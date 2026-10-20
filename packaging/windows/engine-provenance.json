@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Pinned provenance for the libmpv engine bundled with the Windows build. The Windows CMake configure step reads this file, downloads or reuses the exact artifact, verifies every digest, and bundles the verified libmpv-2.dll instead of the 2023 build shipped by media_kit_libs_windows_video.",
+  "engine": {
+    "module": "libmpv-2.dll",
+    "version": "v0.41.0-dev-gfffe7a23a",
+    "versionEvidence": "Windows version resource of libmpv-2.dll and the mpv-version property it reports at runtime",
+    "describeVersion": "v0.41.0-1206-gfffe7a23a",
+    "describeVersionEvidence": "Version line of the upstream git-release notes; the git-describe form counts 1206 commits after the v0.41.0 tag",
+    "runtimeVersion": "0.41.0-dev.39086651352+gfffe7a23a",
+    "runtimeVersionEvidence": "SemVer form the updater derives from the package asset name; test/bundled_engine_test.dart keeps lib/domain/updates/bundled_engine.dart equal to it",
+    "baseVersion": "0.41.0",
+    "channel": "mpv-upstream-git-release",
+    "commit": "fffe7a23a83bc13e0f5d2109179723405812da15",
+    "builtOn": "2026-10-18",
+    "clientApiVersion": "2.6",
+    "architecture": "x86_64-w64-mingw32",
+    "license": "GPL-2.0-or-later (upstream ships the GPL version 2 text as LICENSE.GPL, reproduced as packaging/windows/LICENSE.libmpv-GPL.txt). The FFmpeg libraries linked into this build were built with --enable-gpl --enable-version3 and report GPL version 3 or later, so the combined work is distributed under GPL-3.0-or-later terms.",
+    "staticRuntime": true,
+    "runtimeDependencies": "Windows system modules only. libmpv-2.dll is a self-contained static build, so it needs no bundled FFmpeg or libass DLLs."
+  },
+  "artifact": {
+    "url": "https://github.com/mpv-player/mpv/releases/download/git-release/libmpv-v0.41.0-dev-gfffe7a23a-39086651352-x86_64-w64-mingw32-gpl.zip",
+    "releaseApi": "https://api.github.com/repos/mpv-player/mpv/releases/tags/git-release",
+    "assetName": "libmpv-v0.41.0-dev-gfffe7a23a-39086651352-x86_64-w64-mingw32-gpl.zip",
+    "format": "zip",
+    "size": 64945145,
+    "sha256": "0f8f9bffbc2fa38b7e036a3d927c38a3e7494fd8a374e671344021e756a6304c",
+    "member": "libmpv-2.dll",
+    "memberSize": 157906432,
+    "memberSha256": "6602b9026b3b7391ce235feb7d7baa97abbe489d3faa4f859c0c8fc9261c4210",
+    "licenseMember": "LICENSE.GPL",
+    "licenseSize": 17984,
+    "licenseSha256": "edaef632cbb643e4e7a221717a6c441a4c1a7c918e6e4d56debc3d8739b233f6"
+  },
+  "replaces": {
+    "module": "libmpv-2.dll",
+    "version": "v0.36.0-403-g652a1dd907",
+    "builtOn": "2023-09-24",
+    "size": 29764622,
+    "sha256": "d5f0694b08c124e785d858d00082f3e3b158dd9138bfc48c0382bf1eb443a5fc",
+    "source": "media_kit_libs_windows_video 1.0.11 for Flutter, archive mpv-dev-x86_64-20230924-git-652a1dd.7z from media-kit/libmpv-win32-video-build tag 2023-09-24",
+    "archiveSha256": "dce982222d7a23e4a1c6f0fb6cc39f6e899a6714624b95ea49cff6558ee97572",
+    "reason": "mpv released 0.37.0 and later with security and correctness fixes, and states that old releases do not receive upstream security patches. The 2023 module also carried a stale FFmpeg n6.0 snapshot."
+  },
+  "components": [
+    {
+      "name": "mpv",
+      "version": "v0.41.0-dev-gfffe7a23a",
+      "evidence": "mpv-version property reported by the bundled module at runtime; see test-output/engine-inventory.json"
+    },
+    {
+      "name": "FFmpeg",
+      "version": "git-2026-10-18-89d34d6",
+      "evidence": "ffmpeg-version property reported by the bundled module. Its libavcodec license line reads 'GPL version 3 or later' and its configuration enables --enable-gpl --enable-version3."
+    },
+    {
+      "name": "libass",
+      "version": "0.17.0",
+      "evidence": "libass-version property reports the packed integer 24137728 (0x01700000)"
+    },
+    {
+      "name": "zlib",
+      "version": "1.3.2.1-motley",
+      "evidence": "version string embedded in the module"
+    },
+    {
+      "name": "GNU FriBidi",
+      "version": "1.0.17",
+      "evidence": "version string embedded in the module"
+    },
+    {
+      "name": "Build selection",
+      "version": "gpl, libmpv, prefer_static, d3d11, amf, javascript (mujs), lua (luajit), lcms2, libbluray, libcurl, shaderc, sixel, spirv-cross, subrandr, vapoursynth, vulkan, win32-smtc, zimg, dvda, dvdnav, rubberband",
+      "evidence": "mpv-configuration property of the bundled module"
+    },
+    {
+      "name": "Runtime dependencies",
+      "version": "Windows system modules only",
+      "evidence": "dumpbin /dependents on the pinned module lists KERNEL32, USER32, GDI32, OPENGL32, d2d1, DWrite, dwmapi, ole32, oleaut32, ntdll, bcrypt, ncrypt, CRYPT32, WS2_32, WSOCK32, AVRT, AVICAP32, USP10, UxTheme, SHCORE, SHELL32, SHLWAPI, IMM32, CFGMGR32, IPHLPAPI, Normaliz, RPCRT4, Secur32, USERENV, VERSION and UCRT api-set modules, so no third-party DLL has to ship next to it"
+    }
+  ],
+  "bundledCompanions": {
+    "note": "These are unchanged and still come from media_kit_libs_windows_video. They serve the video renderer's ANGLE path, not the engine.",
+    "files": [
+      "d3dcompiler_47.dll",
+      "libEGL.dll",
+      "libGLESv2.dll",
+      "vk_swiftshader.dll",
+      "vulkan-1.dll",
+      "zlib.dll"
+    ],
+    "source": "alexmercerind/flutter-windows-ANGLE-OpenGL-ES release v1.0.1 (ANGLE.7z, MD5 e866f13e8d552348058afaafe869b1ed)"
+  },
+  "upstreamFacts": [
+    "mpv publishes Windows libmpv modules only under the rolling git-release tag. Its stable release assets (v0.41.0) contain mpv.exe and the player's own DLLs for the MinGW and MSVC builds, and no libmpv-2.dll.",
+    "The upstream git-release libmpv asset is a development build of the master branch (v0.41.0-1206-gfffe7a23a, built 2026-10-18). mpv labels these builds untested and not official releases.",
+    "This record therefore pins the current upstream libmpv line rather than a stable-tag libmpv build, because no stable-tag libmpv build exists. Building libmpv from the v0.41.0 tag with a pinned toolchain would replace this pin; it needs an MSYS2/MinGW-w64 engine build job that this repository does not have yet."
+  ],
+  "maintenance": {
+    "refresh": "dart run tool/engine_provenance.dart refresh --accept <version> rewrites this file from the upstream release metadata and recomputes every digest. Review the diff before committing.",
+    "verify": "dart run tool/engine_provenance.dart verify checks this record against the cached artifact, the extracted module and the built bundle.",
+    "inventory": "dart run tool/engine_provenance.dart inventory writes build/engine/engine-inventory.json for release provenance.",
+    "risk": "Because the git-release tag is refreshed in place, a pinned URL can disappear after upstream rebuilds. The build keeps a verified cache in build/windows/x64/engine and fails with an explicit message when the pin needs refreshing."
+  }
+}

@@ -1,0 +1,181 @@
+# =============================================================================
+# Mpvson
+# Keeps the published repository to source, tests, tooling and docs.
+# Generated builds, release packages, downloaded engines and local machine
+# state must never be committed.
+# =============================================================================
+
+# --- Dart, Flutter and Pub ---------------------------------------------------
+.dart_tool/
+.pub/
+.pub-cache/
+.packages
+build/
+coverage/
+**/doc/api/
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# Flutter version managers.
+.fvm/
+.fvmrc
+.flutter-version
+
+# Flutter tooling writes these into platform folders.
+**/flutter/ephemeral/
+**/Flutter/ephemeral/
+**/Flutter/Generated.xcconfig
+**/Flutter/flutter_export_environment.sh
+**/.symlinks/
+**/Pods/
+
+# Android/Gradle output inside vendored packages.
+**/.gradle/
+**/local.properties
+**/key.properties
+**/Podfile.lock
+
+# Keep the application lockfile, ignore example and vendored package lockfiles.
+**/example/pubspec.lock
+**/packages/*/pubspec.lock
+
+# --- Native build output -----------------------------------------------------
+# Compiled libraries and objects belong in build/, Releases or dist/, not here.
+*.exe
+*.dll
+*.dylib
+*.so
+*.so.*
+*.a
+*.lib
+*.exp
+*.obj
+*.o
+*.pdb
+*.ilk
+*.idb
+*.class
+*.bundle
+*.framework/
+**/x64/
+**/x86/
+**/ARM64/
+**/Win32/
+
+# Visual Studio and MSBuild user state (also outside windows/, which has its own).
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# CMake in-source build artifacts.
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+
+# --- Release packages and distributables -------------------------------------
+/dist/
+/release/
+/releases/
+/artifacts/
+*.zip
+*.7z
+*.rar
+*.tar
+*.tar.gz
+*.tgz
+*.tar.bz2
+*.tar.xz
+*.msi
+*.msix
+*.msixbundle
+*.appx
+*.appxbundle
+*.dmg
+*.pkg
+*.AppImage
+*.deb
+*.rpm
+*.snap
+*.flatpak
+*.sha256
+
+# --- Test, verification and benchmark output ---------------------------------
+/test-output/
+/test-results/
+/verification-output/
+*.trx
+*.coverage
+lcov.info
+*.junit.xml
+
+# --- Downloaded playback engines and archives --------------------------------
+libmpv-2.dll
+mpv-*.dll
+mpv-*.zip
+
+# --- Secrets and signing material --------------------------------------------
+# Never publish environment files, engine signing seeds or release keys.
+.env
+.env.*
+!.env.example
+.envrc
+/secrets/
+*.seed
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.snk
+*.ppk
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+
+# --- Logs and temporary files ------------------------------------------------
+*.log
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+*.swp
+*.swo
+*.dmp
+*.stackdump
+*~
+
+# --- OS metadata -------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# --- Editors and IDEs --------------------------------------------------------
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+*.code-workspace
+.vs/
+.history/
+
+# --- Local agent instructions -------------------------------------------------
+# AGENTS.md and similar files describe this machine's agent setup, not the
+# project. Keep a published contributor guide in README/CONTRIBUTING instead.
+AGENTS.md
+CLAUDE.md
+.opencode/
+.claude/
+.cursor/
+
+# --- Local shortcuts ----------------------------------------------------------
+*.lnk

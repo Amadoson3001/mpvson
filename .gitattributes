@@ -1,0 +1,19 @@
+# Store text as LF so Windows and Linux checkouts produce clean diffs.
+* text=auto eol=lf
+
+# Windows command scripts need CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary assets.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.dll binary
+*.exe binary
+*.zip binary
+*.7z binary
+*.gz binary

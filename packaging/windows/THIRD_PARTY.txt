@@ -1,0 +1,20 @@
+Mpvson uses Flutter, media_kit, libmpv, FFmpeg, ANGLE and their dependencies.
+Each dependency retains its upstream copyright and license.
+Flutter/Dart dependency notices are included in data/flutter_assets/NOTICES.Z.
+
+Flutter source and license: https://github.com/flutter/flutter
+media_kit source and license: https://github.com/media-kit/media-kit
+Windows playback engine shipped in the bundle: the pinned mpv development build
+  recorded in packaging/windows/engine-provenance.json, produced from the
+  mpv-player/mpv GPL build artifacts. Its GPLv2 license text is installed beside
+  the application as LICENSE.libmpv-GPL.txt.
+media_kit's plugin runtime (libmpv-win32-video-build 2023-09-24, mpv 652a1dd907)
+  still provides the remaining Windows helper DLLs and the DLL used by test
+  processes; the Windows build replaces its libmpv-2.dll with the pinned engine.
+mpv source: https://github.com/mpv-player/mpv
+FFmpeg source and licenses: https://ffmpeg.org/legal.html
+ANGLE source and license: https://chromium.googlesource.com/angle/angle/
+
+Before public distribution, assemble the complete licenses and corresponding
+source offers required by the exact native builds used. No public release
+or production update feeds have been published by this workspace.

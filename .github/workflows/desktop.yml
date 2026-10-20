@@ -1,0 +1,151 @@
+name: Desktop builds
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      update_manifest:
+        description: HTTPS release manifest URL, optional for development builds
+        type: string
+        required: false
+      engine_manifest:
+        description: HTTPS signed Windows engine manifest URL, optional
+        type: string
+        required: false
+      engine_public_key:
+        description: Base64 Ed25519 public key for the Windows engine feed
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: subosito/flutter-action@44ac965b96f18d999802d4b807e3256d5a3f9fa1 # v2.18.0
+        with:
+          flutter-version: '3.44.0'
+          channel: stable
+          cache: true
+      - name: Install Linux build and playback dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libmpv-dev libasound2-dev libepoxy-dev liblzma-dev ffmpeg xvfb libgl1-mesa-dri jq
+      - name: Install Windows smoke media generator
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg -y --no-progress
+      - run: flutter pub get --enforce-lockfile
+      - run: dart format --output=none --set-exit-if-changed lib test tool
+      - run: flutter analyze
+      - run: flutter test
+      - name: Build Windows release
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          UPDATE_MANIFEST: ${{ inputs.update_manifest }}
+          ENGINE_MANIFEST: ${{ inputs.engine_manifest }}
+          ENGINE_PUBLIC_KEY: ${{ inputs.engine_public_key }}
+        run: flutter build windows --release "--dart-define=MPVSON_UPDATE_MANIFEST=$env:UPDATE_MANIFEST" "--dart-define=MPVSON_ENGINE_UPDATE_MANIFEST=$env:ENGINE_MANIFEST" "--dart-define=MPVSON_ENGINE_PUBLIC_KEY=$env:ENGINE_PUBLIC_KEY"
+      - name: Build Linux release
+        if: runner.os == 'Linux'
+        env:
+          UPDATE_MANIFEST: ${{ inputs.update_manifest }}
+        run: flutter build linux --release --dart-define="MPVSON_UPDATE_MANIFEST=$UPDATE_MANIFEST"
+      - name: Generate test media
+        shell: bash
+        run: |
+          mkdir -p test-output
+          ffmpeg -hide_banner -loglevel error -f lavfi -i testsrc2=size=640x360:rate=24 -t 8 -c:v mpeg4 -q:v 5 -y test-output/smoke.mp4
+          mkdir -p test-output/thumbnail-native-fixtures
+          ffmpeg -hide_banner -loglevel error -f lavfi -i color=c=0x60CDFF:s=320x180 -frames:v 1 -y test-output/thumbnail-native-fixtures/cover.jpg
+          ffmpeg -hide_banner -loglevel error -i test-output/smoke.mp4 -i test-output/thumbnail-native-fixtures/cover.jpg -map 0:v -map 1:v -c:v:0 copy -c:v:1 mjpeg -disposition:v:1 attached_pic -y test-output/thumbnail-native-fixtures/video-with-cover.mp4
+          cp test-output/smoke.mp4 test-output/thumbnail-native-fixtures/sidecar-video.mp4
+          cp test-output/thumbnail-native-fixtures/cover.jpg test-output/thumbnail-native-fixtures/sidecar-video.jpg
+      - name: Verify Windows native thumbnails
+        if: runner.os == 'Windows'
+        run: flutter test --no-pub --dart-define=MPVSON_TEST_THUMBNAILS=true test/thumbnail_native_test.dart
+      - name: Verify Windows native playback tuning
+        if: runner.os == 'Windows'
+        run: flutter test --no-pub --dart-define=MPVSON_NATIVE_TUNING=true test/native_playback_tuning_test.dart
+      - name: Verify Linux native thumbnails
+        if: runner.os == 'Linux'
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          GDK_BACKEND: x11
+        run: xvfb-run -a flutter test --no-pub --dart-define=MPVSON_TEST_THUMBNAILS=true test/thumbnail_native_test.dart
+      - name: Package Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          dart run tool/engine_provenance.dart verify
+          dart run tool/engine_provenance.dart inventory
+          Copy-Item build/windows/x64/engine/engine-inventory.json build/windows/x64/runner/Release/engine-inventory.json
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath dist/mpvson-windows-x64.zip -Force
+          $packageHash = (Get-FileHash dist/mpvson-windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$packageHash  mpvson-windows-x64.zip" | Set-Content dist/SHA256SUMS -Encoding ascii
+      - name: Verify Windows engine activation and recovery
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: flutter test --no-pub --dart-define=MPVSON_NATIVE_ENGINE_SMOKE=true test/engine_native_smoke_test.dart
+      - name: Extract Windows package for smoke verification
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path test-output/extracted-windows -Force | Out-Null
+          Expand-Archive -Path dist/mpvson-windows-x64.zip -DestinationPath test-output/extracted-windows -Force
+      - name: Verify Windows native playback
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./verification/windows-smoke.ps1 -MediaPath (Join-Path $PWD 'test-output/smoke.mp4') -ExecutablePath (Join-Path $PWD 'test-output/extracted-windows/mpvson.exe') -VerifyFullscreen
+      - name: Verify Windows queue and minimize restore
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./verification/measure-minimize-cycles.ps1 -Cycles 5 -QueueItems 100 -ExecutablePath (Join-Path $PWD 'test-output/extracted-windows/mpvson.exe') -OutputDirectory test-output/performance
+      - name: Package Linux
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p dist
+          cp packaging/linux/dev.mpvson.mpvson.desktop build/linux/x64/release/bundle/
+          cp packaging/linux/dev.mpvson.mpvson.svg build/linux/x64/release/bundle/
+          tar -C build/linux/x64/release/bundle -czf dist/mpvson-linux-x64.tar.gz .
+          (cd dist && sha256sum mpvson-linux-x64.tar.gz > SHA256SUMS)
+      - name: Extract Linux package for smoke verification
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p test-output/extracted-linux
+          tar -xzf dist/mpvson-linux-x64.tar.gz -C test-output/extracted-linux
+      - name: Verify Linux native playback
+        if: runner.os == 'Linux'
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          GDK_BACKEND: x11
+        run: |
+          timeout 25s xvfb-run -a -s '-screen 0 1280x800x24' ./test-output/extracted-linux/mpvson --smoke-test="$PWD/test-output/smoke.mp4" --smoke-report="$PWD/test-output/native-smoke.json" --smoke-screenshot="$PWD/test-output/native-smoke.png"
+          cat test-output/native-smoke.json
+          jq -e '.success == true and .visualCaptureSuccess == true' test-output/native-smoke.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: mpvson-${{ runner.os }}-x64
+          path: dist/*
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: verification-${{ runner.os }}
+          path: |
+            test-output/native-smoke.*
+            test-output/performance/*.json
+            test-output/performance/*.csv
+            test-output/performance/*.log
+          if-no-files-found: ignore
