@@ -172,11 +172,6 @@ void VideoOutput::SetVisibility(bool visible) {
   }
 }
 
-VideoOutputFrameStats VideoOutput::GetFrameStats() const {
-  return {rendered_frames_.load(), consumed_frame_.load(), skipped_frames_.load(),
-          output_width_.load(), output_height_.load(), visible_.load()};
-}
-
 void VideoOutput::NotifyRender() {
   // Teardown takes the same admission lock before its final worker barrier.
   // Every admitted callback has enqueued its task before destruction proceeds.
@@ -214,7 +209,6 @@ void VideoOutput::NotifyRender() {
           };
           mpv_render_context_render(render_context_, params);
         }
-        skipped_frames_.fetch_add(1);
       }
       return;
     }
@@ -257,7 +251,6 @@ void VideoOutput::Render() {
       };
       mpv_render_context_render(render_context_, params);
     }
-    rendered_frames_.fetch_add(1);
     try {
       // Notify Flutter that a new frame is available.
       registrar_->texture_registrar()->MarkTextureFrameAvailable(texture_id_);
@@ -339,8 +332,6 @@ void VideoOutput::CheckAndResize() {
 }
 
 void VideoOutput::Resize(int64_t required_width, int64_t required_height) {
-  output_width_.store(required_width);
-  output_height_.store(required_height);
   std::cout << required_width << " " << required_height << std::endl;
   RetireTexture();
   // The engine may still be opening the shared D3D handle after its texture
@@ -373,7 +364,6 @@ void VideoOutput::Resize(int64_t required_width, int64_t required_height) {
               std::lock_guard<std::mutex> lock(textures_mutex_);
               if (texture_id_) {
                 surface_manager_->Read();
-                consumed_frame_.store(rendered_frames_.load());
                 return textures_.at(texture_id_).get();
               } else {
                 return (FlutterDesktopGpuSurfaceDescriptor*)nullptr;
@@ -403,7 +393,6 @@ void VideoOutput::Resize(int64_t required_width, int64_t required_height) {
         flutter::PixelBufferTexture([&](auto, auto) {
           std::lock_guard<std::mutex> lock(textures_mutex_);
           if (texture_id_) {
-            consumed_frame_.store(rendered_frames_.load());
             return pixel_buffer_textures_.at(texture_id_).get();
           } else {
             return (FlutterDesktopPixelBuffer*)nullptr;

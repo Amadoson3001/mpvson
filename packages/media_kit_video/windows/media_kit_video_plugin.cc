@@ -209,23 +209,6 @@ void MediaKitVideoPlugin::HandleMethodCall(
     auto handle_value = static_cast<int64_t>(std::stoll(handle.c_str()));
     video_output_manager_->SetVisibility(handle_value, visible);
     result->Success(flutter::EncodableValue(std::monostate{}));
-  } else if (method_call.method_name() == "VideoOutputManager.GetFrameStats") {
-    const auto arguments = std::get<flutter::EncodableMap>(*method_call.arguments());
-    const auto handle = std::get<std::string>(
-        arguments.at(flutter::EncodableValue("handle")));
-    const auto stats = video_output_manager_->GetFrameStats(std::stoll(handle));
-    if (!stats.has_value()) {
-      result->Error("video_output_missing", "The native video output is unavailable.");
-      return;
-    }
-    result->Success(flutter::EncodableValue(flutter::EncodableMap{
-        {flutter::EncodableValue("rendered"), flutter::EncodableValue(stats->rendered)},
-        {flutter::EncodableValue("consumed"), flutter::EncodableValue(stats->consumed)},
-        {flutter::EncodableValue("skipped"), flutter::EncodableValue(stats->skipped)},
-        {flutter::EncodableValue("width"), flutter::EncodableValue(stats->width)},
-        {flutter::EncodableValue("height"), flutter::EncodableValue(stats->height)},
-        {flutter::EncodableValue("visible"), flutter::EncodableValue(stats->visible)},
-    }));
   } else if (method_call.method_name().compare("Utils.EnterNativeFullscreen") ==
              0) {
     auto window =

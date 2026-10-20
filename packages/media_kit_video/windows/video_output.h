@@ -40,15 +40,6 @@ typedef struct _VideoOutputConfiguration {
         enable_hardware_acceleration(enable_hardware_acceleration) {}
 } VideoOutputConfiguration;
 
-struct VideoOutputFrameStats {
-  int64_t rendered;
-  int64_t consumed;
-  int64_t skipped;
-  int64_t width;
-  int64_t height;
-  bool visible;
-};
-
 class VideoOutput {
  public:
   int64_t texture_id() const { return texture_id_; }
@@ -88,7 +79,6 @@ class VideoOutput {
   void SetSize(std::optional<int64_t> width, std::optional<int64_t> height);
 
   void SetVisibility(bool visible);
-  VideoOutputFrameStats GetFrameStats() const;
 
  private:
   void NotifyRender();
@@ -111,11 +101,6 @@ class VideoOutput {
 
   std::atomic<bool> visible_{true};
   std::atomic<bool> render_task_pending_{false};
-  std::atomic<int64_t> rendered_frames_{0};
-  std::atomic<int64_t> consumed_frame_{0};
-  std::atomic<int64_t> skipped_frames_{0};
-  std::atomic<int64_t> output_width_{1};
-  std::atomic<int64_t> output_height_{1};
   std::mutex render_admission_mutex_;
 
   mpv_handle* handle_ = nullptr;

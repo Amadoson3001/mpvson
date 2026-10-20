@@ -22,7 +22,7 @@ Future<String> canonicalResolvedPath(File file) async {
       final resolvedTarget = p.isAbsolute(target)
           ? target
           : p.join(file.parent.path, target);
-      return canonicalResolvedPath(File(resolvedTarget));
+      return await canonicalResolvedPath(File(resolvedTarget));
     } catch (_) {}
   }
   try {

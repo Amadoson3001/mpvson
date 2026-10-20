@@ -642,6 +642,9 @@ class PlayerController extends ChangeNotifier {
   /// Thumbnail extraction and caching service, if configured.
   ThumbnailService? get thumbnails => _thumbnails;
 
+  /// Trims disposable thumbnail cache and requests safe decoder cleanup.
+  void trimMemory() => _thumbnails?.trimMemory();
+
   /// Loads artwork independently of the active playback engine and position.
   Future<MediaThumbnail?> loadThumbnail(
     MediaEntry entry, {

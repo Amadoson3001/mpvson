@@ -56,7 +56,7 @@ picture adjustment and timing offset, then restores defaults:
 flutter test --no-pub --dart-define=MPVSON_NATIVE_TUNING=true test/native_playback_tuning_test.dart
 ```
 
-This uses real mpv with a headless video output. Native rendering is checked
-separately by `verification/windows-smoke.ps1`. The minimize/restore benchmark
-also records mpv statistics before and after its measured cycles. A synthetic
-fixture does not reproduce every codec, driver or source of playback lag.
+This uses real mpv with a headless video output. In historical benchmarks,
+native rendering and minimize/restore verification recorded mpv statistics
+before and after measured cycles. A synthetic fixture does not reproduce every
+codec, driver or source of playback lag.

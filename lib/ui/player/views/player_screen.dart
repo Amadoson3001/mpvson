@@ -182,6 +182,13 @@ class _PlayerScreenState extends State<PlayerScreen>
     }
   }
 
+  @override
+  void didHaveMemoryPressure() {
+    widget.controller.trimMemory();
+    PaintingBinding.instance.imageCache.clear();
+    PaintingBinding.instance.imageCache.clearLiveImages();
+  }
+
   void _handlePrimaryFocusChange() {
     if (!_spaceHeld) return;
     final focusedContext = FocusManager.instance.primaryFocus?.context;
@@ -450,6 +457,9 @@ class _PlayerScreenState extends State<PlayerScreen>
     _minimized = true;
     _animationsSuspended = true;
     widget.controller.thumbnails?.suspend();
+    widget.controller.trimMemory();
+    PaintingBinding.instance.imageCache.clear();
+    PaintingBinding.instance.imageCache.clearLiveImages();
     _updateVideoOutputPolicy(visible: false);
     if (mounted) setState(() {});
   }

@@ -19,6 +19,7 @@ class MpvsonApp extends StatelessWidget {
     this.enableNativeDrop = true,
     this.fullscreenSetter,
     this.subtitlePicker,
+    this.navigatorKey,
   });
 
   final PlayerController controller;
@@ -29,10 +30,12 @@ class MpvsonApp extends StatelessWidget {
   final bool enableNativeDrop;
   final FullscreenSetter? fullscreenSetter;
   final SubtitleFilePicker? subtitlePicker;
+  final GlobalKey<NavigatorState>? navigatorKey;
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: navigatorKey,
       title: 'Mpvson',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.dark,

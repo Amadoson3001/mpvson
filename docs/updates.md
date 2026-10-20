@@ -108,7 +108,7 @@ contains that engine build.
 2. Package the full Windows release output, including the bundled engine, as a
    ZIP. Package the Linux Flutter bundle as a `tar.gz` so executable
    permissions are retained; document its system `libmpv` requirement.
-3. Smoke-test each archive after extracting it on a clean machine or VM for
+3. Manually verify each archive after extracting it on a clean machine or VM for
    that OS. On Linux, test against each distro/runtime combination you claim
    to support. Confirm startup, video, audio, subtitles, and representative
    media before publishing.
@@ -207,7 +207,7 @@ Verified on 18 Oct 2026 against the pinned module in the release bundle:
 - The live upstream test downloaded it through the normal update path, staged it in
   an isolated store, activated it after restart, rendered video with the player and
   renderer bound to that DLL, and rolled back to the bundle.
-- The engine smoke test staged the bundled module under synthetic labels, activated,
+- In historical test records, the engine activation test staged the bundled module under synthetic labels, activated,
   recovered from an invalid module and rolled back; `dart run
   tool/engine_provenance.dart verify` and `inventory`, the thumbnail native tests and
   the native source probe passed with the same module, and
@@ -366,7 +366,7 @@ clean Windows machine has installed it through the updater using an isolated
 app-support profile and passed startup plus representative video, audio, and
 subtitle playback tests. The CLI does not certify the binaries. The release
 maintainer certifies the package by recording its source build and versions,
-plus the machine and smoke-test result, with the release.
+plus the machine and verification result, with the release.
 
 Create a 32-byte seed with a cryptographically secure random number generator
 on an offline release machine. Keep it outside the repository. For example,

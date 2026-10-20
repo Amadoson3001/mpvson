@@ -142,6 +142,8 @@ abstract interface class ThumbnailExtractor {
     ThumbnailCancellation? cancellation,
   });
 
+  void requestIdleCleanup() {}
+
   Future<void> dispose();
 }
 
@@ -156,6 +158,8 @@ abstract interface class ThumbnailService {
   void suspend() {}
 
   void resume() {}
+
+  void trimMemory() {}
 
   Future<void> dispose();
 }
@@ -233,7 +237,7 @@ class MediaKitThumbnailService implements ThumbnailService {
              playerFactory: playerFactory,
            );
 
-  static const int _defaultMemoryLimit = 8 * 1024 * 1024;
+  static const int _defaultMemoryLimit = 4 * 1024 * 1024;
   static const int _defaultDiskLimit = 128 * 1024 * 1024;
   static const int _maximumCacheEntryBytes = 12 * 1024 * 1024;
   static const int _maximumExtractedBytes = 12 * 1024 * 1024;
@@ -406,6 +410,14 @@ class MediaKitThumbnailService implements ThumbnailService {
       request.onSuspend();
     }
     _interruptCurrentExtraction();
+    _extractor.requestIdleCleanup();
+  }
+
+  @override
+  void trimMemory() {
+    _memory.clear();
+    _memoryBytes = 0;
+    _extractor.requestIdleCleanup();
   }
 
   @override
@@ -1894,6 +1906,8 @@ class MediaKitThumbnailExtractor implements ThumbnailExtractor {
 
   Player? _decoder;
   Future<void> _lock = Future<void>.value();
+  Timer? _idleTimer;
+  int _activeOperations = 0;
   bool _disposed = false;
 
   Player? get currentDecoder => _decoder;
@@ -1905,7 +1919,7 @@ class MediaKitThumbnailExtractor implements ThumbnailExtractor {
       muted: true,
       osc: false,
       libass: false,
-      bufferSize: 2 * 1024 * 1024,
+      bufferSize: 0,
     ),
   );
 
@@ -1940,6 +1954,10 @@ class MediaKitThumbnailExtractor implements ThumbnailExtractor {
       return defaultValue;
     }
 
+    _idleTimer?.cancel();
+    _idleTimer = null;
+    _activeOperations++;
+
     final previousLock = _lock;
     final completer = Completer<void>();
     _lock = completer.future;
@@ -1953,6 +1971,7 @@ class MediaKitThumbnailExtractor implements ThumbnailExtractor {
     if (_disposed ||
         (cancellation?.isCancelled ?? false) ||
         (cancellation?.isInterrupted ?? false)) {
+      _finishOperation();
       completer.complete();
       return defaultValue;
     }
@@ -1977,6 +1996,59 @@ class MediaKitThumbnailExtractor implements ThumbnailExtractor {
       } catch (_) {
         // Reset source-specific state between jobs.
       }
+      _finishOperation();
+      completer.complete();
+    }
+  }
+
+  void _finishOperation() {
+    _activeOperations--;
+    if (_activeOperations <= 0 && !_disposed) {
+      _activeOperations = 0;
+      _scheduleIdleCleanup();
+    }
+  }
+
+  void _scheduleIdleCleanup() {
+    _idleTimer?.cancel();
+    _idleTimer = Timer(const Duration(seconds: 2), () {
+      unawaited(_disposeIdleDecoder());
+    });
+  }
+
+  @override
+  void requestIdleCleanup() {
+    if (_disposed) return;
+    _idleTimer?.cancel();
+    _idleTimer = null;
+    if (_activeOperations <= 0) {
+      unawaited(_disposeIdleDecoder());
+    }
+  }
+
+  Future<void> _disposeIdleDecoder() async {
+    if (_disposed || _activeOperations > 0 || _decoder == null) return;
+    final previousLock = _lock;
+    final completer = Completer<void>();
+    _lock = completer.future;
+
+    try {
+      await previousLock;
+    } catch (_) {}
+
+    try {
+      if (_disposed || _activeOperations > 0 || _decoder == null) return;
+      final decoder = _decoder;
+      _decoder = null;
+      if (decoder != null) {
+        try {
+          await decoder.stop();
+        } catch (_) {}
+        try {
+          await decoder.dispose();
+        } catch (_) {}
+      }
+    } finally {
       completer.complete();
     }
   }
@@ -2007,7 +2079,7 @@ class MediaKitThumbnailExtractor implements ThumbnailExtractor {
             outputDirectory,
             deadline,
             imageOutput: false,
-            videoTrack: 'auto',
+            videoTrack: 'no',
           );
         } catch (error) {
           _recordDiagnostic(
@@ -2160,6 +2232,19 @@ class MediaKitThumbnailExtractor implements ThumbnailExtractor {
     await player.setProperty('frames', 'all').timeout(_remaining(deadline));
     await player
         .setProperty('cache-on-disk', 'no')
+        .timeout(_remaining(deadline));
+    await player.setProperty('cache', 'no').timeout(_remaining(deadline));
+    await player
+        .setProperty('demuxer-readahead-secs', '0')
+        .timeout(_remaining(deadline));
+    await player
+        .setProperty('demuxer-max-bytes', '0')
+        .timeout(_remaining(deadline));
+    await player
+        .setProperty('demuxer-max-back-bytes', '0')
+        .timeout(_remaining(deadline));
+    await player
+        .setProperty('vd-lavc-threads', '1')
         .timeout(_remaining(deadline));
 
     // Scale native output before writing where supported.
@@ -2339,10 +2424,23 @@ class MediaKitThumbnailExtractor implements ThumbnailExtractor {
           if (native is! NativePlayer) return Duration.zero;
           await native.setProperty('vo', 'null').timeout(_remaining(deadline));
           await native.setProperty('sid', 'no').timeout(_remaining(deadline));
-          await native.setProperty('vid', 'auto').timeout(_remaining(deadline));
+          await native.setProperty('vid', 'no').timeout(_remaining(deadline));
           await native.setProperty('aid', 'no').timeout(_remaining(deadline));
           await native
               .setProperty('cache-on-disk', 'no')
+              .timeout(_remaining(deadline));
+          await native.setProperty('cache', 'no').timeout(_remaining(deadline));
+          await native
+              .setProperty('demuxer-readahead-secs', '0')
+              .timeout(_remaining(deadline));
+          await native
+              .setProperty('demuxer-max-bytes', '0')
+              .timeout(_remaining(deadline));
+          await native
+              .setProperty('demuxer-max-back-bytes', '0')
+              .timeout(_remaining(deadline));
+          await native
+              .setProperty('vd-lavc-threads', '1')
               .timeout(_remaining(deadline));
           await native
               .setProperty('frames', 'all')
@@ -2373,6 +2471,17 @@ class MediaKitThumbnailExtractor implements ThumbnailExtractor {
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
+    _idleTimer?.cancel();
+    _idleTimer = null;
+
+    final previousLock = _lock;
+    final completer = Completer<void>();
+    _lock = completer.future;
+
+    try {
+      await previousLock;
+    } catch (_) {}
+
     final decoder = _decoder;
     _decoder = null;
     if (decoder != null) {
@@ -2383,5 +2492,6 @@ class MediaKitThumbnailExtractor implements ThumbnailExtractor {
         await decoder.dispose();
       } catch (_) {}
     }
+    completer.complete();
   }
 }

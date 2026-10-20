@@ -168,46 +168,31 @@ That does not disable mpv engine updates.
 ## Development and checks
 
 ```sh
-dart format lib test tool
+dart format lib tool
 flutter analyze
-flutter test
 ```
 
-After a Windows release build, verify the native engine against a local video:
+### Release builds and engine verification
+
+Compile release binaries for Windows and Linux:
 
 ```powershell
-.\verification\windows-smoke.ps1 -MediaPath 'C:\Videos\sample.mp4'
+# Windows release build
+flutter build windows --release
+
+# Verify bundled engine provenance and generate inventory
+dart run tool/engine_provenance.dart verify
+dart run tool/engine_provenance.dart inventory
 ```
 
-The smoke check uses an isolated session, mutes its own playback, verifies the engine version, opens/seeks/pauses a real video, captures the app, and writes its report under `test-output`. Use `-ExecutablePath` to point to a specific runner or freshly extracted portable executable (defaults to `build/windows/x64/runner/Release/mpvson.exe`).
-
-The independent engine flow has an opt-in native check after a Windows release
-build and creation of `test-output/smoke.mp4`:
-
-```powershell
-flutter test --no-pub --dart-define=MPVSON_NATIVE_ENGINE_SMOKE=true test/engine_native_smoke_test.dart
+```sh
+# Linux release build
+flutter build linux --release
 ```
 
-It signs a package containing the existing tested runtime, stages it in an
-isolated store, verifies the player and renderer use the selected DLL, checks
-recovery from an invalid DLL, and rolls back to the bundled engine. Its fixture
-release labels exercise selection; they do not represent a newer upstream mpv
-build. No production signing key or user engine installation is used.
+Engine provenance verification (`tool/engine_provenance.dart verify`) checks the pinned engine archive, SHA-256 digest, and license against `packaging/windows/engine-provenance.json`. The `inventory` command records the engine version, ffmpeg version, and build components for distribution.
 
-To check the opt-in development source, download its current package, render
-video with that engine and roll back in an isolated store:
-
-```powershell
-flutter test --no-pub --dart-define=MPVSON_LIVE_MPV_TEST=true test/mpv_upstream_native_test.dart
-```
-
-This opt-in check needs internet access. Its evidence is written beneath
-`test-output/mpv-upstream-native/` and includes the actual upstream URL, hash
-and loaded engine version.
-
-Pass `-VerifyFullscreen` to also exercise native fullscreen and capture the video with the controls hidden. See [desktop interaction design and research](docs/desktop-ux.md).
-
-The desktop workflow in `.github/workflows/desktop.yml` checks and builds Windows x64 and Linux x64, packages the release archives, extracts the bundles into clean staging directories, and executes native playback smoke-tests directly on the extracted binaries before publishing release artifacts.
+The desktop workflow in `.github/workflows/desktop.yml` validates code formatting and static analysis, builds Windows x64 and Linux x64 release binaries, verifies engine provenance and inventory, and packages release distribution archives (`dist/mpvson-windows-x64.zip` and `dist/mpvson-linux-x64.tar.gz`) along with SHA-256 checksums.
 
 The code uses MVVM with injected playback and session services. App controls use Flutter widgets and focus handling; mpv owns decoding, audio/video synchronization, subtitle rendering, and GPU video output. UI controls do not use mpv's ASS renderer.
 

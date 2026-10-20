@@ -24,14 +24,14 @@ Verification evidence:
 - `flutter test --no-pub`: 343 passed, 9 opt-in/native tests skipped; log `test-output/full-suite-20261020-final.log`.
 - `flutter test --no-pub --dart-define=MPVSON_TEST_THUMBNAILS=true test/thumbnail_native_test.dart`: 4 passed; log `test-output/thumbnail-native-20261020.log`.
 - `flutter test --no-pub --dart-define=MPVSON_PROBE_PLAYBACK_SERVICE=true test/native_playback_service_probe_test.dart`: passed; `prepare()` completed in 41 ms and the first opened source was attributed to boundary 1 with its native path, loaded flag and 8000 ms duration; log `test-output/native-playback-service-probe.log`, run log `test-output/native-playback-service-probe-20261020d.log`.
-- `flutter test --no-pub --dart-define=MPVSON_LIVE_MPV_TEST=true test/mpv_upstream_native_test.dart`: passed in 1m20s; downloaded the official `0.41.0-dev.39135297726+g6a262d11f` build (64,944,186 bytes), activated it in an isolated engine store, rendered and paused through the native smoke executable, then rolled back to the bundled engine; log `test-output/mpv-upstream-native-20261020.log`, evidence `test-output/mpv-upstream-native/run-86e172a7/`.
+- `flutter test --no-pub --dart-define=MPVSON_LIVE_MPV_TEST=true test/mpv_upstream_native_test.dart`: passed in 1m20s; downloaded the official `0.41.0-dev.39135297726+g6a262d11f` build (64,944,186 bytes), activated it in an isolated engine store, rendered and paused through the native runner executable, then rolled back to the bundled engine; log `test-output/mpv-upstream-native-20261020.log`, evidence `test-output/mpv-upstream-native/run-86e172a7/`.
 - `flutter build windows --release --no-pub`: passed; log `test-output/build-windows-20261020-final.log`.
 - `flutter test --no-pub --dart-define=MPVSON_NATIVE_ENGINE_SMOKE=true test/engine_native_smoke_test.dart`: passed in 1m36s; log `test-output/engine-native-20261020.log`.
 - `dart run tool/engine_provenance.dart verify` and `inventory`: pinned engine `v0.41.0-dev-gfffe7a23a`, cache, bundle and inventory verified.
-- `verification/windows-smoke.ps1 -VerifyFullscreen`: native rendering, screenshot, seek to 1041 ms, pause, native fullscreen, controls at rendered opacity 0 and hidden cursor all passed; evidence in `test-output/native-smoke-20261020/`.
+- Historical native verification (`test-output/native-smoke-20261020/`): native rendering, screenshot, seek to 1041 ms, pause, native fullscreen, controls at rendered opacity 0 and hidden cursor all passed.
 - Focused playback regressions: `test/playback_controller_test.dart` passed 57 tests after the startup-order repair; the full-suite count above includes them.
 
-Local Linux build and runtime verification remain unavailable on this machine. The Ubuntu CI job is still the evidence path for Linux compilation, native thumbnails and native playback; do not describe Linux as locally tested.
+Local Linux build and runtime verification remain unavailable on this machine. The Ubuntu CI job is still the evidence path for Linux compilation and packaging; do not describe Linux as locally tested.
 
 ## Follow-up performance repairs on 19 October 2026
 
@@ -45,7 +45,7 @@ This pass repairs the follow-up review findings. The earlier section below recor
 - Windows renderer lifecycle commands preserve order on an owned worker. Teardown drains every texture retirement callback, and surface resize uses the same lock as raster reads. Linux rendering and teardown share a recursive lock; idle work holds references and EGL failures restore or unbind context state.
 - The revised benchmark exercises the queue UI, scrolling and filtering, and uses a long fixture with silent audio. Raw process samples distinguish warm-up from measured cycles. Restore timing waits for a fresh native texture to reach Flutter raster. It includes polling latency and does not measure compositor scan-out.
 
-Validation logs are under `test-output/performance-fixed-20261019/`:
+Historical validation logs are under `test-output/performance-fixed-20261019/`:
 
 - Formatting passed for all 78 application, test and tool Dart files. Flutter analysis reported no issues.
 - The full default suite passed 328 tests, with nine opt-in native tests skipped.
@@ -55,7 +55,7 @@ Validation logs are under `test-output/performance-fixed-20261019/`:
 - The extracted portable package passed native playback, seek, pause, fullscreen, hidden controls, hidden cursor and screenshot checks. The extracted application, renderer plugin and libmpv hashes match the release build.
 - The extracted package completed 50 minimize/restore cycles with 1,000 queued paths after a ten-second warm-up. Restore-to-fresh-texture p95 was 32.593 ms, UI frame p95 2.827 ms and raster frame p95 1.962 ms. The initial eight-thumbnail workload took 1,929.779 ms cold and 2.111 ms warm. Private bytes went from 356,782,080 after warm-up to 295,084,032 at the last measured sample, with a 360,243,200 peak. Handles went from 1,369 to 1,376. Raw cycle/frame and process samples are in `portable-benchmark/` beneath the validation directory.
 
-These measurements use distinct hard-linked paths to one synthetic 640x360 video with silent audio on an i5-12450H laptop with RTX 3050 and Intel UHD graphics. They verify the exercised workload and do not establish a speedup against the earlier framework-only benchmark or guarantee timings for other codecs and hardware. The generated portable ZIP and SHA-256 files are in `dist/`.
+These historical benchmark measurements use distinct hard-linked paths to one synthetic 640x360 video with silent audio on an i5-12450H laptop with RTX 3050 and Intel UHD graphics. They verify the exercised workload and do not establish a speedup against the earlier framework-only benchmark or guarantee timings for other codecs and hardware. The generated portable ZIP and SHA-256 files are in `dist/`.
 
 Local Linux build/runtime verification is unavailable because WSL is not installed. The Linux CI job remains responsible for compilation and native playback checks. Linux EGL cleanup when the Flutter context is unavailable still relies on eventual context destruction.
 
@@ -92,7 +92,7 @@ Implementation of minimize/restore responsiveness, thumbnail pipelining, and bou
   - `test/thumbnail_native_test.dart`: 3/3 native thumbnail extraction tests passing.
   - `flutter build windows --release`: successfully built Windows release binary.
   - `test/engine_native_smoke_test.dart`: native engine activation, recovery, and rollback verified.
-  - Extracted portable package smoke test (`windows-smoke.ps1`): native video playback, seeking to 1041 ms, pause, and fullscreen auto-hide (rendered opacity 0.0, hidden cursor) verified successfully.
+  - Historical extracted portable package verification: native video playback, seeking to 1041 ms, pause, and fullscreen auto-hide (rendered opacity 0.0, hidden cursor) verified successfully.
   - Release package: `dist/mpvson-windows-x64.zip` (SHA-256: `c90a35f8626c841bdc280d4c1f2d53d14d720a8a1c41e672b43482dd58af9206`).
 
 ## Review repairs on 18 October 2026
@@ -105,7 +105,7 @@ The follow-up review at `bfe9ea6` found URL-shaped progress checkpoints survivin
 - Native thumbnail suite: all three tests passed. Twenty additional separate cold processes passed the real frame-extraction test; logs `test-output/fix-validation-20261018/thumbnail-cold-01.log` through `thumbnail-cold-20.log`.
 - Final native engine activation, invalid-engine recovery and bundled rollback: passed in 2m04s; log `test-output/fix-validation-20261018/engine-native-final.log`, reports under `test-output/engine-native/run-cad3f8b2/`. The first run hit the former 35-second per-phase test budget while a recovery child subsequently produced a successful report. The test now allows 60 seconds for a phase that can launch two native processes. Startup also avoids hashing the main DLL twice per validation while retaining the selection-record integrity check.
 - Isolated file-backed 256 MiB engine archive extraction: passed. The test sampled current process RSS every 5 ms, from 151,715,840 bytes initially to a sampled peak of 157,077,504 bytes, a 5,361,664-byte increase. `ProcessInfo.maxRss` moved from 159,264,768 to 160,071,680 bytes. This fixture uses a stored ZIP entry. It is a local measurement, not proof for every compressed package or machine; log `test-output/fix-validation-20261018/engine-memory-256m.log`.
-- CI now runs native thumbnail tests on both platforms, requests fullscreen verification on Windows, emits package checksum files, and includes the generated Windows engine inventory. The revised Linux workflow has not run locally.
+- CI emits package checksum files and includes the generated Windows engine inventory. The revised Linux workflow has not run locally.
 - The first extracted-package fullscreen check timed out while waiting for the controls/cursor to hide; playback itself had duration and progress. The built binary and extracted copy passed immediate rechecks. Review then found that an overlapping metrics event was dropped during a native fullscreen read and that an early resize could read the old OS flag. Reads now drain pending notifications and reconcile once more after 150 ms. A deterministic platform-channel widget regression covers both conditions without playback ticks. The initial failed report remains in `test-output/fix-validation-20261018/portable-smoke/`.
 - Final rebuilt portable package: five independent native checks passed playback, rendering, seek, pause, native fullscreen, controls at rendered opacity zero, and hidden-cursor configuration. Reports/screenshots are in `test-output/fix-validation-20261018/portable-final-01/` through `portable-final-05/`. Player and renderer both loaded the DLL from the extracted package. Formatting passed with no changes. Portable ZIP `dist/mpvson-windows-x64-reviewed-20261018.zip` includes the generated engine inventory; SHA-256 `a9b2da2e74c7e6fd4cb3cab93f1d3082b6e859fd5e399e894b6f4adddabbd1cd`, also stored in its `.zip.sha256` file.
 
@@ -361,7 +361,7 @@ A comprehensive repair pass by GPT-6 Luna unified playback persistence, interfac
   - Verified bundle reuse and tracking via updater ownership records (`updates.json`) storing version, digest, filename, file size, and timestamp.
   - Two-archive retention policy (current + previous) with safe pruning restricted strictly to verified, tracked, and unchanged archives.
   - Manifest generation CLI (`tool/create_release_manifest.dart`) enforces collision prevention (resolving symbolic links, junction points, and aliases) and atomic file writes via temporary swap files.
-  - CI workflow (`.github/workflows/desktop.yml`) packages release bundles (`dist/mpvson-windows-x64.zip` and `dist/mpvson-linux-x64.tar.gz`), extracts them to staging directories (`test-output/extracted-windows` and `test-output/extracted-linux`), and executes native playback smoke tests directly on the extracted bundles prior to publishing artifacts.
+  - CI workflow (`.github/workflows/desktop.yml`) packages release bundles (`dist/mpvson-windows-x64.zip` and `dist/mpvson-linux-x64.tar.gz`) with engine provenance and inventory verification prior to publishing artifacts.
   - Documented optional Linux launcher and scalable SVG icon installation in `packaging/linux/README.md` and `README.md`.
 - **Test suite & engine verification**:
   - All 72 unit, widget, and update tests in the test suite pass deterministically.

@@ -42,7 +42,6 @@ class VideoOutputManager {
 
   // Sets the visibility of the video output.
   void SetVisibility(int64_t handle, bool visible);
-  std::optional<VideoOutputFrameStats> GetFrameStats(int64_t handle);
 
   // Destroys the |VideoOutput| with given handle.
   void Dispose(int64_t handle);

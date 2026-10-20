@@ -46,7 +46,7 @@ The thumbnail service owns the compressed memory cache, capped at 8 MiB. Queue r
 
 Native video visibility suppresses texture publication while preserving playback. Hidden OpenGL acknowledgement uses the output's current rendering context. Windows lifecycle operations run in order on an owned executor; render admission closes before teardown, and all texture retirement callbacks finish before output destruction. Surface resize shares the same lock as raster reads. Linux idle render work holds an output reference and uses the same recursive render lock as raster rendering and teardown.
 
-`verification/measure-minimize-cycles.ps1` verifies a long synthetic video through distinct queue paths, warms the queue, then records raw process and frame samples during repeated minimize/restore cycles. Its restore metric ends when Flutter consumes a fresh native video texture. It includes polling latency and does not measure OS compositor scan-out. A failed process or incomplete workload must fail the script.
+In historical minimize/restore benchmarking records, responsiveness verification exercised a long synthetic video through distinct queue paths, warmed the queue, and recorded process and frame samples across repeated minimize/restore cycles. The restore metric ends when Flutter consumes a fresh native video texture, including polling latency (without measuring OS compositor scan-out).
 
 `PlayerController` in `lib/ui/player/player_controller.dart` extends ChangeNotifier. Constructor `PlayerController({required PlaybackService playback, required SessionRepository sessions})`. Expose:
 

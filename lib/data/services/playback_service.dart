@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
+import '../../domain/models/media_entry.dart';
 import '../../domain/models/media_source.dart';
 import '../../domain/models/playback_settings.dart';
 import '../../domain/models/video_output_policy.dart';
@@ -496,6 +497,79 @@ class MediaKitPlaybackService
     }
   }
 
+  Future<void> _applyBufferingPolicy({required bool isNetwork}) async {
+    final nativePlayer = _player.platform;
+    if (nativePlayer is! NativePlayer) return;
+    try {
+      if (!isNetwork) {
+        // Ordinary local files: disable network-style caching, use 1s read-ahead,
+        // and cap forward/backward buffers at 8/2 MiB.
+        await nativePlayer
+            .setProperty('cache', 'no', waitForInitialization: false)
+            .timeout(const Duration(seconds: 1));
+        await nativePlayer
+            .setProperty('cache-on-disk', 'no', waitForInitialization: false)
+            .timeout(const Duration(seconds: 1));
+        await nativePlayer
+            .setProperty(
+              'demuxer-readahead-secs',
+              '1',
+              waitForInitialization: false,
+            )
+            .timeout(const Duration(seconds: 1));
+        await nativePlayer
+            .setProperty(
+              'demuxer-max-bytes',
+              (8 * 1024 * 1024).toString(),
+              waitForInitialization: false,
+            )
+            .timeout(const Duration(seconds: 1));
+        await nativePlayer
+            .setProperty(
+              'demuxer-max-back-bytes',
+              (2 * 1024 * 1024).toString(),
+              waitForInitialization: false,
+            )
+            .timeout(const Duration(seconds: 1));
+      } else {
+        // HTTP(S) and network paths: retain disk-backed caching and 32 MiB
+        // buffer limits, with 20 seconds of forward caching.
+        await nativePlayer
+            .setProperty('cache', 'yes', waitForInitialization: false)
+            .timeout(const Duration(seconds: 1));
+        await nativePlayer
+            .setProperty('cache-on-disk', 'yes', waitForInitialization: false)
+            .timeout(const Duration(seconds: 1));
+        await nativePlayer
+            .setProperty('cache-secs', '20', waitForInitialization: false)
+            .timeout(const Duration(seconds: 1));
+        await nativePlayer
+            .setProperty(
+              'demuxer-readahead-secs',
+              '20',
+              waitForInitialization: false,
+            )
+            .timeout(const Duration(seconds: 1));
+        await nativePlayer
+            .setProperty(
+              'demuxer-max-bytes',
+              (32 * 1024 * 1024).toString(),
+              waitForInitialization: false,
+            )
+            .timeout(const Duration(seconds: 1));
+        await nativePlayer
+            .setProperty(
+              'demuxer-max-back-bytes',
+              (32 * 1024 * 1024).toString(),
+              waitForInitialization: false,
+            )
+            .timeout(const Duration(seconds: 1));
+      }
+    } on Object catch (error) {
+      _diagnostics?.record('playback.buffering_policy', error: error);
+    }
+  }
+
   @override
   Future<void> open(String path, {bool play = true}) async {
     final boundary = _identity.beginOpen(path);
@@ -521,6 +595,7 @@ class MediaKitPlaybackService
     _lastAppliedWidth = null;
     _lastAppliedHeight = null;
     _scheduleResize(force: true);
+    await _applyBufferingPolicy(isNetwork: MediaEntry.isNetworkUrl(path));
     await _player.open(Media(path), play: play);
     if (!_identity.observationActive && !_disposed) {
       _emit(_stamped(_state.copyWith(isBuffering: _player.state.buffering)));

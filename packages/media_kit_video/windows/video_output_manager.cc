@@ -47,14 +47,6 @@ void VideoOutputManager::SetVisibility(int64_t handle, bool visible) {
   });
 }
 
-std::optional<VideoOutputFrameStats> VideoOutputManager::GetFrameStats(
-    int64_t handle) {
-  std::lock_guard<std::mutex> lock(mutex_);
-  auto output = video_outputs_.find(handle);
-  if (output == video_outputs_.end()) return std::nullopt;
-  return output->second->GetFrameStats();
-}
-
 void VideoOutputManager::Dispose(int64_t handle) {
   manager_pool_->Post([=]() {
     std::lock_guard<std::mutex> lock(mutex_);
