@@ -218,17 +218,19 @@ Verified on 18 Oct 2026 against the pinned module in the release bundle:
 the operator names the version they reviewed, downloads the package, recomputes
 every digest, rewrites the record and refreshes the build cache. `verify`
 re-checks the record, the checked-in license text, the cache and the built
-bundle, and `inventory` writes `build/engine/engine-inventory.json` for release
-provenance. Optional native probes run the same checks against a running engine:
+bundle, and `inventory` writes `build/windows/x64/engine/engine-inventory.json`
+with the bundled-file hashes. The retained native playback probe also checks
+the running engine identity against the pin:
 
 ```powershell
 flutter build windows --release
-flutter test --dart-define=MPVSON_PROBE_ENGINE_INVENTORY=true test/native_engine_inventory_probe_test.dart
+flutter test --dart-define=MPVSON_PROBE_NATIVE_EVENTS=true test/native_source_probe_test.dart
 ```
 
-The probe compares the bundled module digest with the pin, loads it, and records
-the `mpv-version`, `ffmpeg-version`, `libass-version`, `platform` and
-`mpv-configuration` values it reports into `test-output/engine-inventory.json`.
+Run `dart run tool/engine_provenance.dart verify` for the module digest check.
+The playback probe loads the bundled module and records its `mpv-version`,
+`ffmpeg-version`, `libass-version`, `platform`, and `mpv-configuration` values
+in `test-output/engine-runtime.json`.
 
 The `libEGL`, `libGLESv2`, `d3dcompiler_47`, `vk_swiftshader`, `vulkan-1` and
 `zlib` modules still come from `media_kit_libs_windows_video`. They serve the

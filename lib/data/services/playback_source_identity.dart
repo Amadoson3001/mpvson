@@ -30,7 +30,7 @@ class SourceAttachment {
   final bool verified;
 
   bool get hasSource => source != null;
-  bool get isEmpty => boundary == 0 && source == null;
+  bool get isEmpty => source == null;
 
   SourceAttachment copyWith({
     int? boundary,
@@ -78,7 +78,6 @@ class PlaybackSourceIdentity {
 
   int _boundary = 0;
   int? _pendingBoundary;
-  bool _loadedHint = false;
 
   SourceAttachment _request = SourceAttachment.none;
   SourceAttachment _native = SourceAttachment.none;
@@ -114,13 +113,10 @@ class PlaybackSourceIdentity {
   /// Enables native attribution once observation is registered.
   ///
   /// A source requested before observation existed keeps its identity, so
-  /// playback that started while the native observers were still being
-  /// registered is not stranded in a loading state.
+  /// playback can be attributed as soon as the native `path` report arrives.
+  /// A request by itself is not proof that the engine attached or loaded it.
   void activateObservation({required bool supported}) {
     observationActive = supported;
-    if (!supported || _native.hasSource || !_request.hasSource) return;
-    _native = _request.copyWith(loaded: true);
-    _pendingBoundary = null;
   }
 
   /// Registers a new load attempt for [source] and returns its boundary.
@@ -135,28 +131,18 @@ class PlaybackSourceIdentity {
       source: canonical,
       loaded: false,
     );
-    if (_native.source == canonical) {
-      // Reopening the source the engine already has attached rebinds the
-      // attachment to the new attempt. libmpv reloads it and reports `path`
-      // again, so the reload is only trusted once the engine confirms it.
-      _native = SourceAttachment(
-        boundary: _boundary,
-        source: canonical,
-        loaded: false,
-        verified: true,
-      );
-      _pendingBoundary = null;
-    }
+    // Until the engine reports `path`, its properties may still belong to the
+    // previous source, even when this request reopens the same path.
+    _native = SourceAttachment(boundary: _boundary);
     return _boundary;
   }
 
   /// Marks that the engine will not attach a new source (stop/clear queue).
   int beginStop() {
     _boundary++;
-    _request = SourceAttachment.none;
-    _native = SourceAttachment.none;
+    _request = SourceAttachment(boundary: _boundary);
+    _native = SourceAttachment(boundary: _boundary);
     _pendingBoundary = null;
-    _loadedHint = false;
     return _boundary;
   }
 
@@ -176,12 +162,10 @@ class PlaybackSourceIdentity {
       // the events as stale instead of attaching them to the current attempt.
       return _native;
     }
-    final loaded = _loadedHint;
-    _loadedHint = false;
     _native = SourceAttachment(
       boundary: boundary,
       source: canonical,
-      loaded: loaded,
+      loaded: false,
       verified: true,
     );
     if (boundary == _pendingBoundary) {
@@ -192,12 +176,9 @@ class PlaybackSourceIdentity {
 
   /// The engine confirmed the attached source is open.
   SourceAttachment attachLoaded() {
-    if (!_native.hasSource) {
-      // A load confirmation can overtake the start notification. Remember it so
-      // the next start is treated as loaded.
-      _loadedHint = true;
-      return _native;
-    }
+    // This signal has no source identity. Until `path` attaches a source it may
+    // be a retained property value from the previous source or from startup.
+    if (!_native.hasSource) return _native;
     _native = _native.copyWith(loaded: true);
     return _native;
   }

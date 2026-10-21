@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
+import 'data/repositories/app_preferences_repository.dart';
+import 'data/repositories/media_library_repository.dart';
+import 'data/services/desktop_integration_service.dart';
 import 'data/services/engine_update_service.dart';
 import 'data/services/update_service.dart';
 import 'ui/core/app_theme.dart';
@@ -20,6 +23,9 @@ class MpvsonApp extends StatelessWidget {
     this.fullscreenSetter,
     this.subtitlePicker,
     this.navigatorKey,
+    this.appPreferences,
+    this.libraryRepository,
+    this.desktopIntegration,
   });
 
   final PlayerController controller;
@@ -31,6 +37,9 @@ class MpvsonApp extends StatelessWidget {
   final FullscreenSetter? fullscreenSetter;
   final SubtitleFilePicker? subtitlePicker;
   final GlobalKey<NavigatorState>? navigatorKey;
+  final AppPreferencesRepository? appPreferences;
+  final MediaLibraryRepository? libraryRepository;
+  final DesktopIntegrationService? desktopIntegration;
 
   @override
   Widget build(BuildContext context) {
@@ -48,6 +57,9 @@ class MpvsonApp extends StatelessWidget {
         enableNativeDrop: enableNativeDrop,
         fullscreenSetter: fullscreenSetter,
         subtitlePicker: subtitlePicker,
+        appPreferences: appPreferences,
+        libraryRepository: libraryRepository,
+        desktopIntegration: desktopIntegration,
       ),
     );
   }

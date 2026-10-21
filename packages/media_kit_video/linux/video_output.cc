@@ -10,14 +10,32 @@
 #include "include/media_kit_video/texture_gl.h"
 #include "include/media_kit_video/texture_sw.h"
 
+#include <algorithm>
+#include <cmath>
 #include <epoxy/egl.h>
 #include <epoxy/glx.h>
 #include <gdk/gdkwayland.h>
 #include <gdk/gdkx.h>
+#include <utility>
+
+static std::pair<gint64, gint64> fit_software_dimensions(
+    gint64 width, gint64 height) {
+  if (width <= 0 || height <= 0) return {width, height};
+  const double scale = (std::min)(
+      {1.0, static_cast<double>(SW_RENDERING_MAX_WIDTH) / width,
+       static_cast<double>(SW_RENDERING_MAX_HEIGHT) / height});
+  return {
+      (std::max<gint64>)(
+          1, static_cast<gint64>(std::floor(width * scale))),
+      (std::max<gint64>)(
+          1, static_cast<gint64>(std::floor(height * scale))),
+  };
+}
 
 struct _VideoOutput {
   GObject parent_instance;
   TextureGL* texture_gl;
+  gboolean texture_gl_registered;
   EGLDisplay egl_display; /* EGL display for mpv rendering (shared with flutter). */
   EGLContext egl_context; /* Isolated EGL context (non-shared). */
   EGLSurface egl_surface; /* Place holder surface for activating egl context */
@@ -27,6 +45,7 @@ struct _VideoOutput {
   EGLSurface flutter_egl_read_surface;
   guint8* pixel_buffer;
   TextureSW* texture_sw;
+  gboolean texture_sw_registered;
   GMutex mutex; /* Only used in S/W rendering. */
   GMutex render_source_mutex; /* Protects the queued GLib idle source ID. */
   guint render_source_id;
@@ -38,10 +57,62 @@ struct _VideoOutput {
   VideoOutputConfiguration configuration;
   TextureUpdateCallback texture_update_callback;
   gpointer texture_update_callback_context;
+  GDestroyNotify texture_update_callback_context_destroy_notify;
   FlTextureRegistrar* texture_registrar;
   gint destroyed;
   gint visible;
 };
+
+static GQuark video_output_error_quark() {
+  return g_quark_from_static_string("media-kit-video-output-error");
+}
+
+// A failed hardware context can be current after TextureGL disposal binds it
+// to release mpv's GL objects. Restore Flutter's context, or unbind it, before
+// starting software rendering. Keep the handle if EGL refuses destruction so
+// teardown can retry without ever destroying a context that is still current.
+static gboolean release_egl_context(VideoOutput* self,
+                                    const gchar* operation) {
+  if (self->egl_context == EGL_NO_CONTEXT) return TRUE;
+
+  if (eglGetCurrentContext() == self->egl_context) {
+    gboolean restored_flutter_context =
+        self->flutter_egl_display != EGL_NO_DISPLAY &&
+        self->flutter_egl_context != EGL_NO_CONTEXT &&
+        eglMakeCurrent(self->flutter_egl_display,
+                       self->flutter_egl_draw_surface,
+                       self->flutter_egl_read_surface,
+                       self->flutter_egl_context);
+    if (!restored_flutter_context) {
+      g_warning(
+          "media_kit: Could not restore Flutter's EGL context %s (EGL error "
+          "0x%x); attempting to unbind the failed context.",
+          operation, eglGetError());
+      if (!eglMakeCurrent(self->egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE,
+                          EGL_NO_CONTEXT)) {
+        g_warning("media_kit: Could not unbind the EGL context %s (EGL error "
+                  "0x%x).",
+                  operation, eglGetError());
+      }
+    }
+  }
+
+  if (eglGetCurrentContext() == self->egl_context) {
+    g_warning("media_kit: The failed EGL context is still current %s; it will "
+              "not be destroyed.",
+              operation);
+    return FALSE;
+  }
+
+  if (eglDestroyContext(self->egl_display, self->egl_context)) {
+    self->egl_context = EGL_NO_CONTEXT;
+  } else {
+    g_warning("media_kit: Could not destroy the EGL context %s (EGL error "
+              "0x%x).",
+              operation, eglGetError());
+  }
+  return TRUE;
+}
 
 G_DEFINE_TYPE(VideoOutput, video_output, G_TYPE_OBJECT)
 
@@ -51,13 +122,23 @@ static void video_output_dispose(GObject* object) {
 
   // Unregister outside the render lock: the registrar may wait for an active
   // Flutter texture callback, which also needs that lock to finish.
-  if (self->texture_gl) {
+  if (self->texture_gl && self->texture_gl_registered) {
     fl_texture_registrar_unregister_texture(self->texture_registrar,
                                             FL_TEXTURE(self->texture_gl));
+    self->texture_gl_registered = FALSE;
   }
-  if (self->texture_sw) {
+  if (self->texture_sw && self->texture_sw_registered) {
     fl_texture_registrar_unregister_texture(self->texture_registrar,
                                             FL_TEXTURE(self->texture_sw));
+    self->texture_sw_registered = FALSE;
+  }
+  if (self->texture_update_callback_context_destroy_notify != NULL) {
+    GDestroyNotify destroy_notify =
+        self->texture_update_callback_context_destroy_notify;
+    gpointer context = self->texture_update_callback_context;
+    self->texture_update_callback_context_destroy_notify = NULL;
+    self->texture_update_callback_context = NULL;
+    destroy_notify(context);
   }
   g_rec_mutex_lock(&self->render_mutex);
 
@@ -103,12 +184,9 @@ static void video_output_dispose(GObject* object) {
     g_object_unref(self->texture_gl);
     self->texture_gl = NULL;
 
-    // Clean up EGL resources
-    if (self->egl_context != EGL_NO_CONTEXT) {
-      eglDestroyContext(self->egl_display, self->egl_context);
-      self->egl_context = EGL_NO_CONTEXT;
-    }
-    
+  }
+  if (self->egl_context != EGL_NO_CONTEXT) {
+    release_egl_context(self, "during teardown");
   }
   // S/W
   if (self->texture_sw) {
@@ -141,6 +219,7 @@ static void video_output_class_init(VideoOutputClass* klass) {
 
 static void video_output_init(VideoOutput* self) {
   self->texture_gl = NULL;
+  self->texture_gl_registered = FALSE;
   self->egl_display = EGL_NO_DISPLAY;
   self->egl_context = EGL_NO_CONTEXT;
   self->egl_surface = EGL_NO_SURFACE;
@@ -149,6 +228,7 @@ static void video_output_init(VideoOutput* self) {
   self->flutter_egl_draw_surface = EGL_NO_SURFACE;
   self->flutter_egl_read_surface = EGL_NO_SURFACE;
   self->texture_sw = NULL;
+  self->texture_sw_registered = FALSE;
   self->pixel_buffer = NULL;
   self->handle = NULL;
   self->render_context = NULL;
@@ -157,6 +237,7 @@ static void video_output_init(VideoOutput* self) {
   self->configuration = VideoOutputConfiguration{};
   self->texture_update_callback = NULL;
   self->texture_update_callback_context = NULL;
+  self->texture_update_callback_context_destroy_notify = NULL;
   self->texture_registrar = NULL;
   g_atomic_int_set(&self->destroyed, 0);
   g_atomic_int_set(&self->visible, 1);
@@ -286,7 +367,8 @@ static void video_output_schedule_render(VideoOutput* self) {
 VideoOutput* video_output_new(FlTextureRegistrar* texture_registrar,
                               FlView* view,
                               gint64 handle,
-                              VideoOutputConfiguration configuration) {
+                              VideoOutputConfiguration configuration,
+                              GError** error) {
   VideoOutput* self = VIDEO_OUTPUT(g_object_new(video_output_get_type(), NULL));
   self->texture_registrar = texture_registrar;
   self->handle = (mpv_handle*)handle;
@@ -362,6 +444,7 @@ VideoOutput* video_output_new(FlTextureRegistrar* texture_registrar,
             
             if (fl_texture_registrar_register_texture(
                     texture_registrar, FL_TEXTURE(self->texture_gl))) {
+              self->texture_gl_registered = TRUE;
               // Initialize mpv with our isolated EGL context
               mpv_opengl_init_params gl_init_params{
                   [](auto, auto name) {
@@ -431,11 +514,28 @@ VideoOutput* video_output_new(FlTextureRegistrar* texture_registrar,
   if (!hardware_acceleration_supported) {
     g_printerr("media_kit: VideoOutput: S/W rendering.\n");
     // H/W rendering failed. Fallback to S/W rendering.
+    if (self->texture_gl != NULL) {
+      if (self->texture_gl_registered) {
+        fl_texture_registrar_unregister_texture(
+            texture_registrar, FL_TEXTURE(self->texture_gl));
+        self->texture_gl_registered = FALSE;
+      }
+      g_clear_object(&self->texture_gl);
+    }
+    if (!release_egl_context(self, "before software fallback")) {
+      g_printerr("media_kit: VideoOutput: Cannot safely switch away from the failed EGL context; skipping S/W rendering.\n");
+      g_set_error_literal(
+          error, video_output_error_quark(), 1,
+          "Could not release the failed EGL context, so no video texture "
+          "could be created safely.");
+      g_object_unref(self);
+      return NULL;
+    }
     self->pixel_buffer = g_new0(guint8, SW_RENDERING_PIXEL_BUFFER_SIZE);
-    self->texture_gl = NULL;
     self->texture_sw = texture_sw_new(self);
     if (fl_texture_registrar_register_texture(texture_registrar,
                                               FL_TEXTURE(self->texture_sw))) {
+      self->texture_sw_registered = TRUE;
       mpv_render_param params[] = {
           {MPV_RENDER_PARAM_API_TYPE, (void*)MPV_RENDER_API_TYPE_SW},
           {MPV_RENDER_PARAM_INVALID, (void*)0},
@@ -452,15 +552,29 @@ VideoOutput* video_output_new(FlTextureRegistrar* texture_registrar,
     }
   }
 #endif
+  const gboolean has_registered_texture =
+      (self->texture_gl != NULL && self->texture_gl_registered) ||
+      (self->texture_sw != NULL && self->texture_sw_registered);
+  if (!has_registered_texture || self->render_context == NULL) {
+    g_set_error_literal(
+        error, video_output_error_quark(), 2,
+        "Could not initialize a usable Linux video texture. Check EGL/GPU "
+        "initialization and software-rendering support.");
+    g_object_unref(self);
+    return NULL;
+  }
   return self;
 }
 
 void video_output_set_texture_update_callback(
     VideoOutput* self,
     TextureUpdateCallback texture_update_callback,
-    gpointer texture_update_callback_context) {
+    gpointer texture_update_callback_context,
+    GDestroyNotify texture_update_callback_context_destroy_notify) {
   self->texture_update_callback = texture_update_callback;
   self->texture_update_callback_context = texture_update_callback_context;
+  self->texture_update_callback_context_destroy_notify =
+      texture_update_callback_context_destroy_notify;
   // Notify initial dimensions as (1, 1) if |width| & |height| are 0 i.e.
   // texture & video frame size is based on playing file's resolution. This
   // will make sure that `Texture` widget on Flutter's widget tree is actually
@@ -539,11 +653,12 @@ gint64 video_output_get_width(VideoOutput* self) {
   gint64 width = 0;
   gint64 height = 0;
 
-  mpv_node params;
-  mpv_get_property(self->handle, "video-out-params", MPV_FORMAT_NODE, &params);
+  mpv_node params{};
+  const int status = mpv_get_property(self->handle, "video-out-params",
+                                      MPV_FORMAT_NODE, &params);
 
   int64_t dw = 0, dh = 0, rotate = 0;
-  if (params.format == MPV_FORMAT_NODE_MAP) {
+  if (status >= 0 && params.format == MPV_FORMAT_NODE_MAP) {
     for (int32_t i = 0; i < params.u.list->num; i++) {
       char* key = params.u.list->keys[i];
       auto value = params.u.list->values[i];
@@ -559,21 +674,14 @@ gint64 video_output_get_width(VideoOutput* self) {
         }
       }
     }
-    mpv_free_node_contents(&params);
   }
+  if (status >= 0) mpv_free_node_contents(&params);
 
   width = rotate == 0 || rotate == 180 ? dw : dh;
   height = rotate == 0 || rotate == 180 ? dh : dw;
 
   if (self->texture_sw != NULL) {
-    // Make sure |width| & |height| fit between |SW_RENDERING_MAX_WIDTH| &
-    // |SW_RENDERING_MAX_HEIGHT| while maintaining aspect ratio.
-    if (width >= SW_RENDERING_MAX_WIDTH) {
-      return SW_RENDERING_MAX_WIDTH;
-    }
-    if (height >= SW_RENDERING_MAX_HEIGHT) {
-      return width / height * SW_RENDERING_MAX_HEIGHT;
-    }
+    return fit_software_dimensions(width, height).first;
   }
 
   return width;
@@ -581,7 +689,7 @@ gint64 video_output_get_width(VideoOutput* self) {
 
 gint64 video_output_get_height(VideoOutput* self) {
   // Fixed height.
-  if (self->width) {
+  if (self->height) {
     return self->height;
   }
 
@@ -589,11 +697,12 @@ gint64 video_output_get_height(VideoOutput* self) {
   gint64 width = 0;
   gint64 height = 0;
 
-  mpv_node params;
-  mpv_get_property(self->handle, "video-out-params", MPV_FORMAT_NODE, &params);
+  mpv_node params{};
+  const int status = mpv_get_property(self->handle, "video-out-params",
+                                      MPV_FORMAT_NODE, &params);
 
   int64_t dw = 0, dh = 0, rotate = 0;
-  if (params.format == MPV_FORMAT_NODE_MAP) {
+  if (status >= 0 && params.format == MPV_FORMAT_NODE_MAP) {
     for (int32_t i = 0; i < params.u.list->num; i++) {
       char* key = params.u.list->keys[i];
       auto value = params.u.list->values[i];
@@ -609,21 +718,14 @@ gint64 video_output_get_height(VideoOutput* self) {
         }
       }
     }
-    mpv_free_node_contents(&params);
   }
+  if (status >= 0) mpv_free_node_contents(&params);
 
   width = rotate == 0 || rotate == 180 ? dw : dh;
   height = rotate == 0 || rotate == 180 ? dh : dw;
 
   if (self->texture_sw != NULL) {
-    // Make sure |width| & |height| fit between |SW_RENDERING_MAX_WIDTH| &
-    // |SW_RENDERING_MAX_HEIGHT| while maintaining aspect ratio.
-    if (height >= SW_RENDERING_MAX_HEIGHT) {
-      return SW_RENDERING_MAX_HEIGHT;
-    }
-    if (width >= SW_RENDERING_MAX_WIDTH) {
-      return height / width * SW_RENDERING_MAX_WIDTH;
-    }
+    return fit_software_dimensions(width, height).second;
   }
 
   return height;

@@ -23,6 +23,7 @@
 // commit, the build date and the artifact digest that were verified.
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:archive/archive_io.dart';
 import 'package:crypto/crypto.dart';
@@ -100,6 +101,33 @@ Map<String, Object?> _readJson(String path) {
     throw FormatException('$path does not hold a JSON object.');
   }
   return decoded;
+}
+
+/// Replaces [destination] only after the complete contents are written, so an
+/// interrupted refresh cannot leave a truncated record, license or module.
+Future<void> writeEngineFileAtomically(
+  File destination,
+  List<int> bytes,
+) async {
+  await destination.parent.create(recursive: true);
+  final randomSuffix = Random.secure().nextInt(1 << 32).toRadixString(16);
+  final temporaryFile = File(
+    p.join(
+      destination.parent.path,
+      '.${p.basename(destination.path)}.$pid-$randomSuffix.tmp',
+    ),
+  );
+  try {
+    await temporaryFile.writeAsBytes(bytes, flush: true);
+    await temporaryFile.rename(destination.path);
+  } catch (_) {
+    try {
+      if (await temporaryFile.exists()) await temporaryFile.delete();
+    } on FileSystemException {
+      // Keep the original failure if cleanup also fails.
+    }
+    rethrow;
+  }
 }
 
 Map<String, Object?> _section(Map<String, Object?> json, String key) {
@@ -603,18 +631,18 @@ Future<bool> _refresh(String root, _Options options) async {
 
     if (!licenseFile.existsSync() ||
         _sha256OfFile(licenseFile.path) != artifact['licenseSha256']) {
-      licenseFile.writeAsBytesSync(licenseBytes, flush: true);
+      await writeEngineFileAtomically(licenseFile, licenseBytes);
       stdout.writeln('  updated $licenseRelative');
     }
     // Refresh the cache copy of the module so the next build reuses it.
-    final Directory moduleDirectory = Directory(p.join(cacheDir, version))
-      ..createSync(recursive: true);
-    File(
-      p.join(moduleDirectory.path, 'libmpv-2.dll'),
-    ).writeAsBytesSync(moduleBytes, flush: true);
-    File(recordPath).writeAsStringSync(
-      '${const JsonEncoder.withIndent('  ').convert(output)}\n',
-      flush: true,
+    final Directory moduleDirectory = Directory(p.join(cacheDir, version));
+    await writeEngineFileAtomically(
+      File(p.join(moduleDirectory.path, 'libmpv-2.dll')),
+      moduleBytes,
+    );
+    await writeEngineFileAtomically(
+      File(recordPath),
+      utf8.encode('${const JsonEncoder.withIndent('  ').convert(output)}\n'),
     );
     stdout.writeln('  updated ${p.relative(recordPath, from: root)}');
     stdout.writeln('');

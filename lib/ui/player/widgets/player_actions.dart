@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../domain/models/media_catalog.dart';
 import '../../../domain/models/media_entry.dart';
 import '../../core/app_motion.dart';
 import '../../core/app_theme.dart';
@@ -20,6 +21,7 @@ class PlayerActions extends StatelessWidget {
     required this.queueOpen,
     this.onFullscreen,
     this.onPlaybackInfo,
+    this.onOpenLibrary,
     this.isFullscreen = false,
   });
 
@@ -33,6 +35,7 @@ class PlayerActions extends StatelessWidget {
   final bool queueOpen;
   final VoidCallback? onFullscreen;
   final VoidCallback? onPlaybackInfo;
+  final VoidCallback? onOpenLibrary;
   final bool isFullscreen;
 
   @override
@@ -90,6 +93,15 @@ class PlayerActions extends StatelessWidget {
             ),
           ),
           const PopupMenuDivider(),
+          if (onOpenLibrary != null)
+            const PopupMenuItem(
+              value: 'library',
+              child: _ActionItem(
+                icon: Icons.video_library_rounded,
+                label: 'Media library',
+                shortcut: 'Ctrl+M',
+              ),
+            ),
           if (onPlaybackInfo != null)
             const PopupMenuItem(
               value: 'playback-info',
@@ -128,7 +140,9 @@ class PlayerActions extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
-                    if (entry.position > Duration.zero)
+                    if (entry.position > Duration.zero &&
+                        MediaCatalog.kindFromExtension(entry.path) !=
+                            MediaKind.audio)
                       Text(
                         'Resume at ${_formatTime(entry.position)}',
                         style: Theme.of(context).textTheme.bodySmall,
@@ -167,6 +181,8 @@ class PlayerActions extends StatelessWidget {
         onOpenUrl();
       case 'settings':
         onSettings();
+      case 'library':
+        onOpenLibrary?.call();
       case 'playback-info':
         onPlaybackInfo?.call();
     }

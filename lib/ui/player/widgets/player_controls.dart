@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../../domain/models/control_density.dart';
 import '../../../ui/core/app_motion.dart';
 import '../../../ui/core/app_theme.dart';
+import '../../../ui/core/slider_overlay.dart';
 import '../player_controller.dart';
 import 'player_control_style.dart';
 
@@ -492,23 +493,25 @@ class _SeekBarState extends State<_SeekBar> {
                         thumbColor: AppTheme.accent,
                         padding: EdgeInsets.zero,
                       ),
-                      child: Slider(
-                        key: const ValueKey('seek-slider'),
-                        focusNode: _focusNode,
-                        value: positionMs,
-                        min: 0,
-                        max: canSeek ? durationMs.toDouble() : 1,
-                        onChangeStart: canSeek
-                            ? (value) =>
-                                  _onChangeStart(value, width, durationMs)
-                            : null,
-                        onChanged: canSeek
-                            ? (value) => _onChanged(value, width, durationMs)
-                            : null,
-                        onChangeEnd: canSeek ? _onChangeEnd : null,
-                        padding: EdgeInsets.zero,
-                        semanticFormatterCallback: (value) =>
-                            'Seek to ${_PlayerControlsState._formatTime(Duration(milliseconds: value.round()))}',
+                      child: SliderOverlay(
+                        child: Slider(
+                          key: const ValueKey('seek-slider'),
+                          focusNode: _focusNode,
+                          value: positionMs,
+                          min: 0,
+                          max: canSeek ? durationMs.toDouble() : 1,
+                          onChangeStart: canSeek
+                              ? (value) =>
+                                    _onChangeStart(value, width, durationMs)
+                              : null,
+                          onChanged: canSeek
+                              ? (value) => _onChanged(value, width, durationMs)
+                              : null,
+                          onChangeEnd: canSeek ? _onChangeEnd : null,
+                          padding: EdgeInsets.zero,
+                          semanticFormatterCallback: (value) =>
+                              'Seek to ${_PlayerControlsState._formatTime(Duration(milliseconds: value.round()))}',
+                        ),
                       ),
                     ),
                   ),
@@ -1040,21 +1043,23 @@ class _InlineVolumeControlState extends State<_InlineVolumeControl> {
             SizedBox(
               width: sliderWidth,
               height: buttonExtent,
-              child: Slider(
-                key: const ValueKey('volume-inline-slider'),
-                focusNode: _focusNode,
-                value: volume,
-                min: 0,
-                max: 100,
-                divisions: 100,
-                onChangeStart: _onChangeStart,
-                onChanged: _onChanged,
-                onChangeEnd: (value) {
-                  _setInteracting(false);
-                  _onChangeEnd(value);
-                },
-                semanticFormatterCallback: (value) =>
-                    'Volume ${value.round()} percent',
+              child: SliderOverlay(
+                child: Slider(
+                  key: const ValueKey('volume-inline-slider'),
+                  focusNode: _focusNode,
+                  value: volume,
+                  min: 0,
+                  max: 100,
+                  divisions: 100,
+                  onChangeStart: _onChangeStart,
+                  onChanged: _onChanged,
+                  onChangeEnd: (value) {
+                    _setInteracting(false);
+                    _onChangeEnd(value);
+                  },
+                  semanticFormatterCallback: (value) =>
+                      'Volume ${value.round()} percent',
+                ),
               ),
             ),
           ],
@@ -1233,20 +1238,22 @@ class _VolumeDialogState extends State<_VolumeDialog> {
               _pointerIsDown = false;
               _cancelPointerDrag();
             },
-            child: Slider(
-              key: const ValueKey('volume-slider'),
-              value: volume,
-              min: 0,
-              max: 100,
-              divisions: 100,
-              onChangeStart: _onChangeStart,
-              onChanged: _onChanged,
-              onChangeEnd: (value) {
-                _setInteracting(false);
-                _onChangeEnd(value);
-              },
-              semanticFormatterCallback: (value) =>
-                  'Volume ${value.round()} percent',
+            child: SliderOverlay(
+              child: Slider(
+                key: const ValueKey('volume-slider'),
+                value: volume,
+                min: 0,
+                max: 100,
+                divisions: 100,
+                onChangeStart: _onChangeStart,
+                onChanged: _onChanged,
+                onChangeEnd: (value) {
+                  _setInteracting(false);
+                  _onChangeEnd(value);
+                },
+                semanticFormatterCallback: (value) =>
+                    'Volume ${value.round()} percent',
+              ),
             ),
           ),
         ),

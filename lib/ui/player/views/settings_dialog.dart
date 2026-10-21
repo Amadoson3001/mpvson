@@ -1,15 +1,21 @@
 import 'dart:async';
 
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 
+import '../../../data/repositories/app_preferences_repository.dart';
+import '../../../data/repositories/media_library_repository.dart';
+import '../../../data/services/desktop_integration_service.dart';
 import '../../../data/services/engine_update_service.dart';
 import '../../../data/services/update_service.dart';
 import '../../../domain/models/control_density.dart';
+import '../../../domain/models/library_models.dart';
 import '../../../domain/models/playback_settings.dart';
 import '../../../domain/updates/engine_update_channel.dart';
 import '../../core/app_motion.dart';
 import '../../core/app_theme.dart';
+import '../../core/slider_overlay.dart';
 import '../player_controller.dart';
 import 'update_center_dialog.dart';
 
@@ -20,12 +26,20 @@ class SettingsDialog extends StatefulWidget {
     required this.updates,
     required this.engineUpdates,
     required this.pickSubtitle,
+    this.appPreferences,
+    this.desktopIntegration,
+    this.libraryRepository,
+    this.pickDirectory,
   });
 
   final PlayerController controller;
   final UpdateService updates;
   final EngineUpdateService engineUpdates;
   final Future<String?> Function() pickSubtitle;
+  final AppPreferencesRepository? appPreferences;
+  final DesktopIntegrationService? desktopIntegration;
+  final MediaLibraryRepository? libraryRepository;
+  final Future<String?> Function()? pickDirectory;
 
   @override
   State<SettingsDialog> createState() => _SettingsDialogState();
@@ -33,6 +47,37 @@ class SettingsDialog extends StatefulWidget {
 
 class _SettingsDialogState extends State<SettingsDialog> {
   _SettingsSection _section = _SettingsSection.appearance;
+  AppPreferencesRepository? _fallbackPreferences;
+  DesktopIntegrationService? _fallbackDesktopIntegration;
+  MediaLibraryRepository? _fallbackLibraryRepository;
+
+  AppPreferencesRepository get _preferences =>
+      widget.appPreferences ??
+      (_fallbackPreferences ??= AppPreferencesRepository());
+
+  DesktopIntegrationService get _desktopIntegration =>
+      widget.desktopIntegration ??
+      (_fallbackDesktopIntegration ??= _EmptyDesktopIntegrationService());
+
+  MediaLibraryRepository get _libraryRepository =>
+      widget.libraryRepository ??
+      (_fallbackLibraryRepository ??= _EmptyMediaLibraryRepository());
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.appPreferences == null) {
+      unawaited(_preferences.load());
+    }
+  }
+
+  @override
+  void dispose() {
+    _fallbackPreferences?.dispose();
+    _fallbackDesktopIntegration?.dispose();
+    _fallbackLibraryRepository?.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
@@ -107,6 +152,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
                             engineUpdates: widget.engineUpdates,
                             pickSubtitle: widget.pickSubtitle,
                             compactViewport: compactViewport,
+                            preferences: _preferences,
+                            desktopIntegration: _desktopIntegration,
+                            libraryRepository: _libraryRepository,
+                            pickDirectory: widget.pickDirectory,
                           ),
                         ),
                       ],
@@ -128,6 +177,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
                       engineUpdates: widget.engineUpdates,
                       pickSubtitle: widget.pickSubtitle,
                       compactViewport: compactViewport,
+                      preferences: _preferences,
+                      desktopIntegration: _desktopIntegration,
+                      libraryRepository: _libraryRepository,
+                      pickDirectory: widget.pickDirectory,
                     ),
                   ),
                 ],
@@ -156,13 +209,23 @@ class _SettingsDialogState extends State<SettingsDialog> {
   }
 }
 
-enum _SettingsSection { appearance, playback, videoAudio, shortcuts, about }
+enum _SettingsSection {
+  appearance,
+  playback,
+  videoAudio,
+  shortcuts,
+  desktopIntegration,
+  mediaLibrary,
+  about,
+}
 
 extension on _SettingsSection {
   String get label => switch (this) {
     _SettingsSection.appearance => 'Appearance',
     _SettingsSection.playback => 'Playback',
     _SettingsSection.videoAudio => 'Video & audio',
+    _SettingsSection.desktopIntegration => 'Desktop integration',
+    _SettingsSection.mediaLibrary => 'Media library',
     _SettingsSection.shortcuts => 'Shortcuts',
     _SettingsSection.about => 'About',
   };
@@ -174,6 +237,10 @@ extension on _SettingsSection {
       'Set playback behavior and choose audio or subtitle tracks.',
     _SettingsSection.videoAudio =>
       'Adjust picture quality, color, and playback timing.',
+    _SettingsSection.desktopIntegration =>
+      'Configure file opening behavior and system integration.',
+    _SettingsSection.mediaLibrary =>
+      'Manage indexed folders and update library scans.',
     _SettingsSection.shortcuts =>
       'See the mouse and keyboard controls for the player.',
     _SettingsSection.about =>
@@ -184,6 +251,8 @@ extension on _SettingsSection {
     _SettingsSection.appearance => Icons.tune_rounded,
     _SettingsSection.playback => Icons.play_circle_outline_rounded,
     _SettingsSection.videoAudio => Icons.high_quality_rounded,
+    _SettingsSection.desktopIntegration => Icons.desktop_windows_rounded,
+    _SettingsSection.mediaLibrary => Icons.folder_copy_rounded,
     _SettingsSection.shortcuts => Icons.keyboard_alt_outlined,
     _SettingsSection.about => Icons.info_outline_rounded,
   };
@@ -342,6 +411,10 @@ class _SettingsContentPane extends StatelessWidget {
     required this.engineUpdates,
     required this.pickSubtitle,
     required this.compactViewport,
+    required this.preferences,
+    required this.desktopIntegration,
+    required this.libraryRepository,
+    this.pickDirectory,
   });
 
   final _SettingsSection section;
@@ -350,6 +423,10 @@ class _SettingsContentPane extends StatelessWidget {
   final EngineUpdateService engineUpdates;
   final Future<String?> Function() pickSubtitle;
   final bool compactViewport;
+  final AppPreferencesRepository preferences;
+  final DesktopIntegrationService desktopIntegration;
+  final MediaLibraryRepository libraryRepository;
+  final Future<String?> Function()? pickDirectory;
 
   @override
   Widget build(BuildContext context) => Column(
@@ -406,6 +483,14 @@ class _SettingsContentPane extends StatelessWidget {
               ),
               _SettingsSection.videoAudio => _VideoAudioSettings(
                 controller: controller,
+              ),
+              _SettingsSection.desktopIntegration => _DesktopIntegrationSettings(
+                preferences: preferences,
+                desktopIntegration: desktopIntegration,
+              ),
+              _SettingsSection.mediaLibrary => _MediaLibrarySettings(
+                libraryRepository: libraryRepository,
+                pickDirectory: pickDirectory,
               ),
               _SettingsSection.shortcuts => const _ShortcutsSettings(),
               _SettingsSection.about => _AboutSettings(
@@ -916,7 +1001,7 @@ class _VideoAudioSettingsState extends State<_VideoAudioSettings> {
           min: -100,
           max: 100,
           divisions: 200,
-          displayValue: _colorValue(_draft.brightness),
+          formatValue: _colorValue,
           onChanged: (value) =>
               _changeDraft(_draft.copyWith(brightness: value)),
           onChangeEnd: (value) => _commit(_draft.copyWith(brightness: value)),
@@ -928,7 +1013,7 @@ class _VideoAudioSettingsState extends State<_VideoAudioSettings> {
           min: -100,
           max: 100,
           divisions: 200,
-          displayValue: _colorValue(_draft.contrast),
+          formatValue: _colorValue,
           onChanged: (value) => _changeDraft(_draft.copyWith(contrast: value)),
           onChangeEnd: (value) => _commit(_draft.copyWith(contrast: value)),
         ),
@@ -939,7 +1024,7 @@ class _VideoAudioSettingsState extends State<_VideoAudioSettings> {
           min: -100,
           max: 100,
           divisions: 200,
-          displayValue: _colorValue(_draft.saturation),
+          formatValue: _colorValue,
           onChanged: (value) =>
               _changeDraft(_draft.copyWith(saturation: value)),
           onChangeEnd: (value) => _commit(_draft.copyWith(saturation: value)),
@@ -951,7 +1036,7 @@ class _VideoAudioSettingsState extends State<_VideoAudioSettings> {
           min: -100,
           max: 100,
           divisions: 200,
-          displayValue: _colorValue(_draft.gamma),
+          formatValue: _colorValue,
           onChanged: (value) => _changeDraft(_draft.copyWith(gamma: value)),
           onChangeEnd: (value) => _commit(_draft.copyWith(gamma: value)),
         ),
@@ -964,7 +1049,7 @@ class _VideoAudioSettingsState extends State<_VideoAudioSettings> {
           min: -10,
           max: 10,
           divisions: 200,
-          displayValue: _secondsValue(_draft.audioDelaySeconds),
+          formatValue: _secondsValue,
           onChanged: (value) =>
               _changeDraft(_draft.copyWith(audioDelaySeconds: value)),
           onChangeEnd: (value) =>
@@ -977,7 +1062,7 @@ class _VideoAudioSettingsState extends State<_VideoAudioSettings> {
           min: -10,
           max: 10,
           divisions: 200,
-          displayValue: _secondsValue(_draft.subtitleDelaySeconds),
+          formatValue: _secondsValue,
           onChanged: (value) =>
               _changeDraft(_draft.copyWith(subtitleDelaySeconds: value)),
           onChangeEnd: (value) =>
@@ -1015,7 +1100,7 @@ class _PlaybackSettingSlider extends StatelessWidget {
     required this.min,
     required this.max,
     required this.divisions,
-    required this.displayValue,
+    required this.formatValue,
     required this.onChanged,
     required this.onChangeEnd,
   });
@@ -1025,7 +1110,9 @@ class _PlaybackSettingSlider extends StatelessWidget {
   final double min;
   final double max;
   final int divisions;
-  final String displayValue;
+  final String Function(double) formatValue;
+
+  String get displayValue => formatValue(value);
   final ValueChanged<double> onChanged;
   final ValueChanged<double> onChangeEnd;
 
@@ -1048,14 +1135,18 @@ class _PlaybackSettingSlider extends StatelessWidget {
             ),
           ],
         ),
-        Slider(
-          value: value.clamp(min, max).toDouble(),
-          min: min,
-          max: max,
-          divisions: divisions,
-          label: displayValue,
-          onChanged: onChanged,
-          onChangeEnd: onChangeEnd,
+        SliderOverlay(
+          child: Slider(
+            value: value.clamp(min, max).toDouble(),
+            min: min,
+            max: max,
+            divisions: divisions,
+            label: displayValue,
+            semanticFormatterCallback: (value) =>
+                '$label ${formatValue(value)}',
+            onChanged: onChanged,
+            onChangeEnd: onChangeEnd,
+          ),
         ),
       ],
     ),
@@ -1067,6 +1158,358 @@ String _colorValue(double value) =>
 
 String _secondsValue(double value) =>
     '${value > 0 ? '+' : ''}${value.toStringAsFixed(1)} s';
+
+class _DesktopIntegrationSettings extends StatelessWidget {
+  const _DesktopIntegrationSettings({
+    required this.preferences,
+    required this.desktopIntegration,
+  });
+
+  final AppPreferencesRepository preferences;
+  final DesktopIntegrationService desktopIntegration;
+
+  @override
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: preferences,
+    builder: (context, _) {
+      final currentOpenBehavior = preferences.preferences.openBehavior;
+      return SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const _SectionHeading(title: 'Opening files'),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(
+                'Choose what happens when opening new files while media is playing:',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: AppTheme.secondaryText,
+                ),
+              ),
+            ),
+            RadioGroup<OpenBehaviorPreference>(
+              groupValue: currentOpenBehavior,
+              onChanged: (preference) {
+                if (preference != null) {
+                  unawaited(preferences.setOpenBehavior(preference));
+                }
+              },
+              child: Column(
+                children: [
+                  RadioListTile<OpenBehaviorPreference>(
+                    key: const ValueKey('open-behavior-keep-playing'),
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    title: const Text('Keep playing and add to queue'),
+                    subtitle: const Text(
+                      'Appends opened media to the queue without interrupting current playback',
+                    ),
+                    value: OpenBehaviorPreference.keepPlayingAndEnqueue,
+                  ),
+                  RadioListTile<OpenBehaviorPreference>(
+                    key: const ValueKey('open-behavior-play-now'),
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    title: const Text('Play new files now'),
+                    subtitle: const Text(
+                      'Immediately interrupts and plays newly opened files',
+                    ),
+                    value: OpenBehaviorPreference.playNewFilesNow,
+                  ),
+                  RadioListTile<OpenBehaviorPreference>(
+                    key: const ValueKey('open-behavior-ask-every-time'),
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    title: const Text('Ask every time'),
+                    subtitle: const Text(
+                      'Prompts for action each time media is opened during playback',
+                    ),
+                    value: OpenBehaviorPreference.askEveryTime,
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 28),
+            const _SectionHeading(title: 'Power & system'),
+            SwitchListTile.adaptive(
+              key: const ValueKey('keep-awake-switch'),
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Keep computer awake during playback'),
+              subtitle: const Text(
+                'Prevents screen sleep and system standby while video playback is active',
+              ),
+              value: preferences.preferences.keepAwakeDuringPlayback,
+              onChanged: (value) => unawaited(preferences.setKeepAwake(value)),
+            ),
+            const Divider(height: 28),
+            const _SectionHeading(title: 'System integration'),
+            Padding(
+              padding: const EdgeInsets.only(top: 4, bottom: 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'File associations',
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'Manage file type associations and autoplay settings in the operating system',
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: AppTheme.secondaryText,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  OutlinedButton.icon(
+                    key: const ValueKey('default-apps-button'),
+                    onPressed: () =>
+                        unawaited(desktopIntegration.openDefaultAppsSettings()),
+                    icon: const Icon(Icons.open_in_new_rounded, size: 16),
+                    label: const Text('Default apps'),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    },
+  );
+}
+
+class _MediaLibrarySettings extends StatelessWidget {
+  const _MediaLibrarySettings({
+    required this.libraryRepository,
+    this.pickDirectory,
+  });
+
+  final MediaLibraryRepository libraryRepository;
+  final Future<String?> Function()? pickDirectory;
+
+  @override
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: libraryRepository,
+    builder: (context, _) {
+      final folders = libraryRepository.folders;
+      final status = libraryRepository.scanStatus;
+
+      return SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                OutlinedButton.icon(
+                  key: const ValueKey('add-folder-button'),
+                  icon: const Icon(Icons.create_new_folder_outlined, size: 18),
+                  label: const Text('Add folder'),
+                  onPressed: () async {
+                    try {
+                      final path = await (pickDirectory != null
+                          ? pickDirectory!()
+                          : getDirectoryPath());
+                      if (path != null && path.isNotEmpty) {
+                        await libraryRepository.addFolder(path);
+                      }
+                    } catch (_) {
+                      // Directory picker cancelled or failed.
+                    }
+                  },
+                ),
+                const SizedBox(width: 12),
+                OutlinedButton.icon(
+                  key: const ValueKey('rescan-all-button'),
+                  icon: const Icon(Icons.refresh_rounded, size: 18),
+                  label: const Text('Rescan all folders'),
+                  onPressed: () => unawaited(libraryRepository.rescanAll()),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Container(
+              key: const ValueKey('library-scan-progress'),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppTheme.card,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppTheme.border),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Wrap(
+                    alignment: WrapAlignment.spaceBetween,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    runSpacing: 6,
+                    children: [
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (status.isScanning) ...[
+                            const Icon(
+                              Icons.sync_rounded,
+                              size: 16,
+                              color: AppTheme.accent,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              'Scanning library…',
+                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                fontWeight: FontWeight.w600,
+                                color: AppTheme.accent,
+                              ),
+                            ),
+                          ] else ...[
+                            const Icon(
+                              Icons.check_circle_outline_rounded,
+                              size: 16,
+                              color: AppTheme.secondaryText,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              'Scan idle',
+                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: AppTheme.secondaryText,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            'Discovered: ${status.discoveredCount}',
+                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              fontFeatures: const [FontFeature.tabularFigures()],
+                            ),
+                          ),
+                          const Text(' · '),
+                          Text(
+                            'Enriched: ${status.enrichedCount}',
+                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              fontFeatures: const [FontFeature.tabularFigures()],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                  if (status.isScanning) ...[
+                    const SizedBox(height: 8),
+                    LinearProgressIndicator(
+                      value: status.totalToEnrich > 0
+                          ? (status.enrichedCount / status.totalToEnrich)
+                              .clamp(0.0, 1.0)
+                          : 0.0,
+                      backgroundColor: AppTheme.border,
+                      color: AppTheme.accent,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
+            const _SectionHeading(title: 'Library folders'),
+            if (folders.isEmpty)
+              Container(
+                padding: const EdgeInsets.symmetric(vertical: 24),
+                alignment: Alignment.center,
+                child: Column(
+                  children: [
+                    Icon(
+                      Icons.folder_open_rounded,
+                      size: 36,
+                      color: AppTheme.secondaryText.withValues(alpha: 0.5),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'No folders added yet',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: AppTheme.secondaryText,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Add a media folder to index video and audio files.',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: AppTheme.secondaryText.withValues(alpha: 0.7),
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            else
+              ListView.separated(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: folders.length,
+                separatorBuilder: (context, index) => const Divider(height: 1),
+                itemBuilder: (context, index) {
+                  final folder = folders[index];
+                  return ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(
+                      folder.isAvailable
+                          ? Icons.folder_rounded
+                          : Icons.folder_off_rounded,
+                      color: folder.isAvailable
+                          ? AppTheme.accent
+                          : Theme.of(context).colorScheme.error,
+                    ),
+                    title: Text(
+                      folder.path,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: folder.isAvailable
+                            ? AppTheme.primaryText
+                            : AppTheme.secondaryText,
+                      ),
+                    ),
+                    subtitle: Row(
+                      children: [
+                        Text(
+                          folder.isAvailable ? 'Available' : 'Unavailable',
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: folder.isAvailable
+                                ? AppTheme.secondaryText
+                                : Theme.of(context).colorScheme.error,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        const Text(' · '),
+                        Text(
+                          '${folder.fileCount} ${folder.fileCount == 1 ? 'file' : 'files'}',
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: AppTheme.secondaryText,
+                          ),
+                        ),
+                      ],
+                    ),
+                    trailing: IconButton(
+                      key: ValueKey('remove-folder-${folder.path}'),
+                      tooltip: 'Remove folder',
+                      icon: const Icon(Icons.delete_outline_rounded, size: 20),
+                      onPressed: () =>
+                          unawaited(libraryRepository.removeFolder(folder.path)),
+                    ),
+                  );
+                },
+              ),
+          ],
+        ),
+      );
+    },
+  );
+}
 
 class _ShortcutsSettings extends StatelessWidget {
   const _ShortcutsSettings();
@@ -1439,3 +1882,137 @@ double _nearestRate(double rate) => const [
   1.5,
   2.0,
 ].reduce((a, b) => (a - rate).abs() <= (b - rate).abs() ? a : b);
+
+class _EmptyDesktopIntegrationService extends DesktopIntegrationService {
+  @override
+  SystemPlaybackStatus get playbackStatus => SystemPlaybackStatus.closed;
+  @override
+  MediaMetadata get currentMetadata => MediaMetadata.empty;
+  @override
+  bool get isAwakeInhibited => false;
+
+  @override
+  Future<void> initialize() async {}
+  @override
+  Future<void> updatePlaybackState({
+    required SystemPlaybackStatus status,
+    required Duration position,
+    required Duration duration,
+    required double playbackRate,
+  }) async {}
+  @override
+  Future<void> updateMetadata(MediaMetadata metadata) async {}
+  @override
+  Future<void> updateCapabilities({
+    bool canPlay = true,
+    bool canPause = true,
+    bool canSeek = true,
+    bool canGoNext = true,
+    bool canGoPrevious = true,
+  }) async {}
+  @override
+  Future<void> setKeepAwake(bool enable, {required bool isVideoPlaying}) async {}
+  @override
+  Future<void> openDefaultAppsSettings() async {}
+}
+
+class _EmptyMediaLibraryRepository extends MediaLibraryRepository {
+  @override
+  LibraryScanStatus get scanStatus => const LibraryScanStatus();
+  @override
+  List<LibraryFolderRecord> get folders => const [];
+  @override
+  bool get isReady => true;
+  @override
+  String? get initializationError => null;
+
+  @override
+  Future<void> initialize() async {}
+  @override
+  Future<void> addFolder(String path) async {}
+  @override
+  Future<void> removeFolder(String path) async {}
+  @override
+  Future<List<LibraryFolderRecord>> getFolders() async => const [];
+  @override
+  Future<void> upsertDiscoveredFiles(List<String> paths) async {}
+  @override
+  Future<void> updateMediaMetadata(
+    String canonicalSource, {
+    required MediaKind kind,
+    required MediaMetadata metadata,
+    required int fileSize,
+    required DateTime modifiedAt,
+  }) async {}
+  @override
+  Future<List<MediaItemRecord>> queryMedia({
+    MediaKind? kind,
+    String? searchQuery,
+    String? artist,
+    String? album,
+    bool? onlyFavorites,
+    int? limit,
+    int? offset,
+    String? sortBy,
+    bool ascending = true,
+  }) async => const [];
+  @override
+  Future<MediaItemRecord?> getMediaByCanonicalSource(
+    String canonicalSource,
+  ) async => null;
+  @override
+  Future<MediaItemRecord?> getMediaById(String id) async => null;
+  @override
+  Future<void> toggleFavorite(String mediaId, bool isFavorite) async {}
+  @override
+  Future<void> recordPlayback(String canonicalSource) async {}
+  @override
+  Future<List<PlaylistRecord>> getPlaylists() async => const [];
+  @override
+  Future<PlaylistRecord> createPlaylist(String title) async => PlaylistRecord(
+    id: '1',
+    title: title,
+    createdAt: DateTime.now(),
+    updatedAt: DateTime.now(),
+  );
+  @override
+  Future<void> deletePlaylist(String playlistId) async {}
+  @override
+  Future<void> renamePlaylist(String playlistId, String newTitle) async {}
+  @override
+  Future<void> addToPlaylist(String playlistId, List<String> mediaIds) async {}
+  @override
+  Future<void> removeFromPlaylist(
+    String playlistId,
+    String playlistEntryId,
+  ) async {}
+  @override
+  Future<void> reorderPlaylist(
+    String playlistId,
+    int oldIndex,
+    int newIndex,
+  ) async {}
+  @override
+  Future<List<PlaylistEntryRecord>> getPlaylistEntries(
+    String playlistId,
+  ) async => const [];
+  @override
+  Future<List<String>> getDistinctArtists({MediaKind? kind}) async => const [];
+  @override
+  Future<List<String>> getDistinctAlbums({String? artist}) async => const [];
+  @override
+  Future<void> markFolderAvailability(
+    String folderPath,
+    bool isAvailable,
+  ) async {}
+  @override
+  Future<void> rescanFolder(String folderPath) async {}
+  @override
+  Future<void> rescanAll() async {}
+  @override
+  Future<void> cancelScan() async {}
+  @override
+  Future<void> dispose() async {
+    super.dispose();
+  }
+}

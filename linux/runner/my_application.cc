@@ -6,13 +6,47 @@
 #endif
 
 #include "flutter/generated_plugin_registrant.h"
+#include "mpris_player.h"
 
 struct _MyApplication {
   GtkApplication parent_instance;
   char** dart_entrypoint_arguments;
+  GtkWindow* window;
+  FlView* view;
+  FlMethodChannel* single_instance_channel;
+  GPtrArray* pending_open_files;
+  MprisPlayer* mpris_player;
 };
 
 G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
+
+// Forward paths to the running Flutter instance via MethodChannel mpvson/single_instance
+static void forward_paths_to_flutter(MyApplication* self, GPtrArray* paths) {
+  if (paths == nullptr || paths->len == 0) {
+    return;
+  }
+
+  if (self->single_instance_channel == nullptr) {
+    for (guint i = 0; i < paths->len; i++) {
+      const gchar* p = (const gchar*)g_ptr_array_index(paths, i);
+      g_ptr_array_add(self->pending_open_files, g_strdup(p));
+    }
+    return;
+  }
+
+  FlValue* args = fl_value_new_list();
+  for (guint i = 0; i < paths->len; i++) {
+    const gchar* p = (const gchar*)g_ptr_array_index(paths, i);
+    fl_value_append_take(args, fl_value_new_string(p));
+  }
+
+  fl_method_channel_invoke_method(self->single_instance_channel,
+                                  "open",
+                                  args,
+                                  nullptr,
+                                  nullptr,
+                                  nullptr);
+}
 
 // Called when first Flutter frame received.
 static void first_frame_cb(MyApplication* self, FlView* view) {
@@ -22,8 +56,15 @@ static void first_frame_cb(MyApplication* self, FlView* view) {
 // Implements GApplication::activate.
 static void my_application_activate(GApplication* application) {
   MyApplication* self = MY_APPLICATION(application);
+
+  if (self->window != nullptr) {
+    gtk_window_present(self->window);
+    return;
+  }
+
   GtkWindow* window =
       GTK_WINDOW(gtk_application_window_new(GTK_APPLICATION(application)));
+  self->window = window;
 
   // Use a header bar when running in GNOME as this is the common style used
   // by applications and is the setup most users will be using (e.g. Ubuntu
@@ -59,23 +100,134 @@ static void my_application_activate(GApplication* application) {
       project, self->dart_entrypoint_arguments);
 
   FlView* view = fl_view_new(project);
+  self->view = view;
+
   GdkRGBA background_color;
-  // Background defaults to black, override it here if necessary, e.g. #00000000
-  // for transparent.
   gdk_rgba_parse(&background_color, "#0B1220");
   fl_view_set_background_color(view, &background_color);
   gtk_widget_show(GTK_WIDGET(view));
   gtk_container_add(GTK_CONTAINER(window), GTK_WIDGET(view));
 
   // Show the window when Flutter renders.
-  // Requires the view to be realized so we can start rendering.
   g_signal_connect_swapped(view, "first-frame", G_CALLBACK(first_frame_cb),
                            self);
   gtk_widget_realize(GTK_WIDGET(view));
 
   fl_register_plugins(FL_PLUGIN_REGISTRY(view));
 
+  // Initialize MethodChannel mpvson/single_instance
+  g_autoptr(FlPluginRegistrar) registrar =
+      fl_plugin_registry_get_registrar_for_plugin(FL_PLUGIN_REGISTRY(view),
+                                                  "MpvsonRunner");
+  FlBinaryMessenger* messenger = fl_plugin_registrar_get_messenger(registrar);
+
+  g_autoptr(FlStandardMethodCodec) codec = fl_standard_method_codec_new();
+  self->single_instance_channel = fl_method_channel_new(
+      messenger, "mpvson/single_instance", FL_METHOD_CODEC(codec));
+
+  fl_method_channel_set_method_call_handler(
+      self->single_instance_channel,
+      [](FlMethodChannel* channel, FlMethodCall* method_call, gpointer user_data) {
+        fl_method_call_respond_success(method_call, nullptr, nullptr);
+      },
+      self,
+      nullptr);
+
+  // Flush any open requests queued prior to channel readiness
+  if (self->pending_open_files != nullptr && self->pending_open_files->len > 0) {
+    FlValue* args = fl_value_new_list();
+    for (guint i = 0; i < self->pending_open_files->len; i++) {
+      const gchar* p = (const gchar*)g_ptr_array_index(self->pending_open_files, i);
+      fl_value_append_take(args, fl_value_new_string(p));
+    }
+    fl_method_channel_invoke_method(self->single_instance_channel,
+                                    "open",
+                                    args,
+                                    nullptr,
+                                    nullptr,
+                                    nullptr);
+    g_ptr_array_set_size(self->pending_open_files, 0);
+  }
+
+  // Initialize and start MPRIS player & power management bridge
+  self->mpris_player = mpris_player_new(application, window, messenger);
+  mpris_player_start(self->mpris_player);
+
   gtk_widget_grab_focus(GTK_WIDGET(view));
+}
+
+// Implements GApplication::open.
+static void my_application_open(GApplication* application,
+                                GFile** files,
+                                gint n_files,
+                                const gchar* hint) {
+  MyApplication* self = MY_APPLICATION(application);
+
+  if (self->window == nullptr) {
+    g_application_activate(application);
+  } else {
+    gtk_window_present(self->window);
+  }
+
+  GPtrArray* paths = g_ptr_array_new_with_free_func(g_free);
+  for (gint i = 0; i < n_files; i++) {
+    gchar* path = g_file_get_path(files[i]);
+    if (path == nullptr) {
+      path = g_file_get_uri(files[i]);
+    }
+    if (path != nullptr) {
+      g_ptr_array_add(paths, path);
+    }
+  }
+
+  forward_paths_to_flutter(self, paths);
+  g_ptr_array_unref(paths);
+}
+
+// Implements GApplication::command_line.
+static int my_application_command_line(GApplication* application,
+                                       GApplicationCommandLine* cmdline) {
+  MyApplication* self = MY_APPLICATION(application);
+
+  gint argc = 0;
+  gchar** argv = g_application_command_line_get_arguments(cmdline, &argc);
+
+  gboolean is_primary_boot = (self->window == nullptr);
+
+  if (is_primary_boot) {
+    g_application_activate(application);
+  } else {
+    gtk_window_present(self->window);
+  }
+
+  GPtrArray* paths = g_ptr_array_new_with_free_func(g_free);
+  for (gint i = 1; i < argc; i++) {
+    if (argv[i][0] == '-') {
+      continue;
+    }
+    g_autoptr(GFile) file =
+        g_application_command_line_create_file_for_arg(cmdline, argv[i]);
+    gchar* path = g_file_get_path(file);
+    if (path == nullptr) {
+      path = g_file_get_uri(file);
+    }
+    if (path == nullptr) {
+      path = g_strdup(argv[i]);
+    }
+    g_ptr_array_add(paths, path);
+  }
+
+  // When a secondary instance is invoked or new paths arrive while running,
+  // notify Flutter via MethodChannel mpvson/single_instance.
+  if (!is_primary_boot && paths->len > 0) {
+    forward_paths_to_flutter(self, paths);
+  }
+
+  g_ptr_array_unref(paths);
+  g_strfreev(argv);
+
+  g_application_command_line_set_exit_status(cmdline, 0);
+  return 0;
 }
 
 // Implements GApplication::local_command_line.
@@ -83,36 +235,30 @@ static gboolean my_application_local_command_line(GApplication* application,
                                                   gchar*** arguments,
                                                   int* exit_status) {
   MyApplication* self = MY_APPLICATION(application);
-  // Strip out the first argument as it is the binary name.
-  self->dart_entrypoint_arguments = g_strdupv(*arguments + 1);
 
-  g_autoptr(GError) error = nullptr;
-  if (!g_application_register(application, nullptr, &error)) {
-    g_warning("Failed to register: %s", error->message);
-    *exit_status = 1;
-    return TRUE;
+  // Capture entrypoint arguments for Flutter dart_entrypoint_arguments
+  if (self->dart_entrypoint_arguments == nullptr) {
+    self->dart_entrypoint_arguments = g_strdupv(*arguments + 1);
   }
 
-  g_application_activate(application);
-  *exit_status = 0;
-
-  return TRUE;
+  // Delegate to standard GApplication single-instance registration and IPC
+  return G_APPLICATION_CLASS(my_application_parent_class)->local_command_line(
+      application, arguments, exit_status);
 }
 
 // Implements GApplication::startup.
 static void my_application_startup(GApplication* application) {
-  // MyApplication* self = MY_APPLICATION(object);
-
-  // Perform any actions required at application startup.
-
   G_APPLICATION_CLASS(my_application_parent_class)->startup(application);
 }
 
 // Implements GApplication::shutdown.
 static void my_application_shutdown(GApplication* application) {
-  // MyApplication* self = MY_APPLICATION(object);
+  MyApplication* self = MY_APPLICATION(application);
 
-  // Perform any actions required at application shutdown.
+  if (self->mpris_player != nullptr) {
+    mpris_player_dispose(self->mpris_player);
+    g_clear_object(&self->mpris_player);
+  }
 
   G_APPLICATION_CLASS(my_application_parent_class)->shutdown(application);
 }
@@ -120,12 +266,27 @@ static void my_application_shutdown(GApplication* application) {
 // Implements GObject::dispose.
 static void my_application_dispose(GObject* object) {
   MyApplication* self = MY_APPLICATION(object);
+
+  if (self->mpris_player != nullptr) {
+    mpris_player_dispose(self->mpris_player);
+    g_clear_object(&self->mpris_player);
+  }
+
   g_clear_pointer(&self->dart_entrypoint_arguments, g_strfreev);
+  g_clear_object(&self->single_instance_channel);
+
+  if (self->pending_open_files != nullptr) {
+    g_ptr_array_unref(self->pending_open_files);
+    self->pending_open_files = nullptr;
+  }
+
   G_OBJECT_CLASS(my_application_parent_class)->dispose(object);
 }
 
 static void my_application_class_init(MyApplicationClass* klass) {
   G_APPLICATION_CLASS(klass)->activate = my_application_activate;
+  G_APPLICATION_CLASS(klass)->open = my_application_open;
+  G_APPLICATION_CLASS(klass)->command_line = my_application_command_line;
   G_APPLICATION_CLASS(klass)->local_command_line =
       my_application_local_command_line;
   G_APPLICATION_CLASS(klass)->startup = my_application_startup;
@@ -133,16 +294,28 @@ static void my_application_class_init(MyApplicationClass* klass) {
   G_OBJECT_CLASS(klass)->dispose = my_application_dispose;
 }
 
-static void my_application_init(MyApplication* self) {}
+static void my_application_init(MyApplication* self) {
+  self->dart_entrypoint_arguments = nullptr;
+  self->window = nullptr;
+  self->view = nullptr;
+  self->single_instance_channel = nullptr;
+  self->pending_open_files = g_ptr_array_new_with_free_func(g_free);
+  self->mpris_player = nullptr;
+}
 
 MyApplication* my_application_new() {
-  // Set the program name to the application ID, which helps various systems
-  // like GTK and desktop environments map this running application to its
-  // corresponding .desktop file. This ensures better integration by allowing
-  // the application to be recognized beyond its binary name.
-  g_set_prgname(APPLICATION_ID);
+  const gchar* app_id = "dev.mpvson.mpvson";
+#ifdef APPLICATION_ID
+  if (strlen(APPLICATION_ID) > 0) {
+    app_id = APPLICATION_ID;
+  }
+#endif
 
-  return MY_APPLICATION(g_object_new(my_application_get_type(),
-                                     "application-id", APPLICATION_ID, "flags",
-                                     G_APPLICATION_NON_UNIQUE, nullptr));
+  g_set_prgname(app_id);
+
+  return MY_APPLICATION(g_object_new(
+      my_application_get_type(),
+      "application-id", app_id,
+      "flags", G_APPLICATION_HANDLES_OPEN | G_APPLICATION_HANDLES_COMMAND_LINE,
+      nullptr));
 }

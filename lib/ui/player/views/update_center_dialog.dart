@@ -28,9 +28,8 @@ class UpdateCenterDialog extends StatelessWidget {
     builder: (context, _) {
       final screenHeight = MediaQuery.sizeOf(context).height;
       final dialogHeight = screenHeight - 48 < 640 ? screenHeight - 48 : 640.0;
-      final appBusy =
-          updates.status == 'checking' || updates.status == 'downloading';
-      final engineBusy = _engineBusy;
+      final appBusy = updates.busy;
+      final engineBusy = engineUpdates.busy;
 
       return Dialog(
         insetPadding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
@@ -106,12 +105,6 @@ class UpdateCenterDialog extends StatelessWidget {
     },
   );
 
-  bool get _engineBusy =>
-      engineUpdates.status == 'checking' ||
-      engineUpdates.status == 'savingChannel' ||
-      engineUpdates.status == 'downloading' ||
-      engineUpdates.status == 'staging';
-
   Future<void> _performApplicationAction() async {
     try {
       switch (updates.status) {
@@ -173,10 +166,12 @@ class _ApplicationTrack extends StatelessWidget {
       'downloading' => 'Downloading…',
       _ => 'Check for updates',
     };
-    final enabled = switch (updates.status) {
-      'available' || 'ready' => true,
-      _ => updates.configured && !busy,
-    };
+    final enabled =
+        !busy &&
+        switch (updates.status) {
+          'available' || 'ready' => true,
+          _ => updates.configured,
+        };
     return _ReleaseTrack(
       railColor: AppTheme.accent,
       icon: Icons.desktop_windows_outlined,
@@ -348,10 +343,12 @@ class _EngineTrack extends StatelessWidget {
       'staging' => 'Staging…',
       _ => 'Check for engine updates',
     };
-    final enabled = switch (updates.status) {
-      'available' || 'readyToRestart' => true,
-      _ => updates.configured && !busy,
-    };
+    final enabled =
+        !busy &&
+        switch (updates.status) {
+          'available' || 'readyToRestart' => true,
+          _ => updates.configured,
+        };
 
     return _ReleaseTrack(
       railColor: color,

@@ -49,14 +49,22 @@ Windows libmpv archive that this application can embed. The updater reports
 that state and keeps the existing engine. A stable bundled DLL still requires
 a reproducible build of the stable mpv tag or a compatible, reviewed package.
 
-The local tuning test verifies that the bundled engine accepts every preset,
-picture adjustment and timing offset, then restores defaults:
+The retained regression suite checks tuning persistence, reported playback
+statistics, and the settings controls:
 
 ```powershell
-flutter test --no-pub --dart-define=MPVSON_NATIVE_TUNING=true test/native_playback_tuning_test.dart
+flutter test --no-pub test/domain/models/playback_settings_test.dart test/data/services/playback_statistics_test.dart test/ui/player/player_workflow_test.dart
 ```
 
-This uses real mpv with a headless video output. In historical benchmarks,
-native rendering and minimize/restore verification recorded mpv statistics
-before and after measured cycles. A synthetic fixture does not reproduce every
-codec, driver or source of playback lag.
+After a Windows release build, the opt-in playback probe loads the bundled
+engine and checks source attachment, stop, reopening, and completion:
+
+```powershell
+flutter test --no-pub --dart-define=MPVSON_PROBE_NATIVE_EVENTS=true test/native_source_probe_test.dart
+```
+
+This probe checks source loading and tuning-option readback with headless
+audio and video output. It does not exercise GPU presentation. Historical
+benchmarks recorded
+mpv statistics around native rendering and minimize/restore cycles. Those
+measurements do not describe every codec, driver, or source of playback lag.

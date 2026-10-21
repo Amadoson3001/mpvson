@@ -24,6 +24,7 @@ class _OpenUrlDialogState extends State<OpenUrlDialog> {
     final uri = Uri.tryParse(value);
     if (uri == null ||
         !uri.hasAuthority ||
+        uri.host.isEmpty ||
         !const {'http', 'https'}.contains(uri.scheme.toLowerCase())) {
       setState(() => _error = 'Enter a valid http or https address.');
       return;

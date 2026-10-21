@@ -15,6 +15,10 @@ struct _VideoOutputManager {
   FlView* view;
 };
 
+static GQuark video_output_manager_error_quark() {
+  return g_quark_from_static_string("media-kit-video-output-manager-error");
+}
+
 G_DEFINE_TYPE(VideoOutputManager, video_output_manager, G_TYPE_OBJECT)
 
 static void video_output_manager_init(VideoOutputManager* self) {
@@ -51,19 +55,39 @@ VideoOutputManager* video_output_manager_new(
   return video_output_manager;
 }
 
-void video_output_manager_create(VideoOutputManager* self,
-                                 gint64 handle,
-                                 VideoOutputConfiguration configuration,
-                                 TextureUpdateCallback texture_update_callback,
-                                 gpointer texture_update_callback_context) {
+gboolean video_output_manager_create(
+    VideoOutputManager* self,
+    gint64 handle,
+    VideoOutputConfiguration configuration,
+    TextureUpdateCallback texture_update_callback,
+    gpointer texture_update_callback_context,
+    GDestroyNotify texture_update_callback_context_destroy_notify,
+    GError** error) {
   if (!g_hash_table_contains(self->video_outputs, GINT_TO_POINTER(handle))) {
     g_autoptr(VideoOutput) video_output = video_output_new(
-        self->texture_registrar, self->view, handle, configuration);
+        self->texture_registrar, self->view, handle, configuration, error);
+    if (video_output == NULL) {
+      if (texture_update_callback_context_destroy_notify != NULL) {
+        texture_update_callback_context_destroy_notify(
+            texture_update_callback_context);
+      }
+      return FALSE;
+    }
     video_output_set_texture_update_callback(
-        video_output, texture_update_callback, texture_update_callback_context);
+        video_output, texture_update_callback, texture_update_callback_context,
+        texture_update_callback_context_destroy_notify);
     g_hash_table_insert(self->video_outputs, GINT_TO_POINTER(handle),
                         g_object_ref(video_output));
+  } else {
+    if (texture_update_callback_context_destroy_notify != NULL) {
+      texture_update_callback_context_destroy_notify(
+          texture_update_callback_context);
+    }
+    g_set_error_literal(error, video_output_manager_error_quark(), 1,
+                        "A video output already exists for this player.");
+    return FALSE;
   }
+  return TRUE;
 }
 
 void video_output_manager_set_size(VideoOutputManager* self,

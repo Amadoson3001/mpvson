@@ -5,8 +5,9 @@
 
 #include "flutter/generated_plugin_registrant.h"
 
-FlutterWindow::FlutterWindow(const flutter::DartProject& project)
-    : project_(project) {}
+FlutterWindow::FlutterWindow(const flutter::DartProject& project,
+                             std::unique_ptr<SingleInstance> single_instance)
+    : project_(project), single_instance_(std::move(single_instance)) {}
 
 FlutterWindow::~FlutterWindow() {}
 
@@ -26,8 +27,23 @@ bool FlutterWindow::OnCreate() {
     return false;
   }
   RegisterPlugins(flutter_controller_->engine());
+
+  auto* messenger = flutter_controller_->engine()->messenger();
+  HWND hwnd = GetHandle();
+
+  // Initialize native integrations
+  if (single_instance_) {
+    single_instance_->Initialize(hwnd, messenger);
+  }
+
+  system_media_transport_ = std::make_unique<SystemMediaTransport>();
+  system_media_transport_->Initialize(hwnd, messenger);
+
+  power_management_ = std::make_unique<PowerManagement>();
+  power_management_->Initialize(messenger);
+
   engine_channel_ = std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
-      flutter_controller_->engine()->messenger(), "mpvson/engine",
+      messenger, "mpvson/engine",
       &flutter::StandardMethodCodec::GetInstance());
   engine_channel_->SetMethodCallHandler([](const auto& call, auto result) {
     const auto module = GetModuleHandleW(L"media_kit_video_plugin.dll");
@@ -91,6 +107,19 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  if (power_management_) {
+    power_management_->CleanUp();
+    power_management_ = nullptr;
+  }
+  if (system_media_transport_) {
+    system_media_transport_->CleanUp();
+    system_media_transport_ = nullptr;
+  }
+  if (single_instance_) {
+    single_instance_->CleanUp();
+    single_instance_ = nullptr;
+  }
+
   engine_channel_ = nullptr;
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
@@ -117,6 +146,20 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
     case WM_FONTCHANGE:
       flutter_controller_->engine()->ReloadSystemFonts();
       break;
+    case WM_SINGLE_INSTANCE_ACTIVATE:
+      if (single_instance_) {
+        auto* paths = reinterpret_cast<std::vector<std::string>*>(lparam);
+        if (paths != nullptr) {
+          single_instance_->HandleActivate(*paths);
+          delete paths;
+        }
+      }
+      return 0;
+    case WM_SMTC_BUTTON_PRESS:
+      if (system_media_transport_) {
+        system_media_transport_->HandleButtonPress(static_cast<int>(wparam));
+      }
+      return 0;
   }
 
   return Win32Window::MessageHandler(hwnd, message, wparam, lparam);

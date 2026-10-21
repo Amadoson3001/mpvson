@@ -50,18 +50,17 @@ G_DECLARE_FINAL_TYPE(VideoOutput,
  * @brief Creates a new |VideoOutput| instance for given |handle|.
  *
  * @param texture_registrar |FlTextureRegistrar| reference.
+ * @param view |FlView| used to capture the Flutter EGL context.
  * @param handle |mpv_handle| reference casted to gint64.
- * @param width Preferred width of the video. Pass `NULL` for using texture
- * dimensions based on video's resolution.
- * @param height Preferred height of the video. Pass `NULL` for using texture
- * dimensions based on video's resolution.
- * @param enable_hardware_acceleration Whether to enable hardware acceleration.
- * @return VideoOutput*
+ * @param configuration Preferred size and hardware-acceleration settings.
+ * @param error Set when neither hardware nor software output can be initialized.
+ * @return VideoOutput* or NULL on failure.
  */
 VideoOutput* video_output_new(FlTextureRegistrar* texture_registrar,
                               FlView* view,
                               gint64 handle,
-                              VideoOutputConfiguration configuration);
+                              VideoOutputConfiguration configuration,
+                              GError** error);
 
 /**
  * @brief Sets the callback invoked when the texture ID updates i.e. video
@@ -70,11 +69,14 @@ VideoOutput* video_output_new(FlTextureRegistrar* texture_registrar,
  * @param self |VideoOutput| reference.
  * @param texture_update_callback Callback.
  * @param texture_update_callback_context Callback context.
+ * @param texture_update_callback_context_destroy_notify Frees the callback
+ * context when the output is disposed.
  */
 void video_output_set_texture_update_callback(
     VideoOutput* self,
     TextureUpdateCallback texture_update_callback,
-    gpointer texture_update_callback_context);
+    gpointer texture_update_callback_context,
+    GDestroyNotify texture_update_callback_context_destroy_notify);
 
 /**
  * @brief Sets the required video output size. This forces |VideoOutput| to

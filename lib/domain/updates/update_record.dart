@@ -154,14 +154,20 @@ final class UpdateOwnershipStore {
     if (matchingRecord == null) return null;
 
     final candidateFile = File(p.join(directory.path, matchingRecord.fileName));
-    if (!await candidateFile.exists()) return null;
-    if (!FileSystemEntity.isFileSync(candidateFile.path)) return null;
+    final int size;
+    try {
+      if (!await candidateFile.exists()) return null;
+      if (!FileSystemEntity.isFileSync(candidateFile.path)) return null;
 
-    final size = await candidateFile.length();
-    if (size != matchingRecord.fileSizeBytes) return null;
+      size = await candidateFile.length();
+      if (size != matchingRecord.fileSizeBytes) return null;
 
-    final actualHash = await computeSha256(candidateFile);
-    if (actualHash != normalizedHash) return null;
+      final actualHash = await computeSha256(candidateFile);
+      if (actualHash != normalizedHash) return null;
+    } on Object {
+      // A transient cache read failure must not block a fresh download.
+      return null;
+    }
 
     final updatedRecords = records
         .where((r) => r.fileName != matchingRecord!.fileName)
@@ -175,7 +181,12 @@ final class UpdateOwnershipStore {
         fileSizeBytes: size,
       ),
     );
-    await saveRecords(updatedRecords);
+    try {
+      await saveRecords(updatedRecords);
+    } on Object {
+      // The bundle is already verified. Failing to refresh its timestamp only
+      // affects retention ordering, so reuse it instead of re-downloading.
+    }
 
     return candidateFile;
   }
@@ -191,6 +202,8 @@ final class UpdateOwnershipStore {
     final normalizedHash = sha256.toLowerCase();
 
     final filtered = records.where((r) => r.fileName != fileName).toList();
+    filtered.sort((a, b) => a.recordedAt.compareTo(b.recordedAt));
+    // Always retain the download being recorded, even after a clock change.
     filtered.add(
       UpdateRecord(
         version: version,
@@ -200,8 +213,6 @@ final class UpdateOwnershipStore {
         fileSizeBytes: fileSize,
       ),
     );
-
-    filtered.sort((a, b) => a.recordedAt.compareTo(b.recordedAt));
 
     final retained = <UpdateRecord>[];
     final toPrune = <UpdateRecord>[];
@@ -217,18 +228,19 @@ final class UpdateOwnershipStore {
     for (final oldRecord in toPrune) {
       final oldFile = File(p.join(directory.path, oldRecord.fileName));
       if (!p.isWithin(directory.path, oldFile.path)) continue;
-      if (!await oldFile.exists()) continue;
-      if (!FileSystemEntity.isFileSync(oldFile.path)) continue;
-
-      final length = await oldFile.length();
-      if (length != oldRecord.fileSizeBytes) continue;
-
-      final hash = await computeSha256(oldFile);
-      if (hash != oldRecord.sha256) continue;
-
       try {
+        if (!await oldFile.exists()) continue;
+        if (!FileSystemEntity.isFileSync(oldFile.path)) continue;
+
+        final length = await oldFile.length();
+        if (length != oldRecord.fileSizeBytes) continue;
+
+        final hash = await computeSha256(oldFile);
+        if (hash != oldRecord.sha256) continue;
         await oldFile.delete();
-      } catch (_) {}
+      } on FileSystemException {
+        // An unreadable old archive must not prevent recording a new one.
+      }
     }
 
     await saveRecords(retained);

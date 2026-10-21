@@ -241,6 +241,7 @@ class MediaKitThumbnailService implements ThumbnailService {
   static const int _defaultDiskLimit = 128 * 1024 * 1024;
   static const int _maximumCacheEntryBytes = 12 * 1024 * 1024;
   static const int _maximumExtractedBytes = 12 * 1024 * 1024;
+  static const int _maximumMetadataBytes = 16 * 1024;
   static const int _maximumMegaPixels = 32 * 1000 * 1000;
   static const int _maximumDimension = 16384;
   static const int _maxThumbnailDimension = 320;
@@ -736,13 +737,11 @@ class MediaKitThumbnailService implements ThumbnailService {
     for (final file in snapshot.sidecars) {
       if (cancellation.isCancelled) return null;
       try {
-        final stat = await file.stat();
-        if (stat.type != FileSystemEntityType.file ||
-            stat.size <= 0 ||
-            stat.size > _maximumSidecarBytes) {
-          continue;
-        }
-        final bytes = await file.readAsBytes();
+        final bytes = await _readFileBounded(
+          file,
+          maximumBytes: _maximumSidecarBytes,
+        );
+        if (bytes == null) continue;
         if (!_looksLikeImage(bytes) || cancellation.isCancelled) continue;
         final normalized = await _runNormalized(
           bytes,
@@ -1028,23 +1027,27 @@ class MediaKitThumbnailService implements ThumbnailService {
     final metadataFile = File(p.join(directory.path, '$digest.json'));
     final bytesFile = File(p.join(directory.path, '$digest.img'));
     try {
-      final decoded = jsonDecode(await metadataFile.readAsString());
+      final metadataBytes = await _readFileBounded(
+        metadataFile,
+        maximumBytes: _maximumMetadataBytes,
+      );
+      if (metadataBytes == null) {
+        await _deleteCachePair(metadataFile, bytesFile);
+        _forgetDiskEntry(digest);
+        return null;
+      }
+      final decoded = jsonDecode(utf8.decode(metadataBytes));
       if (decoded is! Map<String, Object?> ||
           decoded['fingerprint'] != fingerprint) {
         await _deleteCachePair(metadataFile, bytesFile);
         _forgetDiskEntry(digest);
         return null;
       }
-      final stat = await bytesFile.stat();
-      if (stat.type != FileSystemEntityType.file ||
-          stat.size <= 0 ||
-          stat.size > _maximumCacheEntryBytes) {
-        await _deleteCachePair(metadataFile, bytesFile);
-        _forgetDiskEntry(digest);
-        return null;
-      }
-      final bytes = await bytesFile.readAsBytes();
-      if (!_looksLikeImage(bytes)) {
+      final bytes = await _readFileBounded(
+        bytesFile,
+        maximumBytes: _maximumCacheEntryBytes,
+      );
+      if (bytes == null || !_looksLikeImage(bytes)) {
         await _deleteCachePair(metadataFile, bytesFile);
         _forgetDiskEntry(digest);
         return null;
@@ -1335,6 +1338,44 @@ class MediaKitThumbnailService implements ThumbnailService {
   static Future<void> _deleteCachePair(File metadata, File bytes) async {
     await _deleteIfPresent(metadata);
     await _deleteIfPresent(bytes);
+  }
+
+  /// Reads at most [maximumBytes] even if a file grows after it is inspected.
+  /// A changed or incomplete file is treated as unusable and can be retried by
+  /// the caller on a later request.
+  static Future<Uint8List?> _readFileBounded(
+    File file, {
+    required int maximumBytes,
+  }) async {
+    RandomAccessFile? handle;
+    try {
+      final before = await file.stat();
+      if (before.type != FileSystemEntityType.file ||
+          before.size <= 0 ||
+          before.size > maximumBytes) {
+        return null;
+      }
+
+      handle = await file.open(mode: FileMode.read);
+      final length = await handle.length();
+      if (length <= 0 || length > maximumBytes) return null;
+      final bytes = await handle.read(length);
+      final after = await file.stat();
+      if (bytes.length != length ||
+          after.type != FileSystemEntityType.file ||
+          after.size != length) {
+        return null;
+      }
+      return bytes;
+    } on FileSystemException {
+      return null;
+    } finally {
+      try {
+        await handle?.close();
+      } on Object {
+        // Closing a failed read must not hide its unusable result.
+      }
+    }
   }
 
   static Future<void> _deleteIfPresent(File file) async {
@@ -1962,39 +2003,38 @@ class MediaKitThumbnailExtractor implements ThumbnailExtractor {
     final completer = Completer<void>();
     _lock = completer.future;
 
+    Player? decoder;
     try {
       await previousLock;
-    } catch (_) {
-      // Prior failures must not block subsequent requests.
-    }
+      if (_disposed ||
+          (cancellation?.isCancelled ?? false) ||
+          (cancellation?.isInterrupted ?? false)) {
+        return defaultValue;
+      }
 
-    if (_disposed ||
-        (cancellation?.isCancelled ?? false) ||
-        (cancellation?.isInterrupted ?? false)) {
-      _finishOperation();
-      completer.complete();
-      return defaultValue;
-    }
-
-    final decoder = _getOrCreateDecoder();
-    cancellation?.onInterrupt = () {
-      try {
-        unawaited(decoder.stop());
-      } catch (_) {}
-    };
-
-    try {
+      // Decoder creation can fail when native media initialization is
+      // unavailable. Keep it inside the serialized cleanup so a failed factory
+      // cannot leave every later operation waiting on this lock forever.
+      final createdDecoder = _getOrCreateDecoder();
+      decoder = createdDecoder;
+      cancellation?.onInterrupt = () {
+        try {
+          unawaited(createdDecoder.stop());
+        } catch (_) {}
+      };
       if ((cancellation?.isCancelled ?? false) ||
           (cancellation?.isInterrupted ?? false)) {
         return defaultValue;
       }
-      return await action(decoder);
+      return await action(createdDecoder);
     } finally {
-      try {
-        cancellation?.onInterrupt = null;
-        await decoder.stop();
-      } catch (_) {
-        // Reset source-specific state between jobs.
+      if (decoder != null) {
+        try {
+          cancellation?.onInterrupt = null;
+          await decoder.stop();
+        } catch (_) {
+          // Reset source-specific state between jobs.
+        }
       }
       _finishOperation();
       completer.complete();

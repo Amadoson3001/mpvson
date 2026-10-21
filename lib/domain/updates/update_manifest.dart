@@ -54,6 +54,7 @@ final class UpdateManifest {
       'engineVersion',
       maxLength: 200,
     );
+    SemanticVersion.parse(engineVersion);
     final releaseUriValue = _optionalString(
       root,
       'releaseUrl',

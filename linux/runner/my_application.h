@@ -3,6 +3,8 @@
 
 #include <gtk/gtk.h>
 
+G_BEGIN_DECLS
+
 G_DECLARE_FINAL_TYPE(MyApplication,
                      my_application,
                      MY,
@@ -17,5 +19,7 @@ G_DECLARE_FINAL_TYPE(MyApplication,
  * Returns: a new #MyApplication.
  */
 MyApplication* my_application_new();
+
+G_END_DECLS
 
 #endif  // FLUTTER_MY_APPLICATION_H_

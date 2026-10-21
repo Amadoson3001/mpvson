@@ -9,6 +9,9 @@ project(runner LANGUAGES CXX)
 add_executable(${BINARY_NAME}
   "main.cc"
   "my_application.cc"
+  "my_application.h"
+  "mpris_player.cc"
+  "mpris_player.h"
   "${FLUTTER_MANAGED_DIR}/generated_plugin_registrant.cc"
 )
 

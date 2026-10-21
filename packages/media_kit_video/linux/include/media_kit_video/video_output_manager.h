@@ -33,21 +33,24 @@ VideoOutputManager* video_output_manager_new(
  *
  * @param self |VideoOutputManager| reference.
  * @param handle |mpv_handle| reference casted to gint64.
- * @param width Preferred width of the video. Pass `NULL` for using texture
- * dimensions based on video's resolution.
- * @param height Preferred height of the video. Pass `NULL` for using texture
- * dimensions based on video's resolution.
- * @param enable_hardware_acceleration Whether to enable hardware acceleration.
+ * @param configuration Preferred size and hardware-acceleration settings.
  * @param texture_update_callback Callback invoked when the texture ID updates
  * i.e. video dimensions changes.
  * @param texture_update_callback_context Context passed to
  * |texture_update_callback|.
+ * @param texture_update_callback_context_destroy_notify Frees the callback
+ * context when the output is disposed or creation fails.
+ * @param error Set when the output could not be initialized.
+ * @return TRUE when a usable output exists; otherwise FALSE.
  */
-void video_output_manager_create(VideoOutputManager* self,
-                                 gint64 handle,
-                                 VideoOutputConfiguration configuration,
-                                 TextureUpdateCallback texture_update_callback,
-                                 gpointer texture_update_callback_context);
+gboolean video_output_manager_create(
+    VideoOutputManager* self,
+    gint64 handle,
+    VideoOutputConfiguration configuration,
+    TextureUpdateCallback texture_update_callback,
+    gpointer texture_update_callback_context,
+    GDestroyNotify texture_update_callback_context_destroy_notify,
+    GError** error);
 
 /**
  * @brief Sets the required video output size. This forces |VideoOutput| to

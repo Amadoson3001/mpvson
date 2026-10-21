@@ -19,6 +19,7 @@ import '../../domain/updates/engine_update_channel.dart';
 import '../../domain/updates/engine_selection.dart';
 import '../../domain/updates/mpv_github_release.dart';
 import '../../domain/updates/semantic_version.dart' as app_version;
+import 'http_response_length.dart';
 
 enum EngineUpdatePlatform {
   windows,
@@ -195,6 +196,7 @@ class EngineUpdateService extends ChangeNotifier {
   String? _stableReleaseVersion;
 
   bool get configured => _configured;
+  bool get busy => _busy || _initializing;
   EngineUpdateChannel get channel => _channel;
   bool get usesOfficialMpvSource =>
       _isSelfManagedPlatform && _usesOfficialMpvSource;
@@ -274,6 +276,7 @@ class EngineUpdateService extends ChangeNotifier {
       return;
     }
     _initializing = true;
+    notifyListeners();
     try {
       _channel = await _preferencesRepository.loadChannel();
       if (_disposed) return;
@@ -300,6 +303,7 @@ class EngineUpdateService extends ChangeNotifier {
       if (!_disposed) _fail(error);
     } finally {
       _initializing = false;
+      if (!_disposed) notifyListeners();
     }
   }
 
@@ -332,7 +336,7 @@ class EngineUpdateService extends ChangeNotifier {
       if (!_disposed) _fail(error);
       return false;
     } finally {
-      _busy = false;
+      _finishOperation();
     }
   }
 
@@ -470,13 +474,13 @@ class EngineUpdateService extends ChangeNotifier {
     } finally {
       _activeRequests.remove(abort);
       if (!abort.isCompleted) abort.complete();
-      _busy = false;
+      _finishOperation();
     }
   }
 
   /// Downloads, hashes, and extracts the selected ZIP into a versioned folder.
   Future<void> downloadAndStage() async {
-    if (_disposed || _busy) return;
+    if (_disposed || busy) return;
     if (!_isSelfManagedPlatform) {
       _setState(status: 'systemManaged', progress: 0, error: null);
       return;
@@ -531,20 +535,24 @@ class EngineUpdateService extends ChangeNotifier {
       }
       _activeRequests.remove(abort);
       if (!abort.isCompleted) abort.complete();
-      _busy = false;
+      _finishOperation();
     }
   }
 
   /// Removes the staged pointer. Installed active and previous versions stay.
   Future<void> discardPending() async {
-    if (_disposed || _busy) return;
+    if (_disposed || busy) return;
     if (!_isSelfManagedPlatform) {
       _setState(status: 'systemManaged', progress: 0, error: null);
       return;
     }
+    _busy = true;
+    notifyListeners();
     try {
       await _repository.discardPending();
+      if (_disposed) return;
       _selectionState = await _repository.loadSelection();
+      if (_disposed) return;
       _pendingVersion = null;
       _setState(
         status: _configured ? 'idle' : 'unconfigured',
@@ -554,6 +562,8 @@ class EngineUpdateService extends ChangeNotifier {
       );
     } on Object catch (error) {
       if (!_disposed) _fail(error);
+    } finally {
+      _finishOperation();
     }
   }
 
@@ -671,11 +681,13 @@ class EngineUpdateService extends ChangeNotifier {
   /// Queues the previous compatible engine, or the bundled build if there is
   /// no previous custom install, for the next process launch.
   Future<void> scheduleRollback({String? bundledEnginePath}) async {
-    if (_disposed || _busy) return;
+    if (_disposed || busy) return;
     if (!_isSelfManagedPlatform) {
       _setState(status: 'systemManaged', progress: 0, error: null);
       return;
     }
+    _busy = true;
+    notifyListeners();
     try {
       final selection = await _repository.scheduleRollback(
         bundledEnginePath: bundledEnginePath,
@@ -684,24 +696,41 @@ class EngineUpdateService extends ChangeNotifier {
       );
       if (_disposed) return;
       _selectionState = await _repository.loadSelection();
+      if (_disposed) return;
       _pendingVersion =
           selection.version ?? (selection.isBundled ? _bundledVersion : null);
       _setState(status: 'readyToRestart', progress: 0, error: null);
     } on Object catch (error) {
       if (!_disposed) _fail(error);
+    } finally {
+      _finishOperation();
     }
+  }
+
+  void _finishOperation() {
+    _busy = false;
+    if (!_disposed) notifyListeners();
   }
 
   Future<bool> _verifyManifest(EngineUpdateManifest manifest) async {
     final verifier = _signatureVerifier;
-    final publicKey = _decodePublicKey();
     if (verifier != null) {
+      // A custom verifier owns key handling. A malformed configured key must
+      // not prevent it from running, but it is still passed through when valid
+      // so verifiers that use the configured key keep working.
+      Uint8List publicKey;
+      try {
+        publicKey = _decodePublicKey();
+      } on _EngineUpdateException {
+        publicKey = Uint8List(0);
+      }
       return verifier(
         message: manifest.canonicalPayload,
         signature: manifest.signature,
         publicKey: publicKey,
       );
     }
+    final publicKey = _decodePublicKey();
     if (publicKey.length != 32) {
       throw const _EngineUpdateException(
         'Engine public key must be a base64 encoded 32 byte Ed25519 key.',
@@ -856,7 +885,7 @@ class EngineUpdateService extends ChangeNotifier {
           'Engine request failed with HTTP ${response.statusCode}.',
         );
       }
-      final contentLength = response.contentLength;
+      final contentLength = responseBodyLength(response);
       if (contentLength != null && contentLength > maxBytes) {
         await _cancelResponse(response);
         throw const _EngineUpdateException(
@@ -897,6 +926,7 @@ class EngineUpdateService extends ChangeNotifier {
       abort: abort,
       maxBytes: maxBytes,
       expectedBytes: expectedBytes,
+      contentLength: responseBodyLength(response),
     );
   }
 
@@ -1074,6 +1104,7 @@ class EngineUpdateService extends ChangeNotifier {
     required Completer<void> abort,
     required int maxBytes,
     int? expectedBytes,
+    int? contentLength,
   }) async {
     final completer = Completer<Uint8List>();
     final buffer = BytesBuilder(copy: false);
@@ -1154,6 +1185,11 @@ class EngineUpdateService extends ChangeNotifier {
     _activeSubscriptions.add(createdSubscription);
     try {
       final bytes = await completer.future;
+      if (contentLength != null && bytes.length != contentLength) {
+        throw const _EngineUpdateException(
+          'Engine response ended before its declared length.',
+        );
+      }
       if (expectedBytes != null && bytes.length != expectedBytes) {
         throw const _EngineUpdateException(
           'Engine package size does not match its declared size.',

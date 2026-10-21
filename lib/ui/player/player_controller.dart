@@ -12,7 +12,10 @@ import '../../data/services/diagnostic_log.dart';
 import '../../data/services/playback_service.dart';
 import '../../data/services/thumbnail_service.dart';
 import '../../domain/models/control_density.dart';
+import '../../domain/models/media_catalog.dart';
 import '../../domain/models/media_entry.dart';
+import '../../domain/models/media_kind.dart';
+import '../../domain/models/media_metadata.dart';
 import '../../domain/models/media_source.dart';
 import '../../domain/models/media_thumbnail.dart';
 import '../../domain/models/playback_session.dart';
@@ -22,6 +25,9 @@ import '../../domain/models/video_output_policy.dart';
 
 export '../../data/services/thumbnail_service.dart'
     show ThumbnailPriority, ThumbnailRequestHandle;
+export '../../domain/models/media_kind.dart' show MediaKind;
+export '../../domain/models/media_metadata.dart'
+    show AudioTechnicalInfo, MediaMetadata;
 
 /// Shutdown phase of the controller.
 ///
@@ -438,6 +444,8 @@ class PlayerController extends ChangeNotifier {
     _applySnapshot(initial, notify: false);
     _confirmedVolume = _normalizeVolume(initial.volume);
     if (_confirmedVolume > 0) _lastAudibleVolume = _confirmedVolume;
+    _confirmedRate = _normalizeRate(initial.rate);
+    _confirmedShuffle = initial.shuffle;
     _stateSubscription = _playback.states.listen(
       _handleSnapshot,
       onError: (Object error) => _setError(error.toString()),
@@ -518,11 +526,15 @@ class PlayerController extends ChangeNotifier {
   int _repeatPreferenceRevision = 0;
   int _appliedRepeatPreferenceRevision = 0;
   int _repeatPreferenceSequence = 0;
+  int _saveNetworkUrlsRevision = 0;
   Future<void>? _queuePreferenceDrain;
+  Future<void>? _startupPreferenceDrain;
   ControlDensity _controlDensity = ControlDensity.compact;
+  int _controlDensityRevision = 0;
   PlaybackSettings _playbackSettings = PlaybackSettings.defaults;
   String? _playbackSettingsError;
   int _playbackSettingsApplyRevision = 0;
+  int _playbackSettingsRevision = 0;
   final List<String> _navigationHistory = <String>[];
   int _navigationCursor = -1;
   int? _pendingNavigationCursor;
@@ -530,12 +542,21 @@ class PlayerController extends ChangeNotifier {
   final List<String> _shuffleRemaining = <String>[];
   final Set<String> _shuffleVisited = <String>{};
   String? _error;
+  MediaKind _mediaKind = MediaKind.unknown;
+  MediaMetadata _metadata = MediaMetadata.empty;
   double? _desiredVolume;
   double _confirmedVolume = 100;
   double _lastAudibleVolume = 100;
   int _volumeRevision = 0;
   int _appliedVolumeRevision = 0;
   Completer<void>? _volumeDrain;
+  double? _desiredRate;
+  double _confirmedRate = 1;
+  int _rateRevision = 0;
+  int _appliedRateRevision = 0;
+  bool _rateWriteShouldSave = true;
+  Completer<void>? _rateDrain;
+  int _seekRevision = 0;
   QueueSnapshot _queueSnapshot = QueueSnapshot.empty;
 
   /// Position updates, delivered independently of queue and transport changes.
@@ -616,7 +637,7 @@ class PlayerController extends ChangeNotifier {
   Duration get position => _playbackState.position;
   Duration get duration => _playbackState.duration;
   double get volume => _desiredVolume ?? _playbackState.volume;
-  double get rate => _playbackState.rate;
+  double get rate => _desiredRate ?? _playbackState.rate;
   String? get error => _error;
   bool get shuffle => _shuffleEnabled;
   String get repeatMode => _repeatMode;
@@ -628,6 +649,19 @@ class PlayerController extends ChangeNotifier {
   List<SubtitleTrack> get subtitleTracks => _playbackState.subtitleTracks;
   AudioTrack get currentAudioTrack => _playbackState.currentAudioTrack;
   SubtitleTrack get currentSubtitleTrack => _playbackState.currentSubtitleTrack;
+  List<VideoTrack> get videoTracks => _playbackState.videoTracks;
+  MediaKind get mediaKind => _mediaKind;
+  MediaKind get currentMediaKind => _mediaKind;
+  bool get isAudio => _mediaKind == MediaKind.audio;
+  bool get isVideo => _mediaKind == MediaKind.video;
+  MediaMetadata get metadata => _metadata;
+  MediaMetadata get currentMetadata => _metadata;
+  void updateMetadata(MediaMetadata metadata) {
+    if (_metadata == metadata) return;
+    _metadata = metadata;
+    _publishTransport();
+    _notifyIfOpen();
+  }
   String get engineVersion => _playback.engineVersion;
 
   /// Shutdown phase, so controls can reflect a saving or blocked shutdown.
@@ -674,6 +708,16 @@ class PlayerController extends ChangeNotifier {
   /// Loads saved queue/history without opening or playing the last source.
   Future<void> initialize() async {
     if (_initialized || _initializing || !_acceptsCommands) return;
+    final queueRevisionAtStart = _queueStructureRevision;
+    final operationAtStart = _operation;
+    final importOperationAtStart = _importOperation;
+    final volumeRevisionAtStart = _volumeRevision;
+    final rateRevisionAtStart = _rateRevision;
+    final shuffleRevisionAtStart = _shufflePreferenceRevision;
+    final repeatRevisionAtStart = _repeatPreferenceRevision;
+    final saveNetworkUrlsRevisionAtStart = _saveNetworkUrlsRevision;
+    final controlDensityRevisionAtStart = _controlDensityRevision;
+    final playbackSettingsRevisionAtStart = _playbackSettingsRevision;
     _initializing = true;
     try {
       final result = await _sessions.loadDetailed();
@@ -686,69 +730,125 @@ class PlayerController extends ChangeNotifier {
         // rewritten in the current schema after loading.
         migrate = true;
       }
+      final sessionQueueUnchanged =
+          _queueStructureRevision == queueRevisionAtStart &&
+          _operation == operationAtStart &&
+          _importOperation == importOperationAtStart;
+      var restoredSessionQueue = false;
       if (loaded != null) {
-        _queueStructureRevision++;
         final scrubbed = loaded.saveNetworkUrls
             ? loaded
             : loaded.withoutNetworkUrls();
         if (!loaded.saveNetworkUrls && loaded.hasNetworkEntries) {
           migrate = true;
         }
-        if (_queue.isEmpty) {
+        final restoreQueue = sessionQueueUnchanged && _queue.isEmpty;
+        restoredSessionQueue = restoreQueue;
+        if (restoreQueue) {
           _queue
             ..clear()
             ..addAll(scrubbed.queue);
           _currentIndex = scrubbed.currentIndex;
+          if (_queue.isNotEmpty) _queueStructureRevision++;
         }
-        _recent
-          ..clear()
-          ..addAll(_canonicalizeRecent(scrubbed.recent));
-        _unmodifiableRecent = List<MediaEntry>.unmodifiable(_recent);
-        if (_queue.isNotEmpty) {
-          _currentIndex = scrubbed.currentIndex;
+        if (sessionQueueUnchanged) {
+          _recent
+            ..clear()
+            ..addAll(_canonicalizeRecent(scrubbed.recent));
+          _unmodifiableRecent = List<MediaEntry>.unmodifiable(_recent);
         }
-        _repeatMode = scrubbed.repeatMode;
-        _shuffleEnabled = scrubbed.shuffle;
-        _controlDensity = scrubbed.controlDensity;
-        _playbackSettings = scrubbed.playbackSettings.normalized();
-        _saveNetworkUrls = scrubbed.saveNetworkUrls;
-        _progressRevision = scrubbed.progressRevision;
+        if (_repeatPreferenceRevision == repeatRevisionAtStart) {
+          _repeatMode = scrubbed.repeatMode;
+        }
+        if (_shufflePreferenceRevision == shuffleRevisionAtStart) {
+          _shuffleEnabled = scrubbed.shuffle;
+        }
+        if (_controlDensityRevision == controlDensityRevisionAtStart) {
+          _controlDensity = scrubbed.controlDensity;
+        }
+        if (_playbackSettingsRevision == playbackSettingsRevisionAtStart) {
+          _playbackSettings = scrubbed.playbackSettings.normalized();
+        }
+        if (_saveNetworkUrlsRevision == saveNetworkUrlsRevisionAtStart) {
+          _saveNetworkUrls = scrubbed.saveNetworkUrls;
+        }
+        _progressRevision = max(_progressRevision, scrubbed.progressRevision);
         // The queue snapshot still describes the previous session here, so the
         // restored row must be read directly instead of through `current`.
         MediaEntry? restoredCurrent;
-        if (_currentIndex >= 0 && _currentIndex < _queue.length) {
+        if (restoreQueue &&
+            _currentIndex >= 0 &&
+            _currentIndex < _queue.length) {
           restoredCurrent = _queue[_currentIndex];
         }
-        _playbackState = _playbackState.copyWith(
-          volume: scrubbed.volume,
-          rate: scrubbed.rate,
-          shuffle: scrubbed.shuffle,
-          isPlaying: false,
-          isBuffering: false,
-          position: restoredCurrent?.position ?? Duration.zero,
-          duration: restoredCurrent?.duration ?? Duration.zero,
-          completed: false,
-          clearNativeSource: true,
-          sourceLoaded: false,
-        );
-        _lastAudibleVolume = scrubbed.volume > 0
-            ? _normalizeVolume(scrubbed.volume)
-            : 100;
+        final restoredVolume = _volumeRevision == volumeRevisionAtStart
+            ? scrubbed.volume
+            : _playbackState.volume;
+        final restoredRate = _rateRevision == rateRevisionAtStart
+            ? scrubbed.rate
+            : _playbackState.rate;
+        _playbackState = restoreQueue
+            ? _playbackState.copyWith(
+                volume: restoredVolume,
+                rate: restoredRate,
+                shuffle: _shuffleEnabled,
+                isPlaying: false,
+                isBuffering: false,
+                position: restoredCurrent?.position ?? Duration.zero,
+                duration: restoredCurrent?.duration ?? Duration.zero,
+                completed: false,
+                clearNativeSource: true,
+                sourceLoaded: false,
+              )
+            : _playbackState.copyWith(
+                volume: restoredVolume,
+                rate: restoredRate,
+                shuffle: _shuffleEnabled,
+              );
+        if (restoreQueue) {
+          _mediaKind = _classifyMediaKind(
+            entry: restoredCurrent,
+            snapshot: _playbackState,
+          );
+          _metadata = restoredCurrent == null
+              ? MediaMetadata.empty
+              : MediaMetadata(
+                  title: restoredCurrent.title,
+                  duration: restoredCurrent.duration,
+                );
+        }
+        if (_volumeRevision == volumeRevisionAtStart) {
+          _lastAudibleVolume = scrubbed.volume > 0
+              ? _normalizeVolume(scrubbed.volume)
+              : 100;
+        }
       }
 
       // A checkpoint written after the last full save is newer than the session
       // and wins; an older or unusable checkpoint is ignored. Read it even when
       // recovery rejects the primary so URL-shaped ids can still be scrubbed.
+      final checkpointQueueRevision = _queueStructureRevision;
+      final checkpointOperation = _operation;
+      final checkpointImportOperation = _importOperation;
       final checkpoint = await _sessions.loadProgress();
-      if (loaded == null || !result.primaryRejected) {
+      if (!_acceptsCommands) return;
+      final checkpointStillMatchesQueue =
+          _queueStructureRevision == checkpointQueueRevision &&
+          _operation == checkpointOperation &&
+          _importOperation == checkpointImportOperation;
+      if (sessionQueueUnchanged &&
+          checkpointStillMatchesQueue &&
+          (loaded == null || !result.primaryRejected)) {
         await _applyProgressCheckpoint(
           checkpoint,
           sessionRevision: loaded?.progressRevision ?? 0,
         );
+        if (!_acceptsCommands) return;
       }
       if (result.note != null) {
         _diagnostics?.record('session.load', message: result.note);
       }
+      if (!_acceptsCommands) return;
 
       // Publish the restored queue before applying engine settings: the volume,
       // rate and shuffle writes can emit snapshots immediately, and those
@@ -757,27 +857,29 @@ class PlayerController extends ChangeNotifier {
       _publishQueue();
       // These values are independent of a loaded source, so applying them here
       // restores the user's settings while leaving the queue stopped.
-      await Future.wait<void>([
-        setVolume(volume, scheduleSave: false),
-        _ignorePlaybackFailure(() => _playback.setRate(rate)),
-        () async {
-          try {
-            await _playback.setShuffle(shuffle);
-            _confirmedShuffle = shuffle;
-          } on Object {
-            _confirmedShuffle = _playback.state.shuffle;
-          }
-        }(),
-        () async {
-          try {
-            await _playback.setRepeatMode(_repeatMode);
-            _confirmedRepeatMode = _repeatMode;
-          } on Object {
-            // Keep the previous confirmed mode so a failed change can roll back.
-          }
-        }(),
-      ]);
-      if (loaded != null && _currentIndex >= 0) {
+      final startupSettings = Completer<void>();
+      _startupPreferenceDrain = startupSettings.future;
+      try {
+        await Future.wait<void>([
+          setVolume(volume, scheduleSave: false),
+          _applyInitialRate(rate, rateRevisionAtStart),
+          _applyInitialQueuePreferences(
+            shuffleRevisionAtStart: shuffleRevisionAtStart,
+            repeatRevisionAtStart: repeatRevisionAtStart,
+          ),
+        ]);
+      } finally {
+        if (identical(_startupPreferenceDrain, startupSettings.future)) {
+          _startupPreferenceDrain = null;
+        }
+        if (!startupSettings.isCompleted) startupSettings.complete();
+      }
+      if (!_acceptsCommands) return;
+      if (restoredSessionQueue &&
+          _currentIndex >= 0 &&
+          _queueStructureRevision == checkpointQueueRevision &&
+          _operation == checkpointOperation &&
+          _importOperation == checkpointImportOperation) {
         _navigationHistory
           ..clear()
           ..add(_queue[_currentIndex].id);
@@ -792,16 +894,19 @@ class PlayerController extends ChangeNotifier {
         // A migrated session without consent may still have a stream progress
         // checkpoint. Scrub it and the recovery copy before initialization
         // returns, then persist the normalized in-memory session.
-        if (loaded?.saveNetworkUrls != true) {
+        if (!_saveNetworkUrls) {
           await _sessions.scrubNetworkUrls();
+          if (!_acceptsCommands) return;
         }
-        await _runCoalescedSave(scrubBackup: true);
-      } else if (loaded?.saveNetworkUrls != true &&
+        await _runCoalescedSave(scrubBackup: !_saveNetworkUrls);
+        if (!_acceptsCommands) return;
+      } else if (!_saveNetworkUrls &&
           _checkpointNeedsUrlScrub(checkpoint, loaded)) {
         // A clean queue can still have an old URL-shaped checkpoint id from a
         // previous release. Remove it once without rewriting valid local
         // checkpoints on every launch.
         await _sessions.scrubNetworkUrls();
+        if (!_acceptsCommands) return;
       }
     } on Object catch (exception) {
       _setError('Could not restore the playback session: $exception');
@@ -910,6 +1015,7 @@ class PlayerController extends ChangeNotifier {
   Future<void> setSaveNetworkUrls(bool value) async {
     if (!_acceptsCommands || _saveNetworkUrls == value) return;
     _saveNetworkUrls = value;
+    _saveNetworkUrlsRevision++;
     _notifyIfOpen();
     if (!value) {
       try {
@@ -1011,7 +1117,9 @@ class PlayerController extends ChangeNotifier {
     _resumeFloorTimer?.cancel();
     _resumeFloorTimer = null;
     try {
+      await _startupPreferenceDrain;
       await _volumeDrain?.future;
+      await _rateDrain?.future;
       await _queuePreferenceDrain;
       if (!_discardOnClose && _initialized && _engineHasMedia) {
         await _writeProgressCheckpoint(whileClosing: true);
@@ -1103,7 +1211,12 @@ class PlayerController extends ChangeNotifier {
     _disposeNotifier();
   }
 
-  Future<void> openPaths(List<String> paths, {bool append = false}) async {
+  Future<void> openPaths(
+    List<String> paths, {
+    bool append = false,
+    bool playNext = false,
+    int initialIndex = 0,
+  }) async {
     if (!_acceptsCommands) return;
     final importOperation = ++_importOperation;
     final playbackOperation = _operation;
@@ -1135,11 +1248,13 @@ class PlayerController extends ChangeNotifier {
         final source = MediaEntry.normalizeSourcePath(validation.source!);
         final recentEntry = _findRecent(source);
         final entry = MediaEntry.fromPath(source, id: _newQueueId(source));
+        final isMusic =
+            MediaCatalog.kindFromExtension(source) == MediaKind.audio;
         stagedEntries.add(
           recentEntry == null
               ? entry
               : entry.copyWith(
-                  position: recentEntry.position,
+                  position: isMusic ? Duration.zero : recentEntry.position,
                   duration: recentEntry.duration,
                   lastPlayed: recentEntry.lastPlayed,
                 ),
@@ -1176,7 +1291,11 @@ class PlayerController extends ChangeNotifier {
     _syncCurrentProgress();
     if (!isCurrentImport()) return;
     _undo = null;
-    final firstNewIndex = append ? _queue.length : 0;
+    final firstNewIndex = append
+        ? (playNext && _currentIndex >= 0 && _currentIndex < _queue.length
+            ? _currentIndex + 1
+            : _queue.length)
+        : 0;
     if (!append) {
       // Replacing a queue invalidates its pending load only after the new queue
       // has been validated and is ready to commit.
@@ -1196,6 +1315,8 @@ class PlayerController extends ChangeNotifier {
       _engineHasMedia = false;
       _engineEntryId = null;
       _clearResume();
+      _mediaKind = MediaKind.unknown;
+      _metadata = MediaMetadata.empty;
       _playbackState = _playbackState.copyWith(
         isPlaying: false,
         isBuffering: false,
@@ -1206,11 +1327,21 @@ class PlayerController extends ChangeNotifier {
         clearNativeSource: true,
         sourceLoaded: false,
       );
+    } else if (playNext && _currentIndex >= 0 && _currentIndex < _queue.length) {
+      final insertIndex = _currentIndex + 1;
+      _queue.insertAll(insertIndex, stagedEntries);
+      _queueStructureRevision++;
+      if (shuffle) {
+        for (final entry in stagedEntries.reversed) {
+          _shuffleRemaining.remove(entry.id);
+          _shuffleRemaining.insert(0, entry.id);
+        }
+      }
     } else {
       _queue.addAll(stagedEntries);
       _queueStructureRevision++;
+      if (shuffle) _prepareShuffleRemaining();
     }
-    if (shuffle) _prepareShuffleRemaining();
     if (firstRejected != null) {
       _diagnostics?.record(
         'source.rejected',
@@ -1221,7 +1352,12 @@ class PlayerController extends ChangeNotifier {
     _error = null;
 
     if (!append || _currentIndex < 0) {
-      await playIndex(firstNewIndex);
+      final targetIndex = append
+          ? firstNewIndex
+          : (initialIndex >= 0 && initialIndex < stagedEntries.length
+              ? initialIndex
+              : 0);
+      await playIndex(targetIndex);
     } else {
       _publishQueue();
       _scheduleSave();
@@ -1229,13 +1365,25 @@ class PlayerController extends ChangeNotifier {
     }
   }
 
+  Future<void> addToQueue(List<String> paths) => openPaths(paths, append: true);
+
+  Future<void> playNext(List<String> paths) =>
+      openPaths(paths, append: true, playNext: true);
+
   Future<void> playIndex(int index) => _openIndex(index);
 
   Future<void> _openIndex(int index, {int? navigationCursor}) async {
     if (!_acceptsCommands || index < 0 || index >= _queue.length) return;
     _syncCurrentProgress();
     final operation = ++_operation;
-    final entry = _queue[index];
+    var entry = _queue[index];
+    final isMusic =
+        MediaCatalog.kindFromExtension(entry.path) == MediaKind.audio;
+    final isRestoringSession = !_engineHasMedia && _currentIndex == index;
+    if (isMusic && !isRestoringSession && entry.position > Duration.zero) {
+      entry = entry.copyWith(position: Duration.zero);
+      _queue[index] = entry;
+    }
     _pendingNavigationEntryId = entry.id;
     _pendingNavigationCursor = navigationCursor;
     _currentIndex = index;
@@ -1245,6 +1393,11 @@ class PlayerController extends ChangeNotifier {
     _engineHasMedia = false;
     _engineEntryId = null;
     _error = null;
+    _mediaKind = _classifyMediaKind(entry: entry, snapshot: _playbackState);
+    _metadata = MediaMetadata(
+      title: entry.title,
+      duration: entry.duration,
+    );
     _publishQueue();
     _playbackState = _playbackState.copyWith(
       isPlaying: false,
@@ -1354,6 +1507,8 @@ class PlayerController extends ChangeNotifier {
       _clearResume();
       _engineHasMedia = false;
       _engineEntryId = null;
+      _mediaKind = MediaKind.unknown;
+      _metadata = MediaMetadata.empty;
       _playbackState = _playbackState.copyWith(
         isPlaying: false,
         isBuffering: false,
@@ -1379,6 +1534,8 @@ class PlayerController extends ChangeNotifier {
       _clearResume();
       _engineHasMedia = false;
       _engineEntryId = null;
+      _mediaKind = MediaKind.unknown;
+      _metadata = MediaMetadata.empty;
       _playbackState = _playbackState.copyWith(
         isPlaying: false,
         isBuffering: false,
@@ -1454,6 +1611,8 @@ class PlayerController extends ChangeNotifier {
     _clearResume();
     _engineHasMedia = false;
     _engineEntryId = null;
+    _mediaKind = MediaKind.unknown;
+    _metadata = MediaMetadata.empty;
     _publishQueue();
     if (_currentIndex >= 0) {
       final entry = _queue[_currentIndex];
@@ -1500,6 +1659,8 @@ class PlayerController extends ChangeNotifier {
     _clearResume();
     _engineHasMedia = false;
     _engineEntryId = null;
+    _mediaKind = MediaKind.unknown;
+    _metadata = MediaMetadata.empty;
     _publishQueue();
     _playbackState = _playbackState.copyWith(
       isPlaying: false,
@@ -1540,7 +1701,10 @@ class PlayerController extends ChangeNotifier {
   Future<void> seek(Duration position) async {
     if (!_acceptsCommands) return;
     _transportCommandRevision++;
+    final seekRevision = ++_seekRevision;
     if (current == null) return;
+    final entryId = current!.id;
+    final operation = _operation;
     final target = _clampPosition(position, duration);
     if (!_engineHasMedia) {
       // A restored, stopped item has no engine position to change, so the saved
@@ -1559,12 +1723,27 @@ class PlayerController extends ChangeNotifier {
     _clearResume();
     try {
       await _playback.seek(target);
+      if (!_acceptsCommands ||
+          seekRevision != _seekRevision ||
+          operation != _operation ||
+          current?.id != entryId ||
+          !_engineHasMedia ||
+          _engineEntryId != entryId) {
+        return;
+      }
       _playbackState = _playbackState.copyWith(position: target);
       _syncCurrentProgress();
       _notifyIfOpen();
       _scheduleSave();
     } on Object catch (exception) {
-      _setError('Could not seek: $exception');
+      if (_acceptsCommands &&
+          seekRevision == _seekRevision &&
+          operation == _operation &&
+          current?.id == entryId &&
+          _engineHasMedia &&
+          _engineEntryId == entryId) {
+        _setError('Could not seek: $exception');
+      }
     }
   }
 
@@ -1636,17 +1815,88 @@ class PlayerController extends ChangeNotifier {
   static double _normalizeVolume(double value) =>
       value.isNaN ? 0 : value.clamp(0.0, 100.0).toDouble();
 
+  static double _normalizeRate(double value) =>
+      value.isNaN ? 1 : value.clamp(0.25, 4.0).toDouble();
+
   Future<void> setRate(double value) async {
     if (!_acceptsCommands) return;
     _transportCommandRevision++;
-    final target = value.clamp(0.25, 4.0).toDouble();
+    final target = _normalizeRate(value);
+    _desiredRate = target;
+    _rateRevision++;
+    _rateWriteShouldSave = true;
+    _notifyIfOpen();
+    await _drainRateWrites();
+  }
+
+  Future<void> _applyInitialRate(double value, int revisionAtStart) async {
+    if (_rateRevision != revisionAtStart || _desiredRate != null) return;
+    _desiredRate = _normalizeRate(value);
+    _rateRevision++;
+    _rateWriteShouldSave = false;
+    await _drainRateWrites();
+  }
+
+  Future<void> _applyInitialQueuePreferences({
+    required int shuffleRevisionAtStart,
+    required int repeatRevisionAtStart,
+  }) async {
+    if (!_acceptsCommands) return;
+    if (_shufflePreferenceRevision == shuffleRevisionAtStart &&
+        _shuffleEnabled != _confirmedShuffle) {
+      _shufflePreferenceRevision++;
+      _shufflePreferenceSequence = ++_queuePreferenceSequence;
+    }
+    if (_repeatPreferenceRevision == repeatRevisionAtStart &&
+        _repeatMode != _confirmedRepeatMode) {
+      _repeatPreferenceRevision++;
+      _repeatPreferenceSequence = ++_queuePreferenceSequence;
+    }
+    if (_shufflePreferenceRevision != _appliedShufflePreferenceRevision ||
+        _repeatPreferenceRevision != _appliedRepeatPreferenceRevision) {
+      await _drainQueuePreferences();
+    }
+  }
+
+  Future<void> _drainRateWrites() {
+    final activeDrain = _rateDrain;
+    if (activeDrain != null) return activeDrain.future;
+
+    final completion = Completer<void>();
+    _rateDrain = completion;
+    unawaited(_writeRateDrain(completion));
+    return completion.future;
+  }
+
+  Future<void> _writeRateDrain(Completer<void> completion) async {
     try {
-      await _playback.setRate(target);
-      _playbackState = _playbackState.copyWith(rate: target);
-      _scheduleSave();
-      _notifyIfOpen();
-    } on Object catch (exception) {
-      _setError('Could not set playback speed: $exception');
+      while (!_isClosed && _appliedRateRevision < _rateRevision) {
+        final revision = _rateRevision;
+        final target = _desiredRate ?? _playbackState.rate;
+        try {
+          await _playback.setRate(target);
+          _confirmedRate = target;
+          if (revision == _rateRevision) {
+            _desiredRate = null;
+            _appliedRateRevision = revision;
+            _playbackState = _playbackState.copyWith(rate: target);
+            if (_rateWriteShouldSave) _scheduleSave();
+            _notifyIfOpen();
+          }
+        } on Object catch (exception) {
+          if (revision != _rateRevision) {
+            _appliedRateRevision = revision;
+            continue;
+          }
+          _desiredRate = null;
+          _appliedRateRevision = revision;
+          _playbackState = _playbackState.copyWith(rate: _confirmedRate);
+          _setError('Could not set playback speed: $exception');
+        }
+      }
+    } finally {
+      if (identical(_rateDrain, completion)) _rateDrain = null;
+      if (!completion.isCompleted) completion.complete();
     }
   }
 
@@ -1825,6 +2075,7 @@ class PlayerController extends ChangeNotifier {
   void setControlDensity(ControlDensity value) {
     if (!_acceptsCommands || _controlDensity == value) return;
     _controlDensity = value;
+    _controlDensityRevision++;
     _scheduleSave();
     _notifyIfOpen();
   }
@@ -1836,6 +2087,7 @@ class PlayerController extends ChangeNotifier {
     if (_playbackSettings == target && _playbackSettingsError == null) return;
     _playbackSettings = target;
     _playbackSettingsError = null;
+    _playbackSettingsRevision++;
     _scheduleSave();
     _notifyIfOpen();
     await _applyPlaybackSettings(target);
@@ -1870,37 +2122,52 @@ class PlayerController extends ChangeNotifier {
     if (!_acceptsCommands) {
       return;
     }
+    final operation = _operation;
     try {
       await _playback.setAudioTrack(track);
+      if (!_acceptsCommands || operation != _operation) return;
       _playbackState = _playbackState.copyWith(currentAudioTrack: track);
       _notifyIfOpen();
     } on Object catch (exception) {
-      _setError('Could not change audio track: $exception');
+      if (_acceptsCommands && operation == _operation) {
+        _setError('Could not change audio track: $exception');
+      }
     }
   }
 
   Future<void> setSubtitleTrack(SubtitleTrack track) async {
+    if (!_acceptsCommands) return;
+    final operation = _operation;
     try {
       await _playback.setSubtitleTrack(track);
+      if (!_acceptsCommands || operation != _operation) return;
       _playbackState = _playbackState.copyWith(currentSubtitleTrack: track);
       _notifyIfOpen();
     } on Object catch (exception) {
-      _setError('Could not change subtitles: $exception');
+      if (_acceptsCommands && operation == _operation) {
+        _setError('Could not change subtitles: $exception');
+      }
     }
   }
 
   Future<void> loadSubtitle(String path) async {
     if (!_acceptsCommands) return;
+    final operation = _operation;
     final localPath = _localPath(path);
-    if (localPath != null && !await File(localPath).exists()) {
+    final localExists = localPath == null || await File(localPath).exists();
+    if (!_acceptsCommands || operation != _operation) return;
+    if (!localExists) {
       _setError('Subtitle file not found: $path');
       return;
     }
     try {
       await _playback.loadSubtitle(path);
+      if (!_acceptsCommands || operation != _operation) return;
       _notifyIfOpen();
     } on Object catch (exception) {
-      _setError('Could not load subtitles: $exception');
+      if (_acceptsCommands && operation == _operation) {
+        _setError('Could not load subtitles: $exception');
+      }
     }
   }
 
@@ -2205,6 +2472,7 @@ class PlayerController extends ChangeNotifier {
 
     snapshot = _applyResumeFloor(snapshot);
     _applySnapshot(snapshot, notify: false);
+    _confirmedRate = _normalizeRate(snapshot.rate);
     if (oldDuration != _playbackState.duration && _engineHasMedia) {
       // Duration is queue metadata and should refresh queue rows once when the
       // engine resolves it; ordinary position ticks stay on the timeline path.
@@ -2234,7 +2502,14 @@ class PlayerController extends ChangeNotifier {
       unawaited(_advance(fromCompletion: true));
     }
 
+    final oldKind = _mediaKind;
+    _mediaKind = _classifyMediaKind(entry: current, snapshot: snapshot);
+    if (current != null && _metadata.duration != duration) {
+      _metadata = _metadata.copyWith(duration: duration);
+    }
+
     final changed =
+        oldKind != _mediaKind ||
         oldPlaying != isPlaying ||
         oldBuffering != isBuffering ||
         oldDuration != duration ||
@@ -2264,6 +2539,45 @@ class PlayerController extends ChangeNotifier {
     }
 
     _updateProgressTimer();
+  }
+
+  static MediaKind _classifyMediaKind({
+    required MediaEntry? entry,
+    required PlaybackSnapshot snapshot,
+  }) {
+    if (entry == null && snapshot.nativeSource == null) {
+      return MediaKind.unknown;
+    }
+
+    final videoTracks = snapshot.videoTracks;
+    final hasOrdinaryVideo = videoTracks.any((track) =>
+        track.id != 'auto' &&
+        track.id != 'no' &&
+        track.albumart != true &&
+        track.image != true);
+
+    if (hasOrdinaryVideo) {
+      return MediaKind.video;
+    }
+
+    final hasCoverArt = videoTracks.any((track) =>
+        track.id != 'auto' &&
+        track.id != 'no' &&
+        (track.albumart == true || track.image == true));
+
+    if (hasCoverArt) {
+      return MediaKind.audio;
+    }
+
+    if (snapshot.audioTracks.isNotEmpty) {
+      return MediaKind.audio;
+    }
+
+    if (entry != null) {
+      return MediaCatalog.kindFromExtension(entry.path);
+    }
+
+    return MediaKind.unknown;
   }
 
   /// Holds the pending resume target until the engine reports it.
@@ -2421,6 +2735,11 @@ class PlayerController extends ChangeNotifier {
     _engineHasMedia = true;
     _engineEntryId = entryId;
     _activeSourceStart = boundary;
+    _mediaKind = _classifyMediaKind(entry: entry, snapshot: _playbackState);
+    _metadata = _metadata.copyWith(
+      title: entry.title,
+      duration: duration > Duration.zero ? duration : entry.duration,
+    );
     _diagnostics?.record(
       'playback.attached',
       sourceId: entry.path,

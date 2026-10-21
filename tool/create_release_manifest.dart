@@ -111,6 +111,7 @@ Future<Map<String, Object?>> createReleaseManifest({
     );
   }
   SemanticVersion.parse(version);
+  SemanticVersion.parse(engineVersion);
   final windowsHash = await _sha256(windowsFile);
   final linuxHash = await _sha256(linuxFile);
 

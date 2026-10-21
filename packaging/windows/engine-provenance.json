@@ -3,15 +3,15 @@
   "purpose": "Pinned provenance for the libmpv engine bundled with the Windows build. The Windows CMake configure step reads this file, downloads or reuses the exact artifact, verifies every digest, and bundles the verified libmpv-2.dll instead of the 2023 build shipped by media_kit_libs_windows_video.",
   "engine": {
     "module": "libmpv-2.dll",
-    "version": "v0.41.0-dev-g6a262d11f",
+    "version": "v0.41.0-dev-ge471496c5",
     "versionEvidence": "Windows version resource of libmpv-2.dll and the mpv-version property it reports at runtime",
-    "describeVersion": "v0.41.0-39135297726-g6a262d11f",
+    "describeVersion": "v0.41.0-39465194068-ge471496c5",
     "describeVersionEvidence": "Version line of the upstream git-release notes; the git-describe form counts 1206 commits after the v0.41.0 tag",
-    "runtimeVersion": "0.41.0-dev.39135297726+g6a262d11f",
+    "runtimeVersion": "0.41.0-dev.39465194068+ge471496c5",
     "runtimeVersionEvidence": "SemVer form the updater derives from the package asset name; test/bundled_engine_test.dart keeps lib/domain/updates/bundled_engine.dart equal to it",
     "baseVersion": "0.41.0",
     "channel": "mpv-upstream-git-release",
-    "commit": "6a262d11f63733d37e3ee6d5fafcb1be1ef83952",
+    "commit": "e471496c56f0f49c133bd88b50aed62b845f1909",
     "builtOn": "2026-10-20",
     "clientApiVersion": "2.6",
     "architecture": "x86_64-w64-mingw32",
@@ -20,16 +20,16 @@
     "runtimeDependencies": "Windows system modules only. libmpv-2.dll is a self-contained static build, so it needs no bundled FFmpeg or libass DLLs."
   },
   "artifact": {
-    "url": "https://github.com/mpv-player/mpv/releases/download/git-release/libmpv-v0.41.0-dev-g6a262d11f-39135297726-x86_64-w64-mingw32-gpl.zip",
+    "url": "https://github.com/mpv-player/mpv/releases/download/git-release/libmpv-v0.41.0-dev-ge471496c5-39465194068-x86_64-w64-mingw32-gpl.zip",
     "releaseApi": "https://api.github.com/repos/mpv-player/mpv/releases/tags/git-release",
-    "assetName": "libmpv-v0.41.0-dev-g6a262d11f-39135297726-x86_64-w64-mingw32-gpl.zip",
+    "assetName": "libmpv-v0.41.0-dev-ge471496c5-39465194068-x86_64-w64-mingw32-gpl.zip",
     "format": "zip",
-    "size": 64944186,
-    "sha256": "9d27aea7cdc0bf2c484d5cbf57f546fee0c9618a378dd811f7b3c1ed771515a0",
+    "size": 64940593,
+    "sha256": "cbad75aa8e33d801ea0621098e240770675e2e02b12e75e9a0881754aaeacf50",
     "member": "libmpv-2.dll",
     "licenseMember": "LICENSE.GPL",
-    "memberSize": 157906944,
-    "memberSha256": "02a62c5d25206bb19d9cc2ca3d2534c14da0525761003c61716d8d5ee9379a73",
+    "memberSize": 157934080,
+    "memberSha256": "02810a672b37732013c774ab33361771de3363e4fe1b2fc32d33afb864176eb2",
     "licenseSize": 17984,
     "licenseSha256": "edaef632cbb643e4e7a221717a6c441a4c1a7c918e6e4d56debc3d8739b233f6"
   },
@@ -46,12 +46,12 @@
   "components": [
     {
       "name": "mpv",
-      "version": "v0.41.0-dev-gfffe7a23a",
-      "evidence": "mpv-version property reported by the bundled module at runtime; see test-output/engine-inventory.json"
+      "version": "v0.41.0-dev-ge471496c5",
+      "evidence": "mpv-version property reported by the bundled module at runtime; see test-output/engine-runtime.json"
     },
     {
       "name": "FFmpeg",
-      "version": "git-2026-10-18-89d34d6",
+      "version": "git-2026-10-20-10743d0",
       "evidence": "ffmpeg-version property reported by the bundled module. Its libavcodec license line reads 'GPL version 3 or later' and its configuration enables --enable-gpl --enable-version3."
     },
     {

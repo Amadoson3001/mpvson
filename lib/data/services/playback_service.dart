@@ -53,6 +53,7 @@ class PlaybackSnapshot {
     this.volume = 100,
     this.rate = 1,
     this.shuffle = false,
+    this.videoTracks = const <VideoTrack>[],
     this.audioTracks = const <AudioTrack>[],
     this.subtitleTracks = const <SubtitleTrack>[],
     this.currentAudioTrack = const AudioTrack('auto', null, null),
@@ -71,6 +72,7 @@ class PlaybackSnapshot {
   final double volume;
   final double rate;
   final bool shuffle;
+  final List<VideoTrack> videoTracks;
   final List<AudioTrack> audioTracks;
   final List<SubtitleTrack> subtitleTracks;
   final AudioTrack currentAudioTrack;
@@ -102,6 +104,7 @@ class PlaybackSnapshot {
     double? volume,
     double? rate,
     bool? shuffle,
+    List<VideoTrack>? videoTracks,
     List<AudioTrack>? audioTracks,
     List<SubtitleTrack>? subtitleTracks,
     AudioTrack? currentAudioTrack,
@@ -122,6 +125,7 @@ class PlaybackSnapshot {
       volume: volume ?? this.volume,
       rate: rate ?? this.rate,
       shuffle: shuffle ?? this.shuffle,
+      videoTracks: videoTracks ?? this.videoTracks,
       audioTracks: audioTracks ?? this.audioTracks,
       subtitleTracks: subtitleTracks ?? this.subtitleTracks,
       currentAudioTrack: currentAudioTrack ?? this.currentAudioTrack,
@@ -273,6 +277,7 @@ class MediaKitPlaybackService
       _listen<Tracks>(
         _player.stream.tracks,
         (state, value) => state.copyWith(
+          videoTracks: List<VideoTrack>.unmodifiable(value.video),
           audioTracks: List<AudioTrack>.unmodifiable(value.audio),
           subtitleTracks: List<SubtitleTrack>.unmodifiable(value.subtitle),
         ),
@@ -989,6 +994,7 @@ class MediaKitPlaybackService
     volume: state.volume,
     rate: state.rate,
     shuffle: state.shuffle,
+    videoTracks: List<VideoTrack>.unmodifiable(state.tracks.video),
     audioTracks: List<AudioTrack>.unmodifiable(state.tracks.audio),
     subtitleTracks: List<SubtitleTrack>.unmodifiable(state.tracks.subtitle),
     currentAudioTrack: state.track.audio,

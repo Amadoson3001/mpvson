@@ -64,48 +64,74 @@ static void media_kit_video_plugin_handle_method_call(
       FlMethodChannel* channel;
       gint64 handle;
     } VideoOutputTextureUpdateCallbackData;
-    // TODO(@alexmercerind): Fix memory leak.
     VideoOutputTextureUpdateCallbackData* data =
         g_new0(VideoOutputTextureUpdateCallbackData, 1);
-    data->channel = self->channel;
+    data->channel = FL_METHOD_CHANNEL(g_object_ref(self->channel));
     data->handle = handle_value;
-    video_output_manager_create(
-        self->video_output_manager, handle_value, configuration_value,
-        [](gint64 id, gint64 width, gint64 height, gpointer context) {
-          auto data = (VideoOutputTextureUpdateCallbackData*)context;
-          FlMethodChannel* channel = data->channel;
-          gint64 handle = data->handle;
-          FlValue* rect = fl_value_new_map();
-          fl_value_set_string_take(rect, "left", fl_value_new_int(0));
-          fl_value_set_string_take(rect, "top", fl_value_new_int(0));
-          fl_value_set_string_take(rect, "width", fl_value_new_int(width));
-          fl_value_set_string_take(rect, "height", fl_value_new_int(height));
-          FlValue* result = fl_value_new_map();
-          fl_value_set_string_take(result, "handle", fl_value_new_int(handle));
-          fl_value_set_string_take(result, "id", fl_value_new_int(id));
-          fl_value_set_string_take(result, "rect", rect);
-          
-          typedef struct {
-            FlMethodChannel* channel;
-            FlValue* result;
-          } IdleCallbackData;
-          
-          IdleCallbackData* idle_data = g_new0(IdleCallbackData, 1);
-          idle_data->channel = channel;
-          idle_data->result = result;
+    g_autoptr(GError) error = NULL;
+    if (video_output_manager_create(
+            self->video_output_manager, handle_value, configuration_value,
+            [](gint64 id, gint64 width, gint64 height, gpointer context) {
+              auto data = (VideoOutputTextureUpdateCallbackData*)context;
+              FlMethodChannel* channel = data->channel;
+              gint64 handle = data->handle;
+              FlValue* rect = fl_value_new_map();
+              fl_value_set_string_take(rect, "left", fl_value_new_int(0));
+              fl_value_set_string_take(rect, "top", fl_value_new_int(0));
+              fl_value_set_string_take(rect, "width", fl_value_new_int(width));
+              fl_value_set_string_take(rect, "height", fl_value_new_int(height));
+              FlValue* result = fl_value_new_map();
+              fl_value_set_string_take(result, "handle", fl_value_new_int(handle));
+              fl_value_set_string_take(result, "id", fl_value_new_int(id));
+              fl_value_set_string_take(result, "rect", rect);
 
-          // `fl_method_channel_invoke_method` should be called from PlatformThread.
-          g_idle_add([](gpointer user_data) -> gboolean {
-            IdleCallbackData* idle_data = (IdleCallbackData*)user_data;
-            fl_method_channel_invoke_method(idle_data->channel, "VideoOutput.Resize", 
-                                          idle_data->result, NULL, NULL, NULL);
-            g_free(idle_data);
-            return G_SOURCE_REMOVE;
-          }, idle_data);
-        },
-        data);
-    FlValue* result = fl_value_new_null();
-    response = FL_METHOD_RESPONSE(fl_method_success_response_new(result));
+              typedef struct {
+                FlMethodChannel* channel;
+                FlValue* result;
+              } IdleCallbackData;
+
+              IdleCallbackData* idle_data = g_new0(IdleCallbackData, 1);
+              idle_data->channel = FL_METHOD_CHANNEL(g_object_ref(channel));
+              idle_data->result = result;
+
+              // `fl_method_channel_invoke_method` should run on PlatformThread.
+              // Its arguments are borrowed, so the idle destroy notify releases
+              // the result after the method call has encoded it.
+              g_idle_add_full(
+                  G_PRIORITY_DEFAULT,
+                  [](gpointer user_data) -> gboolean {
+                    IdleCallbackData* idle_data =
+                        (IdleCallbackData*)user_data;
+                    fl_method_channel_invoke_method(
+                        idle_data->channel, "VideoOutput.Resize",
+                        idle_data->result, NULL, NULL, NULL);
+                    return G_SOURCE_REMOVE;
+                  },
+                  idle_data,
+                  [](gpointer user_data) {
+                    IdleCallbackData* idle_data =
+                        (IdleCallbackData*)user_data;
+                    fl_value_unref(idle_data->result);
+                    g_object_unref(idle_data->channel);
+                    g_free(idle_data);
+                  });
+            },
+            data,
+            [](gpointer context) {
+              auto data = (VideoOutputTextureUpdateCallbackData*)context;
+              g_object_unref(data->channel);
+              g_free(data);
+            },
+            &error)) {
+      FlValue* result = fl_value_new_null();
+      response = FL_METHOD_RESPONSE(fl_method_success_response_new(result));
+    } else {
+      response = FL_METHOD_RESPONSE(fl_method_error_response_new(
+          "VIDEO_OUTPUT_CREATION_FAILED",
+          error != NULL ? error->message
+                        : "Could not create a Linux video output texture.",
+          nullptr));
+    }
   } else if (g_strcmp0(method, "VideoOutputManager.SetSize") == 0) {
     FlValue* arguments = fl_method_call_get_args(method_call);
     FlValue* handle = fl_value_lookup_string(arguments, "handle");

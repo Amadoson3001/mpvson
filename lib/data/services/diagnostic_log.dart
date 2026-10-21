@@ -33,6 +33,7 @@ class MemoryDiagnosticLog implements DiagnosticSink {
     String? message,
     Object? error,
   }) {
+    if (capacity <= 0) return;
     if (records.length >= capacity) records.removeAt(0);
     records.add(
       _format(stage, sourceId: sourceId, message: message, error: error),
@@ -126,9 +127,9 @@ String _format(
 }) {
   final record = <String, Object?>{
     'at': DateTime.now().toUtc().toIso8601String(),
-    'stage': stage,
+    'stage': _collapse(MediaSource.redactText(stage)),
     if (sourceId != null && sourceId.isNotEmpty)
-      'source': MediaSource.redact(sourceId),
+      'source': _collapse(MediaSource.redact(sourceId)),
     if (message != null && message.isNotEmpty)
       'message': _collapse(MediaSource.redactText(message)),
     if (error != null) 'error': _collapse(MediaSource.redactText('$error')),

@@ -14,6 +14,7 @@ import '../../domain/updates/release_info.dart';
 import '../../domain/updates/semantic_version.dart';
 import '../../domain/updates/update_manifest.dart';
 import '../../domain/updates/update_record.dart';
+import 'http_response_length.dart';
 
 /// Checks for complete desktop application bundles and verifies them before
 /// exposing the downloaded archive to the user.
@@ -79,6 +80,7 @@ class UpdateService extends ChangeNotifier {
   bool _downloadable = false;
 
   bool get configured => _configured;
+  bool get busy => _busy;
 
   String get status => _status;
   double get progress => _progress;
@@ -155,7 +157,7 @@ class UpdateService extends ChangeNotifier {
       if (!abortCompleter.isCompleted) {
         abortCompleter.complete();
       }
-      _busy = false;
+      _finishOperation();
     }
   }
 
@@ -175,8 +177,10 @@ class UpdateService extends ChangeNotifier {
     _busy = true;
     _setState(status: 'downloading', progress: 0, error: null);
     File? temporaryFile;
+    File? verifiedArchive;
     var temporaryFileCreated = false;
     IOSink? output;
+    ByteConversionSink? hashInput;
 
     final abortCompleter = Completer<void>();
     _activeAbortCompleters.add(abortCompleter);
@@ -212,7 +216,7 @@ class UpdateService extends ChangeNotifier {
           'Update download failed (HTTP ${response.statusCode}).',
         );
       }
-      final contentLength = response.contentLength;
+      final contentLength = responseBodyLength(response);
       if (contentLength != null && contentLength > _maxDownloadBytes) {
         await _cancelBody(response);
         throw const _UpdateException('Update bundle exceeds the size limit.');
@@ -235,7 +239,8 @@ class UpdateService extends ChangeNotifier {
       output = partialFile.openWrite();
 
       final hashSink = _DigestSink();
-      final hashInput = sha256.startChunkedConversion(hashSink);
+      final hashing = sha256.startChunkedConversion(hashSink);
+      hashInput = hashing;
       var receivedBytes = 0;
       final stopwatch = Stopwatch()..start();
 
@@ -298,7 +303,7 @@ class UpdateService extends ChangeNotifier {
             return;
           }
           output?.add(chunk);
-          hashInput.add(chunk);
+          hashing.add(chunk);
           if (contentLength != null && contentLength > 0) {
             _setProgress(receivedBytes / contentLength);
           }
@@ -330,7 +335,8 @@ class UpdateService extends ChangeNotifier {
         await subscription.cancel();
       }
 
-      hashInput.close();
+      hashing.close();
+      hashInput = null;
       await output.flush();
       await output.close();
       output = null;
@@ -371,6 +377,7 @@ class UpdateService extends ChangeNotifier {
       final finalFile = await partialFile.rename(destination.path);
       temporaryFile = null;
       temporaryFileCreated = false;
+      verifiedArchive = finalFile;
 
       if (_disposed) {
         try {
@@ -384,14 +391,10 @@ class UpdateService extends ChangeNotifier {
         sha256: release.sha256,
         bundleFile: finalFile,
       );
+      verifiedArchive = null;
 
-      if (_disposed) {
-        try {
-          if (await finalFile.exists()) await finalFile.delete();
-        } catch (_) {}
-        return;
-      }
-
+      // A committed archive belongs to the cache even if disposal raced the
+      // record write. _setState ignores updates after disposal.
       _setState(
         status: 'ready',
         progress: 1,
@@ -404,9 +407,18 @@ class UpdateService extends ChangeNotifier {
           await output.close();
         } catch (_) {}
       }
+      try {
+        hashInput?.close();
+      } catch (_) {}
       if (temporaryFile != null && temporaryFileCreated) {
         try {
           if (await temporaryFile.exists()) await temporaryFile.delete();
+        } catch (_) {}
+      }
+      final orphan = verifiedArchive;
+      if (orphan != null) {
+        try {
+          if (await orphan.exists()) await orphan.delete();
         } catch (_) {}
       }
       if (!_disposed) {
@@ -417,26 +429,29 @@ class UpdateService extends ChangeNotifier {
       if (!abortCompleter.isCompleted) {
         abortCompleter.complete();
       }
-      _busy = false;
+      _finishOperation();
     }
   }
 
   /// Opens the verified archive in its containing location for manual install.
   /// The service deliberately does not install or replace a running bundle.
   Future<void> openDownload() async {
-    if (_disposed) return;
+    if (_disposed || _busy) return;
     final path = _downloadPath;
     if (path == null || _release == null) {
       _fail(const _UpdateException('There is no verified update to open.'));
       return;
     }
 
+    _busy = true;
+    notifyListeners();
     try {
       if (!await File(path).exists()) {
         throw const _UpdateException(
           'The verified update file is no longer available.',
         );
       }
+      if (_disposed) return;
       final opener = _openDownloadedArtifact;
       if (opener != null) {
         await opener(path);
@@ -455,7 +470,14 @@ class UpdateService extends ChangeNotifier {
       _setState(status: 'ready', error: null);
     } on Object catch (error) {
       _fail(error);
+    } finally {
+      _finishOperation();
     }
+  }
+
+  void _finishOperation() {
+    _busy = false;
+    if (!_disposed) notifyListeners();
   }
 
   Future<http.StreamedResponse> _sendGet(
@@ -479,9 +501,21 @@ class UpdateService extends ChangeNotifier {
             ..followRedirects = false
             ..maxRedirects = 0
             ..headers['Accept'] = 'application/json, application/octet-stream';
+      final pendingResponse = _client.send(request).then((response) {
+        if (_disposed || abortCompleter.isCompleted) {
+          unawaited(_cancelBody(response));
+          throw const _DisposedException();
+        }
+        return response;
+      });
       http.StreamedResponse response;
       try {
-        response = await _client.send(request).timeout(_requestTimeout);
+        response = await Future.any<http.StreamedResponse>([
+          pendingResponse,
+          abortCompleter.future.then<http.StreamedResponse>(
+            (_) => throw const _DisposedException(),
+          ),
+        ]).timeout(_requestTimeout);
       } on TimeoutException {
         if (!abortCompleter.isCompleted) {
           abortCompleter.complete();
@@ -522,7 +556,7 @@ class UpdateService extends ChangeNotifier {
     int maximumBytes,
     Completer<void> abortCompleter,
   ) async {
-    final contentLength = response.contentLength;
+    final contentLength = responseBodyLength(response);
     if (contentLength != null && contentLength > maximumBytes) {
       await _cancelBody(response);
       throw const _UpdateException('Update manifest exceeds the size limit.');

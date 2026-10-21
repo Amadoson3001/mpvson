@@ -65,6 +65,7 @@ class NativeVideoController extends PlatformVideoController {
 
   /// [StreamSubscription] for listening to video [Rect].
   StreamSubscription<VideoParams>? videoParamsSubscription;
+  bool _disposed = false;
 
   /// {@macro native_video_controller}
   NativeVideoController._(
@@ -74,6 +75,7 @@ class NativeVideoController extends PlatformVideoController {
         height = configuration.height {
     videoParamsSubscription = player.stream.videoParams.listen(
       (event) => lock.synchronized(() async {
+        if (_disposed) return;
         if ([0, null].contains(event.dw) || [0, null].contains(event.dh)) {
           return;
         }
@@ -158,20 +160,12 @@ class NativeVideoController extends PlatformVideoController {
     // Store the [NativeVideoController] in the [_controllers].
     _controllers[handle] = controller;
 
-    await controller.setProperties(
-      {
-        'vo': configuration.vo!,
-        'hwdec': configuration.hwdec!,
-        'vid': 'auto',
-      },
-    );
-
     // Wait until first texture ID is received.
     // We are not waiting on the native-side itself because it will block the UI thread.
     final completer = Completer<void>();
     void listener() {
       final value = controller.id.value;
-      if (value != null) {
+      if (value != null && !completer.isCompleted) {
         debugPrint('NativeVideoController: Texture ID: $value');
         completer.complete();
       }
@@ -179,24 +173,43 @@ class NativeVideoController extends PlatformVideoController {
 
     controller.id.addListener(listener);
 
-    await _channel.invokeMethod(
-      'VideoOutputManager.Create',
-      {
-        'handle': handle.toString(),
-        'configuration': {
-          'width': configuration.width.toString(),
-          'height': configuration.height.toString(),
-          'enableHardwareAcceleration':
-              configuration.enableHardwareAcceleration,
-        },
-      },
-    );
-
-    await completer.future;
-    controller.id.removeListener(listener);
-
-    // Return the [VideoController].
-    return controller;
+    try {
+      try {
+        await controller.setProperties(
+          {
+            'vo': configuration.vo!,
+            'hwdec': configuration.hwdec!,
+            'vid': 'auto',
+          },
+        );
+        await _channel.invokeMethod(
+          'VideoOutputManager.Create',
+          {
+            'handle': handle.toString(),
+            'configuration': {
+              'width': configuration.width.toString(),
+              'height': configuration.height.toString(),
+              'enableHardwareAcceleration':
+                  configuration.enableHardwareAcceleration,
+            },
+          },
+        );
+        await completer.future;
+      } finally {
+        controller.id.removeListener(listener);
+      }
+      return controller;
+    } on Object {
+      // Failed output creation must not cache a controller without a texture.
+      // Remove its player teardown callback before releasing it here.
+      player.platform?.release.remove(controller._dispose);
+      try {
+        await controller._dispose();
+      } on Object {
+        // Keep the original initialization failure as the reported error.
+      }
+      rethrow;
+    }
   }
 
   /// Sets the required size of the video output.
@@ -254,10 +267,12 @@ class NativeVideoController extends PlatformVideoController {
 
   /// Disposes the instance. Releases allocated resources back to the system.
   Future<void> _dispose() async {
+    if (_disposed) return;
+    _disposed = true;
     super.dispose();
     await videoParamsSubscription?.cancel();
     final handle = await player.handle;
-    _controllers.remove(handle);
+    if (identical(_controllers[handle], this)) _controllers.remove(handle);
     await _channel.invokeMethod(
       'VideoOutputManager.Dispose',
       {

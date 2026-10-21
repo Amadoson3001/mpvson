@@ -14,6 +14,7 @@ class EmptyLibrary extends StatelessWidget {
     required this.onOpenRecent,
     this.error,
     this.isDragging = false,
+    this.onOpenLibrary,
   });
 
   final List<MediaEntry> recent;
@@ -22,6 +23,7 @@ class EmptyLibrary extends StatelessWidget {
   final ValueChanged<MediaEntry> onOpenRecent;
   final String? error;
   final bool isDragging;
+  final VoidCallback? onOpenLibrary;
 
   @override
   Widget build(BuildContext context) {
@@ -60,6 +62,7 @@ class EmptyLibrary extends StatelessWidget {
                             isDragging: isDragging,
                             onOpenFiles: onOpenFiles,
                             onOpenUrl: onOpenUrl,
+                            onOpenLibrary: onOpenLibrary,
                           ),
                           if (error != null && error!.trim().isNotEmpty) ...[
                             const SizedBox(height: 24),
@@ -92,12 +95,14 @@ class _HomeHero extends StatelessWidget {
     required this.isDragging,
     required this.onOpenFiles,
     required this.onOpenUrl,
+    this.onOpenLibrary,
   });
 
   final bool compact;
   final bool isDragging;
   final VoidCallback onOpenFiles;
   final VoidCallback onOpenUrl;
+  final VoidCallback? onOpenLibrary;
 
   @override
   Widget build(BuildContext context) {
@@ -105,6 +110,7 @@ class _HomeHero extends StatelessWidget {
       isDragging: isDragging,
       onOpenFiles: onOpenFiles,
       onOpenUrl: onOpenUrl,
+      onOpenLibrary: onOpenLibrary,
     );
 
     if (compact) {
@@ -134,11 +140,13 @@ class _HeroCopy extends StatelessWidget {
     required this.isDragging,
     required this.onOpenFiles,
     required this.onOpenUrl,
+    this.onOpenLibrary,
   });
 
   final bool isDragging;
   final VoidCallback onOpenFiles;
   final VoidCallback onOpenUrl;
+  final VoidCallback? onOpenLibrary;
 
   @override
   Widget build(BuildContext context) {
@@ -185,6 +193,16 @@ class _HeroCopy extends StatelessWidget {
                 label: const Text('Open URL'),
               ),
             ),
+            if (onOpenLibrary != null)
+              Tooltip(
+                message: 'Browse media library (Ctrl+M)',
+                child: OutlinedButton.icon(
+                  key: const ValueKey('open-library'),
+                  onPressed: onOpenLibrary,
+                  icon: const Icon(Icons.video_library_rounded, size: 18),
+                  label: const Text('Media library'),
+                ),
+              ),
           ],
         ),
         const SizedBox(height: 14),

@@ -6,19 +6,31 @@ import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'app.dart';
+import 'data/repositories/app_preferences_repository.dart';
+import 'data/repositories/database/library_database.dart';
+import 'data/repositories/media_library_repository.dart';
+import 'data/repositories/media_library_repository_impl.dart';
 import 'data/repositories/session_repository.dart';
+import 'data/services/desktop_integration_service.dart';
+import 'data/services/desktop_integration_service_impl.dart';
 import 'data/services/diagnostic_log.dart';
 import 'data/services/engine_update_service.dart';
+import 'data/services/media_probe_service.dart';
+import 'data/services/media_probe_service_impl.dart';
+import 'data/services/open_request_coordinator.dart';
 import 'data/services/playback_service.dart';
 import 'data/services/thumbnail_service.dart';
 import 'data/services/update_service.dart';
+import 'domain/models/open_request.dart';
 import 'domain/updates/bundled_engine.dart';
 import 'domain/updates/engine_selection.dart';
 import 'ui/core/app_theme.dart';
 import 'ui/player/player_controller.dart';
+import 'ui/player/views/open_preference_dialog.dart';
 
 const WindowOptions _windowOptions = WindowOptions(
   size: Size(1240, 780),
@@ -218,13 +230,58 @@ Future<void> main(List<String> arguments) async {
   final readyUpdates = updates;
   final selectedEngine = engineSelection;
 
+  final appPreferences = AppPreferencesRepository();
+  await appPreferences.load();
+
+  final mediaProbeService = MediaProbeServiceImpl();
+  final supportDir = await getApplicationSupportDirectory();
+  final dbFile = File(p.join(supportDir.path, 'media_library.db'));
+  final libraryDb = await LibraryDatabase.open(path: dbFile.path);
+  final libraryRepository = MediaLibraryRepositoryImpl(
+    database: libraryDb,
+    probeService: mediaProbeService,
+  );
+  unawaited(libraryRepository.initialize());
+
   final navigatorKey = GlobalKey<NavigatorState>();
+
+  final openCoordinator = OpenRequestCoordinator(
+    preferences: appPreferences,
+    isPlaybackActive: () =>
+        readyController.isPlaying ||
+        readyController.hasMedia ||
+        readyController.current != null,
+    executePlaybackCommand: ({
+      required List<String> paths,
+      required bool playNow,
+    }) async {
+      await readyController.openPaths(paths, append: !playNow);
+    },
+    showPreferenceDialog: () async {
+      final context = navigatorKey.currentState?.context;
+      if (context == null || !context.mounted) return null;
+      return OpenPreferenceDialog.show(context);
+    },
+  );
+
+  final desktopIntegration = DesktopIntegrationServiceImpl(
+    controller: readyController,
+    openRequestCoordinator: openCoordinator,
+    preferences: appPreferences,
+    mediaProbeService: mediaProbeService,
+  );
+  unawaited(desktopIntegration.initialize());
+
   final lifecycle = _DesktopLifecycle(
     controller: readyController,
     updates: readyUpdates,
     engineUpdates: engineUpdates,
     engineLibraryPath: engineSelection?.libraryPath,
     navigatorKey: navigatorKey,
+    appPreferences: appPreferences,
+    libraryRepository: libraryRepository,
+    mediaProbeService: mediaProbeService,
+    desktopIntegration: desktopIntegration,
   );
   await windowManager.setPreventClose(true);
   windowManager.addListener(lifecycle);
@@ -237,6 +294,9 @@ Future<void> main(List<String> arguments) async {
       updates: readyUpdates,
       engineUpdates: engineUpdates,
       desktopWindow: true,
+      appPreferences: appPreferences,
+      libraryRepository: libraryRepository,
+      desktopIntegration: desktopIntegration,
     ),
   );
   await windowManager.show();
@@ -254,10 +314,22 @@ Future<void> main(List<String> arguments) async {
   unawaited(engineUpdates.initialize());
   unawaited(readyPlayback.prepare());
 
+  final isEnqueue = arguments.contains('--enqueue');
   final paths = arguments.where((argument) => !argument.startsWith('--'));
   if (paths.isNotEmpty) {
     await readyController.initialize().timeout(const Duration(seconds: 20));
-    unawaited(readyController.openPaths(paths.toList(growable: false)));
+    final origin = OpenOrigin.startupArgs;
+    final intent = isEnqueue ? OpenIntent.enqueue : OpenIntent.normal;
+    unawaited(
+      openCoordinator.handleOpenRequest(
+        OpenRequest(
+          id: DateTime.now().microsecondsSinceEpoch.toString(),
+          sources: paths.toList(growable: false),
+          intent: intent,
+          origin: origin,
+        ),
+      ),
+    );
   } else {
     unawaited(readyController.initialize());
   }
@@ -280,6 +352,10 @@ class _DesktopLifecycle extends WindowListener {
     required this.engineUpdates,
     required this.engineLibraryPath,
     required this.navigatorKey,
+    this.appPreferences,
+    this.libraryRepository,
+    this.mediaProbeService,
+    this.desktopIntegration,
   });
 
   final PlayerController controller;
@@ -287,6 +363,10 @@ class _DesktopLifecycle extends WindowListener {
   final EngineUpdateService engineUpdates;
   final String? engineLibraryPath;
   final GlobalKey<NavigatorState> navigatorKey;
+  final AppPreferencesRepository? appPreferences;
+  final MediaLibraryRepository? libraryRepository;
+  final MediaProbeService? mediaProbeService;
+  final DesktopIntegrationService? desktopIntegration;
   bool _closing = false;
 
   @override
@@ -354,6 +434,21 @@ class _DesktopLifecycle extends WindowListener {
 
   Future<void> _releaseServices({bool discard = false}) async {
     windowManager.removeListener(this);
+    try {
+      desktopIntegration?.dispose();
+    } on Object {
+      // Best-effort desktop integration release.
+    }
+    try {
+      await libraryRepository?.dispose();
+    } on Object {
+      // Best-effort library repository release.
+    }
+    try {
+      mediaProbeService?.dispose();
+    } on Object {
+      // Best-effort probe service release.
+    }
     try {
       await controller.close(discard: discard);
     } on Object {

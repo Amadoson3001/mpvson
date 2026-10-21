@@ -9,6 +9,8 @@
 #include "video_output.h"
 
 #include <algorithm>
+#include <cmath>
+#include <utility>
 
 // Limit the frame size to 1080p in software rendering.
 // This is for performance reasons & to avoid allocating too much memory.
@@ -16,6 +18,20 @@
 #define SW_RENDERING_MAX_HEIGHT 1080
 #define SW_RENDERING_PIXEL_BUFFER_SIZE \
   (SW_RENDERING_MAX_WIDTH) * (SW_RENDERING_MAX_HEIGHT) * (4)
+
+static std::pair<int64_t, int64_t> FitSoftwareDimensions(
+    int64_t width, int64_t height) {
+  if (width <= 0 || height <= 0) return {width, height};
+  const double scale = (std::min)(
+      {1.0, static_cast<double>(SW_RENDERING_MAX_WIDTH) / width,
+       static_cast<double>(SW_RENDERING_MAX_HEIGHT) / height});
+  return {
+      (std::max<int64_t>)(
+          1, static_cast<int64_t>(std::floor(width * scale))),
+      (std::max<int64_t>)(
+          1, static_cast<int64_t>(std::floor(height * scale))),
+  };
+}
 
 VideoOutput::VideoOutput(int64_t handle,
                          VideoOutputConfiguration configuration,
@@ -422,11 +438,12 @@ int64_t VideoOutput::GetVideoWidth() {
   int64_t width = 0;
   int64_t height = 0;
 
-  mpv_node params;
-  mpv_get_property(handle_, "video-out-params", MPV_FORMAT_NODE, &params);
+  mpv_node params{};
+  const int status =
+      mpv_get_property(handle_, "video-out-params", MPV_FORMAT_NODE, &params);
 
   int64_t dw = 0, dh = 0, rotate = 0;
-  if (params.format == MPV_FORMAT_NODE_MAP) {
+  if (status >= 0 && params.format == MPV_FORMAT_NODE_MAP) {
     for (int32_t i = 0; i < params.u.list->num; i++) {
       char* key = params.u.list->keys[i];
       auto value = params.u.list->values[i];
@@ -442,21 +459,14 @@ int64_t VideoOutput::GetVideoWidth() {
         }
       }
     }
-    mpv_free_node_contents(&params);
   }
+  if (status >= 0) mpv_free_node_contents(&params);
 
   width = rotate == 0 || rotate == 180 ? dw : dh;
   height = rotate == 0 || rotate == 180 ? dh : dw;
 
   if (pixel_buffer_ != nullptr) {
-    // Make sure |width| & |height| fit between |SW_RENDERING_MAX_WIDTH| &
-    // |SW_RENDERING_MAX_HEIGHT| while maintaining aspect-ratio.
-    if (width >= SW_RENDERING_MAX_WIDTH) {
-      return SW_RENDERING_MAX_WIDTH;
-    }
-    if (height >= SW_RENDERING_MAX_HEIGHT) {
-      return width / height * SW_RENDERING_MAX_HEIGHT;
-    }
+    return FitSoftwareDimensions(width, height).first;
   }
 
   return width;
@@ -471,11 +481,12 @@ int64_t VideoOutput::GetVideoHeight() {
   int64_t width = 0;
   int64_t height = 0;
 
-  mpv_node params;
-  mpv_get_property(handle_, "video-out-params", MPV_FORMAT_NODE, &params);
+  mpv_node params{};
+  const int status =
+      mpv_get_property(handle_, "video-out-params", MPV_FORMAT_NODE, &params);
 
   int64_t dw = 0, dh = 0, rotate = 0;
-  if (params.format == MPV_FORMAT_NODE_MAP) {
+  if (status >= 0 && params.format == MPV_FORMAT_NODE_MAP) {
     for (int32_t i = 0; i < params.u.list->num; i++) {
       char* key = params.u.list->keys[i];
       auto value = params.u.list->values[i];
@@ -491,21 +502,14 @@ int64_t VideoOutput::GetVideoHeight() {
         }
       }
     }
-    mpv_free_node_contents(&params);
   }
+  if (status >= 0) mpv_free_node_contents(&params);
 
   width = rotate == 0 || rotate == 180 ? dw : dh;
   height = rotate == 0 || rotate == 180 ? dh : dw;
 
   if (pixel_buffer_ != NULL) {
-    // Make sure |width| & |height| fit between |SW_RENDERING_MAX_WIDTH| &
-    // |SW_RENDERING_MAX_HEIGHT| while maintaining aspect-ratio.
-    if (height >= SW_RENDERING_MAX_HEIGHT) {
-      return SW_RENDERING_MAX_HEIGHT;
-    }
-    if (width >= SW_RENDERING_MAX_WIDTH) {
-      return height / width * SW_RENDERING_MAX_WIDTH;
-    }
+    return FitSoftwareDimensions(width, height).second;
   }
 
   return height;

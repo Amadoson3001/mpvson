@@ -7,6 +7,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:window_manager/window_manager.dart';
 
+import '../../../domain/models/media_catalog.dart';
 import '../../../domain/models/media_entry.dart';
 import '../../../data/services/engine_update_service.dart';
 import '../../../data/services/update_service.dart';
@@ -24,6 +25,10 @@ import '../widgets/playback_feedback.dart';
 import '../widgets/queue_panel.dart';
 import 'settings_dialog.dart';
 import 'playback_info_dialog.dart';
+import '../../../data/repositories/app_preferences_repository.dart';
+import '../../../data/repositories/media_library_repository.dart';
+import '../../../data/services/desktop_integration_service.dart';
+import '../../library/views/library_shell.dart';
 
 typedef PlayerVideoBuilder =
     Widget Function(BuildContext context, PlayerController controller);
@@ -47,6 +52,9 @@ class PlayerScreen extends StatefulWidget {
     this.urlPrompt,
     this.enableNativeDrop = true,
     this.fullscreenSetter,
+    this.appPreferences,
+    this.libraryRepository,
+    this.desktopIntegration,
   });
 
   final PlayerController controller;
@@ -59,6 +67,9 @@ class PlayerScreen extends StatefulWidget {
   final UrlPrompt? urlPrompt;
   final bool enableNativeDrop;
   final FullscreenSetter? fullscreenSetter;
+  final AppPreferencesRepository? appPreferences;
+  final MediaLibraryRepository? libraryRepository;
+  final DesktopIntegrationService? desktopIntegration;
 
   @override
   State<PlayerScreen> createState() => _PlayerScreenState();
@@ -109,6 +120,7 @@ class _PlayerScreenState extends State<PlayerScreen>
   bool _dismissedContextMenuOnPointerDown = false;
   bool _minimized = false;
   bool _animationsSuspended = false;
+  bool _showLibrary = false;
 
   bool get _nativeWindow =>
       widget.desktopWindow && widget.fullscreenSetter == null;
@@ -936,6 +948,27 @@ class _PlayerScreenState extends State<PlayerScreen>
 
   Widget _buildPlayerArea() {
     final current = widget.controller.current;
+    final isAudioMedia = widget.controller.isAudio && widget.controller.hasMedia;
+    if ((_showLibrary || isAudioMedia) && widget.libraryRepository != null) {
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          Offstage(
+            offstage: true,
+            child: widget.videoBuilder(context, widget.controller),
+          ),
+          LibraryShell(
+            repository: widget.libraryRepository!,
+            controller: widget.controller,
+            initialSection: isAudioMedia
+                ? LibrarySection.nowPlaying
+                : LibrarySection.music,
+            onSwitchToVideo: () => setState(() => _showLibrary = false),
+            onAddFolders: _showSettings,
+          ),
+        ],
+      );
+    }
     final Widget content;
     final String contentState;
     if (current == null) {
@@ -948,6 +981,9 @@ class _PlayerScreenState extends State<PlayerScreen>
           onOpenUrl: _openUrl,
           onOpenRecent: _playRecent,
           isDragging: _draggingFiles,
+          onOpenLibrary: widget.libraryRepository != null
+              ? () => setState(() => _showLibrary = true)
+              : null,
         ),
       );
     } else if (!widget.controller.hasMedia) {
@@ -1125,6 +1161,9 @@ class _PlayerScreenState extends State<PlayerScreen>
                         onToggleQueue: _toggleQueue,
                         onSettings: _showSettings,
                         onPlaybackInfo: _showPlaybackInfo,
+                        onOpenLibrary: widget.libraryRepository != null
+                            ? () => setState(() => _showLibrary = !_showLibrary)
+                            : null,
                         onMenuVisibilityChanged: _handleMenuVisibility,
                         queueOpen: _queueOpen,
                         isFullscreen: _isFullscreen,
@@ -1208,28 +1247,17 @@ class _PlayerScreenState extends State<PlayerScreen>
   }
 
   Future<List<String>> _pickMediaFiles() async {
-    const videoTypes = XTypeGroup(
-      label: 'Video files',
-      extensions: [
-        '3gp',
-        'avi',
-        'flv',
-        'm2ts',
-        'm4v',
-        'mkv',
-        'mov',
-        'mp4',
-        'mpeg',
-        'mpg',
-        'mts',
-        'ogg',
-        'ogv',
-        'ts',
-        'webm',
-        'wmv',
-      ],
+    final mediaTypes = XTypeGroup(
+      label: 'Media files',
+      extensions: MediaCatalog.filePickerExtensions,
     );
-    final files = await openFiles(acceptedTypeGroups: [videoTypes]);
+    final audioVideoTypes = XTypeGroup(
+      label: 'Audio and video files',
+      extensions: MediaCatalog.filePickerExtensions,
+    );
+    final files = await openFiles(
+      acceptedTypeGroups: [mediaTypes, audioVideoTypes],
+    );
     return files
         .map((file) => file.path)
         .where((path) => path.isNotEmpty)
@@ -1340,6 +1368,9 @@ class _PlayerScreenState extends State<PlayerScreen>
           updates: widget.updates,
           engineUpdates: widget.engineUpdates,
           pickSubtitle: _pickSubtitle,
+          appPreferences: widget.appPreferences,
+          libraryRepository: widget.libraryRepository,
+          desktopIntegration: widget.desktopIntegration,
         ),
       ),
     );

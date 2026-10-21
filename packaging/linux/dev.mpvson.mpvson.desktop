@@ -2,11 +2,12 @@
 Version=1.0
 Type=Application
 Name=Mpvson
-GenericName=Video Player
-Comment=Play videos with a modern desktop interface and the mpv engine
+GenericName=Media Player
+Comment=Modern desktop media player powered by mpv
 Exec=mpvson %U
 Icon=dev.mpvson.mpvson
 Terminal=false
-Categories=AudioVideo;Video;Player;
-MimeType=video/mp4;video/x-matroska;video/webm;video/quicktime;video/x-msvideo;video/mpeg;audio/mpeg;audio/flac;audio/ogg;
+Categories=AudioVideo;Player;Video;Audio;
+MimeType=audio/mpeg;audio/flac;audio/wav;audio/x-wav;audio/mp4;audio/x-m4a;audio/aac;audio/ogg;audio/opus;audio/x-ms-wma;audio/x-aiff;audio/x-ape;video/mp4;video/x-matroska;video/x-msvideo;video/avi;video/webm;video/quicktime;video/x-flv;video/x-ms-wmv;video/x-m4v;video/mp2t;video/x-ms-vob;video/ogg;video/3gpp;
 StartupWMClass=dev.mpvson.mpvson
+Keywords=Audio;Video;Player;MPV;Media;Streaming;
