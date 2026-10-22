@@ -10,6 +10,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 import '../../data/repositories/session_repository.dart';
 import '../../data/services/diagnostic_log.dart';
 import '../../data/services/playback_service.dart';
+import '../../data/services/seek_preview_service.dart';
 import '../../data/services/thumbnail_service.dart';
 import '../../domain/models/control_density.dart';
 import '../../domain/models/media_catalog.dart';
@@ -23,6 +24,18 @@ import '../../domain/models/playback_settings.dart';
 import '../../domain/models/session_progress.dart';
 import '../../domain/models/video_output_policy.dart';
 
+export '../../data/services/seek_preview_service.dart'
+    show
+        DisabledSeekPreviewBackend,
+        MediaKitSeekPreviewBackend,
+        SeekPreviewBackend,
+        SeekPreviewBackendFactory,
+        SeekPreviewFrame,
+        SeekPreviewLRUCache,
+        SeekPreviewQuality,
+        SeekPreviewService,
+        SeekPreviewState,
+        SeekPreviewStatus;
 export '../../data/services/thumbnail_service.dart'
     show ThumbnailPriority, ThumbnailRequestHandle;
 export '../../domain/models/media_kind.dart' show MediaKind;
@@ -427,6 +440,13 @@ class TransportState {
   );
 }
 
+/// Reasons why background thumbnail extraction is suspended.
+enum ThumbnailSuspensionReason {
+  windowMinimized,
+  playbackBuffering,
+  previewExtraction,
+}
+
 /// Owns the queue, history, session state and playback commands for the UI.
 class PlayerController extends ChangeNotifier {
   static const int _maximumNavigationHistory = 10000;
@@ -434,12 +454,21 @@ class PlayerController extends ChangeNotifier {
     required PlaybackService playback,
     required SessionRepository sessions,
     ThumbnailService? thumbnails,
+    SeekPreviewService? seekPreview,
+    SeekPreviewBackendFactory? previewBackendFactory,
     DiagnosticSink? diagnostics,
   }) {
     _playback = playback;
     _sessions = sessions;
     _thumbnails = thumbnails;
     _diagnostics = diagnostics;
+    _seekPreview =
+        seekPreview ??
+        SeekPreviewService(
+          backendFactory: previewBackendFactory,
+          onExtractionStateChange: _handlePreviewExtractionStateChange,
+          diagnostics: diagnostics,
+        );
     final initial = _playback.state;
     _applySnapshot(initial, notify: false);
     _confirmedVolume = _normalizeVolume(initial.volume);
@@ -465,7 +494,37 @@ class PlayerController extends ChangeNotifier {
   late final PlaybackService _playback;
   late final SessionRepository _sessions;
   late final ThumbnailService? _thumbnails;
+  late final SeekPreviewService _seekPreview;
   late final DiagnosticSink? _diagnostics;
+
+  SeekPreviewService get seekPreview => _seekPreview;
+
+  final Set<ThumbnailSuspensionReason> _thumbnailSuspensionReasons =
+      <ThumbnailSuspensionReason>{};
+
+  void addThumbnailSuspension(ThumbnailSuspensionReason reason) {
+    if (_thumbnailSuspensionReasons.isEmpty) {
+      _thumbnails?.suspend();
+    }
+    _thumbnailSuspensionReasons.add(reason);
+  }
+
+  void removeThumbnailSuspension(ThumbnailSuspensionReason reason) {
+    _thumbnailSuspensionReasons.remove(reason);
+    if (_thumbnailSuspensionReasons.isEmpty) {
+      _thumbnails?.resume();
+    }
+  }
+
+  void _handlePreviewExtractionStateChange(bool extracting) {
+    if (_notifierDisposed || _isClosing || _isClosed) return;
+    if (extracting) {
+      addThumbnailSuspension(ThumbnailSuspensionReason.previewExtraction);
+    } else {
+      removeThumbnailSuspension(ThumbnailSuspensionReason.previewExtraction);
+    }
+  }
+
   final Random _random = Random();
   final List<MediaEntry> _queue = <MediaEntry>[];
   final List<MediaEntry> _recent = <MediaEntry>[];
@@ -572,6 +631,9 @@ class PlayerController extends ChangeNotifier {
   /// Buffering updates, delivered independently of queue changes.
   final ValueNotifier<bool> bufferingListenable = ValueNotifier<bool>(false);
 
+  /// Seekability updates, delivered independently of queue changes.
+  final ValueNotifier<bool> seekableListenable = ValueNotifier<bool>(false);
+
   /// The queue contents and their structural revision.
   final ValueNotifier<QueueSnapshot> queueListenable =
       ValueNotifier<QueueSnapshot>(QueueSnapshot.empty);
@@ -634,6 +696,7 @@ class PlayerController extends ChangeNotifier {
   bool get isLoading => _pendingOpen != null;
   bool get isPlaying => _playbackState.isPlaying;
   bool get isBuffering => _playbackState.isBuffering || _pendingOpen != null;
+  bool get isSeekable => _playbackState.isSeekable;
   Duration get position => _playbackState.position;
   Duration get duration => _playbackState.duration;
   double get volume => _desiredVolume ?? _playbackState.volume;
@@ -662,6 +725,7 @@ class PlayerController extends ChangeNotifier {
     _publishTransport();
     _notifyIfOpen();
   }
+
   String get engineVersion => _playback.engineVersion;
 
   /// Shutdown phase, so controls can reflect a saving or blocked shutdown.
@@ -703,6 +767,16 @@ class PlayerController extends ChangeNotifier {
   }) {
     if (_isClosing) return null;
     return _thumbnails?.request(entry, priority: priority);
+  }
+
+  /// Captures the currently displayed video frame as JPEG bytes from the active engine.
+  Future<Uint8List?> captureFrame() async {
+    if (_isClosing || !_engineHasMedia || isAudio) return null;
+    try {
+      return await _playback.player.screenshot(format: 'image/jpeg');
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Loads saved queue/history without opening or playing the last source.
@@ -1203,6 +1277,11 @@ class PlayerController extends ChangeNotifier {
       // Release playback even if a thumbnail request could not be cancelled.
     }
     try {
+      await _seekPreview.dispose();
+    } on Object {
+      // Release playback even if preview disposal fails.
+    }
+    try {
       await _playback.dispose();
     } on Object {
       // Teardown should not prevent the native window from closing.
@@ -1293,8 +1372,8 @@ class PlayerController extends ChangeNotifier {
     _undo = null;
     final firstNewIndex = append
         ? (playNext && _currentIndex >= 0 && _currentIndex < _queue.length
-            ? _currentIndex + 1
-            : _queue.length)
+              ? _currentIndex + 1
+              : _queue.length)
         : 0;
     if (!append) {
       // Replacing a queue invalidates its pending load only after the new queue
@@ -1327,7 +1406,9 @@ class PlayerController extends ChangeNotifier {
         clearNativeSource: true,
         sourceLoaded: false,
       );
-    } else if (playNext && _currentIndex >= 0 && _currentIndex < _queue.length) {
+    } else if (playNext &&
+        _currentIndex >= 0 &&
+        _currentIndex < _queue.length) {
       final insertIndex = _currentIndex + 1;
       _queue.insertAll(insertIndex, stagedEntries);
       _queueStructureRevision++;
@@ -1355,8 +1436,8 @@ class PlayerController extends ChangeNotifier {
       final targetIndex = append
           ? firstNewIndex
           : (initialIndex >= 0 && initialIndex < stagedEntries.length
-              ? initialIndex
-              : 0);
+                ? initialIndex
+                : 0);
       await playIndex(targetIndex);
     } else {
       _publishQueue();
@@ -1394,10 +1475,7 @@ class PlayerController extends ChangeNotifier {
     _engineEntryId = null;
     _error = null;
     _mediaKind = _classifyMediaKind(entry: entry, snapshot: _playbackState);
-    _metadata = MediaMetadata(
-      title: entry.title,
-      duration: entry.duration,
-    );
+    _metadata = MediaMetadata(title: entry.title, duration: entry.duration);
     _publishQueue();
     _playbackState = _playbackState.copyWith(
       isPlaying: false,
@@ -2204,6 +2282,7 @@ class PlayerController extends ChangeNotifier {
     positionListenable.dispose();
     durationListenable.dispose();
     bufferingListenable.dispose();
+    seekableListenable.dispose();
     queueListenable.dispose();
     transportListenable.dispose();
   }
@@ -2459,6 +2538,7 @@ class PlayerController extends ChangeNotifier {
     final oldPosition = _playbackState.position;
     final oldPlaying = _playbackState.isPlaying;
     final oldBuffering = _playbackState.isBuffering;
+    final oldSeekable = _playbackState.isSeekable;
     final oldDuration = _playbackState.duration;
     final oldVolume = volume;
     final oldRate = _playbackState.rate;
@@ -2512,6 +2592,7 @@ class PlayerController extends ChangeNotifier {
         oldKind != _mediaKind ||
         oldPlaying != isPlaying ||
         oldBuffering != isBuffering ||
+        oldSeekable != isSeekable ||
         oldDuration != duration ||
         oldVolume != volume ||
         oldRate != rate ||
@@ -2531,6 +2612,20 @@ class PlayerController extends ChangeNotifier {
     }
     if (oldBuffering != isBuffering) {
       bufferingListenable.value = isBuffering;
+      if (isBuffering) {
+        addThumbnailSuspension(ThumbnailSuspensionReason.playbackBuffering);
+        _seekPreview.onPlaybackBuffering(true);
+      } else {
+        removeThumbnailSuspension(ThumbnailSuspensionReason.playbackBuffering);
+        _seekPreview.onPlaybackBuffering(false);
+      }
+    }
+    if (oldSeekable != isSeekable) {
+      seekableListenable.value = isSeekable;
+      _seekPreview.setSeekable(isSeekable);
+    }
+    if (oldKind != _mediaKind) {
+      _seekPreview.setAudio(isAudio);
     }
 
     if (changed) {
@@ -2550,20 +2645,24 @@ class PlayerController extends ChangeNotifier {
     }
 
     final videoTracks = snapshot.videoTracks;
-    final hasOrdinaryVideo = videoTracks.any((track) =>
-        track.id != 'auto' &&
-        track.id != 'no' &&
-        track.albumart != true &&
-        track.image != true);
+    final hasOrdinaryVideo = videoTracks.any(
+      (track) =>
+          track.id != 'auto' &&
+          track.id != 'no' &&
+          track.albumart != true &&
+          track.image != true,
+    );
 
     if (hasOrdinaryVideo) {
       return MediaKind.video;
     }
 
-    final hasCoverArt = videoTracks.any((track) =>
-        track.id != 'auto' &&
-        track.id != 'no' &&
-        (track.albumart == true || track.image == true));
+    final hasCoverArt = videoTracks.any(
+      (track) =>
+          track.id != 'auto' &&
+          track.id != 'no' &&
+          (track.albumart == true || track.image == true),
+    );
 
     if (hasCoverArt) {
       return MediaKind.audio;
@@ -2680,6 +2779,7 @@ class PlayerController extends ChangeNotifier {
     if (_activeSourceStart > _displacedSourceStart) {
       _displacedSourceStart = _activeSourceStart;
     }
+    _seekPreview.setSource(null);
   }
 
   void _armLoadTimeout(_PendingOpen pending) {
@@ -2773,6 +2873,11 @@ class PlayerController extends ChangeNotifier {
     _notifyIfOpen();
     _consumePendingResume();
     _syncCurrentProgress();
+    _seekPreview.setSource(
+      entry.path,
+      isAudio: isAudio,
+      isSeekable: isSeekable,
+    );
     _scheduleSave();
     _updateProgressTimer();
   }
@@ -3181,6 +3286,11 @@ class PlayerController extends ChangeNotifier {
   bool get _isClosed => _closingState == ControllerClosingState.closed;
 
   Future<void> _cancelAndDisposePlayback() async {
+    try {
+      await _seekPreview.dispose();
+    } on Object {
+      // Continue disposing playback if preview teardown fails.
+    }
     try {
       await _stateSubscription?.cancel();
     } on Object {

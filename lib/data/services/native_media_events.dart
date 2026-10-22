@@ -13,17 +13,26 @@ enum NativeMediaEventKind {
 
   /// libmpv reached the end of the attached source.
   ended,
+
+  /// libmpv reported a change in seekability of the attached source.
+  seekableChanged,
 }
 
 /// A native engine notification about the source it has attached.
 class NativeMediaEvent {
   const NativeMediaEvent.started(this.source)
-    : kind = NativeMediaEventKind.started;
+    : kind = NativeMediaEventKind.started,
+      seekable = true;
   const NativeMediaEvent.loaded()
     : kind = NativeMediaEventKind.loaded,
-      source = '';
+      source = '',
+      seekable = true;
   const NativeMediaEvent.ended()
     : kind = NativeMediaEventKind.ended,
+      source = '',
+      seekable = true;
+  const NativeMediaEvent.seekable(this.seekable)
+    : kind = NativeMediaEventKind.seekableChanged,
       source = '';
 
   final NativeMediaEventKind kind;
@@ -32,8 +41,12 @@ class NativeMediaEvent {
   /// (may include a Windows long-path prefix or a URL), empty otherwise.
   final String source;
 
+  /// Whether the attached source supports arbitrary seeking.
+  final bool seekable;
+
   @override
-  String toString() => 'NativeMediaEvent(${kind.name}, $source)';
+  String toString() =>
+      'NativeMediaEvent(${kind.name}, $source, seekable: $seekable)';
 }
 
 /// Property names observed on the native player.
@@ -47,6 +60,7 @@ abstract final class NativePropertyNames {
   static const String duration = 'duration';
   static const String eofReached = 'eof-reached';
   static const String idleActive = 'idle-active';
+  static const String seekable = 'seekable';
 
   /// Every property the adapter observes, in registration order.
   static const List<String> all = <String>[
@@ -55,6 +69,7 @@ abstract final class NativePropertyNames {
     duration,
     eofReached,
     idleActive,
+    seekable,
   ];
 }
 
@@ -86,6 +101,8 @@ NativeMediaEvent? interpretNativeProperty(String property, String value) {
     case NativePropertyNames.eofReached:
     case NativePropertyNames.idleActive:
       return _isYes(value) ? const NativeMediaEvent.ended() : null;
+    case NativePropertyNames.seekable:
+      return NativeMediaEvent.seekable(_isYes(value));
     default:
       return null;
   }

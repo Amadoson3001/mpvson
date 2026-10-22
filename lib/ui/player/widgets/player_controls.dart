@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../../domain/models/control_density.dart';
+import '../../../domain/models/media_thumbnail.dart';
 import '../../../ui/core/app_motion.dart';
 import '../../../ui/core/app_theme.dart';
 import '../../../ui/core/slider_overlay.dart';
@@ -285,16 +286,61 @@ class _SeekBarState extends State<_SeekBar> {
   bool _focused = false;
   bool _pointerIsDown = false;
   bool _interactionActive = false;
+  MediaThumbnail? _entryThumbnail;
+  String? _thumbnailEntryId;
 
   @override
   void initState() {
     super.initState();
     _focusNode.addListener(_handleFocusChanged);
+    widget.controller.seekPreview.stateListenable.addListener(
+      _handlePreviewStateChanged,
+    );
+  }
+
+  void _handlePreviewStateChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void didUpdateWidget(covariant _SeekBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller.seekPreview.stateListenable.removeListener(
+        _handlePreviewStateChanged,
+      );
+      final hoverPosition = _pointerInside ? _hoverPositionMs : null;
+      oldWidget.controller.seekPreview.onPointerExit();
+      widget.controller.seekPreview.stateListenable.addListener(
+        _handlePreviewStateChanged,
+      );
+      if (hoverPosition != null &&
+          !widget.controller.isAudio &&
+          widget.controller.hasMedia) {
+        widget.controller.seekPreview.onPointerMove(
+          Duration(milliseconds: hoverPosition.round()),
+        );
+      }
+    }
+  }
+
+  void _updateThumbnail() {
+    final current = widget.controller.current;
+    if (_thumbnailEntryId != current?.id) {
+      _thumbnailEntryId = current?.id;
+      _entryThumbnail = current == null
+          ? null
+          : widget.controller.peekThumbnail(current);
+    }
   }
 
   @override
   void dispose() {
     _keyboardSeekTimer?.cancel();
+    widget.controller.seekPreview.stateListenable.removeListener(
+      _handlePreviewStateChanged,
+    );
+    widget.controller.seekPreview.onPointerExit();
     if (_interactionActive) {
       _notifyInteractionOnDispose(widget.onInteractionChanged);
     }
@@ -317,21 +363,26 @@ class _SeekBarState extends State<_SeekBar> {
   void _onPointerMove(double localX, double trackWidth, int durationMs) {
     if (trackWidth <= 0 || durationMs <= 0) return;
 
-    // The slider and its theme both set zero padding. The stock rounded track
-    // therefore spans this full render box, so local x maps directly to time.
     final trackX = localX.clamp(0.0, trackWidth).toDouble();
     final physicalRatio = trackX / trackWidth;
     final ratio = Directionality.of(context) == TextDirection.rtl
         ? 1 - physicalRatio
         : physicalRatio;
+    final hoverMs = (ratio * durationMs).roundToDouble();
+    final hoverTime = Duration(milliseconds: hoverMs.round());
     setState(() {
       _pointerInside = true;
       _hoverTrackX = trackX;
-      _hoverPositionMs = (ratio * durationMs).roundToDouble();
+      _hoverPositionMs = hoverMs;
     });
+
+    if (!widget.controller.isAudio && widget.controller.hasMedia) {
+      widget.controller.seekPreview.onPointerMove(hoverTime);
+    }
   }
 
   void _onPointerExit() {
+    widget.controller.seekPreview.onPointerExit();
     setState(() {
       _pointerInside = false;
       _hoverPositionMs = null;
@@ -351,7 +402,8 @@ class _SeekBarState extends State<_SeekBar> {
     _focusNode.requestFocus();
     _keyboardSeekTimer?.cancel();
     if (_pointerIsDown) _setInteracting(true);
-    widget.onPreviewChanged(Duration(milliseconds: value.round()));
+    final scrubTime = Duration(milliseconds: value.round());
+    widget.onPreviewChanged(scrubTime);
     setState(() {
       _dragging = true;
       _keyboardSeeking = false;
@@ -359,16 +411,23 @@ class _SeekBarState extends State<_SeekBar> {
       _hoverPositionMs = value;
       _hoverTrackX = _trackXForValue(value, width, durationMs);
     });
+    if (!widget.controller.isAudio && widget.controller.hasMedia) {
+      widget.controller.seekPreview.onPointerMove(scrubTime);
+    }
   }
 
   void _onChanged(double value, double width, int durationMs) {
-    widget.onPreviewChanged(Duration(milliseconds: value.round()));
+    final scrubTime = Duration(milliseconds: value.round());
+    widget.onPreviewChanged(scrubTime);
     setState(() {
       _scrubPositionMs = value;
       _keyboardSeeking = !_dragging;
       _hoverPositionMs = value;
       _hoverTrackX = _trackXForValue(value, width, durationMs);
     });
+    if (!widget.controller.isAudio && widget.controller.hasMedia) {
+      widget.controller.seekPreview.onPointerMove(scrubTime);
+    }
     if (_dragging) return;
 
     // Keyboard slider actions have no drag-end callback on every platform.
@@ -383,6 +442,7 @@ class _SeekBarState extends State<_SeekBar> {
   void _onChangeEnd(double value) {
     _dragging = false;
     _setInteracting(false);
+    widget.controller.seekPreview.onPointerExit();
     unawaited(_commitSeek(value));
   }
 
@@ -396,6 +456,7 @@ class _SeekBarState extends State<_SeekBar> {
     if (!_interactionActive) return;
     _dragging = false;
     _setInteracting(false);
+    widget.controller.seekPreview.onPointerExit();
     widget.onPreviewChanged(null);
     if (mounted) setState(() => _scrubPositionMs = null);
   }
@@ -403,6 +464,7 @@ class _SeekBarState extends State<_SeekBar> {
   Future<void> _commitSeek(double value) async {
     _keyboardSeekTimer?.cancel();
     _keyboardSeekTimer = null;
+    widget.controller.seekPreview.onPointerExit();
     if (!mounted) return;
     setState(() {
       _dragging = false;
@@ -420,9 +482,11 @@ class _SeekBarState extends State<_SeekBar> {
 
   @override
   Widget build(BuildContext context) {
+    _updateThumbnail();
     final controller = widget.controller;
     final durationMs = controller.duration.inMilliseconds;
-    final canSeek = durationMs > 0;
+    final canSeek = durationMs > 0 && controller.isSeekable;
+    final hasTimeline = durationMs > 0;
     final positionMs = (_scrubPositionMs ?? controller.position.inMilliseconds)
         .clamp(0, canSeek ? durationMs : 0)
         .toDouble();
@@ -435,15 +499,28 @@ class _SeekBarState extends State<_SeekBar> {
             : (_hoverPositionMs ?? positionMs);
         final previewTime = Duration(milliseconds: previewMs.round());
         final previewLabel = _PlayerControlsState._formatTime(previewTime);
-        final bubbleWidth = previewLabel.length > 5 ? 72.0 : 58.0;
+        final isAudio = controller.isAudio;
+        final bubbleWidth = isAudio ? 144.0 : 160.0;
+        final actualBubbleWidth = width > 0
+            ? (bubbleWidth > width ? width : bubbleWidth)
+            : bubbleWidth;
+        final previewRatio = durationMs > 0
+            ? (previewMs / durationMs).clamp(0.0, 1.0)
+            : 0.0;
         final previewX = _dragging || _keyboardSeeking
             ? _trackXForValue(previewMs, width, durationMs)
             : _hoverTrackX;
-        final bubbleLeft = (previewX - bubbleWidth / 2)
-            .clamp(0.0, (width - bubbleWidth).clamp(0.0, width))
+        final bubbleLeft = (previewX - actualBubbleWidth / 2)
+            .clamp(0.0, (width - actualBubbleWidth).clamp(0.0, width))
+            .toDouble();
+        final maxCaret = (actualBubbleWidth - 14.0) > 14.0
+            ? (actualBubbleWidth - 14.0)
+            : 14.0;
+        final caretOffset = (previewX - bubbleLeft)
+            .clamp(14.0, maxCaret)
             .toDouble();
         final showPreview =
-            canSeek && (_pointerInside || _dragging || _keyboardSeeking);
+            hasTimeline && (_pointerInside || _dragging || _keyboardSeeking);
         final thumbVisible =
             canSeek && (_pointerInside || _dragging || _focused);
 
@@ -518,7 +595,7 @@ class _SeekBarState extends State<_SeekBar> {
                   Positioned(
                     key: const ValueKey('seek-preview'),
                     left: bubbleLeft,
-                    top: -26,
+                    bottom: PlayerControlStyle.of(context).seekHitHeight + 8,
                     child: IgnorePointer(
                       child: AnimatedSwitcher(
                         duration: AppMotion.duration(context, AppMotion.quick),
@@ -526,14 +603,26 @@ class _SeekBarState extends State<_SeekBar> {
                         switchOutCurve: AppMotion.exit,
                         transitionBuilder: (child, animation) {
                           if (AppMotion.reduce(context)) return child;
+                          final curved = CurvedAnimation(
+                            parent: animation,
+                            curve: AppMotion.enter,
+                            reverseCurve: AppMotion.exit,
+                          );
                           return FadeTransition(
-                            opacity: animation,
-                            child: SlideTransition(
-                              position: Tween<Offset>(
-                                begin: const Offset(0, 0.16),
-                                end: Offset.zero,
-                              ).animate(animation),
-                              child: child,
+                            opacity: curved,
+                            child: ScaleTransition(
+                              scale: Tween<double>(
+                                begin: 0.88,
+                                end: 1.0,
+                              ).animate(curved),
+                              alignment: Alignment.bottomCenter,
+                              child: SlideTransition(
+                                position: Tween<Offset>(
+                                  begin: const Offset(0, 0.08),
+                                  end: Offset.zero,
+                                ).animate(curved),
+                                child: child,
+                              ),
                             ),
                           );
                         },
@@ -542,7 +631,14 @@ class _SeekBarState extends State<_SeekBar> {
                                 key: const ValueKey('seek-preview-content'),
                                 child: _SeekPreview(
                                   label: previewLabel,
-                                  width: bubbleWidth,
+                                  width: actualBubbleWidth,
+                                  caretOffset: caretOffset,
+                                  previewRatio: previewRatio,
+                                  previewTime: previewTime,
+                                  currentPosition: controller.position,
+                                  controller: controller,
+                                  previewState: controller.seekPreview.state,
+                                  thumbnail: _entryThumbnail,
                                 ),
                               )
                             : const SizedBox.shrink(),
@@ -592,27 +688,432 @@ class _UniformRoundedSliderTrackShape extends RoundedRectSliderTrackShape {
   }
 }
 
+class _CaretPainter extends CustomPainter {
+  const _CaretPainter({required this.color, required this.borderColor});
+
+  final Color color;
+  final Color borderColor;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final fillPath = Path()
+      ..moveTo(0, 0)
+      ..lineTo(size.width / 2, size.height)
+      ..lineTo(size.width, 0)
+      ..close();
+    canvas.drawPath(
+      fillPath,
+      Paint()
+        ..color = color
+        ..style = PaintingStyle.fill,
+    );
+
+    final strokePath = Path()
+      ..moveTo(0, 0)
+      ..lineTo(size.width / 2, size.height)
+      ..lineTo(size.width, 0);
+    canvas.drawPath(
+      strokePath,
+      Paint()
+        ..color = borderColor
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_CaretPainter oldDelegate) =>
+      oldDelegate.color != color || oldDelegate.borderColor != borderColor;
+}
+
 class _SeekPreview extends StatelessWidget {
-  const _SeekPreview({required this.label, required this.width});
+  const _SeekPreview({
+    required this.label,
+    required this.width,
+    required this.caretOffset,
+    required this.previewRatio,
+    required this.previewTime,
+    required this.currentPosition,
+    required this.controller,
+    required this.previewState,
+    required this.thumbnail,
+  });
 
   final String label;
   final double width;
+  final double caretOffset;
+  final double previewRatio;
+  final Duration previewTime;
+  final Duration currentPosition;
+  final PlayerController controller;
+  final SeekPreviewState? previewState;
+  final MediaThumbnail? thumbnail;
 
   @override
-  Widget build(BuildContext context) => Container(
-    width: width,
-    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-    decoration: BoxDecoration(
-      color: AppTheme.card,
-      borderRadius: BorderRadius.circular(6),
-      border: Border.all(color: AppTheme.border),
+  Widget build(BuildContext context) {
+    final isAudio = controller.isAudio;
+    final diff = previewTime - currentPosition;
+    final isAhead = diff > Duration.zero;
+    final absDiff = diff.abs();
+    final diffText = absDiff >= const Duration(seconds: 1)
+        ? '${isAhead ? '+' : '-'}${_PlayerControlsState._formatTime(absDiff)}'
+        : '';
+    final entry = controller.current;
+    final title = entry?.title ?? controller.currentMetadata.title;
+
+    final borderColor = AppTheme.border.withValues(alpha: 0.85);
+
+    final cardContent = isAudio
+        ? _buildAudioContent(context, title, diffText, isAhead)
+        : _buildVideoContent(context, title, diffText, isAhead);
+
+    final clampedCaret = (caretOffset - 5).clamp(
+      8.0,
+      (width - 18.0) > 8.0 ? (width - 18.0) : 8.0,
+    );
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: width,
+          clipBehavior: Clip.antiAlias,
+          decoration: BoxDecoration(
+            color: AppTheme.card,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: borderColor),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.45),
+                blurRadius: 14,
+                spreadRadius: 1,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: cardContent,
+        ),
+        Transform.translate(
+          offset: const Offset(0, -1),
+          child: Padding(
+            padding: EdgeInsets.only(left: clampedCaret),
+            child: CustomPaint(
+              size: const Size(10, 5),
+              painter: _CaretPainter(
+                color: AppTheme.card,
+                borderColor: borderColor,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildVideoContent(
+    BuildContext context,
+    String? title,
+    String diffText,
+    bool isAhead,
+  ) {
+    final frameHeight = ((width - 2) * 9 / 16).clamp(54.0, 96.0);
+    final frame = previewState?.currentFrame;
+    final isFailed = previewState?.status == SeekPreviewStatus.failed;
+    final isLoading = previewState?.status == SeekPreviewStatus.loading;
+    final isUpdating = previewState?.isUpdating == true;
+    final showLoadingIndicator = isUpdating || (isLoading && frame == null);
+
+    Widget imageSurface;
+    if (frame != null && frame.bytes.isNotEmpty) {
+      imageSurface = ClipRRect(
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(7)),
+        child: Image.memory(
+          frame.bytes,
+          fit: BoxFit.cover,
+          gaplessPlayback: true,
+          errorBuilder: (context, error, stackTrace) =>
+              const _PreviewPlaceholderFrame(),
+        ),
+      );
+    } else if (isFailed) {
+      imageSurface = const ClipRRect(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(7)),
+        child: _PreviewUnavailableFrame(),
+      );
+    } else if (thumbnail != null && thumbnail!.bytes.isNotEmpty) {
+      imageSurface = ClipRRect(
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(7)),
+        child: Image.memory(
+          thumbnail!.bytes,
+          fit: BoxFit.cover,
+          gaplessPlayback: true,
+          errorBuilder: (context, error, stackTrace) =>
+              const _PreviewPlaceholderFrame(),
+        ),
+      );
+    } else {
+      imageSurface = const ClipRRect(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(7)),
+        child: _PreviewPlaceholderFrame(),
+      );
+    }
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SizedBox(
+          height: frameHeight,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              imageSurface,
+              if (isFailed && frame != null)
+                Positioned.fill(
+                  child: Container(
+                    color: Colors.black.withValues(alpha: 0.68),
+                    alignment: Alignment.center,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.max,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(
+                            Icons.hide_image_outlined,
+                            size: 14,
+                            color: Colors.white,
+                          ),
+                          const SizedBox(width: 5),
+                          Flexible(
+                            child: Text(
+                              'Preview unavailable',
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              textAlign: TextAlign.center,
+                              style: Theme.of(context).textTheme.labelSmall
+                                  ?.copyWith(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              if (showLoadingIndicator)
+                Positioned(
+                  top: 6,
+                  right: 6,
+                  child: Container(
+                    padding: const EdgeInsets.all(3),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.6),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const SizedBox(
+                      width: 10,
+                      height: 10,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 1.5,
+                        color: AppTheme.accent,
+                      ),
+                    ),
+                  ),
+                ),
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: Container(
+                  height: 2.5,
+                  color: Colors.black.withValues(alpha: 0.5),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: FractionallySizedBox(
+                      widthFactor: previewRatio,
+                      child: Container(color: AppTheme.accent),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                label,
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: AppTheme.text,
+                  fontWeight: FontWeight.w600,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
+              if (diffText.isNotEmpty)
+                Text(
+                  diffText,
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: isAhead ? AppTheme.accent : AppTheme.muted,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w500,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAudioContent(
+    BuildContext context,
+    String? title,
+    String diffText,
+    bool isAhead,
+  ) {
+    final bytes = thumbnail?.bytes;
+    return Padding(
+      padding: const EdgeInsets.all(6),
+      child: Row(
+        children: [
+          Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              color: AppTheme.surface,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: AppTheme.border),
+            ),
+            child: (bytes != null && bytes.isNotEmpty)
+                ? ClipRRect(
+                    borderRadius: BorderRadius.circular(5),
+                    child: Image.memory(
+                      bytes,
+                      fit: BoxFit.cover,
+                      gaplessPlayback: true,
+                      errorBuilder: (context, error, stackTrace) => const Icon(
+                        Icons.music_note_rounded,
+                        size: 18,
+                        color: AppTheme.accent,
+                      ),
+                    ),
+                  )
+                : const Icon(
+                    Icons.music_note_rounded,
+                    size: 18,
+                    color: AppTheme.accent,
+                  ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (title != null && title.trim().isNotEmpty)
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: AppTheme.secondaryText,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      label,
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: AppTheme.text,
+                        fontWeight: FontWeight.w600,
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                    if (diffText.isNotEmpty)
+                      Text(
+                        diffText,
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          color: isAhead ? AppTheme.accent : AppTheme.muted,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w500,
+                          fontFeatures: const [FontFeature.tabularFigures()],
+                        ),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PreviewPlaceholderFrame extends StatelessWidget {
+  const _PreviewPlaceholderFrame();
+
+  @override
+  Widget build(BuildContext context) => DecoratedBox(
+    decoration: const BoxDecoration(
+      gradient: LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [AppTheme.surface, AppTheme.card],
+      ),
     ),
-    child: Text(
-      label,
-      textAlign: TextAlign.center,
-      style: Theme.of(context).textTheme.labelSmall?.copyWith(
-        color: AppTheme.text,
-        fontFeatures: const [FontFeature.tabularFigures()],
+    child: Center(
+      child: Icon(
+        Icons.play_circle_fill_rounded,
+        size: 26,
+        color: AppTheme.secondaryText.withValues(alpha: 0.35),
+      ),
+    ),
+  );
+}
+
+class _PreviewUnavailableFrame extends StatelessWidget {
+  const _PreviewUnavailableFrame();
+
+  @override
+  Widget build(BuildContext context) => DecoratedBox(
+    decoration: const BoxDecoration(
+      gradient: LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [AppTheme.surface, AppTheme.card],
+      ),
+    ),
+    child: Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.videocam_off_rounded,
+            size: 20,
+            color: AppTheme.secondaryText.withValues(alpha: 0.5),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Preview unavailable',
+            style: TextStyle(
+              color: AppTheme.secondaryText.withValues(alpha: 0.7),
+              fontSize: 10,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
       ),
     ),
   );

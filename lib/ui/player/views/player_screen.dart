@@ -468,7 +468,10 @@ class _PlayerScreenState extends State<PlayerScreen>
     if (_minimized) return;
     _minimized = true;
     _animationsSuspended = true;
-    widget.controller.thumbnails?.suspend();
+    widget.controller.addThumbnailSuspension(
+      ThumbnailSuspensionReason.windowMinimized,
+    );
+    widget.controller.seekPreview.suspend();
     widget.controller.trimMemory();
     PaintingBinding.instance.imageCache.clear();
     PaintingBinding.instance.imageCache.clearLiveImages();
@@ -480,7 +483,10 @@ class _PlayerScreenState extends State<PlayerScreen>
     if (!_minimized) return;
     _minimized = false;
     _animationsSuspended = false;
-    widget.controller.thumbnails?.resume();
+    widget.controller.removeThumbnailSuspension(
+      ThumbnailSuspensionReason.windowMinimized,
+    );
+    widget.controller.seekPreview.resume();
     _updateVideoOutputPolicy(visible: true);
     if (mounted) setState(() {});
   }
@@ -948,7 +954,8 @@ class _PlayerScreenState extends State<PlayerScreen>
 
   Widget _buildPlayerArea() {
     final current = widget.controller.current;
-    final isAudioMedia = widget.controller.isAudio && widget.controller.hasMedia;
+    final isAudioMedia =
+        widget.controller.isAudio && widget.controller.hasMedia;
     if ((_showLibrary || isAudioMedia) && widget.libraryRepository != null) {
       return Stack(
         fit: StackFit.expand,

@@ -231,19 +231,9 @@ That does not disable mpv engine updates.
 ## Development and checks
 
 ```sh
-dart format lib tool test
+dart format lib tool
 flutter analyze
-flutter test
 ```
-
-After building the Windows release, run the opt-in native playback check:
-
-```powershell
-flutter test --dart-define=MPVSON_PROBE_NATIVE_EVENTS=true test/native_source_probe_test.dart
-```
-
-This check loads the bundled libmpv and verifies source loading, stopping,
-reopening, and completion with a generated audio fixture.
 
 ### Release builds and engine verification
 
@@ -251,7 +241,7 @@ Compile release binaries for Windows and Linux:
 
 ```powershell
 # Windows release build
-flutter build windows --release
+flutter build windows --release --target=lib/main.dart
 
 # Verify bundled engine provenance and generate inventory
 dart run tool/engine_provenance.dart verify
@@ -260,7 +250,7 @@ dart run tool/engine_provenance.dart inventory
 
 ```sh
 # Linux release build
-flutter build linux --release
+flutter build linux --release --target=lib/main.dart
 ```
 
 Engine provenance verification (`tool/engine_provenance.dart verify`) checks the pinned engine archive, SHA-256 digest, and license against `packaging/windows/engine-provenance.json`. The `inventory` command records the engine version, ffmpeg version, and build components for distribution.

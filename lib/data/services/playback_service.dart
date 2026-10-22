@@ -39,6 +39,8 @@ PlaybackSnapshot applyNativeEvent(
         isPlaying: false,
         isBuffering: false,
       );
+    case NativeMediaEventKind.seekableChanged:
+      return state.copyWith(seekable: event.seekable);
   }
 }
 
@@ -50,6 +52,7 @@ class PlaybackSnapshot {
     this.completed = false,
     this.position = Duration.zero,
     this.duration = Duration.zero,
+    this.seekable = true,
     this.volume = 100,
     this.rate = 1,
     this.shuffle = false,
@@ -69,6 +72,8 @@ class PlaybackSnapshot {
   final bool completed;
   final Duration position;
   final Duration duration;
+  final bool seekable;
+  bool get isSeekable => seekable && duration > Duration.zero;
   final double volume;
   final double rate;
   final bool shuffle;
@@ -101,6 +106,7 @@ class PlaybackSnapshot {
     bool? completed,
     Duration? position,
     Duration? duration,
+    bool? seekable,
     double? volume,
     double? rate,
     bool? shuffle,
@@ -122,6 +128,7 @@ class PlaybackSnapshot {
       completed: completed ?? this.completed,
       position: position ?? this.position,
       duration: duration ?? this.duration,
+      seekable: seekable ?? this.seekable,
       volume: volume ?? this.volume,
       rate: rate ?? this.rate,
       shuffle: shuffle ?? this.shuffle,
@@ -937,6 +944,8 @@ class MediaKitPlaybackService
       case NativeMediaEventKind.ended:
         final attachment = _identity.attachEnded();
         if (!attachment.hasSource) return;
+        _emit(_stamped(applyNativeEvent(_state, event)));
+      case NativeMediaEventKind.seekableChanged:
         _emit(_stamped(applyNativeEvent(_state, event)));
     }
   }

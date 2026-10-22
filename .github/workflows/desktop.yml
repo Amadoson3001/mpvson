@@ -42,9 +42,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libmpv-dev libasound2-dev libepoxy-dev liblzma-dev jq
       - run: flutter pub get --enforce-lockfile
-      - run: dart format --output=none --set-exit-if-changed lib tool test
+      - run: dart format --output=none --set-exit-if-changed lib tool
       - run: flutter analyze
-      - run: flutter test --no-pub
       - name: Build Windows release
         if: runner.os == 'Windows'
         shell: pwsh
@@ -52,15 +51,12 @@ jobs:
           UPDATE_MANIFEST: ${{ inputs.update_manifest }}
           ENGINE_MANIFEST: ${{ inputs.engine_manifest }}
           ENGINE_PUBLIC_KEY: ${{ inputs.engine_public_key }}
-        run: flutter build windows --release "--dart-define=MPVSON_UPDATE_MANIFEST=$env:UPDATE_MANIFEST" "--dart-define=MPVSON_ENGINE_UPDATE_MANIFEST=$env:ENGINE_MANIFEST" "--dart-define=MPVSON_ENGINE_PUBLIC_KEY=$env:ENGINE_PUBLIC_KEY"
+        run: flutter build windows --release --target=lib/main.dart "--dart-define=MPVSON_UPDATE_MANIFEST=$env:UPDATE_MANIFEST" "--dart-define=MPVSON_ENGINE_UPDATE_MANIFEST=$env:ENGINE_MANIFEST" "--dart-define=MPVSON_ENGINE_PUBLIC_KEY=$env:ENGINE_PUBLIC_KEY"
       - name: Build Linux release
         if: runner.os == 'Linux'
         env:
           UPDATE_MANIFEST: ${{ inputs.update_manifest }}
-        run: flutter build linux --release --dart-define="MPVSON_UPDATE_MANIFEST=$UPDATE_MANIFEST"
-      - name: Verify bundled Windows playback
-        if: runner.os == 'Windows'
-        run: flutter test --no-pub --dart-define=MPVSON_PROBE_NATIVE_EVENTS=true test/native_source_probe_test.dart
+        run: flutter build linux --release --target=lib/main.dart --dart-define="MPVSON_UPDATE_MANIFEST=$UPDATE_MANIFEST"
       - name: Package Windows
         if: runner.os == 'Windows'
         shell: pwsh

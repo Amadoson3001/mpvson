@@ -12,5 +12,5 @@
 /// record by `test/bundled_engine_test.dart`.
 const String bundledEngineVersion = String.fromEnvironment(
   'MPVSON_BUNDLED_ENGINE_VERSION',
-  defaultValue: '0.41.0-dev.39465194068+ge471496c5',
+  defaultValue: '0.41.0-dev.39717642946+g488fec078',
 );
