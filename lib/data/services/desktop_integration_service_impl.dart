@@ -16,24 +16,20 @@ import 'open_request_coordinator.dart';
 /// [PlayerController], and [OpenRequestCoordinator].
 class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
   DesktopIntegrationServiceImpl({
-    PlayerController? controller,
-    OpenRequestCoordinator? openRequestCoordinator,
-    AppPreferencesRepository? preferences,
-    MediaProbeService? mediaProbeService,
+    this._controller,
+    this._openRequestCoordinator,
+    this._preferences,
+    this._mediaProbeService,
     MethodChannel? singleInstanceChannel,
     MethodChannel? mediaControlsChannel,
     MethodChannel? powerChannel,
-    Future<bool> Function(Uri uri)? urlLauncher,
-  })  : _controller = controller, // ignore: prefer_initializing_formals
-        _openRequestCoordinator = openRequestCoordinator, // ignore: prefer_initializing_formals
-        _preferences = preferences, // ignore: prefer_initializing_formals
-        _mediaProbeService = mediaProbeService, // ignore: prefer_initializing_formals
-        singleInstanceChannel =
-            singleInstanceChannel ?? const MethodChannel('mpvson/single_instance'),
-        mediaControlsChannel =
-            mediaControlsChannel ?? const MethodChannel('mpvson/media_controls'),
-        powerChannel = powerChannel ?? const MethodChannel('mpvson/power'),
-        _urlLauncher = urlLauncher; // ignore: prefer_initializing_formals
+    this._urlLauncher,
+  }) : singleInstanceChannel =
+           singleInstanceChannel ??
+           const MethodChannel('mpvson/single_instance'),
+       mediaControlsChannel =
+           mediaControlsChannel ?? const MethodChannel('mpvson/media_controls'),
+       powerChannel = powerChannel ?? const MethodChannel('mpvson/power');
 
   final MethodChannel singleInstanceChannel;
   final MethodChannel mediaControlsChannel;
@@ -142,15 +138,16 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
   }) async {
     _playbackStatus = status;
     try {
-      await mediaControlsChannel.invokeMethod('updatePlaybackState', <String, Object?>{
-        'status': status.name,
-        'position': position.inMilliseconds,
-        'positionMs': position.inMilliseconds,
-        'duration': duration.inMilliseconds,
-        'durationMs': duration.inMilliseconds,
-        'playbackRate': playbackRate,
-        'rate': playbackRate,
-      });
+      await mediaControlsChannel
+          .invokeMethod('updatePlaybackState', <String, Object?>{
+            'status': status.name,
+            'position': position.inMilliseconds,
+            'positionMs': position.inMilliseconds,
+            'duration': duration.inMilliseconds,
+            'durationMs': duration.inMilliseconds,
+            'playbackRate': playbackRate,
+            'rate': playbackRate,
+          });
     } on MissingPluginException {
       // Platform channel not registered in test or unhandled platform.
     } on PlatformException {
@@ -165,16 +162,17 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
   Future<void> updateMetadata(MediaMetadata metadata) async {
     _currentMetadata = metadata;
     try {
-      await mediaControlsChannel.invokeMethod('updateMetadata', <String, Object?>{
-        'title': metadata.title,
-        'artist': metadata.artist ?? metadata.effectiveArtist,
-        'album': metadata.album ?? metadata.effectiveAlbum,
-        'albumArtist': metadata.albumArtist,
-        'artworkPath': metadata.artworkUri,
-        'artworkUri': metadata.artworkUri,
-        'duration': metadata.duration.inMilliseconds,
-        'durationMs': metadata.duration.inMilliseconds,
-      });
+      await mediaControlsChannel
+          .invokeMethod('updateMetadata', <String, Object?>{
+            'title': metadata.title,
+            'artist': metadata.artist ?? metadata.effectiveArtist,
+            'album': metadata.album ?? metadata.effectiveAlbum,
+            'albumArtist': metadata.albumArtist,
+            'artworkPath': metadata.artworkUri,
+            'artworkUri': metadata.artworkUri,
+            'duration': metadata.duration.inMilliseconds,
+            'durationMs': metadata.duration.inMilliseconds,
+          });
     } on MissingPluginException {
       // Platform channel not registered.
     } on PlatformException {
@@ -194,13 +192,14 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
     bool canGoPrevious = true,
   }) async {
     try {
-      await mediaControlsChannel.invokeMethod('updateCapabilities', <String, Object?>{
-        'canPlay': canPlay,
-        'canPause': canPause,
-        'canSeek': canSeek,
-        'canGoNext': canGoNext,
-        'canGoPrevious': canGoPrevious,
-      });
+      await mediaControlsChannel
+          .invokeMethod('updateCapabilities', <String, Object?>{
+            'canPlay': canPlay,
+            'canPause': canPause,
+            'canSeek': canSeek,
+            'canGoNext': canGoNext,
+            'canGoPrevious': canGoPrevious,
+          });
     } on MissingPluginException {
       // Platform channel not registered.
     } on PlatformException {
@@ -215,7 +214,9 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
       await powerChannel.invokeMethod('setKeepAwake', <String, Object?>{
         'enable': enable,
         'isVideoPlaying': isVideoPlaying,
-        'assertionType': enable ? (isVideoPlaying ? 'display' : 'system') : 'none',
+        'assertionType': enable
+            ? (isVideoPlaying ? 'display' : 'system')
+            : 'none',
       });
     } on MissingPluginException {
       // Platform channel not registered.
@@ -230,8 +231,9 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
   @override
   Future<void> openDefaultAppsSettings() async {
     try {
-      final result =
-          await mediaControlsChannel.invokeMethod<bool>('openDefaultAppsSettings');
+      final result = await mediaControlsChannel.invokeMethod<bool>(
+        'openDefaultAppsSettings',
+      );
       if (result == true) return;
     } on MissingPluginException {
       // Fallback to URL launch or process start.
@@ -354,10 +356,15 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
     }
   }
 
-  MediaMetadata _buildMetadataForEntry(MediaEntry entry, Duration controllerDuration) {
+  MediaMetadata _buildMetadataForEntry(
+    MediaEntry entry,
+    Duration controllerDuration,
+  ) {
     var title = entry.title;
     final lastDot = title.lastIndexOf('.');
-    if (lastDot > 0 && !entry.path.startsWith('http://') && !entry.path.startsWith('https://')) {
+    if (lastDot > 0 &&
+        !entry.path.startsWith('http://') &&
+        !entry.path.startsWith('https://')) {
       final ext = title.substring(lastDot).toLowerCase();
       const knownExtensions = <String>{
         '.mp3',
@@ -405,7 +412,9 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
       title: title,
       artist: artist,
       album: album,
-      duration: controllerDuration > Duration.zero ? controllerDuration : entry.duration,
+      duration: controllerDuration > Duration.zero
+          ? controllerDuration
+          : entry.duration,
     );
   }
 
@@ -434,7 +443,8 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
       return;
     }
 
-    final canPlay = _controller!.current != null || _controller!.queue.isNotEmpty;
+    final canPlay =
+        _controller!.current != null || _controller!.queue.isNotEmpty;
     final canPause = _controller!.isPlaying;
     final canSeek = _controller!.duration > Duration.zero;
     final canGoNext = _controller!.queue.length > 1;
@@ -472,12 +482,14 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
 
     final keepAwakePref =
         _preferences?.preferences.keepAwakeDuringPlayback ?? true;
-    final isPlaying = _controller!.isPlaying &&
+    final isPlaying =
+        _controller!.isPlaying &&
         !_controller!.isClosing &&
         _controller!.closingState == ControllerClosingState.running;
 
     final shouldKeepAwake = keepAwakePref && isPlaying;
-    final isVideo = _isVideoSource(_controller!.current?.path) &&
+    final isVideo =
+        _isVideoSource(_controller!.current?.path) &&
         _controller!.videoOutputPolicy.visible;
 
     if (shouldKeepAwake != _isAwakeInhibited ||
@@ -564,7 +576,10 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
         );
         return await _openRequestCoordinator!.handleOpenRequest(request);
       } else if (_controller != null) {
-        await _controller!.openPaths(paths, append: intent == OpenIntent.enqueue);
+        await _controller!.openPaths(
+          paths,
+          append: intent == OpenIntent.enqueue,
+        );
         return true;
       }
     }
@@ -632,7 +647,8 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
       if (posMs != null) {
         targetPosition = Duration(milliseconds: posMs.toInt());
       }
-      targetTrackId = args['trackId'] as String? ??
+      targetTrackId =
+          args['trackId'] as String? ??
           args['entryId'] as String? ??
           args['id'] as String? ??
           args['path'] as String? ??
@@ -658,7 +674,9 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
     // Stale check 2: Expected duration mismatch
     if (expectedDuration != null && _controller!.duration > Duration.zero) {
       final diff =
-          (expectedDuration.inMilliseconds - _controller!.duration.inMilliseconds).abs();
+          (expectedDuration.inMilliseconds -
+                  _controller!.duration.inMilliseconds)
+              .abs();
       if (diff > 2000) {
         return false;
       }

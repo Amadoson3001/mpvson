@@ -44,11 +44,7 @@ class EmptyLibraryView extends StatelessWidget {
                     shape: BoxShape.circle,
                     border: Border.all(color: LibraryTheme.border),
                   ),
-                  child: Icon(
-                    icon,
-                    size: 30,
-                    color: LibraryTheme.accent,
-                  ),
+                  child: Icon(icon, size: 30, color: LibraryTheme.accent),
                 ),
                 const SizedBox(height: 24),
                 Text(

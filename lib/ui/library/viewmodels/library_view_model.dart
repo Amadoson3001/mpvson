@@ -8,12 +8,7 @@ import '../../../domain/models/media_entry.dart';
 import '../../player/player_controller.dart';
 
 /// Top-level tabs for the library navigation.
-enum LibraryTab {
-  videos,
-  music,
-  playlists,
-  nowPlaying,
-}
+enum LibraryTab { videos, music, playlists, nowPlaying }
 
 /// ViewModel managing top-level library navigation, global search with debouncing,
 /// folder management, scan status, and player interaction.
@@ -60,6 +55,7 @@ class LibraryViewModel extends ChangeNotifier {
   List<PlaylistRecord> get playlists => _playlists;
 
   Timer? _debounceTimer;
+  int _searchGeneration = 0;
   bool _disposed = false;
 
   // Now Playing exposures from PlayerController
@@ -83,6 +79,7 @@ class LibraryViewModel extends ChangeNotifier {
   /// Updates the search query and schedules a debounced execution.
   void setSearchQuery(String query) {
     _searchQuery = query;
+    final generation = ++_searchGeneration;
     _debounceTimer?.cancel();
 
     final trimmed = query.trim();
@@ -99,16 +96,17 @@ class LibraryViewModel extends ChangeNotifier {
     notifyListeners();
 
     if (searchDebounceDuration == Duration.zero) {
-      unawaited(_executeSearch(trimmed));
+      unawaited(_executeSearch(trimmed, generation));
     } else {
       _debounceTimer = Timer(searchDebounceDuration, () {
-        unawaited(_executeSearch(trimmed));
+        unawaited(_executeSearch(trimmed, generation));
       });
     }
   }
 
   /// Executes a search immediately without debouncing.
   Future<void> search(String query) async {
+    final generation = ++_searchGeneration;
     _debounceTimer?.cancel();
     _searchQuery = query;
     final trimmed = query.trim();
@@ -119,11 +117,12 @@ class LibraryViewModel extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    await _executeSearch(trimmed);
+    await _executeSearch(trimmed, generation);
   }
 
   /// Clears the active search query and results.
   void clearSearch() {
+    _searchGeneration++;
     _debounceTimer?.cancel();
     _searchQuery = '';
     _searchResults = const [];
@@ -132,7 +131,8 @@ class LibraryViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> _executeSearch(String query) async {
+  Future<void> _executeSearch(String query, int generation) async {
+    if (_disposed || generation != _searchGeneration) return;
     _isSearching = true;
     _searchError = null;
     notifyListeners();
@@ -140,14 +140,14 @@ class LibraryViewModel extends ChangeNotifier {
     try {
       final results = await repository.queryMedia(searchQuery: query);
       if (_disposed) return;
-      if (_searchQuery.trim() == query) {
+      if (!_disposed && generation == _searchGeneration) {
         _searchResults = results;
         _isSearching = false;
         notifyListeners();
       }
     } catch (error) {
       if (_disposed) return;
-      if (_searchQuery.trim() == query) {
+      if (!_disposed && generation == _searchGeneration) {
         _searchError = error.toString();
         _isSearching = false;
         notifyListeners();
@@ -182,7 +182,9 @@ class LibraryViewModel extends ChangeNotifier {
   // --- Folder Management ---
 
   Future<void> loadFolders() async {
-    _folders = await repository.getFolders();
+    final folders = await repository.getFolders();
+    if (_disposed) return;
+    _folders = folders;
     _scanStatus = repository.scanStatus;
     notifyListeners();
   }
@@ -199,18 +201,21 @@ class LibraryViewModel extends ChangeNotifier {
 
   Future<void> rescanFolder(String path) async {
     await repository.rescanFolder(path);
+    if (_disposed) return;
     _scanStatus = repository.scanStatus;
     notifyListeners();
   }
 
   Future<void> rescanAll() async {
     await repository.rescanAll();
+    if (_disposed) return;
     _scanStatus = repository.scanStatus;
     notifyListeners();
   }
 
   Future<void> cancelScan() async {
     await repository.cancelScan();
+    if (_disposed) return;
     _scanStatus = repository.scanStatus;
     notifyListeners();
   }
@@ -218,7 +223,9 @@ class LibraryViewModel extends ChangeNotifier {
   // --- Playlists Management ---
 
   Future<void> loadPlaylists() async {
-    _playlists = await repository.getPlaylists();
+    final playlists = await repository.getPlaylists();
+    if (_disposed) return;
+    _playlists = playlists;
     notifyListeners();
   }
 
@@ -255,6 +262,7 @@ class LibraryViewModel extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _searchGeneration++;
     _debounceTimer?.cancel();
     repository.removeListener(_onRepositoryChanged);
     playerController?.removeListener(_onPlayerChanged);

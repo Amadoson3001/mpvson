@@ -4,11 +4,7 @@ import '../theme/library_theme.dart';
 
 /// Reusable docked queue panel for desktop layouts and drawers.
 class DockedQueueWidget extends StatelessWidget {
-  const DockedQueueWidget({
-    super.key,
-    required this.controller,
-    this.onClose,
-  });
+  const DockedQueueWidget({super.key, required this.controller, this.onClose});
 
   final PlayerController controller;
   final VoidCallback? onClose;
@@ -34,11 +30,18 @@ class DockedQueueWidget extends StatelessWidget {
             children: [
               // Header
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
                 color: LibraryTheme.surface,
                 child: Row(
                   children: [
-                    const Icon(Icons.queue_music_rounded, size: 18, color: LibraryTheme.accent),
+                    const Icon(
+                      Icons.queue_music_rounded,
+                      size: 18,
+                      color: LibraryTheme.accent,
+                    ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
@@ -73,8 +76,10 @@ class DockedQueueWidget extends StatelessWidget {
                       )
                     : ListView.separated(
                         itemCount: queue.length,
-                        separatorBuilder: (_, _) =>
-                            const Divider(height: 1, color: LibraryTheme.raisedSurface),
+                        separatorBuilder: (_, _) => const Divider(
+                          height: 1,
+                          color: LibraryTheme.raisedSurface,
+                        ),
                         itemBuilder: (context, index) {
                           final item = queue[index];
                           final isCurrent = index == currentIndex;
@@ -83,7 +88,10 @@ class DockedQueueWidget extends StatelessWidget {
                             onTap: () => controller.playIndex(index),
                             hoverColor: LibraryTheme.hover,
                             child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 8,
+                              ),
                               color: isCurrent
                                   ? LibraryTheme.accent.withValues(alpha: 0.1)
                                   : Colors.transparent,
@@ -99,30 +107,33 @@ class DockedQueueWidget extends StatelessWidget {
                                           )
                                         : Text(
                                             '${index + 1}',
-                                            style: LibraryTheme.metadata.copyWith(
-                                              color: isCurrent
-                                                  ? LibraryTheme.accent
-                                                  : LibraryTheme.mutedText,
-                                            ),
+                                            style: LibraryTheme.metadata
+                                                .copyWith(
+                                                  color: isCurrent
+                                                      ? LibraryTheme.accent
+                                                      : LibraryTheme.mutedText,
+                                                ),
                                           ),
                                   ),
                                   const SizedBox(width: 8),
                                   Expanded(
                                     child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
                                         Text(
                                           item.title,
-                                          style: LibraryTheme.rowPrimary.copyWith(
-                                            fontSize: 13,
-                                            color: isCurrent
-                                                ? LibraryTheme.accent
-                                                : LibraryTheme.primaryText,
-                                            fontWeight: isCurrent
-                                                ? FontWeight.w600
-                                                : FontWeight.normal,
-                                          ),
+                                          style: LibraryTheme.rowPrimary
+                                              .copyWith(
+                                                fontSize: 13,
+                                                color: isCurrent
+                                                    ? LibraryTheme.accent
+                                                    : LibraryTheme.primaryText,
+                                                fontWeight: isCurrent
+                                                    ? FontWeight.w600
+                                                    : FontWeight.normal,
+                                              ),
                                           maxLines: 1,
                                           overflow: TextOverflow.ellipsis,
                                         ),
@@ -130,14 +141,18 @@ class DockedQueueWidget extends StatelessWidget {
                                           const SizedBox(height: 2),
                                           Text(
                                             _formatDuration(item.duration),
-                                            style: LibraryTheme.metadata.copyWith(fontSize: 11),
+                                            style: LibraryTheme.metadata
+                                                .copyWith(fontSize: 11),
                                           ),
                                         ],
                                       ],
                                     ),
                                   ),
                                   IconButton(
-                                    icon: const Icon(Icons.close_rounded, size: 14),
+                                    icon: const Icon(
+                                      Icons.close_rounded,
+                                      size: 14,
+                                    ),
                                     tooltip: 'Remove',
                                     visualDensity: VisualDensity.compact,
                                     color: LibraryTheme.mutedText,

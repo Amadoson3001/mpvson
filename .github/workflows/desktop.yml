@@ -42,8 +42,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libmpv-dev libasound2-dev libepoxy-dev liblzma-dev jq
       - run: flutter pub get --enforce-lockfile
-      - run: dart format --output=none --set-exit-if-changed lib tool
+      - run: dart format --output=none --set-exit-if-changed lib tool test
       - run: flutter analyze
+      - run: flutter test --no-pub --concurrency=1
       - name: Build Windows release
         if: runner.os == 'Windows'
         shell: pwsh

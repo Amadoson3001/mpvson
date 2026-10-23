@@ -5,10 +5,7 @@ import '../theme/library_theme.dart';
 
 /// Modal dialog to create a new playlist.
 class PlaylistCreateDialog extends StatefulWidget {
-  const PlaylistCreateDialog({
-    super.key,
-    required this.repository,
-  });
+  const PlaylistCreateDialog({super.key, required this.repository});
 
   final MediaLibraryRepository repository;
 
@@ -111,7 +108,10 @@ class _PlaylistCreateDialogState extends State<PlaylistCreateDialog> {
                   ),
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(8),
-                    borderSide: const BorderSide(color: LibraryTheme.accent, width: 1.5),
+                    borderSide: const BorderSide(
+                      color: LibraryTheme.accent,
+                      width: 1.5,
+                    ),
                   ),
                   errorBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(8),
@@ -119,7 +119,10 @@ class _PlaylistCreateDialogState extends State<PlaylistCreateDialog> {
                   ),
                   focusedErrorBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(8),
-                    borderSide: const BorderSide(color: LibraryTheme.danger, width: 1.5),
+                    borderSide: const BorderSide(
+                      color: LibraryTheme.danger,
+                      width: 1.5,
+                    ),
                   ),
                 ),
               ),
@@ -128,10 +131,15 @@ class _PlaylistCreateDialogState extends State<PlaylistCreateDialog> {
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
                   TextButton(
-                    onPressed: _isCreating ? null : () => Navigator.of(context).pop(),
+                    onPressed: _isCreating
+                        ? null
+                        : () => Navigator.of(context).pop(),
                     style: TextButton.styleFrom(
                       foregroundColor: LibraryTheme.secondaryText,
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
                     ),
                     child: const Text('Cancel'),
                   ),
@@ -141,7 +149,10 @@ class _PlaylistCreateDialogState extends State<PlaylistCreateDialog> {
                     style: FilledButton.styleFrom(
                       backgroundColor: LibraryTheme.accent,
                       foregroundColor: LibraryTheme.background,
-                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 12,
+                      ),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(8),
                       ),

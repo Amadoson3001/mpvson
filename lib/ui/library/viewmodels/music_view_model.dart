@@ -31,10 +31,7 @@ enum MusicSortField {
 /// ViewModel for browsing and interacting with the music collection, albums,
 /// artists, favorites, recent tracks, and playlists.
 class MusicViewModel extends ChangeNotifier {
-  MusicViewModel({
-    required this.repository,
-    this.playerController,
-  }) {
+  MusicViewModel({required this.repository, this.playerController}) {
     repository.addListener(_onRepositoryChanged);
   }
 
@@ -96,6 +93,8 @@ class MusicViewModel extends ChangeNotifier {
 
   bool _disposed = false;
   bool _customSorting = false;
+  Future<void>? _refreshFuture;
+  bool _refreshAgain = false;
 
   void selectSubtab(MusicSubtab subtab) {
     if (_currentSubtab == subtab) return;
@@ -168,51 +167,77 @@ class MusicViewModel extends ChangeNotifier {
   }
 
   /// Refreshes all music data from the repository.
-  Future<void> refresh() async {
+  Future<void> refresh() {
+    if (_disposed) return Future<void>.value();
+    final activeRefresh = _refreshFuture;
+    if (activeRefresh != null) {
+      _refreshAgain = true;
+      return activeRefresh;
+    }
+    final refresh = _drainRefreshRequests();
+    final tracked = refresh.whenComplete(() {
+      _refreshFuture = null;
+      if (_refreshAgain && !_disposed) {
+        unawaited(this.refresh());
+      }
+    });
+    _refreshFuture = tracked;
+    return tracked;
+  }
+
+  Future<void> _drainRefreshRequests() async {
     _isLoading = true;
     notifyListeners();
 
     try {
-      final results = await Future.wait([
-        repository.queryMedia(kind: MediaKind.audio),
-        repository.getDistinctAlbums(),
-        repository.getDistinctArtists(kind: MediaKind.audio),
-        repository.queryMedia(kind: MediaKind.audio, onlyFavorites: true),
-        repository.queryMedia(
-          kind: MediaKind.audio,
-          sortBy: 'addedAt',
-          ascending: false,
-        ),
-        repository.queryMedia(
-          kind: MediaKind.audio,
-          sortBy: 'lastPlayedAt',
-          ascending: false,
-        ),
-        repository.getPlaylists(),
-      ]);
+      do {
+        _refreshAgain = false;
+        final results = await Future.wait([
+          repository.queryMedia(kind: MediaKind.audio),
+          repository.getDistinctAlbums(),
+          repository.getDistinctArtists(kind: MediaKind.audio),
+          repository.getPlaylists(),
+        ]);
 
-      if (_disposed) return;
+        if (_disposed) return;
 
-      _songs = results[0] as List<MediaItemRecord>;
-      _albums = results[1] as List<String>;
-      _artists = results[2] as List<String>;
-      _favorites = results[3] as List<MediaItemRecord>;
-      _recentlyAdded = results[4] as List<MediaItemRecord>;
-      _recentlyPlayed = (results[5] as List<MediaItemRecord>)
-          .where((s) => s.lastPlayedAt != null)
-          .toList();
-      _playlists = results[6] as List<PlaylistRecord>;
+        _songs = results[0] as List<MediaItemRecord>;
+        _albums = results[1] as List<String>;
+        _artists = results[2] as List<String>;
+        _favorites = _songs.where((song) => song.isFavorite).toList();
+        // Keep the repository ordering on these public collections while
+        // reusing the fetched records instead of querying them again.
+        _recentlyAdded = List<MediaItemRecord>.of(_songs)
+          ..sort((a, b) => b.addedAt.compareTo(a.addedAt));
+        _recentlyPlayed =
+            _songs
+                .where((song) => song.lastPlayedAt != null)
+                .toList(growable: false)
+              ..sort(
+                (a, b) =>
+                    (b.lastPlayedAt ?? DateTime.fromMillisecondsSinceEpoch(0))
+                        .compareTo(
+                          a.lastPlayedAt ??
+                              DateTime.fromMillisecondsSinceEpoch(0),
+                        ),
+              );
+        _playlists = results[3] as List<PlaylistRecord>;
 
-      if (_selectedPlaylist != null) {
-        final currentId = _selectedPlaylist!.id;
-        final updated = _playlists.where((p) => p.id == currentId).firstOrNull;
-        _selectedPlaylist = updated;
-        if (updated != null) {
-          _playlistEntries = await repository.getPlaylistEntries(currentId);
+        if (_selectedPlaylist != null) {
+          final currentId = _selectedPlaylist!.id;
+          final updated = _playlists
+              .where((p) => p.id == currentId)
+              .firstOrNull;
+          _selectedPlaylist = updated;
+          if (updated != null) {
+            _playlistEntries = await repository.getPlaylistEntries(currentId);
+          } else {
+            _playlistEntries = const [];
+          }
         } else {
           _playlistEntries = const [];
         }
-      }
+      } while (_refreshAgain && !_disposed);
     } finally {
       if (!_disposed) {
         _isLoading = false;
@@ -238,22 +263,26 @@ class MusicViewModel extends ChangeNotifier {
         source = _recentlyAdded.isNotEmpty
             ? _recentlyAdded
             : (List<MediaItemRecord>.of(_songs)
-              ..sort((a, b) => b.addedAt.compareTo(a.addedAt)));
+                ..sort((a, b) => b.addedAt.compareTo(a.addedAt)));
         break;
       case MusicSubtab.recentlyPlayed:
         source = _recentlyPlayed.isNotEmpty
             ? _recentlyPlayed
-            : (_songs.where((s) => s.lastPlayedAt != null).toList()
-              ..sort((a, b) =>
-                  (b.lastPlayedAt ?? DateTime.fromMillisecondsSinceEpoch(0))
-                      .compareTo(a.lastPlayedAt ??
-                          DateTime.fromMillisecondsSinceEpoch(0))));
+            : (_songs.where((s) => s.lastPlayedAt != null).toList()..sort(
+                (a, b) =>
+                    (b.lastPlayedAt ?? DateTime.fromMillisecondsSinceEpoch(0))
+                        .compareTo(
+                          a.lastPlayedAt ??
+                              DateTime.fromMillisecondsSinceEpoch(0),
+                        ),
+              ));
         break;
       case MusicSubtab.albums:
         if (_selectedAlbum != null) {
           source = _songs
-              .where((s) =>
-                  s.album.toLowerCase() == _selectedAlbum!.toLowerCase())
+              .where(
+                (s) => s.album.toLowerCase() == _selectedAlbum!.toLowerCase(),
+              )
               .toList();
         } else {
           source = _songs;
@@ -262,8 +291,9 @@ class MusicViewModel extends ChangeNotifier {
       case MusicSubtab.artists:
         if (_selectedArtist != null) {
           source = _songs
-              .where((s) =>
-                  s.artist.toLowerCase() == _selectedArtist!.toLowerCase())
+              .where(
+                (s) => s.artist.toLowerCase() == _selectedArtist!.toLowerCase(),
+              )
               .toList();
         } else {
           source = _songs;
@@ -276,8 +306,7 @@ class MusicViewModel extends ChangeNotifier {
     if (_searchQuery.trim().isNotEmpty) {
       final q = _searchQuery.trim().toLowerCase();
       filtered = filtered.where((item) {
-        final filename =
-            item.path.split(RegExp(r'[\\/]')).last.toLowerCase();
+        final filename = item.path.split(RegExp(r'[\\/]')).last.toLowerCase();
         final title = item.title.toLowerCase();
         final artist = item.artist.toLowerCase();
         final album = item.album.toLowerCase();
@@ -290,23 +319,25 @@ class MusicViewModel extends ChangeNotifier {
 
     if (_selectedArtist != null && _currentSubtab != MusicSubtab.artists) {
       filtered = filtered
-          .where((s) =>
-              s.artist.toLowerCase() == _selectedArtist!.toLowerCase())
+          .where(
+            (s) => s.artist.toLowerCase() == _selectedArtist!.toLowerCase(),
+          )
           .toList();
     }
 
     if (_selectedAlbum != null && _currentSubtab != MusicSubtab.albums) {
       filtered = filtered
-          .where((s) =>
-              s.album.toLowerCase() == _selectedAlbum!.toLowerCase())
+          .where((s) => s.album.toLowerCase() == _selectedAlbum!.toLowerCase())
           .toList();
     }
 
     if (_selectedGenre != null) {
       filtered = filtered
-          .where((s) =>
-              s.metadata.genre?.toLowerCase() ==
-              _selectedGenre!.toLowerCase())
+          .where(
+            (s) =>
+                s.metadata.genre?.toLowerCase() ==
+                _selectedGenre!.toLowerCase(),
+          )
           .toList();
     }
 
@@ -407,17 +438,15 @@ class MusicViewModel extends ChangeNotifier {
   Future<void> playAlbum(dynamic album, {int startIndex = 0}) async {
     List<MediaItemRecord> tracks;
     if (album is String) {
-      tracks = await repository.queryMedia(
-        kind: MediaKind.audio,
-        album: album,
-      );
+      tracks = await repository.queryMedia(kind: MediaKind.audio, album: album);
     } else if (album is List<MediaItemRecord>) {
       tracks = List<MediaItemRecord>.of(album);
     } else {
       return;
     }
 
-    final sortedTracks = List<MediaItemRecord>.of(tracks)..sort(compareAlbumTracks);
+    final sortedTracks = List<MediaItemRecord>.of(tracks)
+      ..sort(compareAlbumTracks);
     final paths = sortedTracks.map((t) => t.path).toList();
     if (paths.isEmpty) return;
 
@@ -431,8 +460,7 @@ class MusicViewModel extends ChangeNotifier {
   Future<void> playAlbumTracks(
     List<MediaItemRecord> tracks, {
     int startIndex = 0,
-  }) =>
-      playAlbum(tracks, startIndex: startIndex);
+  }) => playAlbum(tracks, startIndex: startIndex);
 
   List<String> _extractPaths(dynamic media) {
     if (media is MediaItemRecord) return [media.path];
@@ -534,7 +562,7 @@ class MusicViewModel extends ChangeNotifier {
   }
 
   Future<void> addSongToPlaylist(String playlistId, String mediaId) =>
-    addSongsToPlaylist(playlistId, [mediaId]);
+      addSongsToPlaylist(playlistId, [mediaId]);
 
   Future<void> removeSongFromPlaylist(
     String playlistId,
@@ -575,7 +603,11 @@ class MusicViewModel extends ChangeNotifier {
 
   void _onRepositoryChanged() {
     if (_disposed) return;
-    unawaited(refresh());
+    unawaited(
+      refresh().catchError((Object error, StackTrace _) {
+        debugPrint('Music library refresh failed: $error');
+      }),
+    );
   }
 
   @override

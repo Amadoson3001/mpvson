@@ -3,9 +3,15 @@
 #include <flutter/standard_method_codec.h>
 #include <shellapi.h>
 
+#include <cstddef>
+#include <utility>
+
 #include "utils.h"
 
 namespace {
+constexpr size_t kMaxPipeMessageBytes = 1024 * 1024;
+constexpr size_t kMaxForwardedPaths = 2048;
+constexpr size_t kMaxForwardedPathBytes = 128 * 1024;
 constexpr wchar_t kMutexName[] = L"Local\\Mpvson_SingleInstance_Mutex";
 constexpr wchar_t kPipeName[] = L"\\\\.\\pipe\\Mpvson_SingleInstance_Pipe";
 constexpr wchar_t kWindowClassName[] = L"FLUTTER_RUNNER_WIN32_WINDOW";
@@ -116,6 +122,11 @@ void SingleInstance::ForwardToPrimary(const std::vector<std::wstring>& raw_args)
     // so the primary instance knows an activation occurred.
     std::string payload;
     for (const auto& path : paths) {
+      if (path.size() > kMaxForwardedPathBytes ||
+          payload.size() + path.size() + 1 > kMaxPipeMessageBytes) {
+        ::CloseHandle(pipe);
+        return;
+      }
       payload += path;
       payload += '\n';
     }
@@ -210,7 +221,9 @@ void SingleInstance::StartServer() {
   }
   stopping_ = false;
   stop_event_ = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
-  server_thread_ = std::thread(&SingleInstance::ServerThreadWorker, this);
+  if (stop_event_ != nullptr) {
+    server_thread_ = std::thread(&SingleInstance::ServerThreadWorker, this);
+  }
 }
 
 void SingleInstance::ServerThreadWorker() {
@@ -232,23 +245,36 @@ void SingleInstance::ServerThreadWorker() {
 
     OVERLAPPED overlap = {};
     overlap.hEvent = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (overlap.hEvent == nullptr) {
+      ::CloseHandle(pipe);
+      ::Sleep(200);
+      continue;
+    }
 
     BOOL connected = ::ConnectNamedPipe(pipe, &overlap);
-    if (!connected && ::GetLastError() == ERROR_PIPE_CONNECTED) {
+    DWORD connect_error = connected ? ERROR_SUCCESS : ::GetLastError();
+    if (!connected && connect_error == ERROR_PIPE_CONNECTED) {
       connected = TRUE;
     }
 
-    if (!connected && ::GetLastError() == ERROR_IO_PENDING) {
+    if (!connected && connect_error == ERROR_IO_PENDING) {
       HANDLE events[2] = {stop_event_, overlap.hEvent};
       DWORD wait = ::WaitForMultipleObjects(2, events, FALSE, INFINITE);
       if (wait == WAIT_OBJECT_0) {
         // Stopping
-        ::CancelIo(pipe);
+        ::CancelIoEx(pipe, &overlap);
+        DWORD ignored = 0;
+        ::GetOverlappedResult(pipe, &overlap, &ignored, TRUE);
         ::CloseHandle(overlap.hEvent);
         ::CloseHandle(pipe);
         break;
       } else if (wait == WAIT_OBJECT_0 + 1) {
-        connected = TRUE;
+        DWORD ignored = 0;
+        connected = ::GetOverlappedResult(pipe, &overlap, &ignored, FALSE);
+      } else {
+        ::CancelIoEx(pipe, &overlap);
+        DWORD ignored = 0;
+        ::GetOverlappedResult(pipe, &overlap, &ignored, TRUE);
       }
     }
     ::CloseHandle(overlap.hEvent);
@@ -256,9 +282,55 @@ void SingleInstance::ServerThreadWorker() {
     if (connected && !stopping_) {
       std::string data;
       char buffer[1024];
-      DWORD bytes_read = 0;
-      while (::ReadFile(pipe, buffer, sizeof(buffer), &bytes_read, nullptr) &&
-             bytes_read > 0) {
+      bool valid_message = true;
+      while (!stopping_) {
+        OVERLAPPED read_overlap = {};
+        read_overlap.hEvent = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        if (read_overlap.hEvent == nullptr) {
+          valid_message = false;
+          break;
+        }
+        DWORD bytes_read = 0;
+        BOOL read_ok = ::ReadFile(pipe, buffer, sizeof(buffer), &bytes_read,
+                                  &read_overlap);
+        DWORD read_error = read_ok ? ERROR_SUCCESS : ::GetLastError();
+        if (!read_ok && read_error == ERROR_IO_PENDING) {
+          HANDLE events[2] = {stop_event_, read_overlap.hEvent};
+          const DWORD wait =
+              ::WaitForMultipleObjects(2, events, FALSE, INFINITE);
+          if (wait == WAIT_OBJECT_0) {
+            ::CancelIoEx(pipe, &read_overlap);
+            ::GetOverlappedResult(pipe, &read_overlap, &bytes_read, TRUE);
+            ::CloseHandle(read_overlap.hEvent);
+            valid_message = false;
+            break;
+          }
+          if (wait != WAIT_OBJECT_0 + 1) {
+            ::CancelIoEx(pipe, &read_overlap);
+            ::GetOverlappedResult(pipe, &read_overlap, &bytes_read, TRUE);
+            ::CloseHandle(read_overlap.hEvent);
+            valid_message = false;
+            break;
+          }
+          if (!::GetOverlappedResult(pipe, &read_overlap, &bytes_read, FALSE)) {
+            read_error = ::GetLastError();
+            ::CloseHandle(read_overlap.hEvent);
+            if (read_error != ERROR_BROKEN_PIPE && !stopping_) {
+              valid_message = false;
+            }
+            break;
+          }
+        } else if (!read_ok) {
+          ::CloseHandle(read_overlap.hEvent);
+          if (read_error != ERROR_BROKEN_PIPE) valid_message = false;
+          break;
+        }
+        ::CloseHandle(read_overlap.hEvent);
+        if (bytes_read == 0) break;
+        if (data.size() + bytes_read > kMaxPipeMessageBytes) {
+          valid_message = false;
+          break;
+        }
         data.append(buffer, bytes_read);
       }
 
@@ -267,21 +339,34 @@ void SingleInstance::ServerThreadWorker() {
 
       auto paths = std::make_unique<std::vector<std::string>>();
       size_t start = 0;
-      while (start < data.size()) {
+      while (valid_message && start < data.size()) {
         size_t end = data.find('\n', start);
         if (end == std::string::npos) {
           std::string line = data.substr(start);
-          if (!line.empty()) paths->push_back(line);
+          if (line.size() > kMaxForwardedPathBytes ||
+              paths->size() >= kMaxForwardedPaths) {
+            valid_message = false;
+          } else if (!line.empty()) {
+            paths->push_back(std::move(line));
+          }
           break;
         }
         std::string line = data.substr(start, end - start);
-        if (!line.empty()) paths->push_back(line);
+        if (line.size() > kMaxForwardedPathBytes ||
+            paths->size() >= kMaxForwardedPaths) {
+          valid_message = false;
+          break;
+        }
+        if (!line.empty()) paths->push_back(std::move(line));
         start = end + 1;
       }
 
-      if (window_handle_ != nullptr && !stopping_) {
-        ::PostMessageW(window_handle_, WM_SINGLE_INSTANCE_ACTIVATE, 0,
-                       reinterpret_cast<LPARAM>(paths.release()));
+      if (valid_message && window_handle_ != nullptr && !stopping_) {
+        auto* posted_paths = paths.get();
+        if (::PostMessageW(window_handle_, WM_SINGLE_INSTANCE_ACTIVATE, 0,
+                           reinterpret_cast<LPARAM>(posted_paths))) {
+          paths.release();
+        }
       }
     } else {
       ::CloseHandle(pipe);

@@ -241,7 +241,11 @@ Future<void> main(List<String> arguments) async {
     database: libraryDb,
     probeService: mediaProbeService,
   );
-  unawaited(libraryRepository.initialize());
+  unawaited(
+    _initializeBackgroundService('media library', () async {
+      await libraryRepository.initialize();
+    }),
+  );
 
   final navigatorKey = GlobalKey<NavigatorState>();
 
@@ -251,12 +255,10 @@ Future<void> main(List<String> arguments) async {
         readyController.isPlaying ||
         readyController.hasMedia ||
         readyController.current != null,
-    executePlaybackCommand: ({
-      required List<String> paths,
-      required bool playNow,
-    }) async {
-      await readyController.openPaths(paths, append: !playNow);
-    },
+    executePlaybackCommand:
+        ({required List<String> paths, required bool playNow}) async {
+          await readyController.openPaths(paths, append: !playNow);
+        },
     showPreferenceDialog: () async {
       final context = navigatorKey.currentState?.context;
       if (context == null || !context.mounted) return null;
@@ -270,7 +272,11 @@ Future<void> main(List<String> arguments) async {
     preferences: appPreferences,
     mediaProbeService: mediaProbeService,
   );
-  unawaited(desktopIntegration.initialize());
+  unawaited(
+    _initializeBackgroundService('desktop integration', () async {
+      await desktopIntegration.initialize();
+    }),
+  );
 
   final lifecycle = _DesktopLifecycle(
     controller: readyController,
@@ -342,6 +348,18 @@ Future<void> _showFallbackWindow() async {
   } on Object {
     // If the window plugin itself failed, Flutter's fallback still remains
     // available to the platform runner rather than masking the startup error.
+  }
+}
+
+Future<void> _initializeBackgroundService(
+  String serviceName,
+  Future<void> Function() initialize,
+) async {
+  try {
+    await initialize();
+  } on Object catch (error, stackTrace) {
+    stderr.writeln('Could not initialize $serviceName: $error');
+    stderr.writeln(stackTrace);
   }
 }
 

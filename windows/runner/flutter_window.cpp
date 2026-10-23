@@ -117,6 +117,11 @@ void FlutterWindow::OnDestroy() {
   }
   if (single_instance_) {
     single_instance_->CleanUp();
+    MSG pending = {};
+    while (::PeekMessageW(&pending, GetHandle(), WM_SINGLE_INSTANCE_ACTIVATE,
+                          WM_SINGLE_INSTANCE_ACTIVATE, PM_REMOVE)) {
+      delete reinterpret_cast<std::vector<std::string>*>(pending.lParam);
+    }
     single_instance_ = nullptr;
   }
 
@@ -146,15 +151,14 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
     case WM_FONTCHANGE:
       flutter_controller_->engine()->ReloadSystemFonts();
       break;
-    case WM_SINGLE_INSTANCE_ACTIVATE:
-      if (single_instance_) {
-        auto* paths = reinterpret_cast<std::vector<std::string>*>(lparam);
-        if (paths != nullptr) {
-          single_instance_->HandleActivate(*paths);
-          delete paths;
-        }
+    case WM_SINGLE_INSTANCE_ACTIVATE: {
+      std::unique_ptr<std::vector<std::string>> paths(
+          reinterpret_cast<std::vector<std::string>*>(lparam));
+      if (single_instance_ && paths != nullptr) {
+        single_instance_->HandleActivate(*paths);
       }
       return 0;
+    }
     case WM_SMTC_BUTTON_PRESS:
       if (system_media_transport_) {
         system_media_transport_->HandleButtonPress(static_cast<int>(wparam));

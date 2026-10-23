@@ -27,7 +27,9 @@ class ProbeResult {
 }
 
 class ProbeCancelledException implements Exception {
-  const ProbeCancelledException([this.message = 'Probe operation was cancelled']);
+  const ProbeCancelledException([
+    this.message = 'Probe operation was cancelled',
+  ]);
   final String message;
 
   @override

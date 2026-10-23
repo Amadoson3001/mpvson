@@ -30,7 +30,9 @@ class DesktopPreferences {
     bool? keepAwakeDuringPlayback,
   }) {
     return DesktopPreferences(
-      openBehavior: clearOpenBehavior ? null : (openBehavior ?? this.openBehavior),
+      openBehavior: clearOpenBehavior
+          ? null
+          : (openBehavior ?? this.openBehavior),
       keepAwakeDuringPlayback:
           keepAwakeDuringPlayback ?? this.keepAwakeDuringPlayback,
     );
@@ -62,7 +64,7 @@ class DesktopPreferences {
 /// Repository that manages app-level desktop & opening preferences independently of playback session.
 class AppPreferencesRepository extends ChangeNotifier {
   AppPreferencesRepository({File? preferenceFile})
-      : _customFile = preferenceFile;
+    : _customFile = preferenceFile;
 
   final File? _customFile;
   DesktopPreferences _preferences = const DesktopPreferences();
@@ -114,6 +116,8 @@ class AppPreferencesRepository extends ChangeNotifier {
   }
 
   Future<void> setKeepAwake(bool keepAwake) async {
-    await updatePreferences(_preferences.copyWith(keepAwakeDuringPlayback: keepAwake));
+    await updatePreferences(
+      _preferences.copyWith(keepAwakeDuringPlayback: keepAwake),
+    );
   }
 }

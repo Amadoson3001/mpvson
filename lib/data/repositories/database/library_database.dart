@@ -141,6 +141,8 @@ class LibraryDatabase {
   final Map<int, Completer<dynamic>> _pendingRequests =
       <int, Completer<dynamic>>{};
   bool _isClosed = false;
+  bool _isClosing = false;
+  Future<void>? _closeFuture;
 
   /// Whether the database isolate connection is closed.
   bool get isClosed => _isClosed;
@@ -223,7 +225,7 @@ class LibraryDatabase {
   }
 
   Future<T> _send<T>(String action, [Object? params]) {
-    if (_isClosed) {
+    if (_isClosed || (_isClosing && action != 'close')) {
       throw StateError('LibraryDatabase is closed.');
     }
     final requestId = _nextRequestId++;
@@ -603,15 +605,19 @@ class LibraryDatabase {
   // ---------------------------------------------------------------------------
 
   /// Shuts down the database isolate and releases resources.
-  Future<void> close() async {
+  Future<void> close() => _closeFuture ??= _close();
+
+  Future<void> _close() async {
     if (_isClosed) return;
-    _isClosed = true;
+    _isClosing = true;
 
     try {
       await _send<dynamic>('close');
     } catch (_) {
       // Isolate may have already exited.
     } finally {
+      _isClosed = true;
+      _isClosing = false;
       await _responseSubscription?.cancel();
       await _exitSubscription?.cancel();
       _responsePort.close();

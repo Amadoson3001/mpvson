@@ -21,13 +21,13 @@ class InMemoryMediaLibraryRepository extends MediaLibraryRepository {
     List<PlaylistRecord>? initialPlaylists,
     Map<String, List<PlaylistEntryRecord>>? initialPlaylistEntries,
     LibraryScanStatus? initialScanStatus,
-  })  : _folders = List<LibraryFolderRecord>.from(initialFolders ?? const []),
-        _items = List<MediaItemRecord>.from(initialItems ?? const []),
-        _playlists = List<PlaylistRecord>.from(initialPlaylists ?? const []),
-        _playlistEntries = Map<String, List<PlaylistEntryRecord>>.from(
-          initialPlaylistEntries ?? const {},
-        ),
-        _scanStatus = initialScanStatus ?? const LibraryScanStatus();
+  }) : _folders = List<LibraryFolderRecord>.from(initialFolders ?? const []),
+       _items = List<MediaItemRecord>.from(initialItems ?? const []),
+       _playlists = List<PlaylistRecord>.from(initialPlaylists ?? const []),
+       _playlistEntries = Map<String, List<PlaylistEntryRecord>>.from(
+         initialPlaylistEntries ?? const {},
+       ),
+       _scanStatus = initialScanStatus ?? const LibraryScanStatus();
 
   final List<LibraryFolderRecord> _folders;
   final List<MediaItemRecord> _items;
@@ -117,7 +117,9 @@ class InMemoryMediaLibraryRepository extends MediaLibraryRepository {
     required int fileSize,
     required DateTime modifiedAt,
   }) async {
-    final index = _items.indexWhere((i) => i.canonicalSource == canonicalSource);
+    final index = _items.indexWhere(
+      (i) => i.canonicalSource == canonicalSource,
+    );
     if (index >= 0) {
       _items[index] = _items[index].copyWith(
         kind: kind,
@@ -152,11 +154,15 @@ class InMemoryMediaLibraryRepository extends MediaLibraryRepository {
     }
 
     if (artist != null && artist.isNotEmpty) {
-      result = result.where((item) => item.artist.toLowerCase() == artist.toLowerCase()).toList();
+      result = result
+          .where((item) => item.artist.toLowerCase() == artist.toLowerCase())
+          .toList();
     }
 
     if (album != null && album.isNotEmpty) {
-      result = result.where((item) => item.album.toLowerCase() == album.toLowerCase()).toList();
+      result = result
+          .where((item) => item.album.toLowerCase() == album.toLowerCase())
+          .toList();
     }
 
     if (searchQuery != null && searchQuery.trim().isNotEmpty) {
@@ -166,7 +172,10 @@ class InMemoryMediaLibraryRepository extends MediaLibraryRepository {
         final art = item.artist.toLowerCase();
         final alb = item.album.toLowerCase();
         final path = item.path.toLowerCase();
-        return title.contains(q) || art.contains(q) || alb.contains(q) || path.contains(q);
+        return title.contains(q) ||
+            art.contains(q) ||
+            alb.contains(q) ||
+            path.contains(q);
       }).toList();
     }
 
@@ -178,7 +187,9 @@ class InMemoryMediaLibraryRepository extends MediaLibraryRepository {
             comparison = a.title.toLowerCase().compareTo(b.title.toLowerCase());
             break;
           case 'artist':
-            comparison = a.artist.toLowerCase().compareTo(b.artist.toLowerCase());
+            comparison = a.artist.toLowerCase().compareTo(
+              b.artist.toLowerCase(),
+            );
             break;
           case 'album':
             comparison = a.album.toLowerCase().compareTo(b.album.toLowerCase());
@@ -193,16 +204,22 @@ class InMemoryMediaLibraryRepository extends MediaLibraryRepository {
             comparison = a.addedAt.compareTo(b.addedAt);
             break;
           case 'lastPlayedAt':
-            final aTime = a.lastPlayedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
-            final bTime = b.lastPlayedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+            final aTime =
+                a.lastPlayedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+            final bTime =
+                b.lastPlayedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
             comparison = aTime.compareTo(bTime);
             break;
           case 'trackNumber':
-            final discCompare = (a.metadata.discNumber ?? 1).compareTo(b.metadata.discNumber ?? 1);
+            final discCompare = (a.metadata.discNumber ?? 1).compareTo(
+              b.metadata.discNumber ?? 1,
+            );
             if (discCompare != 0) {
               comparison = discCompare;
             } else {
-              comparison = (a.metadata.trackNumber ?? 0).compareTo(b.metadata.trackNumber ?? 0);
+              comparison = (a.metadata.trackNumber ?? 0).compareTo(
+                b.metadata.trackNumber ?? 0,
+              );
             }
             break;
           default:
@@ -227,7 +244,9 @@ class InMemoryMediaLibraryRepository extends MediaLibraryRepository {
   }
 
   @override
-  Future<MediaItemRecord?> getMediaByCanonicalSource(String canonicalSource) async {
+  Future<MediaItemRecord?> getMediaByCanonicalSource(
+    String canonicalSource,
+  ) async {
     return _items.firstWhereOrNull((i) => i.canonicalSource == canonicalSource);
   }
 
@@ -247,7 +266,9 @@ class InMemoryMediaLibraryRepository extends MediaLibraryRepository {
 
   @override
   Future<void> recordPlayback(String canonicalSource) async {
-    final index = _items.indexWhere((i) => i.canonicalSource == canonicalSource);
+    final index = _items.indexWhere(
+      (i) => i.canonicalSource == canonicalSource,
+    );
     if (index >= 0) {
       _items[index] = _items[index].copyWith(
         lastPlayedAt: DateTime.now(),
@@ -299,7 +320,10 @@ class InMemoryMediaLibraryRepository extends MediaLibraryRepository {
 
   @override
   Future<void> addToPlaylist(String playlistId, List<String> mediaIds) async {
-    final list = _playlistEntries.putIfAbsent(playlistId, () => <PlaylistEntryRecord>[]);
+    final list = _playlistEntries.putIfAbsent(
+      playlistId,
+      () => <PlaylistEntryRecord>[],
+    );
     final now = DateTime.now();
     for (final mediaId in mediaIds) {
       final media = _items.firstWhereOrNull((i) => i.id == mediaId);
@@ -324,7 +348,10 @@ class InMemoryMediaLibraryRepository extends MediaLibraryRepository {
   }
 
   @override
-  Future<void> removeFromPlaylist(String playlistId, String playlistEntryId) async {
+  Future<void> removeFromPlaylist(
+    String playlistId,
+    String playlistEntryId,
+  ) async {
     final list = _playlistEntries[playlistId];
     if (list != null) {
       list.removeWhere((e) => e.id == playlistEntryId);
@@ -343,9 +370,17 @@ class InMemoryMediaLibraryRepository extends MediaLibraryRepository {
   }
 
   @override
-  Future<void> reorderPlaylist(String playlistId, int oldIndex, int newIndex) async {
+  Future<void> reorderPlaylist(
+    String playlistId,
+    int oldIndex,
+    int newIndex,
+  ) async {
     final list = _playlistEntries[playlistId];
-    if (list != null && oldIndex >= 0 && oldIndex < list.length && newIndex >= 0 && newIndex <= list.length) {
+    if (list != null &&
+        oldIndex >= 0 &&
+        oldIndex < list.length &&
+        newIndex >= 0 &&
+        newIndex <= list.length) {
       if (newIndex > oldIndex) newIndex--;
       final item = list.removeAt(oldIndex);
       list.insert(newIndex, item);
@@ -357,7 +392,9 @@ class InMemoryMediaLibraryRepository extends MediaLibraryRepository {
   }
 
   @override
-  Future<List<PlaylistEntryRecord>> getPlaylistEntries(String playlistId) async {
+  Future<List<PlaylistEntryRecord>> getPlaylistEntries(
+    String playlistId,
+  ) async {
     final list = _playlistEntries[playlistId] ?? const <PlaylistEntryRecord>[];
     return List.unmodifiable(list);
   }
@@ -379,7 +416,10 @@ class InMemoryMediaLibraryRepository extends MediaLibraryRepository {
   }
 
   @override
-  Future<void> markFolderAvailability(String folderPath, bool isAvailable) async {
+  Future<void> markFolderAvailability(
+    String folderPath,
+    bool isAvailable,
+  ) async {
     final fIndex = _folders.indexWhere((f) => f.path == folderPath);
     if (fIndex >= 0) {
       _folders[fIndex] = _folders[fIndex].copyWith(isAvailable: isAvailable);
@@ -394,34 +434,40 @@ class InMemoryMediaLibraryRepository extends MediaLibraryRepository {
 
   @override
   Future<void> rescanFolder(String folderPath) async {
-    setScanStatus(LibraryScanStatus(
-      phase: ScanPhase.discovering,
-      currentFolder: folderPath,
-      discoveredCount: _items.length,
-      enrichedCount: _items.length,
-      totalToEnrich: _items.length,
-    ));
+    setScanStatus(
+      LibraryScanStatus(
+        phase: ScanPhase.discovering,
+        currentFolder: folderPath,
+        discoveredCount: _items.length,
+        enrichedCount: _items.length,
+        totalToEnrich: _items.length,
+      ),
+    );
     await Future<void>.delayed(const Duration(milliseconds: 50));
-    setScanStatus(LibraryScanStatus(
-      phase: ScanPhase.enriching,
-      currentFolder: folderPath,
-      discoveredCount: _items.length,
-      enrichedCount: _items.length,
-      totalToEnrich: _items.length,
-    ));
+    setScanStatus(
+      LibraryScanStatus(
+        phase: ScanPhase.enriching,
+        currentFolder: folderPath,
+        discoveredCount: _items.length,
+        enrichedCount: _items.length,
+        totalToEnrich: _items.length,
+      ),
+    );
     await Future<void>.delayed(const Duration(milliseconds: 50));
     setScanStatus(const LibraryScanStatus(phase: ScanPhase.idle));
   }
 
   @override
   Future<void> rescanAll() async {
-    setScanStatus(LibraryScanStatus(
-      phase: ScanPhase.discovering,
-      currentFolder: _folders.isNotEmpty ? _folders.first.path : null,
-      discoveredCount: _items.length,
-      enrichedCount: _items.length,
-      totalToEnrich: _items.length,
-    ));
+    setScanStatus(
+      LibraryScanStatus(
+        phase: ScanPhase.discovering,
+        currentFolder: _folders.isNotEmpty ? _folders.first.path : null,
+        discoveredCount: _items.length,
+        enrichedCount: _items.length,
+        totalToEnrich: _items.length,
+      ),
+    );
     await Future<void>.delayed(const Duration(milliseconds: 50));
     setScanStatus(const LibraryScanStatus(phase: ScanPhase.idle));
   }

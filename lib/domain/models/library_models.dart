@@ -5,13 +5,7 @@ import 'media_metadata.dart';
 export 'media_kind.dart';
 export 'media_metadata.dart';
 
-enum ScanPhase {
-  idle,
-  discovering,
-  enriching,
-  reconciling,
-  error,
-}
+enum ScanPhase { idle, discovering, enriching, reconciling, error }
 
 @immutable
 class LibraryScanStatus {

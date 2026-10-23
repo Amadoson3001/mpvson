@@ -231,8 +231,9 @@ That does not disable mpv engine updates.
 ## Development and checks
 
 ```sh
-dart format lib tool
+dart format lib tool test
 flutter analyze
+flutter test --no-pub --concurrency=1
 ```
 
 ### Release builds and engine verification
@@ -255,7 +256,7 @@ flutter build linux --release --target=lib/main.dart
 
 Engine provenance verification (`tool/engine_provenance.dart verify`) checks the pinned engine archive, SHA-256 digest, and license against `packaging/windows/engine-provenance.json`. The `inventory` command records the engine version, ffmpeg version, and build components for distribution.
 
-The desktop workflow in `.github/workflows/desktop.yml` validates code formatting and static analysis, builds Windows x64 and Linux x64 release binaries, verifies engine provenance and inventory, and packages release distribution archives (`dist/mpvson-windows-x64.zip` and `dist/mpvson-linux-x64.tar.gz`) along with SHA-256 checksums.
+The desktop workflow in `.github/workflows/desktop.yml` validates formatting, static analysis, and tests before building Windows x64 and Linux x64 release binaries. It also verifies engine provenance and inventory, then packages release distribution archives (`dist/mpvson-windows-x64.zip` and `dist/mpvson-linux-x64.tar.gz`) with SHA-256 checksums.
 
 The code uses MVVM with injected playback and session services. App controls use Flutter widgets and focus handling; mpv owns decoding, audio/video synchronization, subtitle rendering, and GPU video output. UI controls do not use mpv's ASS renderer.
 

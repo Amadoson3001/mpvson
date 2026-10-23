@@ -58,7 +58,9 @@ class OpenPreferenceDialog extends StatelessWidget {
                 ),
               ),
               onPressed: () {
-                Navigator.of(context).pop(OpenBehaviorPreference.keepPlayingAndEnqueue);
+                Navigator.of(
+                  context,
+                ).pop(OpenBehaviorPreference.keepPlayingAndEnqueue);
               },
               child: const Text(
                 'Keep playing and add to queue',
@@ -76,7 +78,9 @@ class OpenPreferenceDialog extends StatelessWidget {
                 ),
               ),
               onPressed: () {
-                Navigator.of(context).pop(OpenBehaviorPreference.playNewFilesNow);
+                Navigator.of(
+                  context,
+                ).pop(OpenBehaviorPreference.playNewFilesNow);
               },
               child: const Text(
                 'Play new files now',
