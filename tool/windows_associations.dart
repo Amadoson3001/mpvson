@@ -108,8 +108,10 @@ Future<String?> getRegisteredExecutable() async {
     if (result.exitCode != 0) return null;
 
     final output = result.stdout as String;
-    final match = RegExp(r'REG_SZ\s+"?([^"]+mpvson\.exe)"?', caseSensitive: false)
-        .firstMatch(output);
+    final match = RegExp(
+      r'REG_SZ\s+"?([^"]+mpvson\.exe)"?',
+      caseSensitive: false,
+    ).firstMatch(output);
     if (match != null) {
       return p.canonicalize(match.group(1)!);
     }
@@ -142,9 +144,11 @@ void notifyShellAssociationChange() {
   if (!Platform.isWindows) return;
   try {
     final shell32 = DynamicLibrary.open('shell32.dll');
-    final shChangeNotify = shell32.lookupFunction<
-        Void Function(Int32, Uint32, IntPtr, IntPtr),
-        void Function(int, int, int, int)>('SHChangeNotify');
+    final shChangeNotify = shell32
+        .lookupFunction<
+          Void Function(Int32, Uint32, IntPtr, IntPtr),
+          void Function(int, int, int, int)
+        >('SHChangeNotify');
     // SHCNE_ASSOCCHANGED = 0x08000000, SHCNF_IDLIST = 0
     shChangeNotify(0x08000000, 0, 0, 0);
   } catch (e) {
@@ -179,304 +183,400 @@ Future<bool> registerAssociations({
   stdout.writeln('Registering associations for: $targetExe');
 
   // 1. HKCU\Software\Classes\Mpvson.AssocFile ProgID
-  await runReg([
-    'add',
-    r'HKCU\Software\Classes\' + progId,
-    '/ve',
-    '/t',
-    'REG_SZ',
-    '/d',
-    progIdFriendlyName,
-    '/f',
-  ], dryRun: dryRun, verbose: verbose);
+  await runReg(
+    [
+      'add',
+      r'HKCU\Software\Classes\' + progId,
+      '/ve',
+      '/t',
+      'REG_SZ',
+      '/d',
+      progIdFriendlyName,
+      '/f',
+    ],
+    dryRun: dryRun,
+    verbose: verbose,
+  );
 
-  await runReg([
-    'add',
-    r'HKCU\Software\Classes\' + progId,
-    '/v',
-    'FriendlyTypeName',
-    '/t',
-    'REG_SZ',
-    '/d',
-    progIdFriendlyName,
-    '/f',
-  ], dryRun: dryRun, verbose: verbose);
+  await runReg(
+    [
+      'add',
+      r'HKCU\Software\Classes\' + progId,
+      '/v',
+      'FriendlyTypeName',
+      '/t',
+      'REG_SZ',
+      '/d',
+      progIdFriendlyName,
+      '/f',
+    ],
+    dryRun: dryRun,
+    verbose: verbose,
+  );
 
-  await runReg([
-    'add',
-    r'HKCU\Software\Classes\' + progId + r'\DefaultIcon',
-    '/ve',
-    '/t',
-    'REG_SZ',
-    '/d',
-    '"$targetExe",0',
-    '/f',
-  ], dryRun: dryRun, verbose: verbose);
+  await runReg(
+    [
+      'add',
+      r'HKCU\Software\Classes\' + progId + r'\DefaultIcon',
+      '/ve',
+      '/t',
+      'REG_SZ',
+      '/d',
+      '"$targetExe",0',
+      '/f',
+    ],
+    dryRun: dryRun,
+    verbose: verbose,
+  );
 
-  await runReg([
-    'add',
-    r'HKCU\Software\Classes\' + progId + r'\shell',
-    '/ve',
-    '/t',
-    'REG_SZ',
-    '/d',
-    'open',
-    '/f',
-  ], dryRun: dryRun, verbose: verbose);
+  await runReg(
+    [
+      'add',
+      r'HKCU\Software\Classes\' + progId + r'\shell',
+      '/ve',
+      '/t',
+      'REG_SZ',
+      '/d',
+      'open',
+      '/f',
+    ],
+    dryRun: dryRun,
+    verbose: verbose,
+  );
 
-  await runReg([
-    'add',
-    r'HKCU\Software\Classes\' + progId + r'\shell\open',
-    '/ve',
-    '/t',
-    'REG_SZ',
-    '/d',
-    '&Play with Mpvson',
-    '/f',
-  ], dryRun: dryRun, verbose: verbose);
+  await runReg(
+    [
+      'add',
+      r'HKCU\Software\Classes\' + progId + r'\shell\open',
+      '/ve',
+      '/t',
+      'REG_SZ',
+      '/d',
+      '&Play with Mpvson',
+      '/f',
+    ],
+    dryRun: dryRun,
+    verbose: verbose,
+  );
 
-  await runReg([
-    'add',
-    r'HKCU\Software\Classes\' + progId + r'\shell\open',
-    '/v',
-    'Icon',
-    '/t',
-    'REG_SZ',
-    '/d',
-    '"$targetExe",0',
-    '/f',
-  ], dryRun: dryRun, verbose: verbose);
+  await runReg(
+    [
+      'add',
+      r'HKCU\Software\Classes\' + progId + r'\shell\open',
+      '/v',
+      'Icon',
+      '/t',
+      'REG_SZ',
+      '/d',
+      '"$targetExe",0',
+      '/f',
+    ],
+    dryRun: dryRun,
+    verbose: verbose,
+  );
 
-  await runReg([
-    'add',
-    r'HKCU\Software\Classes\' + progId + r'\shell\open\command',
-    '/ve',
-    '/t',
-    'REG_SZ',
-    '/d',
-    '"$targetExe" "%1"',
-    '/f',
-  ], dryRun: dryRun, verbose: verbose);
+  await runReg(
+    [
+      'add',
+      r'HKCU\Software\Classes\' + progId + r'\shell\open\command',
+      '/ve',
+      '/t',
+      'REG_SZ',
+      '/d',
+      '"$targetExe" "%1"',
+      '/f',
+    ],
+    dryRun: dryRun,
+    verbose: verbose,
+  );
 
   // Enqueue command
-  await runReg([
-    'add',
-    r'HKCU\Software\Classes\' + progId + r'\shell\enqueue',
-    '/ve',
-    '/t',
-    'REG_SZ',
-    '/d',
-    'Add to &queue',
-    '/f',
-  ], dryRun: dryRun, verbose: verbose);
+  await runReg(
+    [
+      'add',
+      r'HKCU\Software\Classes\' + progId + r'\shell\enqueue',
+      '/ve',
+      '/t',
+      'REG_SZ',
+      '/d',
+      'Add to &queue',
+      '/f',
+    ],
+    dryRun: dryRun,
+    verbose: verbose,
+  );
 
-  await runReg([
-    'add',
-    r'HKCU\Software\Classes\' + progId + r'\shell\enqueue',
-    '/v',
-    'Icon',
-    '/t',
-    'REG_SZ',
-    '/d',
-    '"$targetExe",0',
-    '/f',
-  ], dryRun: dryRun, verbose: verbose);
+  await runReg(
+    [
+      'add',
+      r'HKCU\Software\Classes\' + progId + r'\shell\enqueue',
+      '/v',
+      'Icon',
+      '/t',
+      'REG_SZ',
+      '/d',
+      '"$targetExe",0',
+      '/f',
+    ],
+    dryRun: dryRun,
+    verbose: verbose,
+  );
 
-  await runReg([
-    'add',
-    r'HKCU\Software\Classes\' + progId + r'\shell\enqueue\command',
-    '/ve',
-    '/t',
-    'REG_SZ',
-    '/d',
-    '"$targetExe" --enqueue "%1"',
-    '/f',
-  ], dryRun: dryRun, verbose: verbose);
+  await runReg(
+    [
+      'add',
+      r'HKCU\Software\Classes\' + progId + r'\shell\enqueue\command',
+      '/ve',
+      '/t',
+      'REG_SZ',
+      '/d',
+      '"$targetExe" --enqueue "%1"',
+      '/f',
+    ],
+    dryRun: dryRun,
+    verbose: verbose,
+  );
 
   // 2. HKCU\Software\Classes\Applications\mpvson.exe
   final appExeKey = r'HKCU\Software\Classes\Applications\mpvson.exe';
-  await runReg([
-    'add',
-    appExeKey,
-    '/v',
-    'FriendlyAppName',
-    '/t',
-    'REG_SZ',
-    '/d',
-    appName,
-    '/f',
-  ], dryRun: dryRun, verbose: verbose);
-
-  await runReg([
-    'add',
-    '$appExeKey\\DefaultIcon',
-    '/ve',
-    '/t',
-    'REG_SZ',
-    '/d',
-    '"$targetExe",0',
-    '/f',
-  ], dryRun: dryRun, verbose: verbose);
-
-  await runReg([
-    'add',
-    '$appExeKey\\shell\\open\\command',
-    '/ve',
-    '/t',
-    'REG_SZ',
-    '/d',
-    '"$targetExe" "%1"',
-    '/f',
-  ], dryRun: dryRun, verbose: verbose);
-
-  await runReg([
-    'add',
-    '$appExeKey\\shell\\enqueue',
-    '/ve',
-    '/t',
-    'REG_SZ',
-    '/d',
-    'Add to queue',
-    '/f',
-  ], dryRun: dryRun, verbose: verbose);
-
-  await runReg([
-    'add',
-    '$appExeKey\\shell\\enqueue',
-    '/v',
-    'Icon',
-    '/t',
-    'REG_SZ',
-    '/d',
-    '"$targetExe",0',
-    '/f',
-  ], dryRun: dryRun, verbose: verbose);
-
-  await runReg([
-    'add',
-    '$appExeKey\\shell\\enqueue\\command',
-    '/ve',
-    '/t',
-    'REG_SZ',
-    '/d',
-    '"$targetExe" --enqueue "%1"',
-    '/f',
-  ], dryRun: dryRun, verbose: verbose);
-
-  for (final ext in MediaCatalog.supportedExtensions) {
-    await runReg([
+  await runReg(
+    [
       'add',
-      '$appExeKey\\SupportedTypes',
+      appExeKey,
       '/v',
-      '.$ext',
+      'FriendlyAppName',
       '/t',
       'REG_SZ',
       '/d',
-      '',
+      appName,
       '/f',
-    ], dryRun: dryRun, verbose: verbose);
+    ],
+    dryRun: dryRun,
+    verbose: verbose,
+  );
+
+  await runReg(
+    [
+      'add',
+      '$appExeKey\\DefaultIcon',
+      '/ve',
+      '/t',
+      'REG_SZ',
+      '/d',
+      '"$targetExe",0',
+      '/f',
+    ],
+    dryRun: dryRun,
+    verbose: verbose,
+  );
+
+  await runReg(
+    [
+      'add',
+      '$appExeKey\\shell\\open\\command',
+      '/ve',
+      '/t',
+      'REG_SZ',
+      '/d',
+      '"$targetExe" "%1"',
+      '/f',
+    ],
+    dryRun: dryRun,
+    verbose: verbose,
+  );
+
+  await runReg(
+    [
+      'add',
+      '$appExeKey\\shell\\enqueue',
+      '/ve',
+      '/t',
+      'REG_SZ',
+      '/d',
+      'Add to queue',
+      '/f',
+    ],
+    dryRun: dryRun,
+    verbose: verbose,
+  );
+
+  await runReg(
+    [
+      'add',
+      '$appExeKey\\shell\\enqueue',
+      '/v',
+      'Icon',
+      '/t',
+      'REG_SZ',
+      '/d',
+      '"$targetExe",0',
+      '/f',
+    ],
+    dryRun: dryRun,
+    verbose: verbose,
+  );
+
+  await runReg(
+    [
+      'add',
+      '$appExeKey\\shell\\enqueue\\command',
+      '/ve',
+      '/t',
+      'REG_SZ',
+      '/d',
+      '"$targetExe" --enqueue "%1"',
+      '/f',
+    ],
+    dryRun: dryRun,
+    verbose: verbose,
+  );
+
+  for (final ext in MediaCatalog.supportedExtensions) {
+    await runReg(
+      [
+        'add',
+        '$appExeKey\\SupportedTypes',
+        '/v',
+        '.$ext',
+        '/t',
+        'REG_SZ',
+        '/d',
+        '',
+        '/f',
+      ],
+      dryRun: dryRun,
+      verbose: verbose,
+    );
   }
 
   // 3. Registered Applications & Capabilities
-  await runReg([
-    'add',
-    r'HKCU\Software\RegisteredApplications',
-    '/v',
-    appName,
-    '/t',
-    'REG_SZ',
-    '/d',
-    r'Software\' + appName + r'\Capabilities',
-    '/f',
-  ], dryRun: dryRun, verbose: verbose);
-
-  final capKey = r'HKCU\Software\' + appName + r'\Capabilities';
-  await runReg([
-    'add',
-    capKey,
-    '/v',
-    'ApplicationName',
-    '/t',
-    'REG_SZ',
-    '/d',
-    appName,
-    '/f',
-  ], dryRun: dryRun, verbose: verbose);
-
-  await runReg([
-    'add',
-    capKey,
-    '/v',
-    'ApplicationDescription',
-    '/t',
-    'REG_SZ',
-    '/d',
-    appDescription,
-    '/f',
-  ], dryRun: dryRun, verbose: verbose);
-
-  await runReg([
-    'add',
-    capKey,
-    '/v',
-    'ApplicationIcon',
-    '/t',
-    'REG_SZ',
-    '/d',
-    '"$targetExe",0',
-    '/f',
-  ], dryRun: dryRun, verbose: verbose);
-
-  for (final ext in MediaCatalog.supportedExtensions) {
-    await runReg([
+  await runReg(
+    [
       'add',
-      '$capKey\\FileAssociations',
+      r'HKCU\Software\RegisteredApplications',
       '/v',
-      '.$ext',
+      appName,
       '/t',
       'REG_SZ',
       '/d',
-      progId,
+      r'Software\' + appName + r'\Capabilities',
       '/f',
-    ], dryRun: dryRun, verbose: verbose);
+    ],
+    dryRun: dryRun,
+    verbose: verbose,
+  );
+
+  final capKey = r'HKCU\Software\' + appName + r'\Capabilities';
+  await runReg(
+    [
+      'add',
+      capKey,
+      '/v',
+      'ApplicationName',
+      '/t',
+      'REG_SZ',
+      '/d',
+      appName,
+      '/f',
+    ],
+    dryRun: dryRun,
+    verbose: verbose,
+  );
+
+  await runReg(
+    [
+      'add',
+      capKey,
+      '/v',
+      'ApplicationDescription',
+      '/t',
+      'REG_SZ',
+      '/d',
+      appDescription,
+      '/f',
+    ],
+    dryRun: dryRun,
+    verbose: verbose,
+  );
+
+  await runReg(
+    [
+      'add',
+      capKey,
+      '/v',
+      'ApplicationIcon',
+      '/t',
+      'REG_SZ',
+      '/d',
+      '"$targetExe",0',
+      '/f',
+    ],
+    dryRun: dryRun,
+    verbose: verbose,
+  );
+
+  for (final ext in MediaCatalog.supportedExtensions) {
+    await runReg(
+      [
+        'add',
+        '$capKey\\FileAssociations',
+        '/v',
+        '.$ext',
+        '/t',
+        'REG_SZ',
+        '/d',
+        progId,
+        '/f',
+      ],
+      dryRun: dryRun,
+      verbose: verbose,
+    );
   }
 
   for (final entry in MediaCatalog.extensionToMimeType.entries) {
-    await runReg([
-      'add',
-      '$capKey\\MIMEAssociations',
-      '/v',
-      entry.value,
-      '/t',
-      'REG_SZ',
-      '/d',
-      progId,
-      '/f',
-    ], dryRun: dryRun, verbose: verbose);
+    await runReg(
+      [
+        'add',
+        '$capKey\\MIMEAssociations',
+        '/v',
+        entry.value,
+        '/t',
+        'REG_SZ',
+        '/d',
+        progId,
+        '/f',
+      ],
+      dryRun: dryRun,
+      verbose: verbose,
+    );
   }
 
   // 4. File extension associations under HKCU\Software\Classes\.ext
   for (final ext in MediaCatalog.supportedExtensions) {
     final extKey = r'HKCU\Software\Classes\.' + ext;
     // Register in OpenWithProgids
-    await runReg([
-      'add',
-      '$extKey\\OpenWithProgids',
-      '/v',
-      progId,
-      '/t',
-      'REG_SZ',
-      '/d',
-      '',
-      '/f',
-    ], dryRun: dryRun, verbose: verbose);
+    await runReg(
+      [
+        'add',
+        '$extKey\\OpenWithProgids',
+        '/v',
+        progId,
+        '/t',
+        'REG_SZ',
+        '/d',
+        '',
+        '/f',
+      ],
+      dryRun: dryRun,
+      verbose: verbose,
+    );
 
     // Register in OpenWithList
-    await runReg([
-      'add',
-      '$extKey\\OpenWithList\\mpvson.exe',
-      '/f',
-    ], dryRun: dryRun, verbose: verbose);
+    await runReg(
+      ['add', '$extKey\\OpenWithList\\mpvson.exe', '/f'],
+      dryRun: dryRun,
+      verbose: verbose,
+    );
   }
 
   if (!dryRun) {
@@ -521,49 +621,45 @@ Future<bool> unregisterAssociations({
   // 1. Remove from OpenWithProgids & OpenWithList
   for (final ext in MediaCatalog.supportedExtensions) {
     final extKey = r'HKCU\Software\Classes\.' + ext;
-    await runReg([
-      'delete',
-      '$extKey\\OpenWithProgids',
-      '/v',
-      progId,
-      '/f',
-    ], dryRun: dryRun, verbose: verbose);
+    await runReg(
+      ['delete', '$extKey\\OpenWithProgids', '/v', progId, '/f'],
+      dryRun: dryRun,
+      verbose: verbose,
+    );
 
-    await runReg([
-      'delete',
-      '$extKey\\OpenWithList\\mpvson.exe',
-      '/f',
-    ], dryRun: dryRun, verbose: verbose);
+    await runReg(
+      ['delete', '$extKey\\OpenWithList\\mpvson.exe', '/f'],
+      dryRun: dryRun,
+      verbose: verbose,
+    );
   }
 
   // 2. Remove RegisteredApplications & Capabilities
-  await runReg([
-    'delete',
-    r'HKCU\Software\RegisteredApplications',
-    '/v',
-    appName,
-    '/f',
-  ], dryRun: dryRun, verbose: verbose);
+  await runReg(
+    ['delete', r'HKCU\Software\RegisteredApplications', '/v', appName, '/f'],
+    dryRun: dryRun,
+    verbose: verbose,
+  );
 
-  await runReg([
-    'delete',
-    r'HKCU\Software\' + appName,
-    '/f',
-  ], dryRun: dryRun, verbose: verbose);
+  await runReg(
+    ['delete', r'HKCU\Software\' + appName, '/f'],
+    dryRun: dryRun,
+    verbose: verbose,
+  );
 
   // 3. Remove Applications\mpvson.exe
-  await runReg([
-    'delete',
-    r'HKCU\Software\Classes\Applications\mpvson.exe',
-    '/f',
-  ], dryRun: dryRun, verbose: verbose);
+  await runReg(
+    ['delete', r'HKCU\Software\Classes\Applications\mpvson.exe', '/f'],
+    dryRun: dryRun,
+    verbose: verbose,
+  );
 
   // 4. Remove ProgID
-  await runReg([
-    'delete',
-    r'HKCU\Software\Classes\' + progId,
-    '/f',
-  ], dryRun: dryRun, verbose: verbose);
+  await runReg(
+    ['delete', r'HKCU\Software\Classes\' + progId, '/f'],
+    dryRun: dryRun,
+    verbose: verbose,
+  );
 
   if (!dryRun) {
     notifyShellAssociationChange();
@@ -592,8 +688,7 @@ Future<void> printStatus(String targetExe) async {
 }
 
 void printHelp() {
-  stdout.writeln(
-    '''
+  stdout.writeln('''
 Mpvson Windows Association Tool
 Usage: dart run tool/windows_associations.dart <command> [options]
 
@@ -608,8 +703,7 @@ Options:
   --dry-run      Print operations without making registry modifications
   --verbose      Print detailed command outputs
   --help, -h     Show this help message
-''',
-  );
+''');
 }
 
 Future<void> main(List<String> args) async {

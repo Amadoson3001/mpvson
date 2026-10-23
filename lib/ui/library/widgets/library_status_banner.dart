@@ -20,8 +20,9 @@ class LibraryStatusBanner extends StatelessWidget {
       animation: repository,
       builder: (context, _) {
         final status = repository.scanStatus;
-        final unavailableFolders =
-            repository.folders.where((f) => !f.isAvailable).toList();
+        final unavailableFolders = repository.folders
+            .where((f) => !f.isAvailable)
+            .toList();
 
         final banners = <Widget>[];
 
@@ -32,7 +33,9 @@ class LibraryStatusBanner extends StatelessWidget {
 
         // 2. Unavailable drive indicator (non-destructive status)
         if (unavailableFolders.isNotEmpty) {
-          banners.add(_buildUnavailableDriveBanner(context, unavailableFolders));
+          banners.add(
+            _buildUnavailableDriveBanner(context, unavailableFolders),
+          );
         }
 
         if (banners.isEmpty) {
@@ -84,7 +87,9 @@ class LibraryStatusBanner extends StatelessWidget {
                 child: CircularProgressIndicator(
                   strokeWidth: 2,
                   value: progress,
-                  valueColor: const AlwaysStoppedAnimation<Color>(LibraryTheme.accent),
+                  valueColor: const AlwaysStoppedAnimation<Color>(
+                    LibraryTheme.accent,
+                  ),
                   backgroundColor: LibraryTheme.border,
                 ),
               ),
@@ -100,7 +105,9 @@ class LibraryStatusBanner extends StatelessWidget {
               ),
               Text(
                 countDetails,
-                style: LibraryTheme.metadata.copyWith(color: LibraryTheme.secondaryText),
+                style: LibraryTheme.metadata.copyWith(
+                  color: LibraryTheme.secondaryText,
+                ),
               ),
               const SizedBox(width: 12),
               IconButton(
@@ -121,7 +128,9 @@ class LibraryStatusBanner extends StatelessWidget {
                 value: progress,
                 minHeight: 4,
                 backgroundColor: LibraryTheme.border,
-                valueColor: const AlwaysStoppedAnimation<Color>(LibraryTheme.accent),
+                valueColor: const AlwaysStoppedAnimation<Color>(
+                  LibraryTheme.accent,
+                ),
               ),
             ),
           ],
@@ -175,7 +184,10 @@ class LibraryStatusBanner extends StatelessWidget {
                     ),
                     const SizedBox(width: 8),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 1.5,
+                      ),
                       decoration: BoxDecoration(
                         color: LibraryTheme.warning.withValues(alpha: 0.15),
                         borderRadius: BorderRadius.circular(4),

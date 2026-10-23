@@ -87,5 +87,6 @@ class MediaCatalog {
   }
 
   /// File selector extension list (e.g. for open file dialogs).
-  static List<String> get filePickerExtensions => supportedExtensions.toList()..sort();
+  static List<String> get filePickerExtensions =>
+      supportedExtensions.toList()..sort();
 }

@@ -2,12 +2,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import '../../domain/models/media_metadata.dart';
 
-enum SystemPlaybackStatus {
-  closed,
-  stopped,
-  playing,
-  paused,
-}
+enum SystemPlaybackStatus { closed, stopped, playing, paused }
 
 abstract class DesktopIntegrationService extends ChangeNotifier {
   SystemPlaybackStatus get playbackStatus;

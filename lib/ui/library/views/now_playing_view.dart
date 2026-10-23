@@ -29,6 +29,7 @@ class _NowPlayingViewState extends State<NowPlayingView> {
   String? _cachedArtworkPath;
   MediaItemRecord? _currentMediaRecord;
   double? _dragPositionRatio;
+  int _metadataGeneration = 0;
 
   @override
   void initState() {
@@ -55,6 +56,7 @@ class _NowPlayingViewState extends State<NowPlayingView> {
 
   @override
   void dispose() {
+    _metadataGeneration++;
     widget.controller.removeListener(_onControllerChanged);
     widget.repository?.removeListener(_onRepositoryChanged);
     super.dispose();
@@ -74,6 +76,7 @@ class _NowPlayingViewState extends State<NowPlayingView> {
   }
 
   Future<void> _syncMetadata() async {
+    final generation = ++_metadataGeneration;
     final cur = widget.controller.current;
     if (cur == null) {
       if (mounted) {
@@ -90,7 +93,9 @@ class _NowPlayingViewState extends State<NowPlayingView> {
 
     // Load thumbnail / artwork
     final thumb = await widget.controller.loadThumbnail(cur);
-    if (mounted && _cachedArtworkPath == cur.path) {
+    if (mounted &&
+        generation == _metadataGeneration &&
+        _cachedArtworkPath == cur.path) {
       setState(() {
         _cachedArtwork = thumb?.bytes;
       });
@@ -98,9 +103,12 @@ class _NowPlayingViewState extends State<NowPlayingView> {
 
     // Load media record from repo if available
     if (widget.repository != null) {
-      final record =
-          await widget.repository!.getMediaByCanonicalSource(cur.path);
-      if (mounted && _cachedArtworkPath == cur.path) {
+      final record = await widget.repository!.getMediaByCanonicalSource(
+        cur.path,
+      );
+      if (mounted &&
+          generation == _metadataGeneration &&
+          _cachedArtworkPath == cur.path) {
         setState(() {
           _currentMediaRecord = record;
         });
@@ -120,6 +128,7 @@ class _NowPlayingViewState extends State<NowPlayingView> {
     if (repo == null || record == null) return;
     final nextFav = !record.isFavorite;
     await repo.toggleFavorite(record.id, nextFav);
+    if (!mounted) return;
     setState(() {
       _currentMediaRecord = record.copyWith(isFavorite: nextFav);
     });
@@ -145,7 +154,10 @@ class _NowPlayingViewState extends State<NowPlayingView> {
               // Main content stage
               Expanded(
                 child: SingleChildScrollView(
-                  padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 32,
+                    vertical: 24,
+                  ),
                   child: Center(
                     child: ConstrainedBox(
                       constraints: const BoxConstraints(maxWidth: 680),
@@ -171,10 +183,14 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                           Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              const SizedBox(width: 48), // balance favorite button
+                              const SizedBox(
+                                width: 48,
+                              ), // balance favorite button
                               Expanded(
                                 child: Text(
-                                  _currentMediaRecord?.title ?? entry?.title ?? 'No Track Playing',
+                                  _currentMediaRecord?.title ??
+                                      entry?.title ??
+                                      'No Track Playing',
                                   style: LibraryTheme.pageTitle,
                                   textAlign: TextAlign.center,
                                   maxLines: 2,
@@ -186,14 +202,18 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                                   (_currentMediaRecord?.isFavorite ?? false)
                                       ? Icons.favorite_rounded
                                       : Icons.favorite_border_rounded,
-                                  color: (_currentMediaRecord?.isFavorite ?? false)
+                                  color:
+                                      (_currentMediaRecord?.isFavorite ?? false)
                                       ? LibraryTheme.accent
                                       : LibraryTheme.mutedText,
                                 ),
-                                tooltip: (_currentMediaRecord?.isFavorite ?? false)
+                                tooltip:
+                                    (_currentMediaRecord?.isFavorite ?? false)
                                     ? 'Remove from favorites'
                                     : 'Add to favorites',
-                                onPressed: entry != null ? _toggleFavorite : null,
+                                onPressed: entry != null
+                                    ? _toggleFavorite
+                                    : null,
                               ),
                             ],
                           ),
@@ -297,7 +317,10 @@ class _NowPlayingViewState extends State<NowPlayingView> {
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             color: LibraryTheme.raisedSurface,
-            border: Border.all(color: LibraryTheme.accent.withValues(alpha: 0.3), width: 3),
+            border: Border.all(
+              color: LibraryTheme.accent.withValues(alpha: 0.3),
+              width: 3,
+            ),
           ),
           child: const Icon(
             Icons.music_note_rounded,
@@ -339,7 +362,9 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                 : null,
             onChangeEnd: totalMs > 0
                 ? (val) {
-                    final target = Duration(milliseconds: (val * totalMs).round());
+                    final target = Duration(
+                      milliseconds: (val * totalMs).round(),
+                    );
                     widget.controller.seek(target);
                     setState(() => _dragPositionRatio = null);
                   }
@@ -351,14 +376,8 @@ class _NowPlayingViewState extends State<NowPlayingView> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                _formatDuration(currentPos),
-                style: LibraryTheme.metadata,
-              ),
-              Text(
-                _formatDuration(duration),
-                style: LibraryTheme.metadata,
-              ),
+              Text(_formatDuration(currentPos), style: LibraryTheme.metadata),
+              Text(_formatDuration(duration), style: LibraryTheme.metadata),
             ],
           ),
         ),
@@ -437,8 +456,8 @@ class _NowPlayingViewState extends State<NowPlayingView> {
     final IconData volIcon = vol <= 0
         ? Icons.volume_off_rounded
         : vol < 50
-            ? Icons.volume_down_rounded
-            : Icons.volume_up_rounded;
+        ? Icons.volume_down_rounded
+        : Icons.volume_up_rounded;
 
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
@@ -471,7 +490,9 @@ class _NowPlayingViewState extends State<NowPlayingView> {
         IconButton(
           icon: const Icon(Icons.queue_music_rounded, size: 22),
           tooltip: _isQueuePanelOpen ? 'Hide queue' : 'Show queue',
-          color: _isQueuePanelOpen ? LibraryTheme.accent : LibraryTheme.secondaryText,
+          color: _isQueuePanelOpen
+              ? LibraryTheme.accent
+              : LibraryTheme.secondaryText,
           onPressed: () {
             setState(() {
               _isQueuePanelOpen = !_isQueuePanelOpen;
@@ -496,7 +517,10 @@ class _NowPlayingViewState extends State<NowPlayingView> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text('Queue (${queue.length})', style: LibraryTheme.sectionTitle),
+                Text(
+                  'Queue (${queue.length})',
+                  style: LibraryTheme.sectionTitle,
+                ),
                 IconButton(
                   icon: const Icon(Icons.close_rounded, size: 18),
                   tooltip: 'Close queue',
@@ -511,10 +535,7 @@ class _NowPlayingViewState extends State<NowPlayingView> {
           Expanded(
             child: queue.isEmpty
                 ? const Center(
-                    child: Text(
-                      'Queue is empty',
-                      style: LibraryTheme.metadata,
-                    ),
+                    child: Text('Queue is empty', style: LibraryTheme.metadata),
                   )
                 : ListView.separated(
                     itemCount: queue.length,
@@ -527,8 +548,9 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                       return ListTile(
                         dense: true,
                         selected: isCurrent,
-                        selectedTileColor:
-                            LibraryTheme.accent.withValues(alpha: 0.1),
+                        selectedTileColor: LibraryTheme.accent.withValues(
+                          alpha: 0.1,
+                        ),
                         leading: isCurrent
                             ? const Icon(
                                 Icons.volume_up_rounded,

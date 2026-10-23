@@ -484,10 +484,11 @@ class _SettingsContentPane extends StatelessWidget {
               _SettingsSection.videoAudio => _VideoAudioSettings(
                 controller: controller,
               ),
-              _SettingsSection.desktopIntegration => _DesktopIntegrationSettings(
-                preferences: preferences,
-                desktopIntegration: desktopIntegration,
-              ),
+              _SettingsSection.desktopIntegration =>
+                _DesktopIntegrationSettings(
+                  preferences: preferences,
+                  desktopIntegration: desktopIntegration,
+                ),
               _SettingsSection.mediaLibrary => _MediaLibrarySettings(
                 libraryRepository: libraryRepository,
                 pickDirectory: pickDirectory,
@@ -1183,9 +1184,9 @@ class _DesktopIntegrationSettings extends StatelessWidget {
               padding: const EdgeInsets.only(bottom: 8),
               child: Text(
                 'Choose what happens when opening new files while media is playing:',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: AppTheme.secondaryText,
-                ),
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: AppTheme.secondaryText),
               ),
             ),
             RadioGroup<OpenBehaviorPreference>(
@@ -1259,9 +1260,8 @@ class _DesktopIntegrationSettings extends StatelessWidget {
                         const SizedBox(height: 2),
                         Text(
                           'Manage file type associations and autoplay settings in the operating system',
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: AppTheme.secondaryText,
-                          ),
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(color: AppTheme.secondaryText),
                         ),
                       ],
                     ),
@@ -1362,10 +1362,11 @@ class _MediaLibrarySettings extends StatelessWidget {
                             const SizedBox(width: 8),
                             Text(
                               'Scanning library…',
-                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                fontWeight: FontWeight.w600,
-                                color: AppTheme.accent,
-                              ),
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                    color: AppTheme.accent,
+                                  ),
                             ),
                           ] else ...[
                             const Icon(
@@ -1376,9 +1377,8 @@ class _MediaLibrarySettings extends StatelessWidget {
                             const SizedBox(width: 8),
                             Text(
                               'Scan idle',
-                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: AppTheme.secondaryText,
-                              ),
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(color: AppTheme.secondaryText),
                             ),
                           ],
                         ],
@@ -1388,16 +1388,22 @@ class _MediaLibrarySettings extends StatelessWidget {
                         children: [
                           Text(
                             'Discovered: ${status.discoveredCount}',
-                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              fontFeatures: const [FontFeature.tabularFigures()],
-                            ),
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(
+                                  fontFeatures: const [
+                                    FontFeature.tabularFigures(),
+                                  ],
+                                ),
                           ),
                           const Text(' · '),
                           Text(
                             'Enriched: ${status.enrichedCount}',
-                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              fontFeatures: const [FontFeature.tabularFigures()],
-                            ),
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(
+                                  fontFeatures: const [
+                                    FontFeature.tabularFigures(),
+                                  ],
+                                ),
                           ),
                         ],
                       ),
@@ -1407,8 +1413,10 @@ class _MediaLibrarySettings extends StatelessWidget {
                     const SizedBox(height: 8),
                     LinearProgressIndicator(
                       value: status.totalToEnrich > 0
-                          ? (status.enrichedCount / status.totalToEnrich)
-                              .clamp(0.0, 1.0)
+                          ? (status.enrichedCount / status.totalToEnrich).clamp(
+                              0.0,
+                              1.0,
+                            )
                           : 0.0,
                       backgroundColor: AppTheme.border,
                       color: AppTheme.accent,
@@ -1478,19 +1486,19 @@ class _MediaLibrarySettings extends StatelessWidget {
                       children: [
                         Text(
                           folder.isAvailable ? 'Available' : 'Unavailable',
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: folder.isAvailable
-                                ? AppTheme.secondaryText
-                                : Theme.of(context).colorScheme.error,
-                            fontWeight: FontWeight.w500,
-                          ),
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                color: folder.isAvailable
+                                    ? AppTheme.secondaryText
+                                    : Theme.of(context).colorScheme.error,
+                                fontWeight: FontWeight.w500,
+                              ),
                         ),
                         const Text(' · '),
                         Text(
                           '${folder.fileCount} ${folder.fileCount == 1 ? 'file' : 'files'}',
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: AppTheme.secondaryText,
-                          ),
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(color: AppTheme.secondaryText),
                         ),
                       ],
                     ),
@@ -1498,8 +1506,9 @@ class _MediaLibrarySettings extends StatelessWidget {
                       key: ValueKey('remove-folder-${folder.path}'),
                       tooltip: 'Remove folder',
                       icon: const Icon(Icons.delete_outline_rounded, size: 20),
-                      onPressed: () =>
-                          unawaited(libraryRepository.removeFolder(folder.path)),
+                      onPressed: () => unawaited(
+                        libraryRepository.removeFolder(folder.path),
+                      ),
                     ),
                   );
                 },
@@ -1911,7 +1920,10 @@ class _EmptyDesktopIntegrationService extends DesktopIntegrationService {
     bool canGoPrevious = true,
   }) async {}
   @override
-  Future<void> setKeepAwake(bool enable, {required bool isVideoPlaying}) async {}
+  Future<void> setKeepAwake(
+    bool enable, {
+    required bool isVideoPlaying,
+  }) async {}
   @override
   Future<void> openDefaultAppsSettings() async {}
 }

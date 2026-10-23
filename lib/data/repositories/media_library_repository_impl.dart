@@ -25,16 +25,14 @@ class MediaLibraryRepositoryImpl extends MediaLibraryRepository {
     DatabaseOpener? databaseOpener,
     String? databasePath,
     bool inMemory = false,
-  })  : _database = database,
-        _scanner = scannerService,
-        _probeService = probeService,
-        _databaseOpener = databaseOpener ??
-            (() => LibraryDatabase.open(
-                  path: databasePath,
-                  inMemory: inMemory,
-                )),
-        _ownsDatabase = database == null,
-        _ownsScanner = scannerService == null;
+  }) : _database = database,
+       _scanner = scannerService,
+       _probeService = probeService,
+       _databaseOpener =
+           databaseOpener ??
+           (() => LibraryDatabase.open(path: databasePath, inMemory: inMemory)),
+       _ownsDatabase = database == null,
+       _ownsScanner = scannerService == null;
 
   LibraryDatabase? _database;
   MediaScannerService? _scanner;
@@ -49,6 +47,7 @@ class MediaLibraryRepositoryImpl extends MediaLibraryRepository {
   bool _isReady = false;
   String? _initializationError;
   bool _isDisposed = false;
+  Future<void>? _initializationFuture;
 
   @override
   LibraryScanStatus get scanStatus => _scanner?.scanStatus ?? _scanStatus;
@@ -67,12 +66,17 @@ class MediaLibraryRepositoryImpl extends MediaLibraryRepository {
       _scanner?.scanStatusStream ?? const Stream<LibraryScanStatus>.empty();
 
   @override
-  Future<void> initialize() async {
-    if (_isDisposed) return;
-    if (_isReady) return;
+  Future<void> initialize() {
+    if (_isDisposed || _isReady) return Future<void>.value();
+    return _initializationFuture ??= _initialize().whenComplete(() {
+      _initializationFuture = null;
+    });
+  }
 
+  Future<void> _initialize() async {
     try {
       _database ??= await _databaseOpener();
+      if (_isDisposed) return;
 
       if (_scanner == null && _probeService != null) {
         _scanner = MediaScannerService(
@@ -82,6 +86,7 @@ class MediaLibraryRepositoryImpl extends MediaLibraryRepository {
       }
 
       _folders = await _database!.getAllFolders();
+      if (_isDisposed) return;
       for (final folder in _folders) {
         _scanner?.registerFolder(folder.path);
       }
@@ -97,9 +102,11 @@ class MediaLibraryRepositoryImpl extends MediaLibraryRepository {
       _initializationError = null;
       notifyListeners();
     } catch (e) {
-      _initializationError = e.toString();
-      _isReady = false;
-      notifyListeners();
+      if (!_isDisposed) {
+        _initializationError = e.toString();
+        _isReady = false;
+        notifyListeners();
+      }
       rethrow;
     }
   }
@@ -340,6 +347,15 @@ class MediaLibraryRepositoryImpl extends MediaLibraryRepository {
   Future<void> dispose() async {
     if (_isDisposed) return;
     _isDisposed = true;
+
+    final initialization = _initializationFuture;
+    if (initialization != null) {
+      try {
+        await initialization;
+      } on Object {
+        // Continue releasing any resources created before initialization failed.
+      }
+    }
 
     await _scanSubscription?.cancel();
     _scanSubscription = null;

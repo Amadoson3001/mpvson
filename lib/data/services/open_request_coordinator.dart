@@ -6,12 +6,11 @@ import 'package:flutter/foundation.dart';
 import '../../domain/models/open_request.dart';
 import '../repositories/app_preferences_repository.dart';
 
-typedef OpenPreferenceDialogHandler = Future<OpenBehaviorPreference?> Function();
+typedef OpenPreferenceDialogHandler =
+    Future<OpenBehaviorPreference?> Function();
 
-typedef PlaybackCommandHandler = Future<void> Function({
-  required List<String> paths,
-  required bool playNow,
-});
+typedef PlaybackCommandHandler =
+    Future<void> Function({required List<String> paths, required bool playNow});
 
 class _QueuedRequest {
   const _QueuedRequest(this.request, this.completer);

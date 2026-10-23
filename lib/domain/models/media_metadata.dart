@@ -118,7 +118,9 @@ class MediaMetadata {
       year: (json['year'] as num?)?.toInt(),
       trackNumber: (json['trackNumber'] as num?)?.toInt(),
       discNumber: (json['discNumber'] as num?)?.toInt(),
-      duration: Duration(milliseconds: (json['durationMs'] as num?)?.toInt() ?? 0),
+      duration: Duration(
+        milliseconds: (json['durationMs'] as num?)?.toInt() ?? 0,
+      ),
       artworkUri: json['artworkUri'] as String?,
       audioInfo: json['audioInfo'] != null
           ? AudioTechnicalInfo.fromJson(

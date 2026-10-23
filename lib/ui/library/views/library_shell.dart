@@ -9,12 +9,7 @@ import 'now_playing_view.dart';
 import 'playlists_view.dart';
 import 'videos_view.dart';
 
-enum LibrarySection {
-  videos,
-  music,
-  playlists,
-  nowPlaying,
-}
+enum LibrarySection { videos, music, playlists, nowPlaying }
 
 /// Top-level shell integrating navigation, search, content stage, and responsive layout.
 class LibraryShell extends StatefulWidget {
@@ -89,16 +84,10 @@ class _LibraryShellState extends State<LibraryShell> {
             children: [
               // 1. Navigation: 208px sidebar on >=1180, collapsed 64px rail on 960-1179, drawer on <960
               if (isDesktopWide) ...[
-                SizedBox(
-                  width: 208,
-                  child: _buildSideNav(isCollapsed: false),
-                ),
+                SizedBox(width: 208, child: _buildSideNav(isCollapsed: false)),
                 const VerticalDivider(width: 1, color: LibraryTheme.border),
               ] else if (isDesktopMedium) ...[
-                SizedBox(
-                  width: 64,
-                  child: _buildSideNav(isCollapsed: true),
-                ),
+                SizedBox(width: 64, child: _buildSideNav(isCollapsed: true)),
                 const VerticalDivider(width: 1, color: LibraryTheme.border),
               ],
 
@@ -115,9 +104,7 @@ class _LibraryShellState extends State<LibraryShell> {
                       onRescan: () => widget.repository.rescanAll(),
                     ),
                     // Main Stage View
-                    Expanded(
-                      child: _buildContentStage(),
-                    ),
+                    Expanded(child: _buildContentStage()),
                     // Stacked Audio Layout (Mini Player at bottom when not in NowPlaying view)
                     if (_currentSection != LibrarySection.nowPlaying)
                       _buildBottomMiniPlayer(isCompact),
@@ -126,13 +113,16 @@ class _LibraryShellState extends State<LibraryShell> {
               ),
 
               // 3. Docked Queue Panel
-              if (isDesktopWide && _currentSection != LibrarySection.nowPlaying) ...[
+              if (isDesktopWide &&
+                  _currentSection != LibrarySection.nowPlaying) ...[
                 const VerticalDivider(width: 1, color: LibraryTheme.border),
                 SizedBox(
                   width: 280,
                   child: DockedQueueWidget(controller: widget.controller),
                 ),
-              ] else if (isDesktopMedium && _isOnDemandQueueOpen && _currentSection != LibrarySection.nowPlaying) ...[
+              ] else if (isDesktopMedium &&
+                  _isOnDemandQueueOpen &&
+                  _currentSection != LibrarySection.nowPlaying) ...[
                 const VerticalDivider(width: 1, color: LibraryTheme.border),
                 SizedBox(
                   width: 280,
@@ -180,7 +170,11 @@ class _LibraryShellState extends State<LibraryShell> {
                   decoration: InputDecoration(
                     hintText: 'Search in ${_sectionName(_currentSection)}...',
                     hintStyle: LibraryTheme.metadata,
-                    prefixIcon: const Icon(Icons.search_rounded, size: 18, color: LibraryTheme.mutedText),
+                    prefixIcon: const Icon(
+                      Icons.search_rounded,
+                      size: 18,
+                      color: LibraryTheme.mutedText,
+                    ),
                     suffixIcon: _searchQuery.isNotEmpty
                         ? IconButton(
                             icon: const Icon(Icons.close_rounded, size: 16),
@@ -197,7 +191,10 @@ class _LibraryShellState extends State<LibraryShell> {
                     ),
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(8),
-                      borderSide: const BorderSide(color: LibraryTheme.accent, width: 1.5),
+                      borderSide: const BorderSide(
+                        color: LibraryTheme.accent,
+                        width: 1.5,
+                      ),
                     ),
                   ),
                 ),
@@ -212,7 +209,8 @@ class _LibraryShellState extends State<LibraryShell> {
             color: LibraryTheme.secondaryText,
             onPressed: () => widget.repository.rescanAll(),
           ),
-          if (widget.onSwitchToVideo != null && (widget.controller.isVideo || widget.controller.hasMedia)) ...[
+          if (widget.onSwitchToVideo != null &&
+              (widget.controller.isVideo || widget.controller.hasMedia)) ...[
             const SizedBox(width: 6),
             IconButton(
               icon: const Icon(Icons.videocam_rounded, size: 20),
@@ -222,16 +220,20 @@ class _LibraryShellState extends State<LibraryShell> {
             ),
           ],
           // Medium screen On-Demand Queue Toggle
-          if (isDesktopMedium && _currentSection != LibrarySection.nowPlaying) ...[
+          if (isDesktopMedium &&
+              _currentSection != LibrarySection.nowPlaying) ...[
             const SizedBox(width: 6),
             IconButton(
               icon: Icon(
                 Icons.queue_music_rounded,
                 size: 20,
-                color: _isOnDemandQueueOpen ? LibraryTheme.accent : LibraryTheme.secondaryText,
+                color: _isOnDemandQueueOpen
+                    ? LibraryTheme.accent
+                    : LibraryTheme.secondaryText,
               ),
               tooltip: _isOnDemandQueueOpen ? 'Close queue' : 'Open queue',
-              onPressed: () => setState(() => _isOnDemandQueueOpen = !_isOnDemandQueueOpen),
+              onPressed: () =>
+                  setState(() => _isOnDemandQueueOpen = !_isOnDemandQueueOpen),
             ),
           ],
         ],
@@ -297,7 +299,9 @@ class _LibraryShellState extends State<LibraryShell> {
             padding: EdgeInsets.symmetric(horizontal: isCollapsed ? 12 : 20),
             alignment: isCollapsed ? Alignment.center : Alignment.centerLeft,
             child: Row(
-              mainAxisAlignment: isCollapsed ? MainAxisAlignment.center : MainAxisAlignment.start,
+              mainAxisAlignment: isCollapsed
+                  ? MainAxisAlignment.center
+                  : MainAxisAlignment.start,
               children: [
                 Container(
                   width: 28,
@@ -307,7 +311,11 @@ class _LibraryShellState extends State<LibraryShell> {
                     borderRadius: BorderRadius.circular(6),
                   ),
                   child: const Center(
-                    child: Icon(Icons.play_arrow_rounded, color: LibraryTheme.background, size: 20),
+                    child: Icon(
+                      Icons.play_arrow_rounded,
+                      color: LibraryTheme.background,
+                      size: 20,
+                    ),
                   ),
                 ),
                 if (!isCollapsed) ...[
@@ -328,10 +336,34 @@ class _LibraryShellState extends State<LibraryShell> {
           const Divider(height: 1, color: LibraryTheme.border),
           const SizedBox(height: 12),
           // Nav Items
-          _navItem(LibrarySection.videos, 'Videos', Icons.movie_outlined, Icons.movie_rounded, isCollapsed),
-          _navItem(LibrarySection.music, 'Music', Icons.music_note_outlined, Icons.music_note_rounded, isCollapsed),
-          _navItem(LibrarySection.playlists, 'Playlists', Icons.queue_music_outlined, Icons.queue_music_rounded, isCollapsed),
-          _navItem(LibrarySection.nowPlaying, 'Now playing', Icons.album_outlined, Icons.album_rounded, isCollapsed),
+          _navItem(
+            LibrarySection.videos,
+            'Videos',
+            Icons.movie_outlined,
+            Icons.movie_rounded,
+            isCollapsed,
+          ),
+          _navItem(
+            LibrarySection.music,
+            'Music',
+            Icons.music_note_outlined,
+            Icons.music_note_rounded,
+            isCollapsed,
+          ),
+          _navItem(
+            LibrarySection.playlists,
+            'Playlists',
+            Icons.queue_music_outlined,
+            Icons.queue_music_rounded,
+            isCollapsed,
+          ),
+          _navItem(
+            LibrarySection.nowPlaying,
+            'Now playing',
+            Icons.album_outlined,
+            Icons.album_rounded,
+            isCollapsed,
+          ),
           const Spacer(),
           // Add Folder Action button
           if (!isCollapsed && widget.onAddFolders != null) ...[
@@ -342,11 +374,16 @@ class _LibraryShellState extends State<LibraryShell> {
                   foregroundColor: LibraryTheme.primaryText,
                   side: const BorderSide(color: LibraryTheme.border),
                   padding: const EdgeInsets.symmetric(vertical: 10),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
                 ),
                 onPressed: widget.onAddFolders,
                 icon: const Icon(Icons.create_new_folder_outlined, size: 16),
-                label: const Text('Add folders', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
+                label: const Text(
+                  'Add folders',
+                  style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+                ),
               ),
             ),
           ],
@@ -373,8 +410,12 @@ class _LibraryShellState extends State<LibraryShell> {
           tooltip: label,
           color: isSelected ? LibraryTheme.accent : LibraryTheme.secondaryText,
           style: IconButton.styleFrom(
-            backgroundColor: isSelected ? LibraryTheme.raisedSurface : Colors.transparent,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            backgroundColor: isSelected
+                ? LibraryTheme.raisedSurface
+                : Colors.transparent,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
           ),
           onPressed: () => _selectSection(section),
         ),
@@ -393,7 +434,9 @@ class _LibraryShellState extends State<LibraryShell> {
             color: isSelected ? LibraryTheme.raisedSurface : Colors.transparent,
             borderRadius: BorderRadius.circular(8),
             border: Border.all(
-              color: isSelected ? LibraryTheme.accent.withValues(alpha: 0.3) : Colors.transparent,
+              color: isSelected
+                  ? LibraryTheme.accent.withValues(alpha: 0.3)
+                  : Colors.transparent,
             ),
           ),
           child: Row(
@@ -401,7 +444,9 @@ class _LibraryShellState extends State<LibraryShell> {
               Icon(
                 icon,
                 size: 20,
-                color: isSelected ? LibraryTheme.accent : LibraryTheme.secondaryText,
+                color: isSelected
+                    ? LibraryTheme.accent
+                    : LibraryTheme.secondaryText,
               ),
               const SizedBox(width: 14),
               Expanded(
@@ -410,7 +455,9 @@ class _LibraryShellState extends State<LibraryShell> {
                   style: TextStyle(
                     fontSize: 13.5,
                     fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
-                    color: isSelected ? LibraryTheme.primaryText : LibraryTheme.secondaryText,
+                    color: isSelected
+                        ? LibraryTheme.primaryText
+                        : LibraryTheme.secondaryText,
                   ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -444,7 +491,11 @@ class _LibraryShellState extends State<LibraryShell> {
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: const Center(
-                      child: Icon(Icons.play_arrow_rounded, color: LibraryTheme.background, size: 24),
+                      child: Icon(
+                        Icons.play_arrow_rounded,
+                        color: LibraryTheme.background,
+                        size: 24,
+                      ),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -466,9 +517,21 @@ class _LibraryShellState extends State<LibraryShell> {
             const Divider(height: 1, color: LibraryTheme.border),
             const SizedBox(height: 8),
             _drawerItem(LibrarySection.videos, 'Videos', Icons.movie_rounded),
-            _drawerItem(LibrarySection.music, 'Music', Icons.music_note_rounded),
-            _drawerItem(LibrarySection.playlists, 'Playlists', Icons.queue_music_rounded),
-            _drawerItem(LibrarySection.nowPlaying, 'Now playing', Icons.album_rounded),
+            _drawerItem(
+              LibrarySection.music,
+              'Music',
+              Icons.music_note_rounded,
+            ),
+            _drawerItem(
+              LibrarySection.playlists,
+              'Playlists',
+              Icons.queue_music_rounded,
+            ),
+            _drawerItem(
+              LibrarySection.nowPlaying,
+              'Now playing',
+              Icons.album_rounded,
+            ),
             const Spacer(),
             if (widget.onAddFolders != null)
               Padding(
@@ -503,7 +566,9 @@ class _LibraryShellState extends State<LibraryShell> {
       title: Text(
         label,
         style: TextStyle(
-          color: isSelected ? LibraryTheme.primaryText : LibraryTheme.secondaryText,
+          color: isSelected
+              ? LibraryTheme.primaryText
+              : LibraryTheme.secondaryText,
           fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
         ),
       ),
@@ -552,7 +617,11 @@ class _LibraryShellState extends State<LibraryShell> {
                     border: Border.all(color: LibraryTheme.border),
                   ),
                   child: const Center(
-                    child: Icon(Icons.music_note_rounded, size: 20, color: LibraryTheme.accent),
+                    child: Icon(
+                      Icons.music_note_rounded,
+                      size: 20,
+                      color: LibraryTheme.accent,
+                    ),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -564,15 +633,14 @@ class _LibraryShellState extends State<LibraryShell> {
                     children: [
                       Text(
                         title,
-                        style: LibraryTheme.rowPrimary.copyWith(fontWeight: FontWeight.w600),
+                        style: LibraryTheme.rowPrimary.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
                       const SizedBox(height: 2),
-                      const Text(
-                        'Now Playing',
-                        style: LibraryTheme.metadata,
-                      ),
+                      const Text('Now Playing', style: LibraryTheme.metadata),
                     ],
                   ),
                 ),
@@ -589,13 +657,21 @@ class _LibraryShellState extends State<LibraryShell> {
                 ),
                 // Next
                 IconButton(
-                  icon: const Icon(Icons.skip_next_rounded, size: 24, color: LibraryTheme.secondaryText),
+                  icon: const Icon(
+                    Icons.skip_next_rounded,
+                    size: 24,
+                    color: LibraryTheme.secondaryText,
+                  ),
                   tooltip: 'Next',
                   onPressed: () => widget.controller.next(),
                 ),
                 if (isCompact) ...[
                   IconButton(
-                    icon: const Icon(Icons.queue_music_rounded, size: 20, color: LibraryTheme.secondaryText),
+                    icon: const Icon(
+                      Icons.queue_music_rounded,
+                      size: 20,
+                      color: LibraryTheme.secondaryText,
+                    ),
                     tooltip: 'Queue',
                     onPressed: () => _selectSection(LibrarySection.nowPlaying),
                   ),

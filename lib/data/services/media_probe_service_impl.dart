@@ -16,6 +16,22 @@ import '../../domain/models/media_kind.dart';
 import '../../domain/models/media_metadata.dart';
 import 'media_probe_service.dart';
 
+const int _maxTagBlockBytes = 16 * 1024 * 1024;
+const int _maxTagFrameBytes = 8 * 1024 * 1024;
+const int _maxArtworkBytes = 12 * 1024 * 1024;
+
+Future<Uint8List?> _readBoundedFile(File file, int maxBytes) async {
+  RandomAccessFile? handle;
+  try {
+    handle = await file.open(mode: FileMode.read);
+    if (await handle.length() > maxBytes) return null;
+    final bytes = await handle.read(maxBytes + 1);
+    return bytes.length <= maxBytes ? bytes : null;
+  } finally {
+    await handle?.close();
+  }
+}
+
 /// Lightweight cancellation token for probe and artwork operations.
 class CancellationToken {
   bool _cancelled = false;
@@ -160,13 +176,18 @@ class PureDartMediaParser {
     }
   }
 
-  Future<DiscoveredMediaInfo?> _parseId3v2(RandomAccessFile raf, int fileLength) async {
+  Future<DiscoveredMediaInfo?> _parseId3v2(
+    RandomAccessFile raf,
+    int fileLength,
+  ) async {
     final headerBytes = await raf.read(10);
     if (headerBytes.length < 10) return null;
 
     final majorVersion = headerBytes[3];
     final tagSize = _readSyncSafeInt(headerBytes.sublist(6, 10));
-    final endPos = (10 + tagSize).clamp(0, fileLength);
+    final endPos = (10 + tagSize)
+        .clamp(0, fileLength.clamp(0, 10 + _maxTagBlockBytes))
+        .toInt();
 
     final rawTags = <String, String>{};
     Uint8List? artworkBytes;
@@ -190,8 +211,13 @@ class PureDartMediaParser {
         frameSize = (fHeader[3] << 16) | (fHeader[4] << 8) | fHeader[5];
       }
 
-      if (frameSize <= 0 || await raf.position() + frameSize > endPos + 100) {
+      final frameStart = await raf.position();
+      if (frameSize <= 0 || frameStart + frameSize > endPos + 100) {
         break;
+      }
+      if (frameSize > _maxTagFrameBytes) {
+        await raf.setPosition(frameStart + frameSize);
+        continue;
       }
 
       final frameData = await raf.read(frameSize);
@@ -227,7 +253,10 @@ class PureDartMediaParser {
     );
   }
 
-  Future<DiscoveredMediaInfo?> _parseFlac(RandomAccessFile raf, int fileLength) async {
+  Future<DiscoveredMediaInfo?> _parseFlac(
+    RandomAccessFile raf,
+    int fileLength,
+  ) async {
     await raf.setPosition(4); // Skip 'fLaC'
     final rawTags = <String, String>{};
     Uint8List? artworkBytes;
@@ -246,6 +275,12 @@ class PureDartMediaParser {
 
       if (blockLength < 0 || await raf.position() + blockLength > fileLength) {
         break;
+      }
+      final blockStart = await raf.position();
+      final maxBlock = blockType == 6 ? _maxArtworkBytes : _maxTagBlockBytes;
+      if (blockLength > maxBlock) {
+        await raf.setPosition(blockStart + blockLength);
+        continue;
       }
 
       final blockData = await raf.read(blockLength);
@@ -317,7 +352,10 @@ class PureDartMediaParser {
     );
   }
 
-  Future<DiscoveredMediaInfo?> _parseMp4(RandomAccessFile raf, int fileLength) async {
+  Future<DiscoveredMediaInfo?> _parseMp4(
+    RandomAccessFile raf,
+    int fileLength,
+  ) async {
     final rawTags = <String, String>{};
     Uint8List? artworkBytes;
     bool hasArtwork = false;
@@ -332,7 +370,11 @@ class PureDartMediaParser {
       final atomDataSize = (size == 1 ? 0 : size) - 8;
 
       if (type == 'moov' && atomDataSize > 0) {
-        final moovBytes = await raf.read(atomDataSize.clamp(0, fileLength - await raf.position()));
+        final availableBytes = fileLength - await raf.position();
+        if (atomDataSize > _maxTagBlockBytes || atomDataSize > availableBytes) {
+          break;
+        }
+        final moovBytes = await raf.read(atomDataSize);
         _searchMp4Ilst(moovBytes, rawTags, (art) {
           hasArtwork = true;
           artworkBytes = art;
@@ -346,7 +388,12 @@ class PureDartMediaParser {
     }
 
     final tracks = <DiscoveredTrack>[
-      const DiscoveredTrack(id: '1', isVideo: false, isAudio: true, codec: 'aac'),
+      const DiscoveredTrack(
+        id: '1',
+        isVideo: false,
+        isAudio: true,
+        codec: 'aac',
+      ),
       if (hasArtwork)
         const DiscoveredTrack(
           id: 'artwork',
@@ -371,7 +418,9 @@ class PureDartMediaParser {
     var offset = 4 + vendorLen;
     if (offset + 4 > data.length) return;
 
-    final commentCount = _readLittleEndianInt32(data.sublist(offset, offset + 4));
+    final commentCount = _readLittleEndianInt32(
+      data.sublist(offset, offset + 4),
+    );
     offset += 4;
 
     for (var i = 0; i < commentCount && offset + 4 <= data.length; i++) {
@@ -379,7 +428,10 @@ class PureDartMediaParser {
       offset += 4;
       if (offset + len > data.length) break;
 
-      final commentStr = utf8.decode(data.sublist(offset, offset + len), allowMalformed: true);
+      final commentStr = utf8.decode(
+        data.sublist(offset, offset + len),
+        allowMalformed: true,
+      );
       offset += len;
 
       final eqIdx = commentStr.indexOf('=');
@@ -432,7 +484,9 @@ class PureDartMediaParser {
       final atomSize = _readBigEndianInt32(moov.sublist(offset, offset + 4));
       if (atomSize <= 8 || offset + atomSize > ilstEnd) break;
 
-      final atomName = String.fromCharCodes(moov.sublist(offset + 4, offset + 8));
+      final atomName = String.fromCharCodes(
+        moov.sublist(offset + 4, offset + 8),
+      );
       final atomData = moov.sublist(offset + 8, offset + atomSize);
 
       // Search for 'data' child atom
@@ -440,8 +494,8 @@ class PureDartMediaParser {
       if (dataIdx >= 4 && dataIdx + 12 <= atomData.length) {
         final payload = atomData.sublist(dataIdx + 12);
         if (atomName == 'covr') {
-          onArtwork(payload);
-        } else {
+          if (payload.length <= _maxArtworkBytes) onArtwork(payload);
+        } else if (payload.length <= 1024 * 1024) {
           final text = utf8.decode(payload, allowMalformed: true).trim();
           if (text.isNotEmpty) {
             outTags[atomName] = text;
@@ -459,11 +513,17 @@ class PureDartMediaParser {
     try {
       if (encoding == 1 || encoding == 2) {
         // UTF-16
-        final buffer = content.buffer.asUint16List(content.offsetInBytes, content.lengthInBytes ~/ 2);
+        final buffer = content.buffer.asUint16List(
+          content.offsetInBytes,
+          content.lengthInBytes ~/ 2,
+        );
         return String.fromCharCodes(buffer).replaceAll('\u0000', '').trim();
       } else {
         // UTF-8 or Latin1
-        return utf8.decode(content, allowMalformed: true).replaceAll('\u0000', '').trim();
+        return utf8
+            .decode(content, allowMalformed: true)
+            .replaceAll('\u0000', '')
+            .trim();
       }
     } catch (_) {
       return null;
@@ -487,7 +547,8 @@ class PureDartMediaParser {
       }
       offset++; // skip null terminator
       if (offset < bytes.length) {
-        return bytes.sublist(offset);
+        final length = bytes.length - offset;
+        if (length <= _maxArtworkBytes) return bytes.sublist(offset);
       }
     } catch (_) {}
     return null;
@@ -529,25 +590,30 @@ class MediaKitProbeEngine implements MediaProbeEngine {
   MediaKitProbeEngine({
     Player Function()? playerFactory,
     PureDartMediaParser? pureDartParser,
-  })  : _playerFactory = playerFactory ?? _defaultPlayerFactory,
-        _pureDartParser = pureDartParser ?? const PureDartMediaParser();
+  }) : _playerFactory = playerFactory ?? _defaultPlayerFactory,
+       _pureDartParser = pureDartParser ?? const PureDartMediaParser();
 
   final Player Function() _playerFactory;
   final PureDartMediaParser _pureDartParser;
 
   Player? _player;
   bool _disposed = false;
+  Future<void> _nativeInspectionTail = Future<void>.value();
+  Future<void>? _retiredPlayerDisposal;
+  final Expando<Future<void>> _playerDisposals = Expando<Future<void>>(
+    'probe player disposal',
+  );
 
   static Player _defaultPlayerFactory() => Player(
-        configuration: const PlayerConfiguration(
-          title: 'Mpvson media probe decoder',
-          vo: 'null',
-          muted: true,
-          osc: false,
-          libass: false,
-          bufferSize: 0,
-        ),
-      );
+    configuration: const PlayerConfiguration(
+      title: 'Mpvson media probe decoder',
+      vo: 'null',
+      muted: true,
+      osc: false,
+      libass: false,
+      bufferSize: 0,
+    ),
+  );
 
   Player _getOrCreatePlayer() {
     if (_player != null) return _player!;
@@ -569,100 +635,147 @@ class MediaKitProbeEngine implements MediaProbeEngine {
       return pureResult;
     }
 
-    // Native Player inspection
-    Player? player;
+    final previousInspection = _nativeInspectionTail;
+    final inspectionFinished = Completer<void>();
+    _nativeInspectionTail = inspectionFinished.future;
+    await previousInspection;
     try {
-      player = _getOrCreatePlayer();
-    } catch (_) {
-      // Return pureResult if native player fails to initialize
-      return pureResult;
-    }
-
-    try {
-      await player.open(Media(filePath), play: false).timeout(const Duration(seconds: 4));
-
-      // Wait for tracks with timeout; audio hints return immediately once audio track is present
-      final watch = Stopwatch()..start();
-      final waitLimit = isAudioHint ? const Duration(milliseconds: 600) : const Duration(seconds: 3);
-
-      while (watch.elapsed < waitLimit) {
-        if (_disposed || (cancellationToken?.isCancelled ?? false)) return null;
-
-        final videoTracks = player.state.tracks.video.where((t) => t.id != 'auto' && t.id != 'no').toList();
-        final audioTracks = player.state.tracks.audio.where((t) => t.id != 'auto' && t.id != 'no').toList();
-
-        if (isAudioHint && audioTracks.isNotEmpty) {
-          // Audio probes finish when audio metadata is available instead of waiting for video tracks.
-          break;
+      final retiredPlayerDisposal = _retiredPlayerDisposal;
+      if (retiredPlayerDisposal != null) {
+        await retiredPlayerDisposal;
+        if (identical(_retiredPlayerDisposal, retiredPlayerDisposal)) {
+          _retiredPlayerDisposal = null;
         }
-        if (!isAudioHint && (videoTracks.isNotEmpty || audioTracks.isNotEmpty)) {
-          break;
-        }
-        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
+      if (_disposed || (cancellationToken?.isCancelled ?? false)) {
+        return pureResult;
       }
 
-      final videoTracks = player.state.tracks.video.where((t) => t.id != 'auto' && t.id != 'no').toList();
-      final audioTracks = player.state.tracks.audio.where((t) => t.id != 'auto' && t.id != 'no').toList();
-
-      final discoveredTracks = <DiscoveredTrack>[
-        for (final t in videoTracks)
-          DiscoveredTrack(
-            id: t.id,
-            isVideo: true,
-            isAudio: false,
-            isArtwork: t.albumart == true || t.image == true,
-            codec: t.codec,
-            width: t.w,
-            height: t.h,
-          ),
-        for (final t in audioTracks)
-          DiscoveredTrack(
-            id: t.id,
-            isVideo: false,
-            isAudio: true,
-            codec: t.codec,
-            sampleRate: t.samplerate,
-            channels: t.channelscount,
-            bitrate: t.bitrate,
-          ),
-      ];
-
-      final duration = player.state.duration > Duration.zero
-          ? player.state.duration
-          : (pureResult?.duration ?? Duration.zero);
-
-      final hasEmbeddedArtwork = pureResult?.hasEmbeddedArtwork == true ||
-          discoveredTracks.any((t) => t.isArtwork);
-
-      final tags = <String, String>{
-        if (pureResult != null) ...pureResult.rawTags,
-      };
-
-      AudioTechnicalInfo? audioInfo = pureResult?.audioInfo;
-      if (audioTracks.isNotEmpty) {
-        final a = audioTracks.first;
-        audioInfo = AudioTechnicalInfo(
-          codec: a.codec ?? audioInfo?.codec,
-          sampleRate: a.samplerate ?? audioInfo?.sampleRate,
-          channels: a.channelscount ?? audioInfo?.channels,
-          bitrate: a.bitrate ?? audioInfo?.bitrate,
-        );
-      }
-
-      return DiscoveredMediaInfo(
-        tracks: discoveredTracks.isNotEmpty ? discoveredTracks : (pureResult?.tracks ?? const []),
-        rawTags: tags,
-        duration: duration,
-        hasEmbeddedArtwork: hasEmbeddedArtwork,
-        embeddedArtworkBytes: pureResult?.embeddedArtworkBytes,
-        audioInfo: audioInfo,
-      );
-    } catch (_) {
-      return pureResult;
-    } finally {
+      // The probe engine reuses one native Player, so native inspection must
+      // stay serialized even when the service runs several file probes at once.
+      Player? player;
       try {
-        await player.stop();
-      } catch (_) {}
+        player = _getOrCreatePlayer();
+      } catch (_) {
+        return pureResult;
+      }
+
+      var playerRetired = false;
+      try {
+        try {
+          await player
+              .open(Media(filePath), play: false)
+              .timeout(const Duration(seconds: 4));
+        } on TimeoutException {
+          playerRetired = true;
+          if (identical(_player, player)) _player = null;
+          _retiredPlayerDisposal = _disposePlayer(player);
+          return pureResult;
+        }
+
+        // Wait for tracks with timeout; audio hints return immediately once audio track is present
+        final watch = Stopwatch()..start();
+        final waitLimit = isAudioHint
+            ? const Duration(milliseconds: 600)
+            : const Duration(seconds: 3);
+
+        while (watch.elapsed < waitLimit) {
+          if (_disposed || (cancellationToken?.isCancelled ?? false)) {
+            return null;
+          }
+
+          final videoTracks = player.state.tracks.video
+              .where((t) => t.id != 'auto' && t.id != 'no')
+              .toList();
+          final audioTracks = player.state.tracks.audio
+              .where((t) => t.id != 'auto' && t.id != 'no')
+              .toList();
+
+          if (isAudioHint && audioTracks.isNotEmpty) {
+            // Audio probes finish when audio metadata is available instead of waiting for video tracks.
+            break;
+          }
+          if (!isAudioHint &&
+              (videoTracks.isNotEmpty || audioTracks.isNotEmpty)) {
+            break;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        }
+
+        final videoTracks = player.state.tracks.video
+            .where((t) => t.id != 'auto' && t.id != 'no')
+            .toList();
+        final audioTracks = player.state.tracks.audio
+            .where((t) => t.id != 'auto' && t.id != 'no')
+            .toList();
+
+        final discoveredTracks = <DiscoveredTrack>[
+          for (final t in videoTracks)
+            DiscoveredTrack(
+              id: t.id,
+              isVideo: true,
+              isAudio: false,
+              isArtwork: t.albumart == true || t.image == true,
+              codec: t.codec,
+              width: t.w,
+              height: t.h,
+            ),
+          for (final t in audioTracks)
+            DiscoveredTrack(
+              id: t.id,
+              isVideo: false,
+              isAudio: true,
+              codec: t.codec,
+              sampleRate: t.samplerate,
+              channels: t.channelscount,
+              bitrate: t.bitrate,
+            ),
+        ];
+
+        final duration = player.state.duration > Duration.zero
+            ? player.state.duration
+            : (pureResult?.duration ?? Duration.zero);
+
+        final hasEmbeddedArtwork =
+            pureResult?.hasEmbeddedArtwork == true ||
+            discoveredTracks.any((t) => t.isArtwork);
+
+        final tags = <String, String>{
+          if (pureResult != null) ...pureResult.rawTags,
+        };
+
+        AudioTechnicalInfo? audioInfo = pureResult?.audioInfo;
+        if (audioTracks.isNotEmpty) {
+          final a = audioTracks.first;
+          audioInfo = AudioTechnicalInfo(
+            codec: a.codec ?? audioInfo?.codec,
+            sampleRate: a.samplerate ?? audioInfo?.sampleRate,
+            channels: a.channelscount ?? audioInfo?.channels,
+            bitrate: a.bitrate ?? audioInfo?.bitrate,
+          );
+        }
+
+        return DiscoveredMediaInfo(
+          tracks: discoveredTracks.isNotEmpty
+              ? discoveredTracks
+              : (pureResult?.tracks ?? const []),
+          rawTags: tags,
+          duration: duration,
+          hasEmbeddedArtwork: hasEmbeddedArtwork,
+          embeddedArtworkBytes: pureResult?.embeddedArtworkBytes,
+          audioInfo: audioInfo,
+        );
+      } catch (_) {
+        return pureResult;
+      } finally {
+        if (!playerRetired) {
+          try {
+            await player.stop();
+          } catch (_) {}
+        }
+      }
+    } finally {
+      inspectionFinished.complete();
     }
   }
 
@@ -674,20 +787,29 @@ class MediaKitProbeEngine implements MediaProbeEngine {
     if (_disposed || (cancellationToken?.isCancelled ?? false)) return null;
 
     final pureResult = await _pureDartParser.parse(filePath);
+    if (_disposed || (cancellationToken?.isCancelled ?? false)) return null;
     if (pureResult?.embeddedArtworkBytes != null) {
       return pureResult!.embeddedArtworkBytes;
     }
     return null;
   }
 
+  Future<void> _disposePlayer(Player player) =>
+      _playerDisposals[player] ??= player.dispose().catchError((Object _) {});
+
   @override
   void dispose() {
     if (_disposed) return;
     _disposed = true;
-    try {
-      _player?.dispose();
-    } catch (_) {}
+    final player = _player;
     _player = null;
+    if (player != null) {
+      unawaited(
+        _nativeInspectionTail
+            .then((_) => _disposePlayer(player))
+            .catchError((Object _) {}),
+      );
+    }
   }
 }
 
@@ -743,19 +865,19 @@ class MediaProbeServiceImpl implements MediaProbeService {
     int maxConcurrentProbes = 2,
     Future<Uint8List> Function(Uint8List, {int maxDimension})? imageNormalizer,
     Player Function()? playerFactory,
-  })  : _engine = engine ?? MediaKitProbeEngine(playerFactory: playerFactory),
-        _providedCacheDirectory = cacheDirectory,
-        // ignore: prefer_initializing_formals
-        _cacheDirectoryProvider = cacheDirectoryProvider,
-        // ignore: prefer_initializing_formals
-        _maxArtworkDimension = maxArtworkDimension,
-        // ignore: prefer_initializing_formals
-        _maxCacheEntries = maxCacheEntries,
-        // ignore: prefer_initializing_formals
-        _maxCacheBytes = maxCacheBytes,
-        // ignore: prefer_initializing_formals
-        _maxConcurrentProbes = maxConcurrentProbes,
-        _imageNormalizer = imageNormalizer ?? _defaultImageNormalizer;
+  }) : _engine = engine ?? MediaKitProbeEngine(playerFactory: playerFactory),
+       _providedCacheDirectory = cacheDirectory,
+       // ignore: prefer_initializing_formals
+       _cacheDirectoryProvider = cacheDirectoryProvider,
+       // ignore: prefer_initializing_formals
+       _maxArtworkDimension = maxArtworkDimension,
+       // ignore: prefer_initializing_formals
+       _maxCacheEntries = maxCacheEntries,
+       // ignore: prefer_initializing_formals
+       _maxCacheBytes = maxCacheBytes,
+       // ignore: prefer_initializing_formals
+       _maxConcurrentProbes = maxConcurrentProbes,
+       _imageNormalizer = imageNormalizer ?? _defaultImageNormalizer;
 
   final MediaProbeEngine _engine;
   final Directory? _providedCacheDirectory;
@@ -764,7 +886,8 @@ class MediaProbeServiceImpl implements MediaProbeService {
   final int _maxCacheEntries;
   final int _maxCacheBytes;
   final int _maxConcurrentProbes;
-  final Future<Uint8List> Function(Uint8List, {int maxDimension}) _imageNormalizer;
+  final Future<Uint8List> Function(Uint8List, {int maxDimension})
+  _imageNormalizer;
 
   final List<_ProbeRequest> _pendingProbes = <_ProbeRequest>[];
   final List<_ProbeRequest> _activeProbes = <_ProbeRequest>[];
@@ -804,7 +927,8 @@ class MediaProbeServiceImpl implements MediaProbeService {
     }
 
     // Fall back to extension hint or metadata hint
-    if (hint == MediaKind.audio || (hasAudioMetadata && hint != MediaKind.video)) {
+    if (hint == MediaKind.audio ||
+        (hasAudioMetadata && hint != MediaKind.video)) {
       return MediaKind.audio;
     }
     if (hint == MediaKind.video) {
@@ -870,17 +994,37 @@ class MediaProbeServiceImpl implements MediaProbeService {
     ]);
     final year = _parseYear(yearStr);
 
-    final trackStr = lookup(['track', 'tracknumber', 'track_number', 'track-number', 'trck', 'trkn']);
+    final trackStr = lookup([
+      'track',
+      'tracknumber',
+      'track_number',
+      'track-number',
+      'trck',
+      'trkn',
+    ]);
     final trackNumber = _parseFirstInt(trackStr);
 
-    final discStr = lookup(['disc', 'discnumber', 'disc_number', 'disc-number', 'disk', 'tpos']);
+    final discStr = lookup([
+      'disc',
+      'discnumber',
+      'disc_number',
+      'disc-number',
+      'disk',
+      'tpos',
+    ]);
     final discNumber = _parseFirstInt(discStr);
 
     // Audio technical info tag fallback
     final tagCodec = lookup(['codec', 'audiocodec', 'audio_codec']);
-    final tagSampleRate = _parseFirstInt(lookup(['samplerate', 'sample_rate', 'sample-rate']));
-    final tagChannels = _parseFirstInt(lookup(['channels', 'channelscount', 'audio_channels']));
-    final tagBitrate = _parseFirstInt(lookup(['bitrate', 'audio_bitrate', 'audio-bitrate']));
+    final tagSampleRate = _parseFirstInt(
+      lookup(['samplerate', 'sample_rate', 'sample-rate']),
+    );
+    final tagChannels = _parseFirstInt(
+      lookup(['channels', 'channelscount', 'audio_channels']),
+    );
+    final tagBitrate = _parseFirstInt(
+      lookup(['bitrate', 'audio_bitrate', 'audio-bitrate']),
+    );
 
     final effectiveAudioInfo = AudioTechnicalInfo(
       codec: audioInfo?.codec ?? tagCodec,
@@ -901,7 +1045,8 @@ class MediaProbeServiceImpl implements MediaProbeService {
       discNumber: discNumber,
       duration: duration,
       artworkUri: artworkUri,
-      audioInfo: (effectiveAudioInfo.codec != null ||
+      audioInfo:
+          (effectiveAudioInfo.codec != null ||
               effectiveAudioInfo.sampleRate != null ||
               effectiveAudioInfo.channels != null)
           ? effectiveAudioInfo
@@ -957,7 +1102,10 @@ class MediaProbeServiceImpl implements MediaProbeService {
         for (final entry in entries) {
           if (entry is! File) continue;
           final base = p.basenameWithoutExtension(entry.path).toLowerCase();
-          final ext = p.extension(entry.path).toLowerCase().replaceFirst('.', '');
+          final ext = p
+              .extension(entry.path)
+              .toLowerCase()
+              .replaceFirst('.', '');
           if (!extensions.contains(ext)) continue;
           if (base == name ||
               base.startsWith('$name-') ||
@@ -1002,7 +1150,8 @@ class MediaProbeServiceImpl implements MediaProbeService {
 
   void _pumpProbes() {
     if (_disposed) return;
-    while (_activeProbes.length < _maxConcurrentProbes && _pendingProbes.isNotEmpty) {
+    while (_activeProbes.length < _maxConcurrentProbes &&
+        _pendingProbes.isNotEmpty) {
       final request = _pendingProbes.removeAt(0);
       if (request.cancellationToken.isCancelled) {
         if (!request.completer.isCompleted) {
@@ -1024,7 +1173,8 @@ class MediaProbeServiceImpl implements MediaProbeService {
       final file = File(request.filePath);
       final stat = await file.stat();
 
-      final isAudioHint = MediaCatalog.kindFromExtension(request.filePath) == MediaKind.audio;
+      final isAudioHint =
+          MediaCatalog.kindFromExtension(request.filePath) == MediaKind.audio;
 
       final info = await _engine.inspect(
         request.filePath,
@@ -1052,7 +1202,8 @@ class MediaProbeServiceImpl implements MediaProbeService {
         audioInfo: info?.audioInfo,
       );
 
-      final hasArtwork = info?.hasEmbeddedArtwork == true ||
+      final hasArtwork =
+          info?.hasEmbeddedArtwork == true ||
           tracks.any((t) => t.isArtwork) ||
           info?.embeddedArtworkBytes != null;
 
@@ -1080,7 +1231,10 @@ class MediaProbeServiceImpl implements MediaProbeService {
   }
 
   @override
-  Future<String?> resolveArtwork(String filePath, {bool embeddedOnly = false}) async {
+  Future<String?> resolveArtwork(
+    String filePath, {
+    bool embeddedOnly = false,
+  }) async {
     if (_disposed) return null;
 
     final file = File(filePath);
@@ -1090,7 +1244,8 @@ class MediaProbeServiceImpl implements MediaProbeService {
     final cacheDir = await _getArtworkCacheDirectory();
 
     // Cache key derived from file path and modification timestamp
-    final rawKey = 'art:$filePath:${stat.modified.millisecondsSinceEpoch}:${stat.size}';
+    final rawKey =
+        'art:$filePath:${stat.modified.millisecondsSinceEpoch}:${stat.size}';
     final key = sha256.convert(utf8.encode(rawKey)).toString();
 
     // 1. Check existing bounded cache record
@@ -1128,11 +1283,14 @@ class MediaProbeServiceImpl implements MediaProbeService {
       if ((rawBytes == null || rawBytes.isEmpty) && !embeddedOnly) {
         final nearby = findNearbyArtwork(filePath);
         if (nearby != null && nearby.existsSync()) {
-          rawBytes = await nearby.readAsBytes();
+          rawBytes = await _readBoundedFile(nearby, _maxArtworkBytes);
         }
       }
 
-      if (rawBytes == null || rawBytes.isEmpty || token.isCancelled || _disposed) {
+      if (rawBytes == null ||
+          rawBytes.isEmpty ||
+          token.isCancelled ||
+          _disposed) {
         return null;
       }
 
@@ -1184,7 +1342,8 @@ class MediaProbeServiceImpl implements MediaProbeService {
   }
 
   void _pruneCache() {
-    while (_artworkCache.length > _maxCacheEntries || _currentCacheBytes > _maxCacheBytes) {
+    while (_artworkCache.length > _maxCacheEntries ||
+        _currentCacheBytes > _maxCacheBytes) {
       if (_artworkCache.isEmpty) break;
       final oldestKey = _artworkCache.keys.first;
       final oldest = _artworkCache.remove(oldestKey);
@@ -1227,15 +1386,17 @@ class MediaProbeServiceImpl implements MediaProbeService {
     Uint8List bytes, {
     int maxDimension = 1024,
   }) async {
+    ui.ImmutableBuffer? buffer;
+    ui.ImageDescriptor? descriptor;
+    ui.Codec? codec;
+    ui.FrameInfo? frame;
     try {
-      final buffer = await ui.ImmutableBuffer.fromUint8List(bytes);
-      final descriptor = await ui.ImageDescriptor.encoded(buffer);
+      buffer = await ui.ImmutableBuffer.fromUint8List(bytes);
+      descriptor = await ui.ImageDescriptor.encoded(buffer);
       final width = descriptor.width;
       final height = descriptor.height;
 
       if (width <= maxDimension && height <= maxDimension) {
-        descriptor.dispose();
-        buffer.dispose();
         return bytes;
       }
 
@@ -1243,29 +1404,47 @@ class MediaProbeServiceImpl implements MediaProbeService {
       int targetHeight = height;
       if (width >= height) {
         targetWidth = maxDimension;
-        targetHeight = ((height * maxDimension) / width).round().clamp(1, maxDimension);
+        targetHeight = ((height * maxDimension) / width).round().clamp(
+          1,
+          maxDimension,
+        );
       } else {
         targetHeight = maxDimension;
-        targetWidth = ((width * maxDimension) / height).round().clamp(1, maxDimension);
+        targetWidth = ((width * maxDimension) / height).round().clamp(
+          1,
+          maxDimension,
+        );
       }
 
-      final codec = await descriptor.instantiateCodec(
+      codec = await descriptor.instantiateCodec(
         targetWidth: targetWidth,
         targetHeight: targetHeight,
       );
-      final frame = await codec.getNextFrame();
-      final byteData = await frame.image.toByteData(format: ui.ImageByteFormat.png);
-
-      frame.image.dispose();
-      codec.dispose();
-      descriptor.dispose();
-      buffer.dispose();
+      frame = await codec.getNextFrame();
+      final byteData = await frame.image.toByteData(
+        format: ui.ImageByteFormat.png,
+      );
 
       if (byteData != null) {
         return byteData.buffer.asUint8List();
       }
-    } catch (_) {}
-    return bytes;
+    } catch (_) {
+      throw const FormatException('Could not normalize the artwork image.');
+    } finally {
+      try {
+        frame?.image.dispose();
+      } catch (_) {}
+      try {
+        codec?.dispose();
+      } catch (_) {}
+      try {
+        descriptor?.dispose();
+      } catch (_) {}
+      try {
+        buffer?.dispose();
+      } catch (_) {}
+    }
+    throw const FormatException('Could not normalize the artwork image.');
   }
 
   @override
@@ -1284,8 +1463,6 @@ class MediaProbeServiceImpl implements MediaProbeService {
         request.completer.completeError(const ProbeCancelledException());
       }
     }
-    _activeProbes.clear();
-
     for (final token in _activeArtworkTokens.toList()) {
       token.cancel();
     }

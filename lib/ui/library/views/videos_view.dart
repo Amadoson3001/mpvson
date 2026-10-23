@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import '../../../data/repositories/media_library_repository.dart';
@@ -36,6 +37,8 @@ class _VideosViewState extends State<VideosView> {
   bool _ascending = false;
   List<MediaItemRecord>? _videos;
   bool _isLoading = false;
+  Future<void>? _reloadFuture;
+  bool _reloadAgain = false;
 
   @override
   void initState() {
@@ -66,20 +69,39 @@ class _VideosViewState extends State<VideosView> {
     _reload();
   }
 
-  Future<void> _reload() async {
-    if (!mounted) return;
-    setState(() => _isLoading = true);
-    final videos = await widget.repository.queryMedia(
-      kind: MediaKind.video,
-      searchQuery: widget.searchQuery,
-      sortBy: _sortBy,
-      ascending: _ascending,
-    );
-    if (mounted) {
-      setState(() {
-        _videos = videos;
-        _isLoading = false;
-      });
+  Future<void> _reload() {
+    if (!mounted) return Future<void>.value();
+    _reloadAgain = true;
+    final active = _reloadFuture;
+    if (active != null) return active;
+    final future = _drainReloads();
+    final tracked = future.whenComplete(() {
+      _reloadFuture = null;
+      if (_reloadAgain && mounted) unawaited(_reload());
+    });
+    _reloadFuture = tracked;
+    return tracked;
+  }
+
+  Future<void> _drainReloads() async {
+    if (mounted) setState(() => _isLoading = true);
+    try {
+      do {
+        _reloadAgain = false;
+        final videos = await widget.repository.queryMedia(
+          kind: MediaKind.video,
+          searchQuery: widget.searchQuery,
+          sortBy: _sortBy,
+          ascending: _ascending,
+        );
+        if (!mounted) return;
+        if (_reloadAgain) continue;
+        setState(() => _videos = videos);
+      } while (_reloadAgain && mounted);
+    } catch (error) {
+      debugPrint('Videos view could not refresh: $error');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -120,7 +142,11 @@ class _VideosViewState extends State<VideosView> {
   }
 
   Future<void> _playVideo(MediaItemRecord video) async {
-    await widget.controller.openPaths([video.path], append: false, initialIndex: 0);
+    await widget.controller.openPaths(
+      [video.path],
+      append: false,
+      initialIndex: 0,
+    );
   }
 
   @override
@@ -139,22 +165,26 @@ class _VideosViewState extends State<VideosView> {
                 ? const Center(
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation<Color>(LibraryTheme.accent),
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                        LibraryTheme.accent,
+                      ),
                     ),
                   )
                 : (_videos ?? const <MediaItemRecord>[]).isEmpty
-                    ? EmptyLibraryView(
-                        title: 'No videos found',
-                        message: widget.searchQuery != null && widget.searchQuery!.isNotEmpty
-                            ? 'No video files matched "${widget.searchQuery}".'
-                            : 'Add your video folders to browse your movies, clips, and recorded videos.',
-                        actionLabel: 'Add folders',
-                        icon: Icons.video_library_rounded,
-                        onAction: widget.onAddFolders,
-                      )
-                    : _viewMode == VideoViewMode.grid
-                        ? _buildVideoGrid(_videos!)
-                        : _buildVideoList(_videos!),
+                ? EmptyLibraryView(
+                    title: 'No videos found',
+                    message:
+                        widget.searchQuery != null &&
+                            widget.searchQuery!.isNotEmpty
+                        ? 'No video files matched "${widget.searchQuery}".'
+                        : 'Add your video folders to browse your movies, clips, and recorded videos.',
+                    actionLabel: 'Add folders',
+                    icon: Icons.video_library_rounded,
+                    onAction: widget.onAddFolders,
+                  )
+                : _viewMode == VideoViewMode.grid
+                ? _buildVideoGrid(_videos!)
+                : _buildVideoList(_videos!),
           ),
         ],
       ),
@@ -167,10 +197,7 @@ class _VideosViewState extends State<VideosView> {
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
       child: Row(
         children: [
-          Text(
-            'Videos',
-            style: LibraryTheme.sectionTitle,
-          ),
+          Text('Videos', style: LibraryTheme.sectionTitle),
           const Spacer(),
           // Sort dropdown
           Text('Sort by: ', style: LibraryTheme.metadata),
@@ -180,7 +207,11 @@ class _VideosViewState extends State<VideosView> {
             underline: const SizedBox.shrink(),
             dropdownColor: LibraryTheme.surface,
             style: LibraryTheme.rowPrimary.copyWith(fontSize: 12.5),
-            icon: const Icon(Icons.arrow_drop_down, color: LibraryTheme.secondaryText, size: 18),
+            icon: const Icon(
+              Icons.arrow_drop_down,
+              color: LibraryTheme.secondaryText,
+              size: 18,
+            ),
             items: const [
               DropdownMenuItem(value: 'title', child: Text('Title')),
               DropdownMenuItem(value: 'addedAt', child: Text('Date added')),
@@ -196,7 +227,9 @@ class _VideosViewState extends State<VideosView> {
           ),
           IconButton(
             icon: Icon(
-              _ascending ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded,
+              _ascending
+                  ? Icons.arrow_upward_rounded
+                  : Icons.arrow_downward_rounded,
               size: 16,
               color: LibraryTheme.secondaryText,
             ),
@@ -208,7 +241,12 @@ class _VideosViewState extends State<VideosView> {
             },
           ),
           const SizedBox(width: 12),
-          const VerticalDivider(width: 1, indent: 6, endIndent: 6, color: LibraryTheme.border),
+          const VerticalDivider(
+            width: 1,
+            indent: 6,
+            endIndent: 6,
+            color: LibraryTheme.border,
+          ),
           const SizedBox(width: 12),
           // Grid / List toggle
           IconButton(
@@ -296,7 +334,10 @@ class _VideosViewState extends State<VideosView> {
                       right: 8,
                       bottom: 8,
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
                         decoration: BoxDecoration(
                           color: Colors.black.withValues(alpha: 0.75),
                           borderRadius: BorderRadius.circular(4),
@@ -313,7 +354,10 @@ class _VideosViewState extends State<VideosView> {
                       left: 8,
                       top: 8,
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
                         decoration: BoxDecoration(
                           color: LibraryTheme.danger.withValues(alpha: 0.85),
                           borderRadius: BorderRadius.circular(4),
@@ -343,7 +387,9 @@ class _VideosViewState extends State<VideosView> {
                         Text(
                           video.title,
                           style: LibraryTheme.rowPrimary.copyWith(
-                            color: isUnavailable ? LibraryTheme.mutedText : LibraryTheme.primaryText,
+                            color: isUnavailable
+                                ? LibraryTheme.mutedText
+                                : LibraryTheme.primaryText,
                           ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -381,10 +427,26 @@ class _VideosViewState extends State<VideosView> {
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             child: Row(
               children: [
-                const SizedBox(width: 48, child: Text('#', style: LibraryTheme.metadata)),
-                const Expanded(flex: 5, child: Text('Title', style: LibraryTheme.metadata)),
-                const Expanded(flex: 2, child: Text('Size', style: LibraryTheme.metadata)),
-                const SizedBox(width: 90, child: Text('Duration', style: LibraryTheme.metadata, textAlign: TextAlign.right)),
+                const SizedBox(
+                  width: 48,
+                  child: Text('#', style: LibraryTheme.metadata),
+                ),
+                const Expanded(
+                  flex: 5,
+                  child: Text('Title', style: LibraryTheme.metadata),
+                ),
+                const Expanded(
+                  flex: 2,
+                  child: Text('Size', style: LibraryTheme.metadata),
+                ),
+                const SizedBox(
+                  width: 90,
+                  child: Text(
+                    'Duration',
+                    style: LibraryTheme.metadata,
+                    textAlign: TextAlign.right,
+                  ),
+                ),
                 const SizedBox(width: 48), // Favorite icon space
                 const SizedBox(width: 40), // More menu space
               ],
@@ -419,7 +481,9 @@ class _VideosViewState extends State<VideosView> {
                         child: Text(
                           video.title,
                           style: LibraryTheme.rowPrimary.copyWith(
-                            color: isUnavailable ? LibraryTheme.mutedText : LibraryTheme.primaryText,
+                            color: isUnavailable
+                                ? LibraryTheme.mutedText
+                                : LibraryTheme.primaryText,
                           ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -428,7 +492,10 @@ class _VideosViewState extends State<VideosView> {
                       if (isUnavailable) ...[
                         const SizedBox(width: 8),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 5,
+                            vertical: 1,
+                          ),
                           decoration: BoxDecoration(
                             color: LibraryTheme.danger.withValues(alpha: 0.2),
                             borderRadius: BorderRadius.circular(4),
@@ -447,7 +514,10 @@ class _VideosViewState extends State<VideosView> {
                 ),
                 Expanded(
                   flex: 2,
-                  child: Text(_formatFileSize(video.fileSize), style: LibraryTheme.rowSecondary),
+                  child: Text(
+                    _formatFileSize(video.fileSize),
+                    style: LibraryTheme.rowSecondary,
+                  ),
                 ),
                 SizedBox(
                   width: 90,
@@ -461,18 +531,24 @@ class _VideosViewState extends State<VideosView> {
                   width: 48,
                   child: IconButton(
                     icon: Icon(
-                      video.isFavorite ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+                      video.isFavorite
+                          ? Icons.favorite_rounded
+                          : Icons.favorite_border_rounded,
                       size: 18,
-                      color: video.isFavorite ? LibraryTheme.accent : LibraryTheme.mutedText,
+                      color: video.isFavorite
+                          ? LibraryTheme.accent
+                          : LibraryTheme.mutedText,
                     ),
-                    tooltip: video.isFavorite ? 'Remove favorite' : 'Add to favorites',
-                    onPressed: () => widget.repository.toggleFavorite(video.id, !video.isFavorite),
+                    tooltip: video.isFavorite
+                        ? 'Remove favorite'
+                        : 'Add to favorites',
+                    onPressed: () => widget.repository.toggleFavorite(
+                      video.id,
+                      !video.isFavorite,
+                    ),
                   ),
                 ),
-                SizedBox(
-                  width: 40,
-                  child: _buildVideoItemActionMenu(video),
-                ),
+                SizedBox(width: 40, child: _buildVideoItemActionMenu(video)),
               ],
             ),
           ),
@@ -483,7 +559,11 @@ class _VideosViewState extends State<VideosView> {
 
   Widget _buildVideoItemActionMenu(MediaItemRecord video) {
     return PopupMenuButton<String>(
-      icon: const Icon(Icons.more_vert_rounded, size: 18, color: LibraryTheme.mutedText),
+      icon: const Icon(
+        Icons.more_vert_rounded,
+        size: 18,
+        color: LibraryTheme.mutedText,
+      ),
       tooltip: 'Actions',
       color: LibraryTheme.surface,
       shape: RoundedRectangleBorder(
@@ -496,10 +576,18 @@ class _VideosViewState extends State<VideosView> {
             await _playVideo(video);
             break;
           case 'play_next':
-            await widget.controller.openPaths([video.path], append: true, playNext: true);
+            await widget.controller.openPaths(
+              [video.path],
+              append: true,
+              playNext: true,
+            );
             break;
           case 'add_queue':
-            await widget.controller.openPaths([video.path], append: true, playNext: false);
+            await widget.controller.openPaths(
+              [video.path],
+              append: true,
+              playNext: false,
+            );
             break;
           case 'toggle_favorite':
             await widget.repository.toggleFavorite(video.id, !video.isFavorite);
@@ -514,7 +602,11 @@ class _VideosViewState extends State<VideosView> {
           value: 'play_now',
           child: Row(
             children: [
-              Icon(Icons.play_arrow_rounded, size: 18, color: LibraryTheme.accent),
+              Icon(
+                Icons.play_arrow_rounded,
+                size: 18,
+                color: LibraryTheme.accent,
+              ),
               SizedBox(width: 10),
               Expanded(child: Text('Play now', style: LibraryTheme.rowPrimary)),
             ],
@@ -524,9 +616,15 @@ class _VideosViewState extends State<VideosView> {
           value: 'play_next',
           child: Row(
             children: [
-              Icon(Icons.playlist_play_rounded, size: 18, color: LibraryTheme.secondaryText),
+              Icon(
+                Icons.playlist_play_rounded,
+                size: 18,
+                color: LibraryTheme.secondaryText,
+              ),
               SizedBox(width: 10),
-              Expanded(child: Text('Play next', style: LibraryTheme.rowPrimary)),
+              Expanded(
+                child: Text('Play next', style: LibraryTheme.rowPrimary),
+              ),
             ],
           ),
         ),
@@ -534,9 +632,15 @@ class _VideosViewState extends State<VideosView> {
           value: 'add_queue',
           child: Row(
             children: [
-              Icon(Icons.queue_music_rounded, size: 18, color: LibraryTheme.secondaryText),
+              Icon(
+                Icons.queue_music_rounded,
+                size: 18,
+                color: LibraryTheme.secondaryText,
+              ),
               SizedBox(width: 10),
-              Expanded(child: Text('Add to queue', style: LibraryTheme.rowPrimary)),
+              Expanded(
+                child: Text('Add to queue', style: LibraryTheme.rowPrimary),
+              ),
             ],
           ),
         ),
@@ -545,7 +649,9 @@ class _VideosViewState extends State<VideosView> {
           child: Row(
             children: [
               Icon(
-                video.isFavorite ? Icons.favorite_border_rounded : Icons.favorite_rounded,
+                video.isFavorite
+                    ? Icons.favorite_border_rounded
+                    : Icons.favorite_rounded,
                 size: 18,
                 color: LibraryTheme.accent,
               ),
@@ -566,9 +672,15 @@ class _VideosViewState extends State<VideosView> {
           value: 'show_folder',
           child: Row(
             children: [
-              Icon(Icons.folder_open_rounded, size: 18, color: LibraryTheme.secondaryText),
+              Icon(
+                Icons.folder_open_rounded,
+                size: 18,
+                color: LibraryTheme.secondaryText,
+              ),
               SizedBox(width: 10),
-              Expanded(child: Text('Show in folder', style: LibraryTheme.rowPrimary)),
+              Expanded(
+                child: Text('Show in folder', style: LibraryTheme.rowPrimary),
+              ),
             ],
           ),
         ),
