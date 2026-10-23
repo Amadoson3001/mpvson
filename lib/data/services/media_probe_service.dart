@@ -36,6 +36,18 @@ class ProbeCancelledException implements Exception {
   String toString() => 'ProbeCancelledException: $message';
 }
 
+/// Signals that an inspection could not produce a usable result and may be retried.
+class ProbeInspectionFailedException implements Exception {
+  const ProbeInspectionFailedException([
+    this.message = 'Media inspection did not return a result',
+  ]);
+
+  final String message;
+
+  @override
+  String toString() => 'ProbeInspectionFailedException: $message';
+}
+
 abstract class MediaProbeService {
   Future<ProbeResult> probe(String filePath, {int? priority});
   Future<String?> resolveArtwork(String filePath, {bool embeddedOnly = false});

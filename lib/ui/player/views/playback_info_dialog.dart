@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../data/services/playback_statistics.dart';
+import '../../core/app_theme.dart';
 
 /// Refresh is explicit so inspecting playback never starts a polling workload.
 class PlaybackInfoDialog extends StatefulWidget {
@@ -68,23 +69,41 @@ class _PlaybackInfoDialogState extends State<PlaybackInfoDialog> {
               ),
             ),
           if (_statistics case final statistics?)
-            for (final entry in statistics.values.entries)
+            for (final entry in statistics.values.entries) ...[
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 8),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(child: Text(entry.key)),
+                    Expanded(
+                      flex: 4,
+                      child: Text(
+                        entry.key,
+                        style: const TextStyle(
+                          color: AppTheme.text,
+                          fontWeight: FontWeight.w500,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
                     const SizedBox(width: 16),
                     Expanded(
+                      flex: 5,
                       child: SelectableText(
                         entry.value,
                         textAlign: TextAlign.end,
+                        style: const TextStyle(
+                          color: AppTheme.secondaryText,
+                          fontSize: 13,
+                          fontFeatures: [FontFeature.tabularFigures()],
+                        ),
                       ),
                     ),
                   ],
                 ),
               ),
+              const Divider(height: 1, color: AppTheme.border),
+            ],
         ],
       ),
     ),

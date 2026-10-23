@@ -1,6 +1,6 @@
 # Control size
 
-Settings opens on Appearance, where Compact and Normal select the bottom control layout. Compact is the default, including when loading a session saved before this preference existed. The selection updates the player immediately and is saved through the session repository.
+Wide settings opens on Appearance; compact settings opens the category list. Appearance offers Compact and Normal for the bottom control layout. Compact is the default, including when loading a session saved before this preference existed. The selection updates the player immediately and is saved through the session repository.
 
 ## Design
 

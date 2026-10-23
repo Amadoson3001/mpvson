@@ -21,6 +21,7 @@ class LibraryViewModel extends ChangeNotifier {
     _scanStatus = repository.scanStatus;
     _folders = repository.folders;
     repository.addListener(_onRepositoryChanged);
+    repository.scanStatusListenable.addListener(_onScanStatusChanged);
     playerController?.addListener(_onPlayerChanged);
   }
 
@@ -254,6 +255,12 @@ class LibraryViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  void _onScanStatusChanged() {
+    if (_disposed) return;
+    _scanStatus = repository.scanStatus;
+    notifyListeners();
+  }
+
   void _onPlayerChanged() {
     if (_disposed) return;
     notifyListeners();
@@ -265,6 +272,7 @@ class LibraryViewModel extends ChangeNotifier {
     _searchGeneration++;
     _debounceTimer?.cancel();
     repository.removeListener(_onRepositoryChanged);
+    repository.scanStatusListenable.removeListener(_onScanStatusChanged);
     playerController?.removeListener(_onPlayerChanged);
     super.dispose();
   }

@@ -25,7 +25,9 @@ abstract class DesktopIntegrationService extends ChangeNotifier {
     bool canGoPrevious = true,
   });
   Future<void> setKeepAwake(bool enable, {required bool isVideoPlaying});
-  Future<void> openDefaultAppsSettings();
+
+  /// Returns whether the operating system accepted the launch request.
+  Future<bool> openDefaultAppsSettings();
   @override
   void dispose();
 }

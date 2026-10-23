@@ -23,7 +23,7 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
     MethodChannel? singleInstanceChannel,
     MethodChannel? mediaControlsChannel,
     MethodChannel? powerChannel,
-    this._urlLauncher,
+    this.urlLauncher,
   }) : singleInstanceChannel =
            singleInstanceChannel ??
            const MethodChannel('mpvson/single_instance'),
@@ -34,7 +34,7 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
   final MethodChannel singleInstanceChannel;
   final MethodChannel mediaControlsChannel;
   final MethodChannel powerChannel;
-  final Future<bool> Function(Uri uri)? _urlLauncher;
+  final Future<bool> Function(Uri uri)? urlLauncher;
 
   PlayerController? _controller;
   OpenRequestCoordinator? _openRequestCoordinator;
@@ -229,46 +229,47 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
   }
 
   @override
-  Future<void> openDefaultAppsSettings() async {
+  Future<bool> openDefaultAppsSettings() async {
     try {
       final result = await mediaControlsChannel.invokeMethod<bool>(
         'openDefaultAppsSettings',
       );
-      if (result == true) return;
+      if (result != null) return result;
     } on MissingPluginException {
       // Fallback to URL launch or process start.
     } on PlatformException {
       // Fallback to URL launch or process start.
     }
 
+    // The URI and Explorer fallbacks are Windows-specific. Linux reports its
+    // desktop launcher result through the native channel above.
+    if (!Platform.isWindows) return false;
     const settingsUriString = 'ms-settings:defaultapps';
     final uri = Uri.parse(settingsUriString);
 
-    final launcher = _urlLauncher;
+    final launcher = urlLauncher;
     if (launcher != null) {
       try {
-        final launched = await launcher(uri);
-        if (launched) return;
+        return await launcher(uri);
       } on Object {
-        // Fall through to system fallback.
+        return false;
       }
     }
 
     try {
       if (await canLaunchUrl(uri)) {
         final launched = await launchUrl(uri);
-        if (launched) return;
+        if (launched) return true;
       }
     } on Object {
       // Fall through to Process run.
     }
 
-    if (Platform.isWindows) {
-      try {
-        await Process.run('explorer.exe', [settingsUriString]);
-      } on Object {
-        // Best effort.
-      }
+    try {
+      final result = await Process.run('explorer.exe', [settingsUriString]);
+      return result.exitCode == 0;
+    } on Object {
+      return false;
     }
   }
 

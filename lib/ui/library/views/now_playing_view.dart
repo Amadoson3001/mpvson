@@ -147,121 +147,136 @@ class _NowPlayingViewState extends State<NowPlayingView> {
       builder: (context, constraints) {
         final isNarrow = constraints.maxWidth < 800;
 
-        return Scaffold(
-          backgroundColor: LibraryTheme.background,
-          body: Row(
-            children: [
-              // Main content stage
-              Expanded(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 32,
-                    vertical: 24,
+        final mainStage = SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 680),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  if (widget.onBack != null)
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: IconButton(
+                        icon: const Icon(Icons.arrow_back_rounded),
+                        tooltip: 'Back',
+                        color: LibraryTheme.secondaryText,
+                        onPressed: widget.onBack,
+                      ),
+                    ),
+                  const SizedBox(height: 12),
+                  // Large square artwork
+                  _buildArtwork(context, isNarrow ? 260 : 340),
+                  const SizedBox(height: 28),
+                  // Title & Favorite row
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const SizedBox(width: 48), // balance favorite button
+                      Expanded(
+                        child: Text(
+                          _currentMediaRecord?.title ??
+                              entry?.title ??
+                              'No Track Playing',
+                          style: LibraryTheme.pageTitle,
+                          textAlign: TextAlign.center,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      IconButton(
+                        icon: Icon(
+                          (_currentMediaRecord?.isFavorite ?? false)
+                              ? Icons.favorite_rounded
+                              : Icons.favorite_border_rounded,
+                          color: (_currentMediaRecord?.isFavorite ?? false)
+                              ? LibraryTheme.accent
+                              : LibraryTheme.mutedText,
+                        ),
+                        tooltip: (_currentMediaRecord?.isFavorite ?? false)
+                            ? 'Remove from favorites'
+                            : 'Add to favorites',
+                        onPressed: entry != null ? _toggleFavorite : null,
+                      ),
+                    ],
                   ),
-                  child: Center(
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 680),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          if (widget.onBack != null)
-                            Align(
-                              alignment: Alignment.centerLeft,
-                              child: IconButton(
-                                icon: const Icon(Icons.arrow_back_rounded),
-                                tooltip: 'Back',
-                                color: LibraryTheme.secondaryText,
-                                onPressed: widget.onBack,
-                              ),
-                            ),
-                          const SizedBox(height: 12),
-                          // Large square artwork
-                          _buildArtwork(context, isNarrow ? 260 : 340),
-                          const SizedBox(height: 28),
-                          // Title & Favorite row
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              const SizedBox(
-                                width: 48,
-                              ), // balance favorite button
-                              Expanded(
-                                child: Text(
-                                  _currentMediaRecord?.title ??
-                                      entry?.title ??
-                                      'No Track Playing',
-                                  style: LibraryTheme.pageTitle,
-                                  textAlign: TextAlign.center,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                              IconButton(
-                                icon: Icon(
-                                  (_currentMediaRecord?.isFavorite ?? false)
-                                      ? Icons.favorite_rounded
-                                      : Icons.favorite_border_rounded,
-                                  color:
-                                      (_currentMediaRecord?.isFavorite ?? false)
-                                      ? LibraryTheme.accent
-                                      : LibraryTheme.mutedText,
-                                ),
-                                tooltip:
-                                    (_currentMediaRecord?.isFavorite ?? false)
-                                    ? 'Remove from favorites'
-                                    : 'Add to favorites',
-                                onPressed: entry != null
-                                    ? _toggleFavorite
-                                    : null,
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          // Artist
-                          Text(
-                            _currentMediaRecord?.artist ?? 'Unknown Artist',
-                            style: LibraryTheme.sectionTitle.copyWith(
-                              color: LibraryTheme.secondaryText,
-                              fontWeight: FontWeight.w500,
-                            ),
-                            textAlign: TextAlign.center,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          const SizedBox(height: 4),
-                          // Album
-                          Text(
-                            _currentMediaRecord?.album ?? '',
-                            style: LibraryTheme.rowSecondary.copyWith(
-                              color: LibraryTheme.mutedText,
-                            ),
-                            textAlign: TextAlign.center,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          const SizedBox(height: 28),
-                          // Timeline scrubber
-                          _buildTimelineScrubber(position, duration),
-                          const SizedBox(height: 20),
-                          // Transport controls
-                          _buildTransportControls(isPlaying),
-                          const SizedBox(height: 24),
-                          // Volume & Queue button row
-                          _buildVolumeAndQueueRow(),
-                        ],
+                  const SizedBox(height: 8),
+                  // Artist
+                  Text(
+                    _currentMediaRecord?.artist ?? 'Unknown Artist',
+                    style: LibraryTheme.sectionTitle.copyWith(
+                      color: LibraryTheme.secondaryText,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    textAlign: TextAlign.center,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 4),
+                  // Album
+                  Text(
+                    _currentMediaRecord?.album ?? '',
+                    style: LibraryTheme.rowSecondary.copyWith(
+                      color: LibraryTheme.mutedText,
+                    ),
+                    textAlign: TextAlign.center,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 28),
+                  // Timeline scrubber
+                  _buildTimelineScrubber(position, duration),
+                  const SizedBox(height: 20),
+                  // Transport controls
+                  _buildTransportControls(isPlaying),
+                  const SizedBox(height: 24),
+                  // Volume & Queue button row
+                  _buildVolumeAndQueueRow(),
+                ],
+              ),
+            ),
+          ),
+        );
+
+        return Material(
+          color: LibraryTheme.background,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              if (!isNarrow)
+                Row(
+                  children: [
+                    Expanded(child: mainStage),
+                    if (_isQueuePanelOpen) ...[
+                      const VerticalDivider(
+                        width: 1,
+                        color: LibraryTheme.border,
+                      ),
+                      SizedBox(width: 320, child: _buildQueuePanel()),
+                    ],
+                  ],
+                )
+              else ...[
+                Positioned.fill(child: mainStage),
+                if (_isQueuePanelOpen) ...[
+                  Positioned.fill(
+                    child: GestureDetector(
+                      onTap: () => setState(() => _isQueuePanelOpen = false),
+                      child: ColoredBox(
+                        color: Colors.black.withValues(alpha: 0.6),
                       ),
                     ),
                   ),
-                ),
-              ),
-              // Docked/slide-in Queue Panel on the right
-              if (_isQueuePanelOpen) ...[
-                const VerticalDivider(width: 1, color: LibraryTheme.border),
-                SizedBox(
-                  width: isNarrow ? constraints.maxWidth : 320,
-                  child: _buildQueuePanel(),
-                ),
+                  Positioned(
+                    top: 0,
+                    bottom: 0,
+                    right: 0,
+                    width: (constraints.maxWidth * 0.85).clamp(280.0, 360.0),
+                    child: _buildQueuePanel(),
+                  ),
+                ],
               ],
             ],
           ),

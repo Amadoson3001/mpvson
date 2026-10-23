@@ -23,84 +23,120 @@ class UpdateCenterDialog extends StatelessWidget {
   final String engineVersion;
 
   @override
+  Widget build(BuildContext context) {
+    final screenHeight = MediaQuery.sizeOf(context).height;
+    final dialogHeight = screenHeight - 48 < 640 ? screenHeight - 48 : 640.0;
+    return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+      child: SizedBox(
+        width: 620,
+        height: dialogHeight,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 12, 12, 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Updates & about',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Close updates and about',
+                    constraints: const BoxConstraints.tightFor(
+                      width: 44,
+                      height: 44,
+                    ),
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(24, 10, 24, 18),
+                child: UpdateCenterContent(
+                  updates: updates,
+                  engineUpdates: engineUpdates,
+                  engineVersion: engineVersion,
+                ),
+              ),
+            ),
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Close'),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+typedef UpdateContentAnchorBuilder = Widget Function(String id, Widget child);
+
+/// The live update controls, suitable for embedding
+/// inside a caller-owned vertical scroll view.
+class UpdateCenterContent extends StatelessWidget {
+  const UpdateCenterContent({
+    super.key,
+    required this.updates,
+    required this.engineUpdates,
+    required this.engineVersion,
+    this.anchorBuilder,
+  });
+
+  final UpdateService updates;
+  final EngineUpdateService engineUpdates;
+  final String engineVersion;
+  final UpdateContentAnchorBuilder? anchorBuilder;
+
+  Widget _anchor(String id, Widget child) =>
+      anchorBuilder?.call(id, child) ?? child;
+
+  @override
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: Listenable.merge([updates, engineUpdates]),
     builder: (context, _) {
-      final screenHeight = MediaQuery.sizeOf(context).height;
-      final dialogHeight = screenHeight - 48 < 640 ? screenHeight - 48 : 640.0;
       final appBusy = updates.busy;
       final engineBusy = engineUpdates.busy;
-
-      return Dialog(
-        insetPadding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
-        child: SizedBox(
-          width: 620,
-          height: dialogHeight,
-          child: Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(24, 12, 12, 8),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        'Updates & about',
-                        style: Theme.of(context).textTheme.titleLarge,
-                      ),
-                    ),
-                    IconButton(
-                      tooltip: 'Close updates and about',
-                      constraints: const BoxConstraints.tightFor(
-                        width: 44,
-                        height: 44,
-                      ),
-                      onPressed: () => Navigator.of(context).pop(),
-                      icon: const Icon(Icons.close_rounded),
-                    ),
-                  ],
-                ),
-              ),
-              const Divider(height: 1),
-              Expanded(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(24, 10, 24, 18),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _EngineTrack(
-                        updates: engineUpdates,
-                        loadedVersion: engineVersion,
-                        busy: engineBusy,
-                        onAction: _performEngineAction,
-                        onRollback: _scheduleEngineRollback,
-                      ),
-                      const Padding(
-                        padding: EdgeInsets.only(left: 18),
-                        child: Divider(height: 22),
-                      ),
-                      _ApplicationTrack(
-                        updates: updates,
-                        busy: appBusy,
-                        onAction: _performApplicationAction,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const Divider(height: 1),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
-                child: Align(
-                  alignment: Alignment.centerRight,
-                  child: TextButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    child: const Text('Close'),
-                  ),
-                ),
-              ),
-            ],
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _anchor(
+            'engine-updates',
+            _EngineTrack(
+              updates: engineUpdates,
+              loadedVersion: engineVersion,
+              busy: engineBusy,
+              onAction: _performEngineAction,
+              onRollback: _scheduleEngineRollback,
+            ),
           ),
-        ),
+          const Padding(
+            padding: EdgeInsets.only(left: 18),
+            child: Divider(height: 22),
+          ),
+          _anchor(
+            'app-updates',
+            _ApplicationTrack(
+              updates: updates,
+              busy: appBusy,
+              onAction: _performApplicationAction,
+            ),
+          ),
+        ],
       );
     },
   );
@@ -532,8 +568,8 @@ class _EngineTrack extends StatelessWidget {
         icon: Icons.inventory_2_outlined,
         color: AppTheme.secondaryText,
         text: linux
-            ? 'On Linux, the system package manager owns libmpv. Update it through your distribution.'
-            : 'The operating system manages updates for this playback engine.',
+            ? 'On Linux, the system package manager owns libmpv. Update it through your distribution. Loaded version: $loadedVersion.'
+            : 'The operating system manages updates for this playback engine. Loaded version: $loadedVersion.',
       );
     }
 

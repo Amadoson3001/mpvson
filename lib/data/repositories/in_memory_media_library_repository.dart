@@ -53,7 +53,7 @@ class InMemoryMediaLibraryRepository extends MediaLibraryRepository {
 
   void setScanStatus(LibraryScanStatus status) {
     _scanStatus = status;
-    notifyListeners();
+    publishScanStatus(status);
   }
 
   void setItems(List<MediaItemRecord> items) {
@@ -138,6 +138,7 @@ class InMemoryMediaLibraryRepository extends MediaLibraryRepository {
     String? artist,
     String? album,
     bool? onlyFavorites,
+    bool onlyPlayed = false,
     int? limit,
     int? offset,
     String? sortBy,
@@ -151,6 +152,9 @@ class InMemoryMediaLibraryRepository extends MediaLibraryRepository {
 
     if (onlyFavorites == true) {
       result = result.where((item) => item.isFavorite).toList();
+    }
+    if (onlyPlayed) {
+      result = result.where((item) => item.lastPlayedAt != null).toList();
     }
 
     if (artist != null && artist.isNotEmpty) {
@@ -225,6 +229,9 @@ class InMemoryMediaLibraryRepository extends MediaLibraryRepository {
           default:
             comparison = a.title.toLowerCase().compareTo(b.title.toLowerCase());
         }
+        if (comparison == 0) {
+          return a.canonicalSource.compareTo(b.canonicalSource);
+        }
         return ascending ? comparison : -comparison;
       });
     }
@@ -281,6 +288,14 @@ class InMemoryMediaLibraryRepository extends MediaLibraryRepository {
   @override
   Future<List<PlaylistRecord>> getPlaylists() async {
     return List.unmodifiable(_playlists);
+  }
+
+  @override
+  Future<void> clearPlaybackHistory() async {
+    for (var i = 0; i < _items.length; i++) {
+      _items[i] = _items[i].copyWith(clearLastPlayedAt: true, playCount: 0);
+    }
+    notifyListeners();
   }
 
   @override
@@ -475,11 +490,6 @@ class InMemoryMediaLibraryRepository extends MediaLibraryRepository {
   @override
   Future<void> cancelScan() async {
     setScanStatus(const LibraryScanStatus(phase: ScanPhase.idle));
-  }
-
-  @override
-  Future<void> dispose() async {
-    super.dispose();
   }
 
   /// Factory helper that returns sample data for testing or demo.

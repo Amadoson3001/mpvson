@@ -1155,8 +1155,10 @@ static void media_controls_method_call_cb(FlMethodChannel* channel,
   }
 
   if (g_strcmp0(method, "openDefaultAppsSettings") == 0) {
-    g_spawn_command_line_async("gnome-control-center default-apps", nullptr);
-    g_autoptr(FlValue) res = fl_value_new_bool(TRUE);
+    g_autoptr(GError) launch_error = nullptr;
+    const gboolean launched = g_spawn_command_line_async(
+        "gnome-control-center default-apps", &launch_error);
+    g_autoptr(FlValue) res = fl_value_new_bool(launched);
     fl_method_call_respond_success(method_call, res, nullptr);
     return;
   }

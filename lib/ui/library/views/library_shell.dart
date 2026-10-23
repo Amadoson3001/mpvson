@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../../../data/repositories/media_library_repository.dart';
 import '../../player/player_controller.dart';
@@ -40,6 +42,7 @@ class _LibraryShellState extends State<LibraryShell> {
   final _scaffoldKey = GlobalKey<ScaffoldState>();
   String _searchQuery = '';
   bool _isOnDemandQueueOpen = false;
+  Timer? _searchDebounce;
 
   @override
   void initState() {
@@ -50,14 +53,22 @@ class _LibraryShellState extends State<LibraryShell> {
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
     _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
     super.dispose();
   }
 
   void _onSearchChanged() {
-    setState(() {
-      _searchQuery = _searchController.text;
+    _searchDebounce?.cancel();
+    final query = _searchController.text.trim();
+    if (query == _searchQuery) return;
+    if (query.isEmpty) {
+      setState(() => _searchQuery = '');
+      return;
+    }
+    _searchDebounce = Timer(const Duration(milliseconds: 300), () {
+      if (mounted) setState(() => _searchQuery = query);
     });
   }
 
@@ -209,14 +220,30 @@ class _LibraryShellState extends State<LibraryShell> {
             color: LibraryTheme.secondaryText,
             onPressed: () => widget.repository.rescanAll(),
           ),
-          if (widget.onSwitchToVideo != null &&
-              (widget.controller.isVideo || widget.controller.hasMedia)) ...[
+          if (widget.onSwitchToVideo != null) ...[
             const SizedBox(width: 6),
-            IconButton(
-              icon: const Icon(Icons.videocam_rounded, size: 20),
-              tooltip: 'Switch to video player',
-              color: LibraryTheme.accent,
-              onPressed: widget.onSwitchToVideo,
+            Tooltip(
+              message: 'Return to player',
+              child: TextButton.icon(
+                onPressed: widget.onSwitchToVideo,
+                icon: Icon(
+                  widget.controller.hasMedia
+                      ? Icons.videocam_rounded
+                      : Icons.play_circle_outline_rounded,
+                  size: 18,
+                ),
+                label: Text(
+                  widget.controller.hasMedia ? 'Video player' : 'Player',
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                style: TextButton.styleFrom(
+                  foregroundColor: LibraryTheme.accent,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 8,
+                  ),
+                ),
+              ),
             ),
           ],
           // Medium screen On-Demand Queue Toggle
@@ -261,6 +288,7 @@ class _LibraryShellState extends State<LibraryShell> {
           searchQuery: _searchQuery,
           onAddFolders: widget.onAddFolders,
           onShowInFolder: widget.onShowInFolder,
+          onSwitchToVideo: widget.onSwitchToVideo,
         );
       case LibrarySection.music:
         return MusicView(
@@ -335,6 +363,56 @@ class _LibraryShellState extends State<LibraryShell> {
           ),
           const Divider(height: 1, color: LibraryTheme.border),
           const SizedBox(height: 12),
+          if (widget.onSwitchToVideo != null) ...[
+            if (isCollapsed)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+                child: IconButton(
+                  icon: const Icon(Icons.arrow_back_rounded, size: 20),
+                  tooltip: 'Return to player',
+                  color: LibraryTheme.accent,
+                  onPressed: widget.onSwitchToVideo,
+                ),
+              )
+            else
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 2,
+                ),
+                child: InkWell(
+                  onTap: widget.onSwitchToVideo,
+                  borderRadius: BorderRadius.circular(8),
+                  hoverColor: LibraryTheme.hover,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    child: const Row(
+                      children: [
+                        Icon(
+                          Icons.arrow_back_rounded,
+                          size: 18,
+                          color: LibraryTheme.accent,
+                        ),
+                        SizedBox(width: 14),
+                        Text(
+                          'Back to player',
+                          style: TextStyle(
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w600,
+                            color: LibraryTheme.accent,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            const Divider(height: 8, color: LibraryTheme.border),
+            const SizedBox(height: 4),
+          ],
           // Nav Items
           _navItem(
             LibrarySection.videos,
@@ -516,6 +594,27 @@ class _LibraryShellState extends State<LibraryShell> {
             ),
             const Divider(height: 1, color: LibraryTheme.border),
             const SizedBox(height: 8),
+            if (widget.onSwitchToVideo != null) ...[
+              ListTile(
+                leading: const Icon(
+                  Icons.arrow_back_rounded,
+                  color: LibraryTheme.accent,
+                ),
+                title: const Text(
+                  'Back to player',
+                  style: TextStyle(
+                    color: LibraryTheme.accent,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  widget.onSwitchToVideo?.call();
+                },
+              ),
+              const Divider(height: 1, color: LibraryTheme.border),
+              const SizedBox(height: 4),
+            ],
             _drawerItem(LibrarySection.videos, 'Videos', Icons.movie_rounded),
             _drawerItem(
               LibrarySection.music,
@@ -608,21 +707,31 @@ class _LibraryShellState extends State<LibraryShell> {
             child: Row(
               children: [
                 // Mini Artwork
-                Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: LibraryTheme.raisedSurface,
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(color: LibraryTheme.border),
-                  ),
-                  child: const Center(
-                    child: Icon(
-                      Icons.music_note_rounded,
-                      size: 20,
-                      color: LibraryTheme.accent,
-                    ),
-                  ),
+                Builder(
+                  builder: (context) {
+                    final thumb = current != null
+                        ? widget.controller.peekThumbnail(current)
+                        : null;
+                    return Container(
+                      width: 40,
+                      height: 40,
+                      clipBehavior: Clip.antiAlias,
+                      decoration: BoxDecoration(
+                        color: LibraryTheme.raisedSurface,
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: LibraryTheme.border),
+                      ),
+                      child: thumb != null && thumb.bytes.isNotEmpty
+                          ? Image.memory(thumb.bytes, fit: BoxFit.cover)
+                          : const Center(
+                              child: Icon(
+                                Icons.music_note_rounded,
+                                size: 20,
+                                color: LibraryTheme.accent,
+                              ),
+                            ),
+                    );
+                  },
                 ),
                 const SizedBox(width: 12),
                 // Title

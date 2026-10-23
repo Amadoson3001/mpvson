@@ -22,6 +22,12 @@ During playback:
 
 At narrower window widths the queue overlays the stage as a drawer. Home and settings content can scroll at the 720×480 minimum size. Keyboard focus, text input shortcuts, drag and drop and native window chrome remain part of the desktop interaction.
 
+Settings uses a larger adaptive dialog with searchable categories, a sidebar on
+wide windows, and category-list/detail navigation on compact windows. Its local
+type scale uses 24px titles, 18px section headings, 14px controls, and 12px help
+text. Player controls retain their existing type and density. See
+[settings](settings.md) for navigation, immediate changes, and saved-state behavior.
+
 The initial design review removed the floating rounded control card, repeated bordered settings cards, visible full paths in the header, and the always-open queue. These elements made application chrome compete with the video. Borders now separate functional regions; the home screen's wide play mark is its one visual accent. No invented film artwork or metadata is needed.
 
 The October 16 refinement removes the application header entirely. Secondary actions share the bottom More menu. A continuous 3px timeline uses cyan for elapsed video. A round thumb appears on hover, dragging or keyboard focus; a timestamp previews the target when hovering or seeking. Previewing a time does not seek; dragging commits on release. There is no invented buffered range.

@@ -207,9 +207,13 @@ class _PlaylistsViewState extends State<PlaylistsView> {
               message: query != null && query.isNotEmpty
                   ? 'No playlists match "$query".'
                   : 'Create custom playlists to group and sequence your favorite tracks and videos.',
-              actionLabel: 'Create playlist',
+              actionLabel: query != null && query.isNotEmpty
+                  ? ''
+                  : 'Create playlist',
               icon: Icons.playlist_add_rounded,
-              onAction: _createPlaylist,
+              onAction: query != null && query.isNotEmpty
+                  ? null
+                  : _createPlaylist,
             )
           : Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -275,7 +279,8 @@ class _PlaylistsViewState extends State<PlaylistsView> {
   }
 
   Widget _buildPlaylistCard(PlaylistRecord pl) {
-    return InkWell(
+    return _PlaylistCard(
+      playlist: pl,
       onTap: () {
         setState(() {
           _selectedPlaylist = pl;
@@ -283,91 +288,7 @@ class _PlaylistsViewState extends State<PlaylistsView> {
         });
         _reload();
       },
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: LibraryTheme.surface,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: LibraryTheme.border),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: Container(
-                decoration: BoxDecoration(
-                  color: LibraryTheme.raisedSurface,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Center(
-                  child: Icon(
-                    Icons.queue_music_rounded,
-                    size: 48,
-                    color: LibraryTheme.accent,
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    pl.title,
-                    style: LibraryTheme.rowPrimary.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                PopupMenuButton<String>(
-                  icon: const Icon(
-                    Icons.more_vert_rounded,
-                    size: 16,
-                    color: LibraryTheme.mutedText,
-                  ),
-                  color: LibraryTheme.surface,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    side: const BorderSide(color: LibraryTheme.border),
-                  ),
-                  onSelected: (action) {
-                    if (action == 'delete') {
-                      _deletePlaylist(pl);
-                    }
-                  },
-                  itemBuilder: (_) => [
-                    const PopupMenuItem(
-                      value: 'delete',
-                      child: Row(
-                        children: [
-                          Icon(
-                            Icons.delete_outline_rounded,
-                            size: 16,
-                            color: LibraryTheme.danger,
-                          ),
-                          SizedBox(width: 8),
-                          Text(
-                            'Delete playlist',
-                            style: TextStyle(
-                              color: LibraryTheme.danger,
-                              fontSize: 13,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-            const SizedBox(height: 2),
-            Text('${pl.entryCount} items', style: LibraryTheme.metadata),
-          ],
-        ),
-      ),
+      onDelete: () => _deletePlaylist(pl),
     );
   }
 
@@ -426,22 +347,7 @@ class _PlaylistsViewState extends State<PlaylistsView> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                Container(
-                  width: 140,
-                  height: 140,
-                  decoration: BoxDecoration(
-                    color: LibraryTheme.raisedSurface,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: LibraryTheme.border),
-                  ),
-                  child: const Center(
-                    child: Icon(
-                      Icons.queue_music_rounded,
-                      size: 56,
-                      color: LibraryTheme.accent,
-                    ),
-                  ),
-                ),
+                _buildPlaylistCoverStage(size: 140),
                 const SizedBox(width: 24),
                 Expanded(
                   child: Column(
@@ -450,7 +356,7 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                       Text(pl.title, style: LibraryTheme.pageTitle),
                       const SizedBox(height: 6),
                       Text(
-                        '${entries.length} items • ${_formatDuration(totalDuration)}',
+                        '${entries.length} items, ${_formatDuration(totalDuration)}',
                         style: LibraryTheme.metadata,
                       ),
                       const SizedBox(height: 16),
@@ -629,6 +535,155 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                   ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+Widget _buildPlaylistCoverStage({double size = 120}) {
+  return Container(
+    width: size,
+    height: size,
+    decoration: BoxDecoration(
+      gradient: const RadialGradient(
+        center: Alignment(-0.2, -0.3),
+        radius: 0.9,
+        colors: [Color(0xFF25334E), Color(0xFF141A28), Color(0xFF0C101A)],
+      ),
+      borderRadius: BorderRadius.circular(10),
+      border: Border.all(color: LibraryTheme.accent.withValues(alpha: 0.18)),
+    ),
+    child: Center(
+      child: Container(
+        width: size * 0.48,
+        height: size * 0.48,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: LibraryTheme.accent.withValues(alpha: 0.12),
+          border: Border.all(
+            color: LibraryTheme.accent.withValues(alpha: 0.35),
+            width: 1.5,
+          ),
+        ),
+        child: Center(
+          child: Icon(
+            Icons.queue_music_rounded,
+            size: size * 0.28,
+            color: LibraryTheme.accent,
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+class _PlaylistCard extends StatefulWidget {
+  const _PlaylistCard({
+    required this.playlist,
+    required this.onTap,
+    required this.onDelete,
+  });
+
+  final PlaylistRecord playlist;
+  final VoidCallback onTap;
+  final VoidCallback onDelete;
+
+  @override
+  State<_PlaylistCard> createState() => _PlaylistCardState();
+}
+
+class _PlaylistCardState extends State<_PlaylistCard> {
+  bool _isHovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final pl = widget.playlist;
+
+    return MouseRegion(
+      onEnter: (_) => setState(() => _isHovered = true),
+      onExit: (_) => setState(() => _isHovered = false),
+      child: InkWell(
+        onTap: widget.onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: LibraryTheme.surface,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: _isHovered
+                  ? LibraryTheme.accent.withValues(alpha: 0.5)
+                  : LibraryTheme.border,
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: SizedBox.expand(
+                  child: _buildPlaylistCoverStage(size: 140),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      pl.title,
+                      style: LibraryTheme.rowPrimary.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  PopupMenuButton<String>(
+                    icon: const Icon(
+                      Icons.more_vert_rounded,
+                      size: 16,
+                      color: LibraryTheme.mutedText,
+                    ),
+                    color: LibraryTheme.surface,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      side: const BorderSide(color: LibraryTheme.border),
+                    ),
+                    onSelected: (action) {
+                      if (action == 'delete') {
+                        widget.onDelete();
+                      }
+                    },
+                    itemBuilder: (_) => [
+                      const PopupMenuItem(
+                        value: 'delete',
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.delete_outline_rounded,
+                              size: 16,
+                              color: LibraryTheme.danger,
+                            ),
+                            SizedBox(width: 8),
+                            Text(
+                              'Delete playlist',
+                              style: TextStyle(
+                                color: LibraryTheme.danger,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              const SizedBox(height: 2),
+              Text('${pl.entryCount} items', style: LibraryTheme.metadata),
+            ],
+          ),
+        ),
       ),
     );
   }

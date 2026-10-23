@@ -17,7 +17,10 @@ class LibraryStatusBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: repository,
+      animation: Listenable.merge([
+        repository,
+        repository.scanStatusListenable,
+      ]),
       builder: (context, _) {
         final status = repository.scanStatus;
         final unavailableFolders = repository.folders
@@ -64,7 +67,7 @@ class LibraryStatusBanner extends StatelessWidget {
         : null;
 
     final countDetails = status.totalToEnrich > 0
-        ? '${status.discoveredCount} discovered • ${status.enrichedCount} of ${status.totalToEnrich} enriched'
+        ? '${status.discoveredCount} discovered, ${status.enrichedCount} of ${status.totalToEnrich} enriched'
         : '${status.discoveredCount} items discovered';
 
     return Container(

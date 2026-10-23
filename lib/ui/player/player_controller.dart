@@ -8,6 +8,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
 import '../../data/repositories/session_repository.dart';
+import '../../data/repositories/media_library_repository.dart';
 import '../../data/services/diagnostic_log.dart';
 import '../../data/services/playback_service.dart';
 import '../../data/services/seek_preview_service.dart';
@@ -21,6 +22,7 @@ import '../../domain/models/media_source.dart';
 import '../../domain/models/media_thumbnail.dart';
 import '../../domain/models/playback_session.dart';
 import '../../domain/models/playback_settings.dart';
+import '../../domain/models/resume_prompt.dart';
 import '../../domain/models/session_progress.dart';
 import '../../domain/models/video_output_policy.dart';
 
@@ -457,11 +459,13 @@ class PlayerController extends ChangeNotifier {
     SeekPreviewService? seekPreview,
     SeekPreviewBackendFactory? previewBackendFactory,
     DiagnosticSink? diagnostics,
+    MediaLibraryRepository? historyRepository,
   }) {
     _playback = playback;
     _sessions = sessions;
     _thumbnails = thumbnails;
     _diagnostics = diagnostics;
+    _historyRepository = historyRepository;
     _seekPreview =
         seekPreview ??
         SeekPreviewService(
@@ -557,6 +561,7 @@ class PlayerController extends ChangeNotifier {
   String? _resumeEntryId;
   bool _resumeSeekStarted = false;
   int _resumeGeneration = 0;
+  ResumePrompt? _pendingResumePrompt;
   bool _engineHasMedia = false;
   String? _engineEntryId;
   ControllerClosingState _closingState = ControllerClosingState.running;
@@ -574,6 +579,20 @@ class PlayerController extends ChangeNotifier {
   bool _checkpointRequested = false;
   Completer<void>? _checkpointDrain;
   bool _saveNetworkUrls = false;
+  bool _networkUrlsPersistenceFailed = false;
+  bool _historyEnabled = true;
+  bool _clearingHistory = false;
+  int _historyPreferenceRevision = 0;
+  int _historyClearRevision = 0;
+  int _historyRecordingGeneration = 0;
+  int _pendingHistoryUpdates = 0;
+  Future<void>? _initializationFuture;
+  Future<void>? _clearHistoryFuture;
+  Future<void> _historyUpdateTail = Future<void>.value();
+  Future<void> _libraryHistoryTail = Future<void>.value();
+  MediaLibraryRepository? _historyRepository;
+  final Set<String> _historySuppressedEntryIds = <String>{};
+  final Map<String, MediaEntry> _frozenQueueHistory = <String, MediaEntry>{};
   String _repeatMode = 'off';
   String _confirmedRepeatMode = 'off';
   bool _shuffleEnabled = false;
@@ -707,6 +726,7 @@ class PlayerController extends ChangeNotifier {
   ControlDensity get controlDensity => _controlDensity;
   PlaybackSettings get playbackSettings => _playbackSettings;
   String? get playbackSettingsError => _playbackSettingsError;
+  ResumePrompt? get pendingResumePrompt => _pendingResumePrompt;
   bool get canUndo => _undo != null;
   List<AudioTrack> get audioTracks => _playbackState.audioTracks;
   List<SubtitleTrack> get subtitleTracks => _playbackState.subtitleTracks;
@@ -734,6 +754,12 @@ class PlayerController extends ChangeNotifier {
 
   /// Whether stream URLs are written to local session files. Off by default.
   bool get saveNetworkUrls => _saveNetworkUrls;
+  bool get historyEnabled => _historyEnabled;
+  bool get historyBusy => _pendingHistoryUpdates > 0;
+
+  void attachHistoryRepository(MediaLibraryRepository repository) {
+    _historyRepository = repository;
+  }
 
   TransportState get transport => transportListenable.value;
 
@@ -780,7 +806,14 @@ class PlayerController extends ChangeNotifier {
   }
 
   /// Loads saved queue/history without opening or playing the last source.
-  Future<void> initialize() async {
+  Future<void> initialize() {
+    if (_initialized || !_acceptsCommands) return Future<void>.value();
+    return _initializationFuture ??= _initializeSession().whenComplete(() {
+      _initializationFuture = null;
+    });
+  }
+
+  Future<void> _initializeSession() async {
     if (_initialized || _initializing || !_acceptsCommands) return;
     final queueRevisionAtStart = _queueStructureRevision;
     final operationAtStart = _operation;
@@ -790,6 +823,8 @@ class PlayerController extends ChangeNotifier {
     final shuffleRevisionAtStart = _shufflePreferenceRevision;
     final repeatRevisionAtStart = _repeatPreferenceRevision;
     final saveNetworkUrlsRevisionAtStart = _saveNetworkUrlsRevision;
+    final historyPreferenceAtStart = _historyPreferenceRevision;
+    final historyClearAtStart = _historyClearRevision;
     final controlDensityRevisionAtStart = _controlDensityRevision;
     final playbackSettingsRevisionAtStart = _playbackSettingsRevision;
     _initializing = true;
@@ -825,7 +860,8 @@ class PlayerController extends ChangeNotifier {
           _currentIndex = scrubbed.currentIndex;
           if (_queue.isNotEmpty) _queueStructureRevision++;
         }
-        if (sessionQueueUnchanged) {
+        if (sessionQueueUnchanged &&
+            _historyClearRevision == historyClearAtStart) {
           _recent
             ..clear()
             ..addAll(_canonicalizeRecent(scrubbed.recent));
@@ -845,6 +881,14 @@ class PlayerController extends ChangeNotifier {
         }
         if (_saveNetworkUrlsRevision == saveNetworkUrlsRevisionAtStart) {
           _saveNetworkUrls = scrubbed.saveNetworkUrls;
+        }
+        if (_historyPreferenceRevision == historyPreferenceAtStart) {
+          _historyEnabled = scrubbed.historyEnabled;
+        }
+        if (!_historyEnabled && restoreQueue) {
+          for (final entry in scrubbed.queue) {
+            _frozenQueueHistory.putIfAbsent(entry.id, () => entry);
+          }
         }
         _progressRevision = max(_progressRevision, scrubbed.progressRevision);
         // The queue snapshot still describes the previous session here, so the
@@ -911,6 +955,9 @@ class PlayerController extends ChangeNotifier {
           _operation == checkpointOperation &&
           _importOperation == checkpointImportOperation;
       if (sessionQueueUnchanged &&
+          _historyEnabled &&
+          !_clearingHistory &&
+          _historyClearRevision == historyClearAtStart &&
           checkpointStillMatchesQueue &&
           (loaded == null || !result.primaryRejected)) {
         await _applyProgressCheckpoint(
@@ -1048,7 +1095,7 @@ class PlayerController extends ChangeNotifier {
     _syncCurrentProgress();
     final active = current;
     final session = PlaybackSession(
-      queue: List<MediaEntry>.unmodifiable(_queue),
+      queue: _queue.map(_storedQueueEntry).toList(growable: false),
       recent: _unmodifiableRecent,
       currentId: active?.id,
       volume: volume,
@@ -1058,6 +1105,7 @@ class PlayerController extends ChangeNotifier {
       controlDensity: _controlDensity,
       playbackSettings: _playbackSettings,
       saveNetworkUrls: _saveNetworkUrls,
+      historyEnabled: _historyEnabled,
       progressRevision: _progressRevision,
     );
     final stored = _saveNetworkUrls ? session : session.withoutNetworkUrls();
@@ -1081,18 +1129,134 @@ class PlayerController extends ChangeNotifier {
     }
   }
 
+  static MediaEntry _withoutEntryHistory(MediaEntry entry) => entry.copyWith(
+    position: Duration.zero,
+    lastPlayed: DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+  );
+
+  MediaEntry _storedQueueEntry(MediaEntry entry) {
+    if (_clearingHistory || _historySuppressedEntryIds.contains(entry.id)) {
+      return _withoutEntryHistory(entry);
+    }
+    if (_historyEnabled) return entry;
+    final previous = _frozenQueueHistory[entry.id];
+    return previous == null
+        ? _withoutEntryHistory(entry)
+        : entry.copyWith(
+            position: previous.position,
+            lastPlayed: previous.lastPlayed,
+          );
+  }
+
+  /// Stops new recording while retaining the history already saved.
+  Future<void> setHistoryEnabled(bool value) {
+    if (!_acceptsCommands) return Future<void>.value();
+    final initialization = initialize();
+    if (_initialized && _historyEnabled == value) return Future<void>.value();
+    _historyEnabled = value;
+    _frozenQueueHistory.clear();
+    if (!value) {
+      for (final entry in _queue) {
+        _frozenQueueHistory[entry.id] = entry;
+      }
+    }
+    _historyPreferenceRevision++;
+    _historyRecordingGeneration++;
+    _progressTimer?.cancel();
+    _progressTimer = null;
+    _notifyIfOpen();
+    return _queueHistoryUpdate(() async {
+      await initialization;
+      await _libraryHistoryTail;
+      await _checkpointDrain?.future;
+      await _sessions.flush();
+      if (!_historyEnabled) {
+        await _sessions.saveProgress(const SessionProgress());
+      }
+      await _saveDrain?.future;
+      await saveSession(scrubBackup: true);
+      await _sessions.flush();
+    });
+  }
+
+  /// Clears stored activity while preserving the current playback and queue.
+  Future<void> clearHistory() {
+    if (!_acceptsCommands) return Future<void>.value();
+    final active = _clearHistoryFuture;
+    if (active != null) return active;
+    final initialization = initialize();
+    _historyClearRevision++;
+    _historyRecordingGeneration++;
+    _clearingHistory = true;
+    _frozenQueueHistory.clear();
+    _recent.clear();
+    _unmodifiableRecent = const <MediaEntry>[];
+    _progressTimer?.cancel();
+    _progressTimer = null;
+    _notifyIfOpen();
+    final clearing = _queueHistoryUpdate(() async {
+      await initialization;
+      for (var index = 0; index < _queue.length; index++) {
+        final entry = _queue[index];
+        _historySuppressedEntryIds.add(entry.id);
+        _queue[index] = _withoutEntryHistory(entry);
+      }
+      _updateQueueSnapshotEntries();
+      await _libraryHistoryTail;
+      final repository = _historyRepository;
+      if (repository != null) {
+        await repository.initialize();
+        await repository.clearPlaybackHistory();
+      }
+      await _checkpointDrain?.future;
+      await _sessions.flush();
+      await _sessions.saveProgress(
+        SessionProgress(revision: ++_progressRevision),
+      );
+      await _saveDrain?.future;
+      await saveSession(scrubBackup: true);
+      await _sessions.flush();
+    });
+    final tracked = clearing.whenComplete(() {
+      _clearingHistory = false;
+      _clearHistoryFuture = null;
+      _updateProgressTimer();
+      _notifyIfOpen();
+    });
+    _clearHistoryFuture = tracked;
+    return tracked;
+  }
+
+  Future<void> _queueHistoryUpdate(Future<void> Function() action) {
+    _pendingHistoryUpdates++;
+    _notifyIfOpen();
+    final update = _historyUpdateTail.then((_) => action()).whenComplete(() {
+      _pendingHistoryUpdates--;
+      _updateProgressTimer();
+      _notifyIfOpen();
+    });
+    _historyUpdateTail = update.catchError((Object error) {
+      _diagnostics?.record('history.update', error: error);
+    });
+    return update;
+  }
+
   /// Enables or disables persistence of stream URLs.
   ///
   /// Disabling the setting scrubs every file this application owns, so URLs that
   /// were stored earlier are removed from the primary, the recovery copy and the
   /// checkpoint while local-file history is retained.
-  Future<void> setSaveNetworkUrls(bool value) async {
-    if (!_acceptsCommands || _saveNetworkUrls == value) return;
+  Future<bool> setSaveNetworkUrls(bool value) async {
+    if (!_acceptsCommands) return false;
+    if (_saveNetworkUrls == value && !_networkUrlsPersistenceFailed) {
+      return true;
+    }
     _saveNetworkUrls = value;
+    _networkUrlsPersistenceFailed = false;
     _saveNetworkUrlsRevision++;
     _notifyIfOpen();
-    if (!value) {
-      try {
+    try {
+      if (!value) {
         _recent.removeWhere((entry) => MediaEntry.isNetworkUrl(entry.path));
         _unmodifiableRecent = List<MediaEntry>.unmodifiable(_recent);
         _progressTimer?.cancel();
@@ -1103,19 +1267,22 @@ class PlayerController extends ChangeNotifier {
         await _checkpointDrain?.future;
         await _sessions.flush();
         await _sessions.scrubNetworkUrls();
-      } on Object catch (exception) {
-        _diagnostics?.record(
-          'session.scrub',
-          message: 'Could not remove stored stream URLs',
-          error: exception,
-        );
-        _setError('Could not remove stored stream URLs: $exception');
       }
+      // A later enable may have completed while the opt-out scrub was running.
+      // Persist the latest consent state after that scrub, not the captured one.
+      if (_saveNetworkUrls) await _runCoalescedSave();
+      return true;
+    } on Object catch (exception) {
+      _networkUrlsPersistenceFailed = true;
+      final message = value
+          ? 'Could not save the stream URL preference'
+          : 'Could not remove stored stream URLs';
+      _diagnostics?.record('session.scrub', message: message, error: exception);
+      _setError('$message: $exception');
+      return false;
+    } finally {
+      _updateProgressTimer();
     }
-    // A later enable may have completed while the opt-out scrub was running.
-    // Persist the latest consent state after that scrub, not the captured one.
-    if (_saveNetworkUrls) await _runCoalescedSave();
-    _updateProgressTimer();
   }
 
   /// Stops playback, saves state, releases streams and disposes libmpv.
@@ -1461,7 +1628,14 @@ class PlayerController extends ChangeNotifier {
     final isMusic =
         MediaCatalog.kindFromExtension(entry.path) == MediaKind.audio;
     final isRestoringSession = !_engineHasMedia && _currentIndex == index;
-    if (isMusic && !isRestoringSession && entry.position > Duration.zero) {
+    _pendingResumePrompt = null;
+    final startOver =
+        _playbackSettings.resumeBehavior == ResumeBehavior.startOver;
+    final shouldAsk =
+        _playbackSettings.resumeBehavior == ResumeBehavior.ask &&
+        entry.position > Duration.zero;
+    if ((startOver || (isMusic && !isRestoringSession && !shouldAsk)) &&
+        entry.position > Duration.zero) {
       entry = entry.copyWith(position: Duration.zero);
       _queue[index] = entry;
     }
@@ -1512,13 +1686,22 @@ class PlayerController extends ChangeNotifier {
       operation: operation,
       entryId: entry.id,
       source: entry.path,
+      resumeDecisionRequired: shouldAsk,
     );
     _pendingOpen = pending;
     _armLoadTimeout(pending);
     _publishTransport();
 
     try {
-      await _playback.open(entry.path, play: true);
+      if (_playback is PlaybackLanguagePreferenceCapability) {
+        await (_playback as PlaybackLanguagePreferenceCapability)
+            .applyTrackLanguagePreferences(
+              audioLanguages: _playbackSettings.preferredAudioLanguages,
+              subtitleLanguages: _playbackSettings.preferredSubtitleLanguages,
+            );
+      }
+      if (!_isCurrentOpen(pending)) return;
+      await _playback.open(entry.path, play: !shouldAsk);
       if (!_isCurrentOpen(pending)) return;
       // The load may already be confirmed by the service's latest state, since
       // native events can arrive while open() is still awaiting.
@@ -1759,6 +1942,7 @@ class PlayerController extends ChangeNotifier {
 
   Future<void> togglePlayPause() async {
     if (!_acceptsCommands) return;
+    if (_pendingResumePrompt != null) return;
     _transportCommandRevision++;
     if (isLoading) return;
     if (current == null) {
@@ -2039,14 +2223,22 @@ class PlayerController extends ChangeNotifier {
   }
 
   Future<void> cycleRepeat() {
-    if (!_acceptsCommands) return Future<void>.value();
-    _transportCommandRevision++;
     final nextMode = switch (_repeatMode) {
       'off' => 'all',
       'all' => 'one',
       _ => 'off',
     };
-    _repeatMode = nextMode;
+    return setRepeatMode(nextMode);
+  }
+
+  /// Selects a repeat mode directly, without cycling through other modes.
+  Future<void> setRepeatMode(String mode) {
+    if (!_acceptsCommands || _repeatMode == mode) return Future<void>.value();
+    if (!const ['off', 'all', 'one'].contains(mode)) {
+      throw ArgumentError.value(mode, 'mode', 'Unknown repeat mode');
+    }
+    _transportCommandRevision++;
+    _repeatMode = mode;
     _repeatPreferenceRevision++;
     _repeatPreferenceSequence = ++_queuePreferenceSequence;
     _scheduleSave();
@@ -2228,24 +2420,26 @@ class PlayerController extends ChangeNotifier {
     }
   }
 
-  Future<void> loadSubtitle(String path) async {
-    if (!_acceptsCommands) return;
+  Future<bool> loadSubtitle(String path) async {
+    if (!_acceptsCommands) return false;
     final operation = _operation;
-    final localPath = _localPath(path);
-    final localExists = localPath == null || await File(localPath).exists();
-    if (!_acceptsCommands || operation != _operation) return;
-    if (!localExists) {
-      _setError('Subtitle file not found: $path');
-      return;
-    }
     try {
+      final localPath = _localPath(path);
+      final localExists = localPath == null || await File(localPath).exists();
+      if (!_acceptsCommands || operation != _operation) return false;
+      if (!localExists) {
+        _setError('Subtitle file not found: $path');
+        return false;
+      }
       await _playback.loadSubtitle(path);
-      if (!_acceptsCommands || operation != _operation) return;
+      if (!_acceptsCommands || operation != _operation) return false;
       _notifyIfOpen();
+      return true;
     } on Object catch (exception) {
       if (_acceptsCommands && operation == _operation) {
         _setError('Could not load subtitles: $exception');
       }
+      return false;
     }
   }
 
@@ -2826,6 +3020,7 @@ class PlayerController extends ChangeNotifier {
     required int boundary,
     required Duration duration,
   }) {
+    final opening = _pendingOpen;
     final entry = _entryById(entryId);
     if (entry == null) {
       _finishPendingOpen();
@@ -2856,7 +3051,19 @@ class PlayerController extends ChangeNotifier {
       completed: false,
       clearError: true,
     );
-    if (saved > Duration.zero) {
+    if (saved > Duration.zero &&
+        opening?.resumeDecisionRequired == true &&
+        opening?.entryId == entryId) {
+      _resumeFloor = saved;
+      _resumeEntryId = entryId;
+      _resumeSeekStarted = false;
+      _pendingResumePrompt = ResumePrompt(
+        id: opening!.operation,
+        source: entry.path,
+        title: entry.title,
+        position: saved,
+      );
+    } else if (saved > Duration.zero) {
       _resumeFloor = saved;
       _resumeEntryId = entryId;
       _resumeSeekStarted = false;
@@ -2880,6 +3087,79 @@ class PlayerController extends ChangeNotifier {
     );
     _scheduleSave();
     _updateProgressTimer();
+  }
+
+  /// Resolves the current saved-position prompt. Stale decisions are ignored.
+  Future<void> resolveResumePrompt(
+    ResumePrompt prompt, {
+    required bool resume,
+  }) async {
+    if (!_acceptsCommands || _pendingResumePrompt != prompt) return;
+    final entryId = _engineEntryId;
+    final entry = entryId == null ? null : _entryById(entryId);
+    if (entry == null || entry.path != prompt.source || !_engineHasMedia) {
+      _pendingResumePrompt = null;
+      _notifyIfOpen();
+      return;
+    }
+    final operation = _operation;
+    _pendingResumePrompt = null;
+    if (resume) {
+      final target = _clampPosition(prompt.position, duration);
+      _resumeSeekStarted = true;
+      try {
+        await _playback.seek(target);
+        if (!_acceptsCommands || operation != _operation) return;
+        _playbackState = _playbackState.copyWith(
+          position: target,
+          isPlaying: false,
+        );
+        _updateQueueProgress(
+          _currentIndex,
+          position: target,
+          duration: duration,
+        );
+      } on Object catch (exception) {
+        if (_acceptsCommands && operation == _operation) {
+          _setError('Could not resume playback position: $exception');
+        }
+      }
+    } else {
+      _clearResume();
+      _playbackState = _playbackState.copyWith(
+        position: Duration.zero,
+        isPlaying: false,
+      );
+      _updateQueueProgress(
+        _currentIndex,
+        position: Duration.zero,
+        duration: duration,
+      );
+    }
+    if (!_acceptsCommands || operation != _operation) return;
+    _notifyIfOpen();
+    await _runPlaybackCommand(_playback.play);
+  }
+
+  /// Dismisses a resume prompt without choosing either playback action.
+  ///
+  /// The source stays paused at its beginning until the user explicitly plays
+  /// it. Prompts from earlier sources cannot dismiss a newer prompt.
+  void dismissResumePrompt(ResumePrompt prompt) {
+    if (!_acceptsCommands || _pendingResumePrompt != prompt) return;
+    _pendingResumePrompt = null;
+    _clearResume();
+    _playbackState = _playbackState.copyWith(
+      position: Duration.zero,
+      isPlaying: false,
+    );
+    _updateQueueProgress(
+      _currentIndex,
+      position: Duration.zero,
+      duration: duration,
+    );
+    _scheduleSave();
+    _notifyIfOpen();
   }
 
   void _failPendingOpen(_PendingOpen pending, String message) {
@@ -2906,6 +3186,7 @@ class PlayerController extends ChangeNotifier {
   }
 
   void _consumePendingResume() {
+    if (_pendingResumePrompt != null) return;
     final target = _resumeFloor;
     if (target == null || _resumeSeekStarted) return;
     final end = _playbackState.duration;
@@ -2958,6 +3239,7 @@ class PlayerController extends ChangeNotifier {
     _resumeSeekStarted = false;
     _resumeFloorTimer?.cancel();
     _resumeFloorTimer = null;
+    _pendingResumePrompt = null;
   }
 
   void _clearResumeFloor() {
@@ -3017,7 +3299,10 @@ class PlayerController extends ChangeNotifier {
           MediaEntry.canonicalSource(item.path) ==
           MediaEntry.canonicalSource(updated.path),
     );
-    if (recentIndex >= 0) {
+    if (recentIndex >= 0 &&
+        _historyEnabled &&
+        !_clearingHistory &&
+        !_historySuppressedEntryIds.contains(updated.id)) {
       _recent[recentIndex] = _recent[recentIndex].copyWith(
         position: updated.position,
         duration: updated.duration,
@@ -3041,6 +3326,12 @@ class PlayerController extends ChangeNotifier {
   }
 
   void _recordHistory(MediaEntry entry, {required DateTime playedAt}) {
+    if (_clearingHistory) {
+      _historySuppressedEntryIds.add(entry.id);
+      return;
+    }
+    if (!_historyEnabled) return;
+    _historySuppressedEntryIds.remove(entry.id);
     final sourceId = MediaEntry.canonicalSource(entry.path);
     final index = _recent.indexWhere(
       (item) => MediaEntry.canonicalSource(item.path) == sourceId,
@@ -3052,6 +3343,23 @@ class PlayerController extends ChangeNotifier {
       _recent.removeRange(_maximumRecentEntries, _recent.length);
     }
     _unmodifiableRecent = List<MediaEntry>.unmodifiable(_recent);
+    final repository = _historyRepository;
+    if (repository != null) {
+      final generation = _historyRecordingGeneration;
+      _libraryHistoryTail = _libraryHistoryTail
+          .then((_) async {
+            await repository.initialize();
+            if (!_historyEnabled ||
+                _clearingHistory ||
+                generation != _historyRecordingGeneration) {
+              return;
+            }
+            await repository.recordPlayback(sourceId);
+          })
+          .catchError((Object error) {
+            _diagnostics?.record('history.library', error: error);
+          });
+    }
   }
 
   List<MediaEntry> _canonicalizeRecent(List<MediaEntry> entries) {
@@ -3066,6 +3374,7 @@ class PlayerController extends ChangeNotifier {
   }
 
   MediaEntry? _findRecent(String source) {
+    if (!_historyEnabled || _clearingHistory) return null;
     final sourceId = MediaEntry.canonicalSource(source);
     for (final entry in _recent) {
       if (MediaEntry.canonicalSource(entry.path) == sourceId) return entry;
@@ -3101,6 +3410,11 @@ class PlayerController extends ChangeNotifier {
 
   /// Publishes a new immutable queue snapshot when structural contents changed.
   void _publishQueue() {
+    _historySuppressedEntryIds.retainAll(_queue.map((entry) => entry.id));
+    if (_frozenQueueHistory.isNotEmpty) {
+      final ids = _queue.map((entry) => entry.id).toSet();
+      _frozenQueueHistory.removeWhere((id, _) => !ids.contains(id));
+    }
     _queueRevision++;
     _updateQueueSnapshotEntries();
   }
@@ -3184,13 +3498,21 @@ class PlayerController extends ChangeNotifier {
   }
 
   Future<void> _drainPersistence() async {
+    await _historyUpdateTail;
+    await _libraryHistoryTail;
     await _saveDrain?.future;
     await _checkpointDrain?.future;
     await _sessions.flush();
   }
 
   void _updateProgressTimer() {
-    final shouldRun = _acceptsCommands && _engineHasMedia && isPlaying;
+    final shouldRun =
+        _acceptsCommands &&
+        _historyEnabled &&
+        !_clearingHistory &&
+        !_historySuppressedEntryIds.contains(_engineEntryId) &&
+        _engineHasMedia &&
+        isPlaying;
     if (shouldRun) {
       _progressTimer ??= Timer.periodic(
         _progressCheckpointInterval,
@@ -3205,6 +3527,11 @@ class PlayerController extends ChangeNotifier {
 
   /// Writes the small progress checkpoint, coalescing overlapping writes.
   Future<void> _writeProgressCheckpoint({bool whileClosing = false}) async {
+    if (!_historyEnabled ||
+        _clearingHistory ||
+        _historySuppressedEntryIds.contains(_engineEntryId ?? current?.id)) {
+      return;
+    }
     if (_checkpointInFlight) {
       _checkpointRequested = true;
       return;
@@ -3335,11 +3662,13 @@ class _PendingOpen {
     required this.operation,
     required this.entryId,
     required this.source,
+    required this.resumeDecisionRequired,
   });
 
   final int operation;
   final String entryId;
   final String source;
+  final bool resumeDecisionRequired;
 
   /// Load-attempt identity reported by the playback service, assigned once the
   /// request has been sent to the engine.

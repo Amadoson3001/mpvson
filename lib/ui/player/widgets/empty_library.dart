@@ -176,7 +176,7 @@ class _HeroCopy extends StatelessWidget {
           runSpacing: 10,
           children: [
             Tooltip(
-              message: 'Open video files (Ctrl+O)',
+              message: 'Open video files',
               child: FilledButton.icon(
                 key: const ValueKey('open-files'),
                 onPressed: onOpenFiles,
@@ -185,7 +185,7 @@ class _HeroCopy extends StatelessWidget {
               ),
             ),
             Tooltip(
-              message: 'Open a stream URL (Ctrl+L)',
+              message: 'Open a stream URL',
               child: OutlinedButton.icon(
                 key: const ValueKey('open-url'),
                 onPressed: onOpenUrl,
@@ -195,7 +195,7 @@ class _HeroCopy extends StatelessWidget {
             ),
             if (onOpenLibrary != null)
               Tooltip(
-                message: 'Browse media library (Ctrl+M)',
+                message: 'Browse media library',
                 child: OutlinedButton.icon(
                   key: const ValueKey('open-library'),
                   onPressed: onOpenLibrary,
@@ -354,7 +354,15 @@ class _RecentEntryState extends State<_RecentEntry> {
                 ),
               ),
               const SizedBox(width: 8),
-              const Icon(Icons.chevron_right_rounded, size: 19),
+              AnimatedOpacity(
+                duration: AppMotion.duration(context, AppMotion.quick),
+                opacity: _isHovered || _hasFocus ? 1.0 : 0.0,
+                child: const Icon(
+                  Icons.play_circle_filled_rounded,
+                  size: 22,
+                  color: AppTheme.accent,
+                ),
+              ),
             ],
           ),
         ),

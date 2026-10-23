@@ -241,6 +241,7 @@ Future<void> main(List<String> arguments) async {
     database: libraryDb,
     probeService: mediaProbeService,
   );
+  readyController.attachHistoryRepository(libraryRepository);
   unawaited(
     _initializeBackgroundService('media library', () async {
       await libraryRepository.initialize();

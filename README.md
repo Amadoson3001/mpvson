@@ -4,9 +4,14 @@ A desktop video player for Windows and Linux, built with Flutter and powered by 
 
 Mpvson is standalone: it stores its state in the OS application-support directory, does not modify a system mpv profile, and needs no separate mpv installation on Windows.
 
-The interface gives video the full stage below the native title bar. A thin seek timeline and all controls sit along the bottom; the More menu contains open, recent-file and settings actions. Open the queue when needed; it docks on wide windows and becomes a drawer on smaller ones. Settings groups playback controls, shortcuts and application information into tabs. See [interface design notes](docs/ui-design.md).
+The interface gives video the full stage below the native title bar. A thin seek timeline and all controls sit along the bottom; the More menu contains open, recent-file and settings actions. Open the queue when needed; it docks on wide windows and becomes a drawer on smaller ones. Settings organizes controls into searchable categories, with a sidebar on wide windows and a category list on smaller ones. See [settings](docs/settings.md) and [interface design notes](docs/ui-design.md).
 
 Settings → Appearance offers Compact and Normal controls. Compact is the default: smaller buttons and a wider seek rail in a shallow bottom strip. Changes apply immediately and are remembered after restarting. See [control-size design](docs/control-density.md).
+
+Settings also includes subtitle styling with a live preview, language priorities,
+resume choices, editable shortcuts, and a Changed settings page for selective
+resets. Export or import preferences from General without transferring media,
+history, or saved URLs.
 
 ## Run on Windows
 
@@ -117,8 +122,13 @@ For system-wide installation across all users, copy the files to `/usr/local/bin
 - Shuffle directly from the queue, with no repeated entries within a cycle and Previous following playback history.
 - Queue cards show cover art or a generated video frame, with duration over the image. Hover or focus a card to reveal its drag grip on the left.
 - Continue recent media from its saved position.
+- Manage recording in **Settings > History & privacy**. Turn **Save playback history** off
+  to stop saving new recent files, resume positions, and library play activity.
+  Existing history remains available. **Clear history** removes recent files,
+  saved positions, and library play counts, including the session recovery copy.
+  Playback continues, and your queue, favorites, playlists, and media stay intact.
 - Select audio and subtitle tracks, load an external subtitle file, and adjust playback speed.
-- Tune quality, hardware decoding, picture and synchronization in Settings > Video & audio. See [playback tuning](docs/playback-tuning.md).
+- Tune picture quality and decoding in **Settings > Video**, and tracks and synchronization in **Settings > Audio & subtitles**. See [playback tuning](docs/playback-tuning.md).
 - Inspect the active decoder and dropped frames through More > Playback information or the I key.
 - Control volume, seek, and enter fullscreen from the player or keyboard.
 - Scroll over video to change volume, click to pause/play, and double-click to toggle fullscreen.
@@ -171,7 +181,7 @@ When opening new media files (via Explorer double-click, command-line arguments,
 - **Play new files now** (`playNewFilesNow`): Halts active playback and starts playing the newly opened files immediately.
 - **Ask every time** (`askEveryTime`): Prompts the user with a modal preference dialog on each conflict.
 - **Initial choice prompt**: If unset, opening files during active playback displays a first-conflict dialog with "Keep playing and add to queue" or "Play new files now", automatically remembering the selection and noting that it can be modified anytime in Settings.
-- **Display sleep setting**: Under **Settings > Desktop integration**, toggle display sleep prevention (`keepAwakeDuringPlayback`) or launch the OS default applications settings.
+- **Display sleep setting**: Under **Settings > General**, toggle sleep prevention (`keepAwakeDuringPlayback`) or launch the OS default applications settings.
 
 See the [desktop integration guide](docs/desktop-integration.md) for IPC flow, SMTC, MPRIS, and platform hooks.
 

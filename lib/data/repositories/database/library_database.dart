@@ -403,6 +403,11 @@ class LibraryDatabase {
     });
   }
 
+  /// Removes listening/viewing activity without changing the media catalog.
+  Future<void> clearPlaybackHistory() async {
+    await _send<dynamic>('clearPlaybackHistory', null);
+  }
+
   /// Records playback history for a media item by canonical source URI.
   Future<void> recordPlayHistoryByCanonicalSource(
     String canonicalSource, {
@@ -476,6 +481,7 @@ class LibraryDatabase {
     String? album,
     bool? isFavorite,
     bool? isAvailable,
+    bool onlyPlayed = false,
     String? searchQuery,
     int? limit,
     int? offset,
@@ -488,6 +494,7 @@ class LibraryDatabase {
     if (album != null) payload['album'] = album;
     if (isFavorite != null) payload['isFavorite'] = isFavorite;
     if (isAvailable != null) payload['isAvailable'] = isAvailable;
+    if (onlyPlayed) payload['onlyPlayed'] = true;
     if (searchQuery != null) payload['searchQuery'] = searchQuery;
     if (limit != null) payload['limit'] = limit;
     if (offset != null) payload['offset'] = offset;
@@ -498,6 +505,78 @@ class LibraryDatabase {
     return (res as List)
         .map((e) => _mediaFromMap((e as Map).cast<String, Object?>()))
         .toList();
+  }
+
+  /// Returns album groups without loading every track into the UI isolate.
+  Future<List<Map<String, Object?>>> queryAlbums({
+    String? searchQuery,
+    String? album,
+    int? limit,
+    int? offset,
+  }) async {
+    final payload = <String, Object?>{};
+    if (searchQuery != null) payload['searchQuery'] = searchQuery;
+    if (album != null) payload['album'] = album;
+    if (limit != null) payload['limit'] = limit;
+    if (offset != null) payload['offset'] = offset;
+    final rows = await _send<dynamic>('queryAlbums', payload) as List;
+    return rows
+        .map((row) => (row as Map).cast<String, Object?>())
+        .toList(growable: false);
+  }
+
+  /// Returns artist groups and their complete song/album counts.
+  Future<List<Map<String, Object?>>> queryArtists({
+    String? searchQuery,
+    String? artist,
+    int? limit,
+    int? offset,
+  }) async {
+    final payload = <String, Object?>{};
+    if (searchQuery != null) payload['searchQuery'] = searchQuery;
+    if (artist != null) payload['artist'] = artist;
+    if (limit != null) payload['limit'] = limit;
+    if (offset != null) payload['offset'] = offset;
+    final rows = await _send<dynamic>('queryArtists', payload) as List;
+    return rows
+        .map((row) => (row as Map).cast<String, Object?>())
+        .toList(growable: false);
+  }
+
+  /// Returns stored file fingerprints for [paths], keyed by canonical source.
+  ///
+  /// Requests are chunked below SQLite's bind parameter limit so a scan can
+  /// compare a large folder without sending every path in one SQL statement.
+  Future<Map<String, ({int fileSize, DateTime? modifiedAt})>>
+  getFileFingerprints(List<String> paths) async {
+    final canonicalSources = paths
+        .map(MediaEntry.canonicalSource)
+        .toSet()
+        .toList(growable: false);
+    final fingerprints = <String, ({int fileSize, DateTime? modifiedAt})>{};
+
+    const chunkSize = 900;
+    for (var start = 0; start < canonicalSources.length; start += chunkSize) {
+      final end = (start + chunkSize).clamp(0, canonicalSources.length);
+      final rows =
+          await _send<dynamic>(
+                'getFileFingerprints',
+                canonicalSources.sublist(start, end),
+              )
+              as List;
+      for (final rawRow in rows) {
+        final row = (rawRow as Map).cast<String, Object?>();
+        final modifiedAtMs = row['modified_at'] as int?;
+        fingerprints[row['canonical_source'] as String] = (
+          fileSize: (row['file_size'] as int?) ?? 0,
+          modifiedAt: modifiedAtMs == null
+              ? null
+              : DateTime.fromMillisecondsSinceEpoch(modifiedAtMs),
+        );
+      }
+    }
+
+    return fingerprints;
   }
 
   /// Retrieves distinct artist names from the media library.
@@ -1031,6 +1110,13 @@ Object? _dispatchAction(Database db, String action, Object? params) {
       ]);
       return null;
 
+    case 'clearPlaybackHistory':
+      db.execute('''
+        UPDATE media SET last_played_at = NULL, play_count = 0
+        WHERE last_played_at IS NOT NULL OR play_count != 0
+      ''');
+      return null;
+
     case 'recordPlayHistory':
       final map = (params as Map).cast<String, Object?>();
       final mediaId = map['mediaId'] as String;
@@ -1131,9 +1217,138 @@ Object? _dispatchAction(Database db, String action, Object? params) {
       return null;
 
     // ---------------- Query Media ----------------
+    case 'getFileFingerprints':
+      final canonicalSources = (params as List).cast<String>();
+      if (canonicalSources.isEmpty) return const <Map<String, Object?>>[];
+      final placeholders = List<String>.filled(
+        canonicalSources.length,
+        '?',
+      ).join(', ');
+      final rows = db.select('''
+        SELECT canonical_source, file_size, modified_at
+        FROM media
+        WHERE canonical_source IN ($placeholders)
+        ''', canonicalSources);
+      return rows.map((row) => Map<String, Object?>.from(row)).toList();
+
     case 'queryMedia':
       final map = (params as Map).cast<String, Object?>();
       return _queryMediaRows(db, map);
+
+    case 'queryAlbums':
+      final map = (params as Map).cast<String, Object?>();
+      final rawSearchQuery = map['searchQuery'] as String?;
+      final album = map['album'] as String?;
+      final limit = map['limit'] as int?;
+      final offset = map['offset'] as int?;
+      final ftsMatch = rawSearchQuery == null
+          ? null
+          : _buildFts5MatchExpression(rawSearchQuery);
+      final useFts = ftsMatch != null && ftsMatch.isNotEmpty;
+      const albumExpr =
+          "COALESCE(NULLIF(TRIM(media.album), ''), 'Unknown Album')";
+      const artistExpr =
+          "COALESCE(NULLIF(TRIM(media.artist), ''), "
+          "NULLIF(TRIM(media.album_artist), ''), 'Unknown Artist')";
+      final sql = StringBuffer('''
+        SELECT summary_rows.album, summary_rows.artist,
+               summary_rows.track_count, summary_rows.total_duration_ms
+        FROM (
+          SELECT
+            $albumExpr AS album,
+            MIN($artistExpr) AS artist,
+            COUNT(*) AS track_count,
+            SUM(COALESCE(media.duration_ms, 0)) AS total_duration_ms
+          FROM media
+      ''');
+      final args = <Object?>[];
+      if (useFts) {
+        sql.write('JOIN media_fts ON media.rowid = media_fts.rowid ');
+      }
+      sql.write("WHERE media.kind = 'audio'");
+      if (useFts) {
+        sql.write(' AND media_fts MATCH ?');
+        args.add(ftsMatch);
+      }
+      if (album != null) {
+        sql.write(' AND $albumExpr = ?');
+        args.add(album);
+      }
+      sql.write('''
+        GROUP BY $albumExpr
+        ) AS summary_rows
+        ORDER BY LOWER(summary_rows.album) COLLATE NOCASE ASC,
+                 summary_rows.album COLLATE BINARY ASC
+      ''');
+      if (limit != null) {
+        sql.write(' LIMIT ?');
+        args.add(limit);
+        if (offset != null) {
+          sql.write(' OFFSET ?');
+          args.add(offset);
+        }
+      }
+      return db
+          .select(sql.toString(), args)
+          .map((row) => Map<String, Object?>.from(row))
+          .toList();
+
+    case 'queryArtists':
+      final map = (params as Map).cast<String, Object?>();
+      final rawSearchQuery = map['searchQuery'] as String?;
+      final artist = map['artist'] as String?;
+      final limit = map['limit'] as int?;
+      final offset = map['offset'] as int?;
+      final ftsMatch = rawSearchQuery == null
+          ? null
+          : _buildFts5MatchExpression(rawSearchQuery);
+      final useFts = ftsMatch != null && ftsMatch.isNotEmpty;
+      const artistExpr =
+          "COALESCE(NULLIF(TRIM(media.artist), ''), "
+          "NULLIF(TRIM(media.album_artist), ''), 'Unknown Artist')";
+      const albumExpr =
+          "COALESCE(NULLIF(TRIM(media.album), ''), 'Unknown Album')";
+      final sql = StringBuffer('''
+        SELECT summary_rows.artist, summary_rows.song_count,
+               summary_rows.album_count
+        FROM (
+          SELECT
+            $artistExpr AS artist,
+            COUNT(*) AS song_count,
+            COUNT(DISTINCT $albumExpr) AS album_count
+          FROM media
+      ''');
+      final args = <Object?>[];
+      if (useFts) {
+        sql.write('JOIN media_fts ON media.rowid = media_fts.rowid ');
+      }
+      sql.write("WHERE media.kind = 'audio'");
+      if (useFts) {
+        sql.write(' AND media_fts MATCH ?');
+        args.add(ftsMatch);
+      }
+      if (artist != null) {
+        sql.write(' AND $artistExpr = ?');
+        args.add(artist);
+      }
+      sql.write('''
+        GROUP BY $artistExpr
+        ) AS summary_rows
+        ORDER BY LOWER(summary_rows.artist) COLLATE NOCASE ASC,
+                 summary_rows.artist COLLATE BINARY ASC
+      ''');
+      if (limit != null) {
+        sql.write(' LIMIT ?');
+        args.add(limit);
+        if (offset != null) {
+          sql.write(' OFFSET ?');
+          args.add(offset);
+        }
+      }
+      return db
+          .select(sql.toString(), args)
+          .map((row) => Map<String, Object?>.from(row))
+          .toList();
 
     case 'getDistinctArtists':
       final map = (params as Map).cast<String, Object?>();
@@ -1570,6 +1785,7 @@ void _batchUpsertPaths(Database db, List<String> paths) {
       ON CONFLICT(canonical_source) DO UPDATE SET
         path = excluded.path,
         is_available = 1
+      WHERE media.path IS NOT excluded.path OR media.is_available <> 1
     ''');
     try {
       for (final rawPath in paths) {
@@ -1665,6 +1881,7 @@ List<Map<String, Object?>> _queryMediaRows(
   final album = map['album'] as String?;
   final isFavorite = map['isFavorite'] as bool?;
   final isAvailable = map['isAvailable'] as bool?;
+  final onlyPlayed = map['onlyPlayed'] as bool? ?? false;
   final rawSearchQuery = map['searchQuery'] as String?;
   final limit = map['limit'] as int?;
   final offset = map['offset'] as int?;
@@ -1700,11 +1917,17 @@ List<Map<String, Object?>> _queryMediaRows(
     args.add(kind);
   }
   if (artist != null) {
-    sql.write(' AND media.artist = ?');
+    sql.write('''
+      AND COALESCE(NULLIF(TRIM(media.artist), ''),
+                   NULLIF(TRIM(media.album_artist), ''),
+                   'Unknown Artist') = ?
+    ''');
     args.add(artist);
   }
   if (album != null) {
-    sql.write(' AND media.album = ?');
+    sql.write('''
+      AND COALESCE(NULLIF(TRIM(media.album), ''), 'Unknown Album') = ?
+    ''');
     args.add(album);
   }
   if (isFavorite != null) {
@@ -1715,31 +1938,51 @@ List<Map<String, Object?>> _queryMediaRows(
     sql.write(' AND media.is_available = ?');
     args.add(isAvailable ? 1 : 0);
   }
+  if (onlyPlayed) {
+    sql.write(' AND media.last_played_at IS NOT NULL');
+  }
 
   final dir = ascending ? 'ASC' : 'DESC';
   switch (sortBy) {
     case 'title':
-      sql.write(' ORDER BY LOWER(media.title) COLLATE NOCASE $dir');
+      sql.write(
+        ' ORDER BY LOWER(media.title) COLLATE NOCASE $dir, media.title COLLATE BINARY $dir',
+      );
       break;
     case 'artist':
-      sql.write(
-        ' ORDER BY LOWER(media.artist) COLLATE NOCASE $dir, media.track_number ASC',
-      );
+      sql.write('''
+        ORDER BY LOWER(COALESCE(NULLIF(TRIM(media.artist), ''),
+                                NULLIF(TRIM(media.album_artist), ''),
+                                'Unknown Artist')) COLLATE NOCASE $dir,
+                 media.track_number ASC, media.disc_number ASC
+        ''');
       break;
     case 'album':
-      sql.write(
-        ' ORDER BY LOWER(media.album) COLLATE NOCASE $dir, media.disc_number ASC, media.track_number ASC',
-      );
+      sql.write('''
+        ORDER BY LOWER(COALESCE(NULLIF(TRIM(media.album), ''), 'Unknown Album')) COLLATE NOCASE $dir,
+                 media.disc_number ASC, media.track_number ASC
+        ''');
       break;
     case 'duration':
     case 'duration_ms':
       sql.write(' ORDER BY media.duration_ms $dir');
       break;
     case 'added_at':
+    case 'addedAt':
       sql.write(' ORDER BY media.added_at $dir');
       break;
     case 'last_played_at':
+    case 'lastPlayedAt':
       sql.write(' ORDER BY media.last_played_at $dir');
+      break;
+    case 'fileSize':
+    case 'file_size':
+      sql.write(' ORDER BY media.file_size $dir');
+      break;
+    case 'trackNumber':
+      sql.write(
+        ' ORDER BY media.disc_number ASC, media.track_number ASC, LOWER(media.title) COLLATE NOCASE ASC',
+      );
       break;
     case 'play_count':
       sql.write(' ORDER BY media.play_count $dir');
@@ -1758,6 +2001,11 @@ List<Map<String, Object?>> _queryMediaRows(
         sql.write(' ORDER BY media.added_at DESC');
       }
   }
+
+  sql.write(
+    ', media.canonical_source COLLATE NOCASE ASC, '
+    'media.canonical_source COLLATE BINARY ASC',
+  );
 
   if (limit != null) {
     sql.write(' LIMIT ?');

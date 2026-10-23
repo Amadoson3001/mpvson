@@ -93,7 +93,7 @@ class _PlaylistCreateDialogState extends State<PlaylistCreateDialog> {
                 cursorColor: LibraryTheme.accent,
                 onSubmitted: (_) => _submit(),
                 decoration: InputDecoration(
-                  hintText: 'e.g. Synthwave Favorites',
+                  hintText: 'Playlist title',
                   hintStyle: LibraryTheme.metadata,
                   filled: true,
                   fillColor: LibraryTheme.raisedSurface,

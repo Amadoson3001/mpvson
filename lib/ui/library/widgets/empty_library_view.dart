@@ -25,34 +25,31 @@ class EmptyLibraryView extends StatelessWidget {
       child: SingleChildScrollView(
         padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 48),
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 460),
-          child: Container(
-            padding: const EdgeInsets.all(36),
-            decoration: BoxDecoration(
-              color: LibraryTheme.surface,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: LibraryTheme.border, width: 1),
-            ),
+          constraints: const BoxConstraints(maxWidth: 480),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 Container(
-                  width: 64,
-                  height: 64,
+                  width: 56,
+                  height: 56,
                   decoration: BoxDecoration(
                     color: LibraryTheme.raisedSurface,
                     shape: BoxShape.circle,
-                    border: Border.all(color: LibraryTheme.border),
+                    border: Border.all(
+                      color: LibraryTheme.accent.withValues(alpha: 0.25),
+                    ),
                   ),
-                  child: Icon(icon, size: 30, color: LibraryTheme.accent),
+                  child: Icon(icon, size: 26, color: LibraryTheme.accent),
                 ),
-                const SizedBox(height: 24),
+                const SizedBox(height: 20),
                 Text(
                   title,
                   style: LibraryTheme.albumTitle,
                   textAlign: TextAlign.center,
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 10),
                 Text(
                   message,
                   style: LibraryTheme.rowSecondary.copyWith(
@@ -61,26 +58,26 @@ class EmptyLibraryView extends StatelessWidget {
                   ),
                   textAlign: TextAlign.center,
                 ),
-                if (onAction != null) ...[
-                  const SizedBox(height: 28),
+                if (onAction != null && actionLabel.isNotEmpty) ...[
+                  const SizedBox(height: 24),
                   FilledButton.icon(
                     style: FilledButton.styleFrom(
                       backgroundColor: LibraryTheme.accent,
                       foregroundColor: LibraryTheme.background,
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 24,
-                        vertical: 14,
+                        horizontal: 20,
+                        vertical: 12,
                       ),
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
+                        borderRadius: BorderRadius.circular(8),
                       ),
                       textStyle: const TextStyle(
-                        fontSize: 14,
+                        fontSize: 13.5,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
                     onPressed: onAction,
-                    icon: const Icon(Icons.add_rounded, size: 20),
+                    icon: const Icon(Icons.add_rounded, size: 18),
                     label: Text(actionLabel),
                   ),
                 ],

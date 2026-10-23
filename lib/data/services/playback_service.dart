@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
@@ -12,6 +13,114 @@ import 'diagnostic_log.dart';
 import 'native_media_events.dart';
 import 'playback_source_identity.dart';
 import 'snapshot_emitter.dart';
+
+/// Converts persisted player settings into the exact runtime mpv properties.
+@visibleForTesting
+Map<String, String> playbackSettingsMpvProperties(PlaybackSettings value) {
+  final settings = value.normalized();
+  final preset = switch (settings.qualityPreset) {
+    PlaybackQualityPreset.performance => const <String, String>{
+      'scale': 'bilinear',
+      'cscale': 'bilinear',
+      'dscale': 'bilinear',
+      'deband': 'no',
+    },
+    PlaybackQualityPreset.balanced => const <String, String>{
+      'scale': 'lanczos',
+      'cscale': 'lanczos',
+      'dscale': 'hermite',
+      'deband': 'no',
+    },
+    PlaybackQualityPreset.quality => const <String, String>{
+      'scale': 'ewa_lanczossharp',
+      'cscale': 'ewa_lanczossharp',
+      'dscale': 'mitchell',
+      'deband': 'yes',
+    },
+  };
+  final hasBackground = settings.subtitleBackgroundOpacity > 0;
+  return <String, String>{
+    'hwdec': settings.preferHardwareDecoding ? 'auto' : 'no',
+    ...preset,
+    'brightness': settings.brightness.toString(),
+    'contrast': settings.contrast.toString(),
+    'saturation': settings.saturation.toString(),
+    'gamma': settings.gamma.toString(),
+    'audio-delay': settings.audioDelaySeconds.toString(),
+    'sub-delay': settings.subtitleDelaySeconds.toString(),
+    'sub-font': settings.subtitleFont,
+    'sub-font-size': settings.subtitleFontSize.toString(),
+    'sub-color': settings.subtitleColor,
+    'sub-outline-size': settings.subtitleOutlineSize.toString(),
+    'sub-back-color': _subtitleBackgroundColor(
+      settings.subtitleBackgroundOpacity,
+    ),
+    'sub-border-style': hasBackground ? 'background-box' : 'outline-and-shadow',
+    'sub-shadow-offset': hasBackground ? '2' : '0',
+    'sub-pos': settings.subtitlePosition.toString(),
+  };
+}
+
+/// Compares mpv's returned property value with the value we requested.
+@visibleForTesting
+bool mpvPropertyMatchesRequestedValue(String actual, String requested) {
+  final expectedNumber = double.tryParse(requested);
+  if (expectedNumber != null) {
+    final actualNumber = double.tryParse(actual.trim());
+    return actualNumber != null &&
+        actualNumber.isFinite &&
+        (actualNumber - expectedNumber).abs() < 0.0001;
+  }
+  final expectedColor = _parseMpvColor(requested);
+  final actualColor = _parseMpvColor(actual);
+  if (expectedColor != null && actualColor != null) {
+    for (var index = 0; index < expectedColor.length; index++) {
+      if (expectedColor[index] != actualColor[index]) return false;
+    }
+    return true;
+  }
+  return actual.trim().toLowerCase() == requested.trim().toLowerCase();
+}
+
+List<int>? _parseMpvColor(String value) {
+  final color = value.trim();
+  final hex = RegExp(r'^#([0-9a-fA-F]{6}|[0-9a-fA-F]{8})$').firstMatch(color);
+  if (hex != null) {
+    final digits = hex.group(1)!;
+    if (digits.length == 6) {
+      return <int>[
+        255,
+        int.parse(digits.substring(0, 2), radix: 16),
+        int.parse(digits.substring(2, 4), radix: 16),
+        int.parse(digits.substring(4, 6), radix: 16),
+      ];
+    }
+    return List<int>.generate(
+      4,
+      (index) =>
+          int.parse(digits.substring(index * 2, index * 2 + 2), radix: 16),
+    );
+  }
+  final channels = color.split('/');
+  if (channels.length != 3 && channels.length != 4) return null;
+  final parsed = channels.map(double.tryParse).toList(growable: false);
+  if (parsed.any((channel) => channel == null || !channel.isFinite)) {
+    return null;
+  }
+  final rgb = parsed.map((channel) => channel!.clamp(0, 1)).toList();
+  if (rgb.length == 3) rgb.add(1);
+  return <int>[
+    (rgb[3] * 255).round(),
+    (rgb[0] * 255).round(),
+    (rgb[1] * 255).round(),
+    (rgb[2] * 255).round(),
+  ];
+}
+
+String _subtitleBackgroundColor(double opacity) {
+  final alpha = (opacity.clamp(0, 1) * 255).round();
+  return '#${alpha.toRadixString(16).padLeft(2, '0').toUpperCase()}000000';
+}
 
 /// The playback state a native engine event describes, before identity stamping.
 ///
@@ -199,6 +308,15 @@ abstract interface class PlaybackSettingsCapability {
   );
 }
 
+/// Applies language priorities before a source is opened, so changing a
+/// preference never replaces a manually selected track in the current source.
+abstract interface class PlaybackLanguagePreferenceCapability {
+  Future<void> applyTrackLanguagePreferences({
+    required String audioLanguages,
+    required String subtitleLanguages,
+  });
+}
+
 /// Reports which requested mpv properties matched after the write completed.
 class PlaybackSettingsApplyResult {
   const PlaybackSettingsApplyResult({
@@ -220,7 +338,10 @@ class PlaybackSettingsApplyResult {
 
 /// Production implementation backed by media_kit and its bundled libmpv.
 class MediaKitPlaybackService
-    implements PlaybackService, PlaybackSettingsCapability {
+    implements
+        PlaybackService,
+        PlaybackSettingsCapability,
+        PlaybackLanguagePreferenceCapability {
   MediaKitPlaybackService({
     Player? player,
     VideoController? videoController,
@@ -615,6 +736,32 @@ class MediaKitPlaybackService
   }
 
   @override
+  Future<void> applyTrackLanguagePreferences({
+    required String audioLanguages,
+    required String subtitleLanguages,
+  }) async {
+    if (_disposed) return;
+    final nativePlayer = _player.platform;
+    if (nativePlayer is! NativePlayer) return;
+    for (final entry in <MapEntry<String, String>>[
+      MapEntry('alang', audioLanguages),
+      MapEntry('slang', subtitleLanguages),
+    ]) {
+      try {
+        await nativePlayer
+            .setProperty(entry.key, entry.value, waitForInitialization: false)
+            .timeout(const Duration(seconds: 2));
+      } on Object catch (error) {
+        _diagnostics?.record(
+          'playback.track_language',
+          message: 'Could not apply ${entry.key} before opening media',
+          error: error,
+        );
+      }
+    }
+  }
+
+  @override
   Future<void> stop() async {
     final boundary = _identity.beginStop();
     _diagnostics?.record('playback.stop', message: 'boundary $boundary');
@@ -785,36 +932,7 @@ class MediaKitPlaybackService
       );
     }
 
-    final preset = switch (settings.qualityPreset) {
-      PlaybackQualityPreset.performance => const <String, String>{
-        'scale': 'bilinear',
-        'cscale': 'bilinear',
-        'dscale': 'bilinear',
-        'deband': 'no',
-      },
-      PlaybackQualityPreset.balanced => const <String, String>{
-        'scale': 'lanczos',
-        'cscale': 'lanczos',
-        'dscale': 'hermite',
-        'deband': 'no',
-      },
-      PlaybackQualityPreset.quality => const <String, String>{
-        'scale': 'ewa_lanczossharp',
-        'cscale': 'ewa_lanczossharp',
-        'dscale': 'mitchell',
-        'deband': 'yes',
-      },
-    };
-    final properties = <String, String>{
-      'hwdec': settings.preferHardwareDecoding ? 'auto' : 'no',
-      ...preset,
-      'brightness': settings.brightness.toString(),
-      'contrast': settings.contrast.toString(),
-      'saturation': settings.saturation.toString(),
-      'gamma': settings.gamma.toString(),
-      'audio-delay': settings.audioDelaySeconds.toString(),
-      'sub-delay': settings.subtitleDelaySeconds.toString(),
-    };
+    final properties = playbackSettingsMpvProperties(settings);
     final applied = <String>[];
     final failed = <String>[];
     for (final entry in properties.entries) {
@@ -840,7 +958,7 @@ class MediaKitPlaybackService
         final actual = await nativePlayer
             .getProperty(entry.key, waitForInitialization: false)
             .timeout(const Duration(seconds: 2));
-        if (_propertyMatches(actual, entry.value)) {
+        if (mpvPropertyMatchesRequestedValue(actual, entry.value)) {
           applied.add(entry.key);
           _confirmedPlaybackProperties[entry.key] = entry.value;
         } else {
@@ -859,17 +977,6 @@ class MediaKitPlaybackService
           ? null
           : 'mpv did not confirm: ${failed.join(', ')}',
     );
-  }
-
-  static bool _propertyMatches(String actual, String requested) {
-    final expectedNumber = double.tryParse(requested);
-    if (expectedNumber != null) {
-      final actualNumber = double.tryParse(actual.trim());
-      return actualNumber != null &&
-          actualNumber.isFinite &&
-          (actualNumber - expectedNumber).abs() < 0.0001;
-    }
-    return actual.trim().toLowerCase() == requested.toLowerCase();
   }
 
   @override

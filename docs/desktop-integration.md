@@ -124,7 +124,7 @@ The Inno Setup script (`packaging/windows/installer.iss`) configures non-elevate
   - `open`: `&Play with Mpvson` executes `"{app}\mpvson.exe" "%1"`.
   - `enqueue`: `Add to &queue` executes `"{app}\mpvson.exe" --enqueue "%1"`.
 - **Default Programs Registration**: Registers `HKCU\Software\RegisteredApplications\Mpvson` pointing to capabilities with complete `FileAssociations` and `MIMEAssociations` from [`MediaCatalog`](file:///E:/mpvson/lib/domain/models/media_catalog.dart).
-- **Settings Shortcut**: Settings > Desktop integration includes a one-click button launching `ms-settings:defaultapps` to configure Mpvson as the default player.
+- **Settings Shortcut**: Settings > General includes a one-click button launching `ms-settings:defaultapps` to configure Mpvson as the default player. A failed launch is reported in settings.
 
 ---
 
@@ -244,7 +244,7 @@ The [`OpenRequestCoordinator`](file:///E:/mpvson/lib/data/services/open_request_
 
 ### Settings UI
 
-Under **Settings > Desktop integration**:
+Under **Settings > General**:
 - **Opening files**: Toggle between "Keep playing and add to queue", "Play new files now", and "Ask every time".
 - **Keep display awake during playback**: Checkbox enabling or disabling Win32 display power requests and Linux screensaver inhibition.
 - **Default application**: Shortcut button to open the system's default apps configuration page.

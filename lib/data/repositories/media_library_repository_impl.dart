@@ -42,6 +42,11 @@ class MediaLibraryRepositoryImpl extends MediaLibraryRepository {
   final bool _ownsScanner;
 
   StreamSubscription<LibraryScanStatus>? _scanSubscription;
+  StreamSubscription<void>? _libraryChangesSubscription;
+  Timer? _libraryChangeTimer;
+  bool _libraryChangePending = false;
+  Future<void>? _libraryRefresh;
+  bool _refreshAgain = false;
   List<LibraryFolderRecord> _folders = <LibraryFolderRecord>[];
   LibraryScanStatus _scanStatus = const LibraryScanStatus();
   bool _isReady = false;
@@ -94,7 +99,15 @@ class MediaLibraryRepositoryImpl extends MediaLibraryRepository {
       if (_scanner != null) {
         _scanSubscription = _scanner!.scanStatusStream.listen((status) {
           _scanStatus = status;
-          notifyListeners();
+          publishScanStatus(status);
+          if (!status.isScanning && _libraryChangePending) {
+            _libraryChangeTimer?.cancel();
+            _libraryChangeTimer = null;
+            unawaited(_refreshLibraryContents());
+          }
+        });
+        _libraryChangesSubscription = _scanner!.libraryChanges.listen((_) {
+          _scheduleLibraryChange();
         });
       }
 
@@ -119,6 +132,58 @@ class MediaLibraryRepositoryImpl extends MediaLibraryRepository {
     }
   }
 
+  void _scheduleLibraryChange() {
+    if (_isDisposed) return;
+    _libraryChangePending = true;
+    _libraryChangeTimer ??= Timer(const Duration(milliseconds: 500), () {
+      _libraryChangeTimer = null;
+      unawaited(_refreshLibraryContents());
+    });
+  }
+
+  /// Batches scan and watcher writes into a bounded number of query refreshes.
+  /// The final scan state flushes pending changes without a debounce delay.
+  Future<void> _refreshLibraryContents() {
+    if (_isDisposed) return Future<void>.value();
+    final active = _libraryRefresh;
+    if (active != null) {
+      _refreshAgain = true;
+      return active;
+    }
+    final future = _drainLibraryRefreshes();
+    final tracked = future.whenComplete(() {
+      _libraryRefresh = null;
+      if (_refreshAgain && !_isDisposed) {
+        unawaited(_refreshLibraryContents());
+      }
+    });
+    _libraryRefresh = tracked;
+    return tracked;
+  }
+
+  Future<void> _drainLibraryRefreshes() async {
+    do {
+      _refreshAgain = false;
+      _libraryChangePending = false;
+      try {
+        final folders = await _database!.getAllFolders();
+        if (_isDisposed) return;
+        _folders = folders;
+        notifyListeners();
+      } on Object {
+        // The database may be closing after a cancelled scan.
+        if (!_isDisposed) notifyListeners();
+      }
+    } while (_refreshAgain && !_isDisposed);
+  }
+
+  Future<void> _flushLibraryChanges() async {
+    _libraryChangeTimer?.cancel();
+    _libraryChangeTimer = null;
+    if (_libraryChangePending) await _refreshLibraryContents();
+    await _libraryRefresh;
+  }
+
   @override
   Future<void> addFolder(String path) async {
     _checkReady();
@@ -140,6 +205,7 @@ class MediaLibraryRepositoryImpl extends MediaLibraryRepository {
     notifyListeners();
 
     await _scanner?.scanFolder(norm);
+    await _flushLibraryChanges();
   }
 
   @override
@@ -163,6 +229,7 @@ class MediaLibraryRepositoryImpl extends MediaLibraryRepository {
   Future<void> upsertDiscoveredFiles(List<String> paths) async {
     _checkReady();
     await _database!.batchUpsertDiscoveredFiles(paths);
+    _scheduleLibraryChange();
   }
 
   @override
@@ -181,6 +248,7 @@ class MediaLibraryRepositoryImpl extends MediaLibraryRepository {
       fileSize: fileSize,
       modifiedAt: modifiedAt,
     );
+    _scheduleLibraryChange();
   }
 
   @override
@@ -190,6 +258,7 @@ class MediaLibraryRepositoryImpl extends MediaLibraryRepository {
     String? artist,
     String? album,
     bool? onlyFavorites,
+    bool onlyPlayed = false,
     int? limit,
     int? offset,
     String? sortBy,
@@ -202,11 +271,65 @@ class MediaLibraryRepositoryImpl extends MediaLibraryRepository {
       artist: artist,
       album: album,
       isFavorite: onlyFavorites == true ? true : null,
+      onlyPlayed: onlyPlayed,
       limit: limit,
       offset: offset,
       sortBy: sortBy,
       ascending: ascending,
     );
+  }
+
+  @override
+  Future<List<LibraryAlbumSummary>> queryAlbums({
+    String? searchQuery,
+    String? album,
+    int? limit,
+    int? offset,
+  }) async {
+    _checkReady();
+    final rows = await _database!.queryAlbums(
+      searchQuery: searchQuery,
+      album: album,
+      limit: limit,
+      offset: offset,
+    );
+    return rows
+        .map(
+          (row) => LibraryAlbumSummary(
+            album: row['album'] as String,
+            artist: row['artist'] as String,
+            trackCount: row['track_count'] as int,
+            totalDuration: Duration(
+              milliseconds: row['total_duration_ms'] as int,
+            ),
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  @override
+  Future<List<LibraryArtistSummary>> queryArtists({
+    String? searchQuery,
+    String? artist,
+    int? limit,
+    int? offset,
+  }) async {
+    _checkReady();
+    final rows = await _database!.queryArtists(
+      searchQuery: searchQuery,
+      artist: artist,
+      limit: limit,
+      offset: offset,
+    );
+    return rows
+        .map(
+          (row) => LibraryArtistSummary(
+            artist: row['artist'] as String,
+            songCount: row['song_count'] as int,
+            albumCount: row['album_count'] as int,
+          ),
+        )
+        .toList(growable: false);
   }
 
   @override
@@ -235,6 +358,13 @@ class MediaLibraryRepositoryImpl extends MediaLibraryRepository {
     _checkReady();
     await _database!.recordPlayHistoryByCanonicalSource(canonicalSource);
     notifyListeners();
+  }
+
+  @override
+  Future<void> clearPlaybackHistory() async {
+    _checkReady();
+    await _database!.clearPlaybackHistory();
+    if (!_isDisposed) notifyListeners();
   }
 
   @override
@@ -330,12 +460,14 @@ class MediaLibraryRepositoryImpl extends MediaLibraryRepository {
     _checkReady();
     final norm = p.normalize(p.absolute(folderPath));
     await _scanner?.scanFolder(norm);
+    await _flushLibraryChanges();
   }
 
   @override
   Future<void> rescanAll() async {
     _checkReady();
     await _scanner?.scanAll();
+    await _flushLibraryChanges();
   }
 
   @override
@@ -347,6 +479,8 @@ class MediaLibraryRepositoryImpl extends MediaLibraryRepository {
   Future<void> dispose() async {
     if (_isDisposed) return;
     _isDisposed = true;
+    _libraryChangeTimer?.cancel();
+    _libraryChangeTimer = null;
 
     final initialization = _initializationFuture;
     if (initialization != null) {
@@ -359,6 +493,9 @@ class MediaLibraryRepositoryImpl extends MediaLibraryRepository {
 
     await _scanSubscription?.cancel();
     _scanSubscription = null;
+    await _libraryChangesSubscription?.cancel();
+    _libraryChangesSubscription = null;
+    await _libraryRefresh;
 
     if (_ownsScanner) {
       await _scanner?.dispose();
@@ -370,6 +507,6 @@ class MediaLibraryRepositoryImpl extends MediaLibraryRepository {
     }
     _database = null;
 
-    super.dispose();
+    await super.dispose();
   }
 }

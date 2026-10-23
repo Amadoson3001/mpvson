@@ -29,12 +29,13 @@ class PlaybackSession {
     this.controlDensity = ControlDensity.compact,
     this.playbackSettings = PlaybackSettings.defaults,
     this.saveNetworkUrls = false,
+    this.historyEnabled = true,
     this.progressRevision = 0,
     this.storedVersion = schemaVersion,
   });
 
   /// Schema version written by this release.
-  static const int schemaVersion = 3;
+  static const int schemaVersion = 4;
 
   /// Highest queue rows read from a stored session. A corrupt or hostile file
   /// cannot make the launch path unbounded.
@@ -55,6 +56,9 @@ class PlaybackSession {
 
   /// Whether stream URLs may be written to local session files.
   final bool saveNetworkUrls;
+
+  /// Whether new recent-file and playback-position activity is remembered.
+  final bool historyEnabled;
 
   /// Revision of the progress checkpoint this session already contains, used to
   /// decide whether a newer checkpoint should override the stored position.
@@ -97,6 +101,7 @@ class PlaybackSession {
       controlDensity: controlDensity,
       playbackSettings: playbackSettings,
       saveNetworkUrls: false,
+      historyEnabled: historyEnabled,
       progressRevision: progressRevision,
       storedVersion: storedVersion,
     );
@@ -114,6 +119,7 @@ class PlaybackSession {
     ControlDensity? controlDensity,
     PlaybackSettings? playbackSettings,
     bool? saveNetworkUrls,
+    bool? historyEnabled,
     int? progressRevision,
     int? storedVersion,
   }) {
@@ -128,6 +134,7 @@ class PlaybackSession {
       controlDensity: controlDensity ?? this.controlDensity,
       playbackSettings: playbackSettings ?? this.playbackSettings,
       saveNetworkUrls: saveNetworkUrls ?? this.saveNetworkUrls,
+      historyEnabled: historyEnabled ?? this.historyEnabled,
       progressRevision: progressRevision ?? this.progressRevision,
       storedVersion: storedVersion ?? this.storedVersion,
     );
@@ -158,6 +165,7 @@ class PlaybackSession {
       playbackSettings: PlaybackSettings.fromJson(json['playbackSettings']),
       // Version 1 predates the consent setting, so it implies no consent.
       saveNetworkUrls: version >= 2 && json['saveNetworkUrls'] == true,
+      historyEnabled: json['historyEnabled'] != false,
       progressRevision: version >= 2
           ? _asInt(json['progressRevision']) ?? 0
           : 0,
@@ -177,6 +185,7 @@ class PlaybackSession {
     'controlDensity': controlDensity.name,
     'playbackSettings': playbackSettings.toJson(),
     'saveNetworkUrls': saveNetworkUrls,
+    'historyEnabled': historyEnabled,
     'progressRevision': progressRevision,
   };
 

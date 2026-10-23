@@ -1,8 +1,9 @@
 # Playback tuning and queue navigation
 
-Settings > Video & audio controls the running libmpv engine. Preferences are
-remembered between launches. Playback stays stopped when a saved queue is
-restored.
+Settings > Video controls picture quality and decoding in the running libmpv
+engine. Settings > Audio & subtitles contains tracks and timing adjustments.
+Preferences are remembered between launches. Playback stays stopped when a
+saved queue is restored.
 
 | Preset | Scaling | Debanding |
 | --- | --- | --- |
@@ -20,8 +21,8 @@ it off requests software decoding. Changing decoding mode can briefly restart
 the decoder. Picture controls cover brightness, contrast, saturation and gamma.
 Audio and subtitle timing offsets range from -10 to +10 seconds.
 
-Reset restores the video and audio tuning defaults. Speed, volume and track
-selection remain in the Playback section. The controls use documented
+Each section's Reset restores only its own tuning defaults. Speed and queue
+behavior remain in Playback; track selection is in Audio & subtitles. The controls use documented
 [mpv runtime options](https://mpv.io/manual/stable/). The service reads each
 changed option back before reporting success and displays unconfirmed settings
 in the dialog. It caches confirmed values, serializes writes and coalesces

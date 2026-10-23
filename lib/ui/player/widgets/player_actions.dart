@@ -81,16 +81,11 @@ class PlayerActions extends StatelessWidget {
             child: _ActionItem(
               icon: Icons.folder_open_rounded,
               label: 'Open files',
-              shortcut: 'Ctrl+O',
             ),
           ),
           const PopupMenuItem(
             value: 'url',
-            child: _ActionItem(
-              icon: Icons.link_rounded,
-              label: 'Open URL',
-              shortcut: 'Ctrl+L',
-            ),
+            child: _ActionItem(icon: Icons.link_rounded, label: 'Open URL'),
           ),
           const PopupMenuDivider(),
           if (onOpenLibrary != null)
@@ -99,7 +94,6 @@ class PlayerActions extends StatelessWidget {
               child: _ActionItem(
                 icon: Icons.video_library_rounded,
                 label: 'Media library',
-                shortcut: 'Ctrl+M',
               ),
             ),
           if (onPlaybackInfo != null)
@@ -108,7 +102,6 @@ class PlayerActions extends StatelessWidget {
               child: _ActionItem(
                 icon: Icons.query_stats_rounded,
                 label: 'Playback information',
-                shortcut: 'I',
               ),
             ),
           const PopupMenuItem(
@@ -198,10 +191,9 @@ class PlayerActions extends StatelessWidget {
 }
 
 class _ActionItem extends StatelessWidget {
-  const _ActionItem({required this.icon, required this.label, this.shortcut});
+  const _ActionItem({required this.icon, required this.label});
   final IconData icon;
   final String label;
-  final String? shortcut;
 
   @override
   Widget build(BuildContext context) => Row(
@@ -209,10 +201,6 @@ class _ActionItem extends StatelessWidget {
       Icon(icon, size: 19, color: AppTheme.secondaryText),
       const SizedBox(width: 12),
       Expanded(child: Text(label)),
-      if (shortcut != null) ...[
-        const SizedBox(width: 16),
-        Text(shortcut!, style: Theme.of(context).textTheme.labelSmall),
-      ],
     ],
   );
 }

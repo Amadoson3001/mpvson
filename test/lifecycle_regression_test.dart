@@ -328,6 +328,7 @@ class _DelayedQueryRepository extends InMemoryMediaLibraryRepository {
     String? artist,
     String? album,
     bool? onlyFavorites,
+    bool onlyPlayed = false,
     int? limit,
     int? offset,
     String? sortBy,

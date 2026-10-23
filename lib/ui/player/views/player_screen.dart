@@ -9,6 +9,8 @@ import 'package:window_manager/window_manager.dart';
 
 import '../../../domain/models/media_catalog.dart';
 import '../../../domain/models/media_entry.dart';
+import '../../../domain/models/player_shortcuts.dart';
+import '../../../domain/models/resume_prompt.dart';
 import '../../../data/services/engine_update_service.dart';
 import '../../../data/services/update_service.dart';
 import '../../../data/services/playback_statistics.dart';
@@ -121,6 +123,11 @@ class _PlayerScreenState extends State<PlayerScreen>
   bool _minimized = false;
   bool _animationsSuspended = false;
   bool _showLibrary = false;
+  bool _resumePromptOpen = false;
+  int? _resumePromptId;
+  NavigatorState? _resumePromptNavigator;
+  DialogRoute<bool>? _resumePromptRoute;
+  final Set<int> _shownResumePromptIds = <int>{};
 
   bool get _nativeWindow =>
       widget.desktopWindow && widget.fullscreenSetter == null;
@@ -136,7 +143,9 @@ class _PlayerScreenState extends State<PlayerScreen>
     HardwareKeyboard.instance.addHandler(_recordKeyboardInput);
     if (_nativeWindow) windowManager.addListener(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _showControls();
+      if (!mounted) return;
+      _showControls();
+      _maybeShowResumePrompt();
     });
   }
 
@@ -146,8 +155,15 @@ class _PlayerScreenState extends State<PlayerScreen>
     if (oldWidget.controller != widget.controller) {
       oldWidget.controller.removeListener(_handleControllerChange);
       widget.controller.addListener(_handleControllerChange);
+      _dismissResumePromptRoute();
+      _shownResumePromptIds.clear();
+      _resumePromptOpen = false;
+      _resumePromptId = null;
       _queuePanelCache = null;
       _queuePanelCacheController = null;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _maybeShowResumePrompt();
+      });
     }
     final wasNative =
         oldWidget.desktopWindow && oldWidget.fullscreenSetter == null;
@@ -162,6 +178,7 @@ class _PlayerScreenState extends State<PlayerScreen>
 
   @override
   void dispose() {
+    _dismissResumePromptRoute(immediate: true);
     WidgetsBinding.instance.removeObserver(this);
     FocusManager.instance.removeListener(_handlePrimaryFocusChange);
     HardwareKeyboard.instance.removeHandler(_recordKeyboardInput);
@@ -264,12 +281,136 @@ class _PlayerScreenState extends State<PlayerScreen>
 
   void _handleControllerChange() {
     if (!mounted) return;
+    _maybeShowResumePrompt();
     if (_hideBlocked) {
       _controlsTimer?.cancel();
       if (!_controlsVisible) setState(() => _controlsVisible = true);
     } else {
       _scheduleControlsHide();
     }
+  }
+
+  void _maybeShowResumePrompt() {
+    final prompt = widget.controller.pendingResumePrompt;
+    if (!mounted) return;
+    if (_resumePromptId != null && _resumePromptId != prompt?.id) {
+      _dismissResumePromptRoute();
+      _resumePromptId = null;
+      _resumePromptOpen = false;
+    }
+    if (prompt == null ||
+        _resumePromptOpen ||
+        !_shownResumePromptIds.add(prompt.id)) {
+      return;
+    }
+
+    _resumePromptOpen = true;
+    _resumePromptId = prompt.id;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          _resumePromptId != prompt.id ||
+          widget.controller.pendingResumePrompt?.id != prompt.id) {
+        if (_resumePromptId == prompt.id) {
+          _resumePromptId = null;
+          _resumePromptOpen = false;
+        }
+        return;
+      }
+      unawaited(_showResumePrompt(prompt));
+    });
+  }
+
+  Future<void> _showResumePrompt(ResumePrompt prompt) async {
+    final navigator = Navigator.of(context, rootNavigator: true);
+    final route = DialogRoute<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Resume playback?'),
+        scrollable: true,
+        content: Text(
+          'Continue ${prompt.title} from ${_formatResumePosition(prompt.position)}?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Start over'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Resume'),
+          ),
+        ],
+      ),
+      barrierDismissible: false,
+      barrierColor:
+          Theme.of(context).dialogTheme.barrierColor ?? Colors.black54,
+      barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel,
+      themes: InheritedTheme.capture(from: context, to: navigator.context),
+    );
+    _resumePromptNavigator = navigator;
+    _resumePromptRoute = route;
+    try {
+      final resume = await _withControlsVisible(() => navigator.push(route));
+      if (!mounted || widget.controller.pendingResumePrompt?.id != prompt.id) {
+        return;
+      }
+      if (resume == null) {
+        widget.controller.dismissResumePrompt(prompt);
+        return;
+      }
+      await widget.controller.resolveResumePrompt(
+        prompt,
+        resume: resume == true,
+      );
+    } finally {
+      if (identical(_resumePromptRoute, route)) {
+        _resumePromptRoute = null;
+        _resumePromptNavigator = null;
+      }
+      if (_resumePromptId == prompt.id) {
+        _resumePromptOpen = false;
+        _resumePromptId = null;
+        if (mounted && widget.controller.pendingResumePrompt != null) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _maybeShowResumePrompt();
+          });
+        }
+      }
+    }
+  }
+
+  void _dismissResumePromptRoute({bool immediate = false}) {
+    final route = _resumePromptRoute;
+    final navigator = _resumePromptNavigator;
+    _resumePromptRoute = null;
+    _resumePromptNavigator = null;
+    if (route == null || navigator == null || !navigator.mounted) return;
+    void removeTrackedRoute() {
+      if (route.isActive && navigator.mounted) navigator.removeRoute(route);
+    }
+
+    if (immediate) {
+      removeTrackedRoute();
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) => removeTrackedRoute());
+      WidgetsBinding.instance.ensureVisualUpdate();
+    }
+  }
+
+  String _formatResumePosition(Duration position) {
+    final totalSeconds = position.inSeconds;
+    final hours = totalSeconds ~/ 3600;
+    final minutes = (totalSeconds ~/ 60) % 60;
+    final seconds = totalSeconds % 60;
+    final secondsText = seconds.toString().padLeft(2, '0');
+    if (hours > 0) {
+      return '$hours:${minutes.toString().padLeft(2, '0')}:$secondsText';
+    }
+    return '$minutes:$secondsText';
   }
 
   void _handleQueueFocusChange() {
@@ -592,6 +733,22 @@ class _PlayerScreenState extends State<PlayerScreen>
 
   KeyEventResult _handleKey(FocusNode node, KeyEvent event) {
     final key = event.logicalKey;
+    final bindings = resolvePlayerShortcuts(
+      widget.appPreferences?.preferences.shortcutOverrides ?? const {},
+    );
+    final canonical = playerShortcutFromEvent(
+      event,
+      control: HardwareKeyboard.instance.isControlPressed,
+      alt: HardwareKeyboard.instance.isAltPressed,
+      shift: HardwareKeyboard.instance.isShiftPressed,
+      meta: HardwareKeyboard.instance.isMetaPressed,
+    );
+    final action = canonical == null
+        ? null
+        : playerShortcutActionFor(canonical, bindings);
+    final isPlayPauseSpace =
+        action == PlayerShortcutAction.playPause &&
+        key == LogicalKeyboardKey.space;
     // A held playback shortcut must unwind even if the focus changed before
     // the release. Fresh typing inside a text field remains untouched.
     if (key == LogicalKeyboardKey.space && event is KeyUpEvent && _spaceHeld) {
@@ -614,13 +771,17 @@ class _PlayerScreenState extends State<PlayerScreen>
       }
       return KeyEventResult.handled;
     }
+    if (key == LogicalKeyboardKey.escape && _isFullscreen) {
+      if (event is KeyDownEvent) unawaited(_setFullscreen(false));
+      return KeyEventResult.handled;
+    }
 
     if (_textInputFocused) return KeyEventResult.ignored;
-    if (key == LogicalKeyboardKey.space && _controlsFocusScope.hasFocus) {
+    if (isPlayPauseSpace && _controlsFocusScope.hasFocus) {
       return KeyEventResult.ignored;
     }
 
-    if (key == LogicalKeyboardKey.space) {
+    if (isPlayPauseSpace) {
       if (event is KeyDownEvent && !_spaceHeld) {
         _spaceHeld = true;
         _longSpacePress = false;
@@ -641,103 +802,68 @@ class _PlayerScreenState extends State<PlayerScreen>
 
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
     final queueOwnsFocus = _queueFocusScope.hasFocus;
-    if (HardwareKeyboard.instance.isControlPressed &&
-        key == LogicalKeyboardKey.keyO) {
-      unawaited(_openFiles());
-      return KeyEventResult.handled;
-    }
-    if (HardwareKeyboard.instance.isControlPressed &&
-        key == LogicalKeyboardKey.keyL) {
-      unawaited(_openUrl());
-      return KeyEventResult.handled;
-    }
-
-    switch (key) {
-      case LogicalKeyboardKey.arrowLeft:
+    if (action == null) return KeyEventResult.ignored;
+    switch (action) {
+      case PlayerShortcutAction.playPause:
+        if (_controlsFocusScope.hasFocus &&
+            (key == LogicalKeyboardKey.space ||
+                key == LogicalKeyboardKey.enter)) {
+          return KeyEventResult.ignored;
+        }
+        _toggleVideoPlayback();
+        return KeyEventResult.handled;
+      case PlayerShortcutAction.seekBackward:
         if (_sliderFocused || queueOwnsFocus) return KeyEventResult.ignored;
         unawaited(widget.controller.seekRelative(const Duration(seconds: -5)));
         _showControls();
         return KeyEventResult.handled;
-      case LogicalKeyboardKey.arrowRight:
+      case PlayerShortcutAction.seekForward:
         if (_sliderFocused || queueOwnsFocus) return KeyEventResult.ignored;
         unawaited(widget.controller.seekRelative(const Duration(seconds: 5)));
         _showControls();
         return KeyEventResult.handled;
-      case LogicalKeyboardKey.arrowUp:
+      case PlayerShortcutAction.volumeUp:
         if (_sliderFocused || queueOwnsFocus) return KeyEventResult.ignored;
         _adjustVolume(5);
         _showControls();
         return KeyEventResult.handled;
-      case LogicalKeyboardKey.arrowDown:
+      case PlayerShortcutAction.volumeDown:
         if (_sliderFocused || queueOwnsFocus) return KeyEventResult.ignored;
         _adjustVolume(-5);
         _showControls();
         return KeyEventResult.handled;
-      case LogicalKeyboardKey.keyP:
-        _toggleQueue();
-        return KeyEventResult.handled;
-      case LogicalKeyboardKey.keyI:
-        if (HardwareKeyboard.instance.isControlPressed ||
-            HardwareKeyboard.instance.isAltPressed ||
-            HardwareKeyboard.instance.isMetaPressed) {
-          return KeyEventResult.ignored;
-        }
-        unawaited(_showPlaybackInfo());
-        return KeyEventResult.handled;
-      case LogicalKeyboardKey.keyM:
-        if (HardwareKeyboard.instance.isControlPressed ||
-            HardwareKeyboard.instance.isAltPressed ||
-            HardwareKeyboard.instance.isMetaPressed) {
-          return KeyEventResult.ignored;
-        }
+      case PlayerShortcutAction.mute:
         _toggleMute();
         return KeyEventResult.handled;
-      case LogicalKeyboardKey.contextMenu:
-        _openKeyboardContextMenu();
-        return KeyEventResult.handled;
-      case LogicalKeyboardKey.f10:
-        if (HardwareKeyboard.instance.isShiftPressed) {
-          _openKeyboardContextMenu();
+      case PlayerShortcutAction.fullscreen:
+        if (widget.desktopWindow) {
+          unawaited(_toggleFullscreen());
           return KeyEventResult.handled;
         }
-        break;
-      case LogicalKeyboardKey.delete:
+        return KeyEventResult.ignored;
+      case PlayerShortcutAction.toggleQueue:
+        _toggleQueue();
+        return KeyEventResult.handled;
+      case PlayerShortcutAction.playbackInfo:
+        unawaited(_showPlaybackInfo());
+        return KeyEventResult.handled;
+      case PlayerShortcutAction.openFiles:
+        unawaited(_openFiles());
+        return KeyEventResult.handled;
+      case PlayerShortcutAction.openUrl:
+        unawaited(_openUrl());
+        return KeyEventResult.handled;
+      case PlayerShortcutAction.contextMenu:
+        _openKeyboardContextMenu();
+        return KeyEventResult.handled;
+      case PlayerShortcutAction.removeQueueItem:
         if (_focusedQueueEntryId case final entryId?
             when _queueFocusScope.hasFocus) {
           unawaited(_removeQueueEntryById(entryId));
           return KeyEventResult.handled;
         }
-        break;
-      case LogicalKeyboardKey.f11:
-      case LogicalKeyboardKey.keyF:
-        if (HardwareKeyboard.instance.isControlPressed ||
-            HardwareKeyboard.instance.isAltPressed ||
-            HardwareKeyboard.instance.isMetaPressed) {
-          return KeyEventResult.ignored;
-        }
-        if (widget.desktopWindow) {
-          unawaited(_toggleFullscreen());
-          return KeyEventResult.handled;
-        }
-        break;
-      case LogicalKeyboardKey.escape:
-        if (_contextMenu.isOpen) {
-          _contextMenu.close();
-          return KeyEventResult.handled;
-        }
-        if (_queueOpen) {
-          _closeQueuePanel();
-          return KeyEventResult.handled;
-        }
-        if (_isFullscreen) {
-          unawaited(_setFullscreen(false));
-          return KeyEventResult.handled;
-        }
-        break;
-      default:
-        break;
+        return KeyEventResult.ignored;
     }
-    return KeyEventResult.ignored;
   }
 
   @override
@@ -971,7 +1097,8 @@ class _PlayerScreenState extends State<PlayerScreen>
                 ? LibrarySection.nowPlaying
                 : LibrarySection.music,
             onSwitchToVideo: () => setState(() => _showLibrary = false),
-            onAddFolders: _showSettings,
+            onAddFolders: () =>
+                _showSettings(initialSection: SettingsSection.mediaLibrary),
           ),
         ],
       );
@@ -1365,7 +1492,7 @@ class _PlayerScreenState extends State<PlayerScreen>
     setState(() => _queueMounted = false);
   }
 
-  Future<void> _showSettings() async {
+  Future<void> _showSettings({SettingsSection? initialSection}) async {
     if (_contextMenu.isOpen) _contextMenu.close();
     await _withControlsVisible(
       () => showDialog<void>(
@@ -1378,6 +1505,7 @@ class _PlayerScreenState extends State<PlayerScreen>
           appPreferences: widget.appPreferences,
           libraryRepository: widget.libraryRepository,
           desktopIntegration: widget.desktopIntegration,
+          initialSection: initialSection,
         ),
       ),
     );

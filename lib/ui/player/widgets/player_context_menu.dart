@@ -94,7 +94,6 @@ class PlayerContextMenu extends StatelessWidget {
             : Icons.play_arrow_rounded,
         animateLeadingIcon: !AppMotion.reduce(context),
         label: playerController.isPlaying ? 'Pause' : 'Play',
-        trailing: 'Space',
         onPressed: canPlay
             ? () => unawaited(playerController.togglePlayPause())
             : null,
@@ -165,7 +164,6 @@ class PlayerContextMenu extends StatelessWidget {
                 ? Icons.volume_up_rounded
                 : Icons.volume_off_rounded,
             label: playerController.volume <= 0 ? 'Unmute' : 'Mute',
-            trailing: 'M',
             onPressed: onToggleMute,
           ),
         ],
@@ -179,13 +177,11 @@ class PlayerContextMenu extends StatelessWidget {
           _menuAction(
             icon: Icons.video_file_outlined,
             label: 'Files',
-            trailing: 'Ctrl+O',
             onPressed: onOpenFiles,
           ),
           _menuAction(
             icon: Icons.link_rounded,
             label: 'URL',
-            trailing: 'Ctrl+L',
             onPressed: onOpenUrl,
           ),
         ],
@@ -193,7 +189,6 @@ class PlayerContextMenu extends StatelessWidget {
       _menuAction(
         icon: queueOpen ? Icons.view_sidebar_rounded : Icons.queue_play_next,
         label: queueOpen ? 'Hide queue' : 'Show queue',
-        trailing: 'P',
         onPressed: onToggleQueue,
       ),
       if (onFullscreen != null)

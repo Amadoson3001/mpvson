@@ -19,7 +19,7 @@ class OpenPreferenceDialog extends StatelessWidget {
     return AlertDialog(
       backgroundColor: AppTheme.card,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(14),
         side: const BorderSide(color: AppTheme.border),
       ),
       titlePadding: const EdgeInsets.fromLTRB(24, 24, 24, 12),
@@ -40,7 +40,7 @@ class OpenPreferenceDialog extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             const Text(
-              'You can change this anytime in Settings > Desktop integration > Opening files.',
+              'You can change this anytime in Settings, under General.',
               style: TextStyle(
                 color: AppTheme.secondaryText,
                 fontSize: 13,
@@ -48,13 +48,13 @@ class OpenPreferenceDialog extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 20),
-            FilledButton(
+            FilledButton.icon(
               style: FilledButton.styleFrom(
                 backgroundColor: AppTheme.accent,
                 foregroundColor: AppTheme.deepBackground,
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(6),
+                  borderRadius: BorderRadius.circular(8),
                 ),
               ),
               onPressed: () {
@@ -62,19 +62,20 @@ class OpenPreferenceDialog extends StatelessWidget {
                   context,
                 ).pop(OpenBehaviorPreference.keepPlayingAndEnqueue);
               },
-              child: const Text(
+              icon: const Icon(Icons.playlist_add_rounded, size: 20),
+              label: const Text(
                 'Keep playing and add to queue',
                 style: TextStyle(fontWeight: FontWeight.w600),
               ),
             ),
             const SizedBox(height: 10),
-            OutlinedButton(
+            OutlinedButton.icon(
               style: OutlinedButton.styleFrom(
                 foregroundColor: AppTheme.primaryText,
                 side: const BorderSide(color: AppTheme.border),
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(6),
+                  borderRadius: BorderRadius.circular(8),
                 ),
               ),
               onPressed: () {
@@ -82,7 +83,8 @@ class OpenPreferenceDialog extends StatelessWidget {
                   context,
                 ).pop(OpenBehaviorPreference.playNewFilesNow);
               },
-              child: const Text(
+              icon: const Icon(Icons.play_arrow_rounded, size: 20),
+              label: const Text(
                 'Play new files now',
                 style: TextStyle(fontWeight: FontWeight.w600),
               ),

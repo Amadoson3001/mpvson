@@ -7,6 +7,36 @@ export 'media_metadata.dart';
 
 enum ScanPhase { idle, discovering, enriching, reconciling, error }
 
+/// One album in the library, without retaining its individual track records.
+@immutable
+class LibraryAlbumSummary {
+  const LibraryAlbumSummary({
+    required this.album,
+    required this.artist,
+    required this.trackCount,
+    this.totalDuration = Duration.zero,
+  });
+
+  final String album;
+  final String artist;
+  final int trackCount;
+  final Duration totalDuration;
+}
+
+/// One artist in the library, without retaining their individual track records.
+@immutable
+class LibraryArtistSummary {
+  const LibraryArtistSummary({
+    required this.artist,
+    required this.songCount,
+    required this.albumCount,
+  });
+
+  final String artist;
+  final int songCount;
+  final int albumCount;
+}
+
 @immutable
 class LibraryScanStatus {
   const LibraryScanStatus({
@@ -37,6 +67,7 @@ class LibraryScanStatus {
     int? enrichedCount,
     int? totalToEnrich,
     String? errorMessage,
+    bool clearError = false,
   }) {
     return LibraryScanStatus(
       phase: phase ?? this.phase,
@@ -44,7 +75,7 @@ class LibraryScanStatus {
       discoveredCount: discoveredCount ?? this.discoveredCount,
       enrichedCount: enrichedCount ?? this.enrichedCount,
       totalToEnrich: totalToEnrich ?? this.totalToEnrich,
-      errorMessage: errorMessage ?? this.errorMessage,
+      errorMessage: clearError ? null : errorMessage ?? this.errorMessage,
     );
   }
 }
@@ -133,6 +164,7 @@ class MediaItemRecord {
     bool? isFavorite,
     DateTime? addedAt,
     DateTime? lastPlayedAt,
+    bool clearLastPlayedAt = false,
     int? playCount,
   }) {
     return MediaItemRecord(
@@ -146,7 +178,9 @@ class MediaItemRecord {
       isAvailable: isAvailable ?? this.isAvailable,
       isFavorite: isFavorite ?? this.isFavorite,
       addedAt: addedAt ?? this.addedAt,
-      lastPlayedAt: lastPlayedAt ?? this.lastPlayedAt,
+      lastPlayedAt: clearLastPlayedAt
+          ? null
+          : lastPlayedAt ?? this.lastPlayedAt,
       playCount: playCount ?? this.playCount,
     );
   }

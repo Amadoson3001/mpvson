@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import '../../../data/repositories/media_library_repository.dart';
 import '../../../domain/models/library_models.dart';
+import '../../../domain/models/media_entry.dart';
+import '../../../domain/models/media_thumbnail.dart';
 import '../../player/player_controller.dart';
 import '../theme/library_theme.dart';
 import '../widgets/empty_library_view.dart';
@@ -19,6 +21,7 @@ class VideosView extends StatefulWidget {
     this.searchQuery,
     this.onAddFolders,
     this.onShowInFolder,
+    this.onSwitchToVideo,
   });
 
   final MediaLibraryRepository repository;
@@ -26,19 +29,28 @@ class VideosView extends StatefulWidget {
   final String? searchQuery;
   final VoidCallback? onAddFolders;
   final ValueChanged<String>? onShowInFolder;
+  final VoidCallback? onSwitchToVideo;
 
   @override
   State<VideosView> createState() => _VideosViewState();
 }
 
 class _VideosViewState extends State<VideosView> {
+  static const int _pageSize = 80;
+
   VideoViewMode _viewMode = VideoViewMode.grid;
   String _sortBy = 'addedAt';
   bool _ascending = false;
   List<MediaItemRecord>? _videos;
   bool _isLoading = false;
-  Future<void>? _reloadFuture;
-  bool _reloadAgain = false;
+  bool _isLoadingMore = false;
+  bool _pageLoadFailed = false;
+  bool _hasMore = true;
+  bool _loadMoreScheduled = false;
+  bool _requestRunning = false;
+  int? _pendingOffset;
+  int _nextOffset = 0;
+  int _queryGeneration = 0;
 
   @override
   void initState() {
@@ -69,43 +81,112 @@ class _VideosViewState extends State<VideosView> {
     _reload();
   }
 
-  Future<void> _reload() {
-    if (!mounted) return Future<void>.value();
-    _reloadAgain = true;
-    final active = _reloadFuture;
-    if (active != null) return active;
-    final future = _drainReloads();
-    final tracked = future.whenComplete(() {
-      _reloadFuture = null;
-      if (_reloadAgain && mounted) unawaited(_reload());
+  void _reload() {
+    if (!mounted) return;
+    _queryGeneration++;
+    setState(() {
+      _videos = null;
+      _isLoading = true;
+      _isLoadingMore = false;
+      _pageLoadFailed = false;
+      _hasMore = true;
+      _nextOffset = 0;
     });
-    _reloadFuture = tracked;
-    return tracked;
+    _queuePage(0);
   }
 
-  Future<void> _drainReloads() async {
-    if (mounted) setState(() => _isLoading = true);
+  void _queuePage(int offset) {
+    _pendingOffset = offset;
+    _pumpPages();
+  }
+
+  void _pumpPages() {
+    if (!mounted || _requestRunning || _pendingOffset == null) return;
+    final offset = _pendingOffset!;
+    final generation = _queryGeneration;
+    _pendingOffset = null;
+    _requestRunning = true;
+    unawaited(
+      _loadPage(generation, offset).whenComplete(() {
+        _requestRunning = false;
+        _pumpPages();
+      }),
+    );
+  }
+
+  Future<void> _loadPage(int generation, int offset) async {
     try {
-      do {
-        _reloadAgain = false;
-        final videos = await widget.repository.queryMedia(
-          kind: MediaKind.video,
-          searchQuery: widget.searchQuery,
-          sortBy: _sortBy,
-          ascending: _ascending,
-        );
-        if (!mounted) return;
-        if (_reloadAgain) continue;
-        setState(() => _videos = videos);
-      } while (_reloadAgain && mounted);
+      final videos = await widget.repository.queryMedia(
+        kind: MediaKind.video,
+        searchQuery: widget.searchQuery,
+        limit: _pageSize,
+        offset: offset,
+        sortBy: _sortBy,
+        ascending: _ascending,
+      );
+      if (!mounted || generation != _queryGeneration) return;
+      setState(() {
+        _videos = offset == 0
+            ? videos
+            : <MediaItemRecord>[...?_videos, ...videos];
+        _nextOffset = offset + videos.length;
+        _hasMore = videos.length == _pageSize;
+        _isLoading = false;
+        _isLoadingMore = false;
+        _pageLoadFailed = false;
+      });
     } catch (error) {
       debugPrint('Videos view could not refresh: $error');
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted && generation == _queryGeneration) {
+        setState(() {
+          _isLoading = false;
+          _isLoadingMore = false;
+          _pageLoadFailed = true;
+        });
+      }
     }
   }
 
-  String _formatDuration(Duration d) {
+  void _loadMore() {
+    if (!mounted ||
+        _videos == null ||
+        !_hasMore ||
+        _isLoading ||
+        _isLoadingMore) {
+      return;
+    }
+    final offset = _nextOffset;
+    setState(() => _isLoadingMore = true);
+    _queuePage(offset);
+  }
+
+  void _retryPage() {
+    if (!mounted || !_pageLoadFailed) return;
+    final offset = _videos == null ? 0 : _nextOffset;
+    setState(() {
+      _pageLoadFailed = false;
+      _isLoading = _videos == null;
+      _isLoadingMore = _videos != null;
+    });
+    _queuePage(offset);
+  }
+
+  void _scheduleLoadMore() {
+    if (_loadMoreScheduled ||
+        !_hasMore ||
+        _pageLoadFailed ||
+        _isLoadingMore ||
+        _isLoading) {
+      return;
+    }
+    _loadMoreScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadMoreScheduled = false;
+      if (mounted) _loadMore();
+    });
+  }
+
+  static String _formatDuration(Duration d) {
     final hours = d.inHours;
     final minutes = d.inMinutes % 60;
     final seconds = d.inSeconds % 60;
@@ -115,7 +196,7 @@ class _VideosViewState extends State<VideosView> {
     return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
   }
 
-  String _formatFileSize(int bytes) {
+  static String _formatFileSize(int bytes) {
     if (bytes <= 0) return '0 B';
     const suffixes = ['B', 'KB', 'MB', 'GB', 'TB'];
     var i = 0;
@@ -147,6 +228,7 @@ class _VideosViewState extends State<VideosView> {
       append: false,
       initialIndex: 0,
     );
+    widget.onSwitchToVideo?.call();
   }
 
   @override
@@ -170,6 +252,8 @@ class _VideosViewState extends State<VideosView> {
                       ),
                     ),
                   )
+                : _pageLoadFailed && _videos == null
+                ? _buildLoadError()
                 : (_videos ?? const <MediaItemRecord>[]).isEmpty
                 ? EmptyLibraryView(
                     title: 'No videos found',
@@ -178,15 +262,33 @@ class _VideosViewState extends State<VideosView> {
                             widget.searchQuery!.isNotEmpty
                         ? 'No video files matched "${widget.searchQuery}".'
                         : 'Add your video folders to browse your movies, clips, and recorded videos.',
-                    actionLabel: 'Add folders',
+                    actionLabel:
+                        widget.searchQuery != null &&
+                            widget.searchQuery!.isNotEmpty
+                        ? ''
+                        : 'Add folders',
                     icon: Icons.video_library_rounded,
-                    onAction: widget.onAddFolders,
+                    onAction:
+                        widget.searchQuery != null &&
+                            widget.searchQuery!.isNotEmpty
+                        ? null
+                        : widget.onAddFolders,
                   )
                 : _viewMode == VideoViewMode.grid
                 ? _buildVideoGrid(_videos!)
                 : _buildVideoList(_videos!),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildLoadError() {
+    return Center(
+      child: TextButton.icon(
+        onPressed: _retryPage,
+        icon: const Icon(Icons.refresh_rounded),
+        label: const Text('Could not load videos. Retry'),
       ),
     );
   }
@@ -282,6 +384,7 @@ class _VideosViewState extends State<VideosView> {
 
   Widget _buildVideoGrid(List<MediaItemRecord> videos) {
     return GridView.builder(
+      key: ValueKey<int>(_queryGeneration),
       padding: const EdgeInsets.all(24),
       gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
         maxCrossAxisExtent: 280,
@@ -289,126 +392,31 @@ class _VideosViewState extends State<VideosView> {
         crossAxisSpacing: 20,
         childAspectRatio: 1.15,
       ),
-      itemCount: videos.length,
+      itemCount: videos.length + (_hasMore ? 1 : 0),
       itemBuilder: (context, index) {
+        if (index == videos.length) {
+          _scheduleLoadMore();
+          return Center(
+            child: _pageLoadFailed
+                ? TextButton(onPressed: _retryPage, child: const Text('Retry'))
+                : _isLoadingMore
+                ? const CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                      LibraryTheme.accent,
+                    ),
+                  )
+                : const SizedBox.shrink(),
+          );
+        }
         final video = videos[index];
-        return _buildVideoGridCard(video);
+        return _VideoGridCard(
+          video: video,
+          controller: widget.controller,
+          onPlay: () => _playVideo(video),
+          actionMenu: _buildVideoItemActionMenu(video),
+        );
       },
-    );
-  }
-
-  Widget _buildVideoGridCard(MediaItemRecord video) {
-    final isUnavailable = !video.isAvailable;
-
-    return InkWell(
-      onDoubleTap: () => _playVideo(video),
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        decoration: BoxDecoration(
-          color: LibraryTheme.surface,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: LibraryTheme.border),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Video Thumbnail Stage
-            Expanded(
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  Container(
-                    color: LibraryTheme.raisedSurface,
-                    child: const Center(
-                      child: Icon(
-                        Icons.movie_creation_rounded,
-                        size: 40,
-                        color: LibraryTheme.mutedText,
-                      ),
-                    ),
-                  ),
-                  // Duration badge
-                  if (video.metadata.duration > Duration.zero)
-                    Positioned(
-                      right: 8,
-                      bottom: 8,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withValues(alpha: 0.75),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          _formatDuration(video.metadata.duration),
-                          style: LibraryTheme.badge.copyWith(fontSize: 10),
-                        ),
-                      ),
-                    ),
-                  // Missing file indicator badge
-                  if (isUnavailable)
-                    Positioned(
-                      left: 8,
-                      top: 8,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: LibraryTheme.danger.withValues(alpha: 0.85),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          'File missing',
-                          style: LibraryTheme.badge.copyWith(
-                            fontSize: 10,
-                            color: Colors.white,
-                          ),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            // Card Bottom Details
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          video.title,
-                          style: LibraryTheme.rowPrimary.copyWith(
-                            color: isUnavailable
-                                ? LibraryTheme.mutedText
-                                : LibraryTheme.primaryText,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          _formatFileSize(video.fileSize),
-                          style: LibraryTheme.metadata,
-                        ),
-                      ],
-                    ),
-                  ),
-                  _buildVideoItemActionMenu(video),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 
@@ -416,8 +424,9 @@ class _VideosViewState extends State<VideosView> {
 
   Widget _buildVideoList(List<MediaItemRecord> videos) {
     return ListView.separated(
+      key: ValueKey<int>(_queryGeneration),
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-      itemCount: videos.length + 1,
+      itemCount: videos.length + 1 + (_hasMore ? 1 : 0),
       separatorBuilder: (_, index) => index == 0
           ? const Divider(height: 16, thickness: 1, color: LibraryTheme.border)
           : const Divider(height: 1, color: LibraryTheme.surface),
@@ -428,9 +437,11 @@ class _VideosViewState extends State<VideosView> {
             child: Row(
               children: [
                 const SizedBox(
-                  width: 48,
+                  width: 36,
                   child: Text('#', style: LibraryTheme.metadata),
                 ),
+                const SizedBox(width: 48), // Preview column
+                const SizedBox(width: 12),
                 const Expanded(
                   flex: 5,
                   child: Text('Title', style: LibraryTheme.metadata),
@@ -454,25 +465,61 @@ class _VideosViewState extends State<VideosView> {
           );
         }
 
+        if (index == videos.length + 1) {
+          _scheduleLoadMore();
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Center(
+              child: _pageLoadFailed
+                  ? TextButton(
+                      onPressed: _retryPage,
+                      child: const Text('Could not load more. Retry'),
+                    )
+                  : _isLoadingMore
+                  ? const CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                        LibraryTheme.accent,
+                      ),
+                    )
+                  : const SizedBox.shrink(),
+            ),
+          );
+        }
+
         final videoIndex = index - 1;
         final video = videos[videoIndex];
         final isUnavailable = !video.isAvailable;
 
         return InkWell(
+          onTap: () => _playVideo(video),
           onDoubleTap: () => _playVideo(video),
           borderRadius: BorderRadius.circular(8),
           hoverColor: LibraryTheme.hover,
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             child: Row(
               children: [
                 SizedBox(
-                  width: 48,
+                  width: 36,
                   child: Text(
                     '${videoIndex + 1}',
                     style: LibraryTheme.metadata,
                   ),
                 ),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: SizedBox(
+                    width: 48,
+                    height: 30,
+                    child: _VideoThumbnailStage(
+                      video: video,
+                      controller: widget.controller,
+                      iconSize: 16,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
                 Expanded(
                   flex: 5,
                   child: Row(
@@ -685,6 +732,290 @@ class _VideosViewState extends State<VideosView> {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _VideoGridCard extends StatefulWidget {
+  const _VideoGridCard({
+    required this.video,
+    required this.controller,
+    required this.onPlay,
+    required this.actionMenu,
+  });
+
+  final MediaItemRecord video;
+  final PlayerController controller;
+  final VoidCallback onPlay;
+  final Widget actionMenu;
+
+  @override
+  State<_VideoGridCard> createState() => _VideoGridCardState();
+}
+
+class _VideoGridCardState extends State<_VideoGridCard> {
+  bool _isHovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final video = widget.video;
+    final isUnavailable = !video.isAvailable;
+
+    return MouseRegion(
+      onEnter: (_) => setState(() => _isHovered = true),
+      onExit: (_) => setState(() => _isHovered = false),
+      child: InkWell(
+        onTap: widget.onPlay,
+        onDoubleTap: widget.onPlay,
+        borderRadius: BorderRadius.circular(12),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          decoration: BoxDecoration(
+            color: LibraryTheme.surface,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: _isHovered
+                  ? LibraryTheme.accent.withValues(alpha: 0.5)
+                  : LibraryTheme.border,
+            ),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Video Thumbnail Stage
+              Expanded(
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    _VideoThumbnailStage(
+                      video: video,
+                      controller: widget.controller,
+                    ),
+                    // Duration badge
+                    if (video.metadata.duration > Duration.zero)
+                      Positioned(
+                        right: 8,
+                        bottom: 8,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.75),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            _VideosViewState._formatDuration(
+                              video.metadata.duration,
+                            ),
+                            style: LibraryTheme.badge.copyWith(fontSize: 10),
+                          ),
+                        ),
+                      ),
+                    // Missing file indicator badge
+                    if (isUnavailable)
+                      Positioned(
+                        left: 8,
+                        top: 8,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: LibraryTheme.danger.withValues(alpha: 0.85),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            'File missing',
+                            style: LibraryTheme.badge.copyWith(
+                              fontSize: 10,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ),
+                    // Animated Play Button on Hover
+                    AnimatedOpacity(
+                      opacity: _isHovered ? 1.0 : 0.0,
+                      duration: const Duration(milliseconds: 150),
+                      child: Center(
+                        child: AnimatedScale(
+                          scale: _isHovered ? 1.0 : 0.8,
+                          duration: const Duration(milliseconds: 150),
+                          curve: Curves.easeOutCubic,
+                          child: Container(
+                            width: 44,
+                            height: 44,
+                            decoration: BoxDecoration(
+                              color: LibraryTheme.accent,
+                              shape: BoxShape.circle,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.4),
+                                  blurRadius: 8,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ],
+                            ),
+                            child: const Icon(
+                              Icons.play_arrow_rounded,
+                              color: Colors.white,
+                              size: 28,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              // Card Bottom Details
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            video.title,
+                            style: LibraryTheme.rowPrimary.copyWith(
+                              color: isUnavailable
+                                  ? LibraryTheme.mutedText
+                                  : LibraryTheme.primaryText,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            _VideosViewState._formatFileSize(video.fileSize),
+                            style: LibraryTheme.metadata,
+                          ),
+                        ],
+                      ),
+                    ),
+                    widget.actionMenu,
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _VideoThumbnailStage extends StatefulWidget {
+  const _VideoThumbnailStage({
+    required this.video,
+    required this.controller,
+    this.iconSize = 40,
+  });
+
+  final MediaItemRecord video;
+  final PlayerController controller;
+  final double iconSize;
+
+  @override
+  State<_VideoThumbnailStage> createState() => _VideoThumbnailStageState();
+}
+
+class _VideoThumbnailStageState extends State<_VideoThumbnailStage> {
+  ThumbnailRequestHandle? _handle;
+  MediaThumbnail? _thumbnail;
+  late MediaEntry _entry;
+
+  @override
+  void initState() {
+    super.initState();
+    _entry = _createEntry(widget.video);
+    _initThumbnail();
+  }
+
+  @override
+  void didUpdateWidget(covariant _VideoThumbnailStage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.video.id != widget.video.id ||
+        oldWidget.video.path != widget.video.path) {
+      _handle?.release();
+      _handle = null;
+      _thumbnail = null;
+      _entry = _createEntry(widget.video);
+      _initThumbnail();
+    }
+  }
+
+  @override
+  void dispose() {
+    _handle?.release();
+    _handle = null;
+    super.dispose();
+  }
+
+  MediaEntry _createEntry(MediaItemRecord v) => MediaEntry(
+    id: v.id,
+    path: v.path,
+    title: v.title,
+    duration: v.metadata.duration,
+    lastPlayed: v.lastPlayedAt ?? v.addedAt,
+  );
+
+  void _initThumbnail() {
+    try {
+      final peek = widget.controller.peekThumbnail(_entry);
+      if (peek != null && peek.bytes.isNotEmpty) {
+        _thumbnail = peek;
+        return;
+      }
+      final handle = widget.controller.requestThumbnail(
+        _entry,
+        priority: ThumbnailPriority.normal,
+      );
+      _handle = handle;
+      handle?.thumbnail.then((thumb) {
+        if (mounted && thumb != null && thumb.bytes.isNotEmpty) {
+          setState(() => _thumbnail = thumb);
+        }
+      });
+    } catch (_) {
+      // Safely ignore if controller is a test mock or has no thumbnail service
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_thumbnail != null && _thumbnail!.bytes.isNotEmpty) {
+      return Image(
+        image: ResizeImage(
+          MemoryImage(_thumbnail!.bytes),
+          width: 320,
+          policy: ResizeImagePolicy.fit,
+        ),
+        fit: BoxFit.cover,
+        gaplessPlayback: true,
+        errorBuilder: (_, _, _) => _buildFallback(),
+      );
+    }
+    return _buildFallback();
+  }
+
+  Widget _buildFallback() {
+    return Container(
+      color: LibraryTheme.raisedSurface,
+      child: Center(
+        child: Icon(
+          Icons.movie_creation_rounded,
+          size: widget.iconSize,
+          color: LibraryTheme.mutedText,
+        ),
+      ),
     );
   }
 }

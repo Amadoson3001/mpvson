@@ -590,16 +590,23 @@ class MediaKitProbeEngine implements MediaProbeEngine {
   MediaKitProbeEngine({
     Player Function()? playerFactory,
     PureDartMediaParser? pureDartParser,
+    this.playerIdleTimeout = const Duration(seconds: 15),
   }) : _playerFactory = playerFactory ?? _defaultPlayerFactory,
        _pureDartParser = pureDartParser ?? const PureDartMediaParser();
 
   final Player Function() _playerFactory;
   final PureDartMediaParser _pureDartParser;
 
+  /// How long to retain the native metadata player after its last inspection.
+  final Duration playerIdleTimeout;
+
   Player? _player;
   bool _disposed = false;
   Future<void> _nativeInspectionTail = Future<void>.value();
   Future<void>? _retiredPlayerDisposal;
+  Timer? _playerIdleTimer;
+  int _playerIdleGeneration = 0;
+  int _pendingNativeInspections = 0;
   final Expando<Future<void>> _playerDisposals = Expando<Future<void>>(
     'probe player disposal',
   );
@@ -638,6 +645,8 @@ class MediaKitProbeEngine implements MediaProbeEngine {
     final previousInspection = _nativeInspectionTail;
     final inspectionFinished = Completer<void>();
     _nativeInspectionTail = inspectionFinished.future;
+    _pendingNativeInspections++;
+    _cancelPlayerIdleTimer();
     await previousInspection;
     try {
       final retiredPlayerDisposal = _retiredPlayerDisposal;
@@ -775,7 +784,12 @@ class MediaKitProbeEngine implements MediaProbeEngine {
         }
       }
     } finally {
+      _pendingNativeInspections--;
       inspectionFinished.complete();
+      final player = _player;
+      if (player != null && _pendingNativeInspections == 0) {
+        _schedulePlayerIdleRelease(player);
+      }
     }
   }
 
@@ -797,19 +811,47 @@ class MediaKitProbeEngine implements MediaProbeEngine {
   Future<void> _disposePlayer(Player player) =>
       _playerDisposals[player] ??= player.dispose().catchError((Object _) {});
 
+  void _cancelPlayerIdleTimer() {
+    _playerIdleGeneration++;
+    _playerIdleTimer?.cancel();
+    _playerIdleTimer = null;
+  }
+
+  void _schedulePlayerIdleRelease(Player player) {
+    _cancelPlayerIdleTimer();
+    final generation = _playerIdleGeneration;
+    _playerIdleTimer = Timer(playerIdleTimeout, () {
+      if (generation != _playerIdleGeneration) return;
+      _playerIdleTimer = null;
+      if (_disposed ||
+          _pendingNativeInspections != 0 ||
+          !identical(_player, player)) {
+        return;
+      }
+
+      // Clear the shared slot before disposal begins. A later queued inspection
+      // waits for this future before creating a replacement Player.
+      _player = null;
+      _retiredPlayerDisposal = _disposePlayer(player);
+    });
+  }
+
   @override
   void dispose() {
     if (_disposed) return;
     _disposed = true;
+    _cancelPlayerIdleTimer();
     final player = _player;
     _player = null;
-    if (player != null) {
-      unawaited(
-        _nativeInspectionTail
-            .then((_) => _disposePlayer(player))
-            .catchError((Object _) {}),
-      );
-    }
+    unawaited(
+      _nativeInspectionTail
+          .then((_) async {
+            if (player != null) await _disposePlayer(player);
+            final retiredPlayerDisposal = _retiredPlayerDisposal;
+            if (retiredPlayerDisposal != null) await retiredPlayerDisposal;
+          })
+          .catchError((Object _) {}),
+    );
   }
 }
 
@@ -863,9 +905,15 @@ class MediaProbeServiceImpl implements MediaProbeService {
     int maxCacheEntries = 100,
     int maxCacheBytes = 64 * 1024 * 1024,
     int maxConcurrentProbes = 2,
+    Duration playerIdleTimeout = const Duration(seconds: 15),
     Future<Uint8List> Function(Uint8List, {int maxDimension})? imageNormalizer,
     Player Function()? playerFactory,
-  }) : _engine = engine ?? MediaKitProbeEngine(playerFactory: playerFactory),
+  }) : _engine =
+           engine ??
+           MediaKitProbeEngine(
+             playerFactory: playerFactory,
+             playerIdleTimeout: playerIdleTimeout,
+           ),
        _providedCacheDirectory = cacheDirectory,
        // ignore: prefer_initializing_formals
        _cacheDirectoryProvider = cacheDirectoryProvider,
@@ -1185,10 +1233,13 @@ class MediaProbeServiceImpl implements MediaProbeService {
       if (request.cancellationToken.isCancelled) {
         throw const ProbeCancelledException();
       }
+      if (info == null) {
+        throw const ProbeInspectionFailedException();
+      }
 
-      final tracks = info?.tracks ?? const <DiscoveredTrack>[];
-      final rawTags = info?.rawTags ?? const <String, String>{};
-      final duration = info?.duration ?? Duration.zero;
+      final tracks = info.tracks;
+      final rawTags = info.rawTags;
+      final duration = info.duration;
 
       final kind = classifyMediaKind(
         request.filePath,
@@ -1199,13 +1250,13 @@ class MediaProbeServiceImpl implements MediaProbeService {
       final metadata = normalizeMetadata(
         rawTags: rawTags,
         duration: duration,
-        audioInfo: info?.audioInfo,
+        audioInfo: info.audioInfo,
       );
 
       final hasArtwork =
-          info?.hasEmbeddedArtwork == true ||
+          info.hasEmbeddedArtwork ||
           tracks.any((t) => t.isArtwork) ||
-          info?.embeddedArtworkBytes != null;
+          info.embeddedArtworkBytes != null;
 
       final result = ProbeResult(
         canonicalSource: p.canonicalize(request.filePath),
