@@ -14,6 +14,7 @@ import '../../../data/services/update_service.dart';
 import '../../../data/services/playback_statistics.dart';
 import '../../core/app_motion.dart';
 import '../../core/app_theme.dart';
+import '../../core/components/media_accent_scope.dart';
 import '../player_controller.dart';
 import '../widgets/empty_library.dart';
 import '../widgets/media_ready.dart';
@@ -29,6 +30,7 @@ import '../../../data/repositories/app_preferences_repository.dart';
 import '../../../data/repositories/media_library_repository.dart';
 import '../../../data/services/desktop_integration_service.dart';
 import '../../library/views/library_shell.dart';
+import '../../library/views/home_view.dart';
 
 typedef PlayerVideoBuilder =
     Widget Function(BuildContext context, PlayerController controller);
@@ -121,13 +123,33 @@ class _PlayerScreenState extends State<PlayerScreen>
   bool _minimized = false;
   bool _animationsSuspended = false;
   bool _showLibrary = false;
+  int _homeNavigationRequest = 0;
+  bool _backButtonFocused = false;
+  bool _settingsOpen = false;
+  bool _showPlayerView = false;
+  String? _playerViewEntryId;
+  String? _lastVideoEntryId;
 
   bool get _nativeWindow =>
       widget.desktopWindow && widget.fullscreenSetter == null;
 
+  bool get _isShowingLibrary {
+    final current = widget.controller.current;
+    final isAudioMedia =
+        widget.controller.isAudio && widget.controller.hasMedia;
+    final showPlayerForCurrent =
+        _showPlayerView && _playerViewEntryId == current?.id;
+    return (_showLibrary ||
+            ((isAudioMedia || current == null) && !showPlayerForCurrent)) &&
+        widget.libraryRepository != null;
+  }
+
   @override
   void initState() {
     super.initState();
+    if (widget.controller.isVideo) {
+      _lastVideoEntryId = widget.controller.current?.id;
+    }
     widget.controller.addListener(_handleControllerChange);
     _controlsFocusScope.addListener(_handleControlFocusChange);
     _queueFocusScope.addListener(_handleQueueFocusChange);
@@ -227,6 +249,7 @@ class _PlayerScreenState extends State<PlayerScreen>
       _controlMenuOpen ||
       _openDialogs > 0 ||
       _controlInteraction ||
+      _backButtonFocused ||
       _draggingFiles ||
       (_controlsFocusScope.hasFocus && _keyboardControlsFocus) ||
       (_pointerInControls && !_isFullscreen);
@@ -264,12 +287,50 @@ class _PlayerScreenState extends State<PlayerScreen>
 
   void _handleControllerChange() {
     if (!mounted) return;
+    final current = widget.controller.current;
+    if (current != null &&
+        widget.controller.hasMedia &&
+        widget.controller.isVideo &&
+        current.id != _lastVideoEntryId) {
+      _lastVideoEntryId = current.id;
+      if (_showLibrary) setState(() => _showLibrary = false);
+    }
     if (_hideBlocked) {
       _controlsTimer?.cancel();
       if (!_controlsVisible) setState(() => _controlsVisible = true);
     } else {
       _scheduleControlsHide();
     }
+  }
+
+  void _openLibrary() {
+    setState(() {
+      _showLibrary = true;
+      _showPlayerView = false;
+    });
+  }
+
+  void _backToHome() {
+    if (_contextMenu.isOpen) _contextMenu.close();
+    final wasFullscreen = _isFullscreen;
+    setState(() {
+      _showLibrary = true;
+      _showPlayerView = false;
+      _settingsOpen = false;
+      _homeNavigationRequest++;
+      _queueOpen = false;
+      _queueMounted = false;
+      _backButtonFocused = false;
+    });
+    if (wasFullscreen) unawaited(_setFullscreen(false));
+  }
+
+  void _returnToPlayer() {
+    setState(() {
+      _showLibrary = false;
+      _showPlayerView = true;
+      _playerViewEntryId = widget.controller.current?.id;
+    });
   }
 
   void _handleQueueFocusChange() {
@@ -766,10 +827,14 @@ class _PlayerScreenState extends State<PlayerScreen>
                       Expanded(
                         child: LayoutBuilder(
                           builder: (context, constraints) {
+                            final showPlayerQueue =
+                                _queueOpen && !_isShowingLibrary;
+                            final queueMounted =
+                                _queueMounted && !_isShowingLibrary;
                             final inlineQueue =
-                                constraints.maxWidth >= 1100 && _queueOpen;
+                                constraints.maxWidth >= 1100 && showPlayerQueue;
                             final narrowDrawer =
-                                constraints.maxWidth < 1100 && _queueOpen;
+                                constraints.maxWidth < 1100 && showPlayerQueue;
                             return Stack(
                               children: [
                                 Row(
@@ -788,7 +853,7 @@ class _PlayerScreenState extends State<PlayerScreen>
                                         curve: AppMotion.standardCurve,
                                         clipBehavior: Clip.hardEdge,
                                         onEnd: _handleQueueExitEnd,
-                                        child: _queueMounted || inlineQueue
+                                        child: queueMounted || inlineQueue
                                             ? ClipRect(
                                                 child: OverflowBox(
                                                   alignment:
@@ -851,7 +916,7 @@ class _PlayerScreenState extends State<PlayerScreen>
                                   ],
                                 ),
                                 if (constraints.maxWidth < 1100 &&
-                                    (_queueMounted || narrowDrawer)) ...[
+                                    (queueMounted || narrowDrawer)) ...[
                                   Positioned.fill(
                                     child: IgnorePointer(
                                       ignoring: !narrowDrawer,
@@ -954,26 +1019,50 @@ class _PlayerScreenState extends State<PlayerScreen>
 
   Widget _buildPlayerArea() {
     final current = widget.controller.current;
-    final isAudioMedia =
-        widget.controller.isAudio && widget.controller.hasMedia;
-    if ((_showLibrary || isAudioMedia) && widget.libraryRepository != null) {
-      return Stack(
-        fit: StackFit.expand,
-        children: [
-          Offstage(
-            offstage: true,
-            child: widget.videoBuilder(context, widget.controller),
-          ),
-          LibraryShell(
-            repository: widget.libraryRepository!,
-            controller: widget.controller,
-            initialSection: isAudioMedia
-                ? LibrarySection.nowPlaying
-                : LibrarySection.music,
-            onSwitchToVideo: () => setState(() => _showLibrary = false),
-            onAddFolders: _showSettings,
-          ),
-        ],
+    final showLibrary = _isShowingLibrary;
+    Widget? library;
+    if (widget.libraryRepository != null) {
+      library = LibraryShell(
+        repository: widget.libraryRepository!,
+        controller: widget.controller,
+        initialSection: LibrarySection.home,
+        homeNavigationRequest: _homeNavigationRequest,
+        queueOpen: _queueOpen,
+        onQueueOpenChanged: (open) => setState(() {
+          _queueOpen = open;
+          if (open) _queueMounted = true;
+        }),
+        home: HomeView(
+          repository: widget.libraryRepository!,
+          controller: widget.controller,
+          recent: widget.controller.recent,
+          onOpenFiles: _openFiles,
+          onOpenUrl: _openUrl,
+          onOpenRecent: _playRecent,
+          isDragging: _draggingFiles,
+        ),
+        onOpenFiles: _openFiles,
+        onOpenUrl: _openUrl,
+        onAddQueueFiles: _addQueueFiles,
+        onBackToPlayer: widget.controller.hasMedia && widget.controller.isVideo
+            ? _returnToPlayer
+            : null,
+        onAddFolders: _addLibraryFolder,
+        showSettings: _settingsOpen,
+        onSettings: () => setState(() => _settingsOpen = true),
+        onCloseSettings: () => setState(() => _settingsOpen = false),
+        folders: LibraryFoldersView(repository: widget.libraryRepository!),
+        settings: SettingsDialog(
+          controller: widget.controller,
+          updates: widget.updates,
+          engineUpdates: widget.engineUpdates,
+          pickSubtitle: _pickSubtitle,
+          appPreferences: widget.appPreferences,
+          libraryRepository: widget.libraryRepository,
+          desktopIntegration: widget.desktopIntegration,
+          embedded: true,
+          onClose: () => setState(() => _settingsOpen = false),
+        ),
       );
     }
     final Widget content;
@@ -988,9 +1077,7 @@ class _PlayerScreenState extends State<PlayerScreen>
           onOpenUrl: _openUrl,
           onOpenRecent: _playRecent,
           isDragging: _draggingFiles,
-          onOpenLibrary: widget.libraryRepository != null
-              ? () => setState(() => _showLibrary = true)
-              : null,
+          onOpenLibrary: widget.libraryRepository != null ? _openLibrary : null,
         ),
       );
     } else if (!widget.controller.hasMedia) {
@@ -1015,7 +1102,7 @@ class _PlayerScreenState extends State<PlayerScreen>
     } else {
       contentState = 'video';
       content = ColoredBox(
-        color: AppTheme.background,
+        color: Colors.black,
         child: LayoutBuilder(
           builder: (context, constraints) {
             _updateViewportDimensions(context, constraints);
@@ -1088,6 +1175,73 @@ class _PlayerScreenState extends State<PlayerScreen>
             ),
           ),
         ),
+        if (widget.controller.hasMedia &&
+            widget.controller.isVideo &&
+            current != null)
+          Positioned(
+            left: 16,
+            top: 12,
+            right: 24,
+            child: MouseRegion(
+              onEnter: _controlsPointerEntered,
+              onExit: _controlsPointerExited,
+              child: AnimatedOpacity(
+                duration: AppMotion.duration(context, AppMotion.quick),
+                opacity: _controlsVisible ? 1 : 0,
+                child: IgnorePointer(
+                  ignoring: !_controlsVisible,
+                  child: Row(
+                    children: [
+                      if (widget.libraryRepository != null) ...[
+                        Focus(
+                          onFocusChange: (focused) {
+                            _backButtonFocused = focused;
+                            if (focused) {
+                              _showControls();
+                            } else if (!_hideBlocked) {
+                              _scheduleControlsHide(restart: true);
+                            }
+                          },
+                          child: TextButton.icon(
+                            onPressed: _backToHome,
+                            icon: const Icon(
+                              Icons.arrow_back_rounded,
+                              size: 20,
+                            ),
+                            label: const Text('Home'),
+                            style: TextButton.styleFrom(
+                              foregroundColor: Colors.white,
+                              backgroundColor: Colors.black.withValues(
+                                alpha: 0.65,
+                              ),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                      ],
+                      Expanded(
+                        child: Text(
+                          current.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(
+                                color: Colors.white,
+                                shadows: const [
+                                  Shadow(color: Colors.black, blurRadius: 5),
+                                ],
+                              ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
         Positioned.fill(
           child: IgnorePointer(
             child: Align(
@@ -1095,7 +1249,7 @@ class _PlayerScreenState extends State<PlayerScreen>
                   ? Alignment.center
                   : Alignment.topCenter,
               child: Padding(
-                padding: const EdgeInsets.all(24),
+                padding: const EdgeInsets.all(AppSpace.lg),
                 child: AnimatedSwitcher(
                   duration: AppMotion.duration(context, AppMotion.quick),
                   child: _feedbackLabel == null
@@ -1117,7 +1271,10 @@ class _PlayerScreenState extends State<PlayerScreen>
               child: Container(
                 decoration: BoxDecoration(
                   color: AppTheme.background.withValues(alpha: 0.6),
-                  border: Border.all(color: AppTheme.accent, width: 2),
+                  border: Border.all(
+                    color: Theme.of(context).colorScheme.primary,
+                    width: 2,
+                  ),
                 ),
                 alignment: Alignment.center,
                 child: Text(
@@ -1169,7 +1326,7 @@ class _PlayerScreenState extends State<PlayerScreen>
                         onSettings: _showSettings,
                         onPlaybackInfo: _showPlaybackInfo,
                         onOpenLibrary: widget.libraryRepository != null
-                            ? () => setState(() => _showLibrary = !_showLibrary)
+                            ? _openLibrary
                             : null,
                         onMenuVisibilityChanged: _handleMenuVisibility,
                         queueOpen: _queueOpen,
@@ -1187,7 +1344,25 @@ class _PlayerScreenState extends State<PlayerScreen>
         ),
       ],
     );
-    if (!widget.enableNativeDrop) return stage;
+    final contentArea = MediaAccentScope(
+      controller: widget.controller,
+      child: library == null
+          ? stage
+          : Stack(
+              fit: StackFit.expand,
+              children: [
+                Offstage(
+                  offstage: showLibrary,
+                  child: TickerMode(enabled: !showLibrary, child: stage),
+                ),
+                Offstage(
+                  offstage: !showLibrary,
+                  child: TickerMode(enabled: showLibrary, child: library),
+                ),
+              ],
+            ),
+    );
+    if (!widget.enableNativeDrop) return contentArea;
     return DropTarget(
       onDragEntered: (_) => setState(() => _draggingFiles = true),
       onDragExited: (_) => setState(() => _draggingFiles = false),
@@ -1199,7 +1374,7 @@ class _PlayerScreenState extends State<PlayerScreen>
             .toList();
         unawaited(_openPaths(paths, append: widget.controller.hasMedia));
       },
-      child: stage,
+      child: contentArea,
     );
   }
 
@@ -1365,8 +1540,29 @@ class _PlayerScreenState extends State<PlayerScreen>
     setState(() => _queueMounted = false);
   }
 
-  Future<void> _showSettings() async {
+  Future<void> _addLibraryFolder() async {
+    final repository = widget.libraryRepository;
+    if (repository == null) return;
+    try {
+      final path = await getDirectoryPath();
+      if (path != null) await repository.addFolder(path);
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not add the folder. Try again.')),
+      );
+    }
+  }
+
+  Future<void> _showSettings({bool showMediaLibrary = false}) async {
     if (_contextMenu.isOpen) _contextMenu.close();
+    if (widget.libraryRepository != null) {
+      setState(() {
+        _showLibrary = true;
+        _settingsOpen = true;
+      });
+      return;
+    }
     await _withControlsVisible(
       () => showDialog<void>(
         context: context,
@@ -1378,6 +1574,7 @@ class _PlayerScreenState extends State<PlayerScreen>
           appPreferences: widget.appPreferences,
           libraryRepository: widget.libraryRepository,
           desktopIntegration: widget.desktopIntegration,
+          showMediaLibrary: showMediaLibrary,
         ),
       ),
     );
@@ -1430,7 +1627,7 @@ class _ErrorBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Container(
     width: double.infinity,
-    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: AppSpace.xs),
     color: AppTheme.danger.withValues(alpha: 0.12),
     child: Row(
       children: [

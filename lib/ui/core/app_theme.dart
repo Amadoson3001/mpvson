@@ -1,23 +1,85 @@
 import 'package:flutter/material.dart';
+import 'tokens/colors.dart';
+import 'tokens/radii.dart';
+import 'tokens/space.dart';
+import 'tokens/type.dart';
+export 'tokens/colors.dart';
+export 'tokens/radii.dart';
+export 'tokens/space.dart';
+export 'tokens/type.dart';
 
 /// Shared colors and component styling for Mpvson's desktop interface.
 abstract final class AppTheme {
-  static const Color accent = Color(0xFF60CDFF);
-  static const Color background = Color(0xFF0B1220);
+  static const Color accent = AppColors.lamp;
+  static const Color background = AppColors.ground;
   static const Color deepBackground = background;
-  static const Color surface = Color(0xFF111A2C);
-  static const Color card = Color(0xFF182238);
-  static const Color hover = Color(0xFF223052);
-  static const Color border = Color(0xFF2C3A55);
-  static const Color text = Color(0xFFF2F5FA);
+  static const Color surface = AppColors.layer;
+  static const Color card = AppColors.raised;
+  static const Color raisedSurface = card;
+  static const Color hover = AppColors.line;
+  static const Color border = AppColors.line;
+  static const Color text = AppColors.ink;
   static const Color primaryText = text;
-  static const Color secondaryText = Color(0xFFC3CCDD);
-  static const Color muted = Color(0xFF7E8AA0);
+  static const Color secondaryText = Color(0xFFBDBDC0);
+  static const Color muted = AppColors.inkDim;
   static const Color mutedText = muted;
-  static const Color success = Color(0xFF34D399);
-  static const Color warning = Color(0xFFFBBF24);
-  static const Color danger = Color(0xFFF87171);
+  static const Color success = Color(0xFF83B89C);
+  static const Color warning = Color(0xFFD1AA68);
+  static const Color danger = Color(0xFFC98282);
   static const Color accentForeground = background;
+
+  // Typography tokens
+  static const TextStyle pageTitle = TextStyle(
+    color: primaryText,
+    fontSize: AppType.display,
+    fontWeight: FontWeight.w600,
+    letterSpacing: -0.5,
+    height: 1.2,
+  );
+
+  static const TextStyle albumTitle = TextStyle(
+    color: primaryText,
+    fontSize: AppType.title,
+    fontWeight: FontWeight.w600,
+    letterSpacing: -0.3,
+    height: 1.25,
+  );
+
+  static const TextStyle sectionTitle = TextStyle(
+    color: primaryText,
+    fontSize: AppType.body,
+    fontWeight: FontWeight.w600,
+    letterSpacing: -0.2,
+    height: 1.3,
+  );
+
+  static const TextStyle rowPrimary = TextStyle(
+    color: primaryText,
+    fontSize: AppType.small,
+    fontWeight: FontWeight.w400,
+    height: 1.3,
+  );
+
+  static const TextStyle rowSecondary = TextStyle(
+    color: secondaryText,
+    fontSize: AppType.caption,
+    fontWeight: FontWeight.normal,
+    height: 1.3,
+  );
+
+  static const TextStyle metadata = TextStyle(
+    color: mutedText,
+    fontSize: AppType.caption,
+    fontWeight: FontWeight.normal,
+    height: 1.3,
+  );
+
+  static const TextStyle badge = TextStyle(
+    color: primaryText,
+    fontSize: AppType.caption,
+    fontWeight: FontWeight.w600,
+    letterSpacing: 0.2,
+  );
 
   static ThemeData get dark {
     final colorScheme = const ColorScheme.dark(
@@ -38,8 +100,9 @@ abstract final class AppTheme {
 
     return ThemeData(
       useMaterial3: true,
+      extensions: const [MediaAccent()],
       brightness: Brightness.dark,
-      fontFamily: 'Segoe UI',
+      fontFamily: 'Onest',
       fontFamilyFallback: const ['Noto Sans', 'DejaVu Sans', 'sans-serif'],
       colorScheme: colorScheme,
       scaffoldBackgroundColor: background,
@@ -56,44 +119,56 @@ abstract final class AppTheme {
       textTheme: const TextTheme(
         displaySmall: TextStyle(
           color: text,
-          fontSize: 40,
+          fontSize: AppType.display,
           fontWeight: FontWeight.w600,
           letterSpacing: -1.2,
           height: 1.15,
         ),
         headlineMedium: TextStyle(
           color: text,
-          fontSize: 28,
+          fontSize: AppType.title,
           fontWeight: FontWeight.w600,
           letterSpacing: -0.6,
           height: 1.2,
         ),
         titleLarge: TextStyle(
           color: text,
-          fontSize: 22,
+          fontSize: AppType.title,
           fontWeight: FontWeight.w600,
           letterSpacing: -0.4,
         ),
         titleMedium: TextStyle(
           color: text,
-          fontSize: 16,
+          fontSize: AppType.body,
           fontWeight: FontWeight.w600,
         ),
         titleSmall: TextStyle(
           color: text,
-          fontSize: 14,
+          fontSize: AppType.small,
           fontWeight: FontWeight.w600,
         ),
-        bodyLarge: TextStyle(color: secondaryText, fontSize: 15, height: 1.5),
-        bodyMedium: TextStyle(color: secondaryText, fontSize: 13, height: 1.4),
-        bodySmall: TextStyle(color: muted, fontSize: 12, height: 1.4),
+        bodyLarge: TextStyle(
+          color: secondaryText,
+          fontSize: AppType.body,
+          height: 1.5,
+        ),
+        bodyMedium: TextStyle(
+          color: secondaryText,
+          fontSize: AppType.small,
+          height: 1.4,
+        ),
+        bodySmall: TextStyle(
+          color: muted,
+          fontSize: AppType.caption,
+          height: 1.4,
+        ),
         labelLarge: TextStyle(
           color: text,
-          fontSize: 13,
+          fontSize: AppType.small,
           fontWeight: FontWeight.w600,
         ),
-        labelMedium: TextStyle(color: secondaryText, fontSize: 12),
-        labelSmall: TextStyle(color: muted, fontSize: 11),
+        labelMedium: TextStyle(color: secondaryText, fontSize: AppType.caption),
+        labelSmall: TextStyle(color: muted, fontSize: AppType.caption),
       ),
       iconTheme: const IconThemeData(color: secondaryText, size: 20),
       switchTheme: SwitchThemeData(
@@ -112,7 +187,9 @@ abstract final class AppTheme {
           minimumSize: const WidgetStatePropertyAll(Size(44, 44)),
           iconSize: const WidgetStatePropertyAll(20),
           shape: WidgetStatePropertyAll(
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AppRadii.control),
+            ),
           ),
           side: WidgetStateProperty.resolveWith(
             (states) => BorderSide(
@@ -141,10 +218,10 @@ abstract final class AppTheme {
       tooltipTheme: TooltipThemeData(
         decoration: BoxDecoration(
           color: hover,
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(AppRadii.control),
           border: Border.all(color: border),
         ),
-        textStyle: const TextStyle(color: text, fontSize: 12),
+        textStyle: const TextStyle(color: text, fontSize: AppType.caption),
         waitDuration: const Duration(milliseconds: 450),
       ),
       inputDecorationTheme: InputDecorationTheme(
@@ -153,18 +230,18 @@ abstract final class AppTheme {
         hintStyle: const TextStyle(color: muted),
         contentPadding: const EdgeInsets.symmetric(
           horizontal: 14,
-          vertical: 12,
+          vertical: AppSpace.sm,
         ),
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(AppRadii.artwork),
           borderSide: const BorderSide(color: border),
         ),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(AppRadii.artwork),
           borderSide: const BorderSide(color: border),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(AppRadii.artwork),
           borderSide: const BorderSide(color: accent, width: 1.3),
         ),
       ),
@@ -180,7 +257,7 @@ abstract final class AppTheme {
         backgroundColor: surface,
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(AppRadii.artwork),
           side: const BorderSide(color: border),
         ),
       ),
@@ -188,7 +265,7 @@ abstract final class AppTheme {
         color: card,
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(AppRadii.artwork),
           side: const BorderSide(color: border),
         ),
       ),
@@ -196,8 +273,15 @@ abstract final class AppTheme {
         backgroundColor: hover,
         contentTextStyle: const TextStyle(color: text),
         behavior: SnackBarBehavior.floating,
-        insetPadding: const EdgeInsets.fromLTRB(24, 0, 24, 128),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        insetPadding: const EdgeInsets.fromLTRB(
+          AppSpace.lg,
+          0,
+          AppSpace.lg,
+          128,
+        ),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadii.artwork),
+        ),
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
@@ -207,7 +291,9 @@ abstract final class AppTheme {
           disabledBackgroundColor: accent.withValues(alpha: 0.35),
           minimumSize: const Size(44, 44),
           padding: const EdgeInsets.symmetric(horizontal: 18),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppRadii.control),
+          ),
         ),
       ),
       filledButtonTheme: FilledButtonThemeData(
@@ -218,7 +304,7 @@ abstract final class AppTheme {
               minimumSize: const Size(44, 44),
               padding: const EdgeInsets.symmetric(horizontal: 18),
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(AppRadii.control),
               ),
             ).copyWith(
               side: WidgetStateProperty.resolveWith(
@@ -233,10 +319,10 @@ abstract final class AppTheme {
             OutlinedButton.styleFrom(
               foregroundColor: text,
               minimumSize: const Size(44, 44),
-              padding: const EdgeInsets.symmetric(horizontal: 16),
+              padding: const EdgeInsets.symmetric(horizontal: AppSpace.md),
               side: const BorderSide(color: border),
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(AppRadii.control),
               ),
             ).copyWith(
               side: WidgetStateProperty.resolveWith(
@@ -249,18 +335,11 @@ abstract final class AppTheme {
       textButtonTheme: TextButtonThemeData(
         style: TextButton.styleFrom(
           foregroundColor: accent,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppRadii.control),
+          ),
         ),
       ),
     );
   }
-}
-
-abstract final class AppSpace {
-  static const double xxs = 4;
-  static const double xs = 8;
-  static const double sm = 12;
-  static const double md = 16;
-  static const double lg = 24;
-  static const double xl = 32;
 }

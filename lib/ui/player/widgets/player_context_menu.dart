@@ -86,6 +86,7 @@ class PlayerContextMenu extends StatelessWidget {
     final canSeek =
         playerController.hasMedia && playerController.duration > Duration.zero;
     final hasMedia = playerController.hasMedia;
+    final accent = Theme.of(context).colorScheme.primary;
 
     return [
       _menuAction(
@@ -128,19 +129,19 @@ class PlayerContextMenu extends StatelessWidget {
         context,
         icon: Icons.speed_rounded,
         label: 'Playback speed',
-        children: _speedOptions(),
+        children: _speedOptions(accent),
       ),
       _submenu(
         context,
         icon: Icons.audiotrack_rounded,
         label: 'Audio',
-        children: _audioOptions(hasMedia),
+        children: _audioOptions(hasMedia, accent),
       ),
       _submenu(
         context,
         icon: Icons.subtitles_rounded,
         label: 'Subtitles',
-        children: _subtitleOptions(hasMedia),
+        children: _subtitleOptions(hasMedia, accent),
       ),
       _submenu(
         context,
@@ -213,17 +214,18 @@ class PlayerContextMenu extends StatelessWidget {
     ];
   }
 
-  List<Widget> _speedOptions() => [
+  List<Widget> _speedOptions(Color accent) => [
     for (final rate in _playbackRates)
       _menuAction(
         icon: null,
         label: _speedLabel(rate),
         checked: (playerController.rate - rate).abs() < 0.01,
+        accent: accent,
         onPressed: () => unawaited(playerController.setRate(rate)),
       ),
   ];
 
-  List<Widget> _audioOptions(bool hasMedia) {
+  List<Widget> _audioOptions(bool hasMedia, Color accent) {
     if (!hasMedia) return const [];
 
     final tracks = _audioTrackOptions(playerController.audioTracks);
@@ -233,12 +235,13 @@ class PlayerContextMenu extends StatelessWidget {
           icon: null,
           label: _trackLabel(track.id, track.title, track.language),
           checked: playerController.currentAudioTrack.id == track.id,
+          accent: accent,
           onPressed: () => unawaited(playerController.setAudioTrack(track)),
         ),
     ];
   }
 
-  List<Widget> _subtitleOptions(bool hasMedia) {
+  List<Widget> _subtitleOptions(bool hasMedia, Color accent) {
     if (!hasMedia) {
       return [
         _menuAction(
@@ -256,6 +259,7 @@ class PlayerContextMenu extends StatelessWidget {
           icon: null,
           label: _trackLabel(track.id, track.title, track.language),
           checked: playerController.currentSubtitleTrack.id == track.id,
+          accent: accent,
           onPressed: () => unawaited(playerController.setSubtitleTrack(track)),
         ),
       const _MenuDivider(),
@@ -287,6 +291,7 @@ class PlayerContextMenu extends StatelessWidget {
     required VoidCallback? onPressed,
     String? trailing,
     bool checked = false,
+    Color? accent,
     bool animateLeadingIcon = false,
   }) => MenuItemButton(
     onPressed: onPressed,
@@ -301,11 +306,14 @@ class PlayerContextMenu extends StatelessWidget {
       child: Align(
         alignment: Alignment.centerRight,
         child: checked
-            ? const Icon(Icons.check_rounded, size: 17, color: AppTheme.accent)
+            ? Icon(Icons.check_rounded, size: 17, color: accent)
             : Text(
                 trailing ?? '',
                 textAlign: TextAlign.right,
-                style: const TextStyle(color: AppTheme.muted, fontSize: 11),
+                style: const TextStyle(
+                  color: AppTheme.muted,
+                  fontSize: AppType.caption,
+                ),
               ),
       ),
     ),
@@ -347,7 +355,7 @@ MenuStyle _menuPanelStyle(Color color) => MenuStyle(
   maximumSize: const WidgetStatePropertyAll(Size(320, 420)),
   shape: WidgetStatePropertyAll(
     RoundedRectangleBorder(
-      borderRadius: BorderRadius.circular(10),
+      borderRadius: BorderRadius.circular(AppRadii.artwork),
       side: const BorderSide(color: AppTheme.border),
     ),
   ),
@@ -359,7 +367,9 @@ final _menuItemButtonStyle = MenuItemButton.styleFrom(
   disabledForegroundColor: AppTheme.muted,
   minimumSize: const Size(260, 40),
   padding: const EdgeInsets.symmetric(horizontal: 10),
-  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
+  shape: RoundedRectangleBorder(
+    borderRadius: BorderRadius.circular(AppRadii.control),
+  ),
   overlayColor: AppTheme.hover,
 );
 
@@ -369,7 +379,9 @@ final _submenuButtonStyle = SubmenuButton.styleFrom(
   disabledForegroundColor: AppTheme.muted,
   minimumSize: const Size(260, 40),
   padding: const EdgeInsets.symmetric(horizontal: 10),
-  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
+  shape: RoundedRectangleBorder(
+    borderRadius: BorderRadius.circular(AppRadii.control),
+  ),
   overlayColor: AppTheme.hover,
 );
 

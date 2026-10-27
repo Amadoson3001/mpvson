@@ -82,6 +82,23 @@ class MediaLibraryRepositoryImpl extends MediaLibraryRepository {
         _scanner = MediaScannerService(
           probeService: _probeService,
           database: _database!,
+          onFolderAvailabilityChanged: (path, available) async {
+            final db = _database;
+            if (_isDisposed || db == null || db.isClosed) return;
+            await db.markFolderAvailability(path, available);
+            await _refreshFolders();
+          },
+          onFolderScanCompleted:
+              (path, {required fileCount, required lastScannedAt}) async {
+                final db = _database;
+                if (_isDisposed || db == null || db.isClosed) return;
+                await db.updateFolderScanStats(
+                  path,
+                  fileCount: fileCount,
+                  lastScannedAt: lastScannedAt,
+                );
+                await _refreshFolders();
+              },
         );
       }
 
@@ -93,14 +110,20 @@ class MediaLibraryRepositoryImpl extends MediaLibraryRepository {
 
       if (_scanner != null) {
         _scanSubscription = _scanner!.scanStatusStream.listen((status) {
+          if (_isDisposed) return;
           _scanStatus = status;
           notifyListeners();
+          if (status.phase == ScanPhase.idle) unawaited(_refreshFolders());
         });
       }
 
       _isReady = true;
       _initializationError = null;
       notifyListeners();
+      // Changes made while the app was closed cannot be observed by watchers.
+      if (_scanner != null && _folders.isNotEmpty) {
+        unawaited(_scanner!.scanAll().catchError((Object _) {}));
+      }
     } catch (e) {
       if (!_isDisposed) {
         _initializationError = e.toString();
@@ -116,6 +139,19 @@ class MediaLibraryRepositoryImpl extends MediaLibraryRepository {
       throw StateError(
         'MediaLibraryRepository is not initialized. Call initialize() first.',
       );
+    }
+  }
+
+  Future<void> _refreshFolders() async {
+    final database = _database;
+    if (_isDisposed || database == null || database.isClosed) return;
+    try {
+      final folders = await database.getAllFolders();
+      if (_isDisposed) return;
+      _folders = folders;
+      notifyListeners();
+    } catch (_) {
+      if (!_isDisposed && !database.isClosed) rethrow;
     }
   }
 
@@ -140,14 +176,15 @@ class MediaLibraryRepositoryImpl extends MediaLibraryRepository {
     notifyListeners();
 
     await _scanner?.scanFolder(norm);
+    await _refreshFolders();
   }
 
   @override
   Future<void> removeFolder(String path) async {
     _checkReady();
     final norm = p.normalize(p.absolute(path));
-    await _database!.deleteFolder(norm);
     _scanner?.unregisterFolder(norm);
+    await _database!.deleteFolder(norm);
     _folders = await _database!.getAllFolders();
     notifyListeners();
   }
@@ -222,6 +259,10 @@ class MediaLibraryRepositoryImpl extends MediaLibraryRepository {
     _checkReady();
     return _database!.getMediaById(id);
   }
+
+  @override
+  Future<String?> resolveArtwork(String path) async =>
+      _probeService?.resolveArtwork(path);
 
   @override
   Future<void> toggleFavorite(String mediaId, bool isFavorite) async {
@@ -330,12 +371,14 @@ class MediaLibraryRepositoryImpl extends MediaLibraryRepository {
     _checkReady();
     final norm = p.normalize(p.absolute(folderPath));
     await _scanner?.scanFolder(norm);
+    await _refreshFolders();
   }
 
   @override
   Future<void> rescanAll() async {
     _checkReady();
     await _scanner?.scanAll();
+    await _refreshFolders();
   }
 
   @override

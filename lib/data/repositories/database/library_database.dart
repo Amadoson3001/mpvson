@@ -11,6 +11,7 @@ import 'package:path/path.dart' as p;
 import 'package:sqlite3/sqlite3.dart';
 
 import '../../../domain/models/library_models.dart';
+import '../../../domain/models/media_catalog.dart';
 import '../../../domain/models/media_entry.dart';
 
 /// Data payload for batch metadata updates.
@@ -318,6 +319,30 @@ class LibraryDatabase {
       'folderPath': folderPath,
       'isAvailable': isAvailable,
     });
+  }
+
+  /// Marks files missing from a complete scan without deleting their history.
+  Future<void> reconcileFolderFiles(
+    String folderPath,
+    List<String> paths,
+  ) async {
+    await _send<dynamic>('reconcileFolderFiles', <String, Object?>{
+      'folderPath': folderPath,
+      'paths': paths,
+    });
+  }
+
+  /// Updates a single watched file while preserving its metadata and playlists.
+  Future<void> markFileAvailability(String path, bool isAvailable) async {
+    await _send<dynamic>('markFileAvailability', <String, Object?>{
+      'path': path,
+      'isAvailable': isAvailable,
+    });
+  }
+
+  /// Recounts available items after incremental watcher events.
+  Future<void> refreshFolderFileCount(String folderPath) async {
+    await _send<dynamic>('refreshFolderFileCount', folderPath);
   }
 
   /// Updates a folder's fileCount and lastScannedAt stats.
@@ -706,6 +731,13 @@ void _databaseIsolateEntryPoint(_DbInitParams params) {
     db.execute('PRAGMA busy_timeout = 5000;');
     db.execute('PRAGMA synchronous = NORMAL;');
 
+    db.createFunction(
+      functionName: 'unicode_lower',
+      argumentCount: const AllowedArgumentCount(1),
+      deterministic: true,
+      function: (arguments) => (arguments[0] as String?)?.toLowerCase(),
+    );
+
     _initializeSchema(db);
 
     // Notify parent isolate that worker is ready
@@ -779,6 +811,7 @@ void _initializeSchema(Database db) {
       file_size INTEGER NOT NULL DEFAULT 0,
       modified_at INTEGER,
       is_available INTEGER NOT NULL DEFAULT 1,
+      is_in_library INTEGER NOT NULL DEFAULT 1,
       is_favorite INTEGER NOT NULL DEFAULT 0,
       added_at INTEGER NOT NULL,
       last_played_at INTEGER,
@@ -840,6 +873,12 @@ void _initializeSchema(Database db) {
       VALUES (new.rowid, new.title, new.artist, new.album, new.path);
     END;
   ''');
+  final columns = db.select('PRAGMA table_info(media)');
+  if (!columns.any((column) => column['name'] == 'is_in_library')) {
+    db.execute(
+      'ALTER TABLE media ADD COLUMN is_in_library INTEGER NOT NULL DEFAULT 1',
+    );
+  }
 }
 
 Object? _dispatchAction(Database db, String action, Object? params) {
@@ -907,7 +946,15 @@ Object? _dispatchAction(Database db, String action, Object? params) {
 
     case 'deleteFolder':
       final path = params as String;
-      db.execute('DELETE FROM folders WHERE path = ?', [path]);
+      db.execute('BEGIN TRANSACTION');
+      try {
+        db.execute('DELETE FROM folders WHERE path = ?', [path]);
+        _untrackRemovedFolder(db, path);
+        db.execute('COMMIT');
+      } catch (_) {
+        db.execute('ROLLBACK');
+        rethrow;
+      }
       return null;
 
     case 'getFolder':
@@ -926,31 +973,51 @@ Object? _dispatchAction(Database db, String action, Object? params) {
       final isAvailable = map['isAvailable'] as bool;
       final availInt = isAvailable ? 1 : 0;
 
-      final normSlash = folderPath.replaceAll(r'\', '/');
-      final normBackslash = folderPath.replaceAll('/', r'\');
-
       db.execute('UPDATE folders SET is_available = ? WHERE path = ?', [
         availInt,
         folderPath,
       ]);
 
+      // A reconnected folder does not imply that each previously indexed file
+      // still exists. Discovered files become available during the scan.
+      if (!isAvailable) _markMissingFilesInFolder(db, folderPath, const {});
+      return null;
+
+    case 'reconcileFolderFiles':
+      final map = (params as Map).cast<String, Object?>();
+      final paths = (map['paths'] as List).cast<String>();
+      _markMissingFilesInFolder(
+        db,
+        map['folderPath'] as String,
+        paths.map(MediaEntry.canonicalSource).toSet(),
+      );
+      return null;
+
+    case 'markFileAvailability':
+      final map = (params as Map).cast<String, Object?>();
       db.execute(
-        '''
-        UPDATE media SET is_available = ?
-        WHERE path = ? OR path = ?
-           OR path LIKE ? OR path LIKE ?
-           OR path LIKE ? OR path LIKE ?
-        ''',
+        'UPDATE media SET is_available = ? WHERE canonical_source = ?',
         [
-          availInt,
-          folderPath,
-          normSlash,
-          '$folderPath/%',
-          '$folderPath\\%',
-          '$normSlash/%',
-          '$normBackslash\\%',
+          (map['isAvailable'] as bool) ? 1 : 0,
+          MediaEntry.canonicalSource(map['path'] as String),
         ],
       );
+      return null;
+
+    case 'refreshFolderFileCount':
+      final folderPath = params as String;
+      final root = MediaEntry.canonicalSource(folderPath);
+      final rows = db.select(
+        'SELECT path FROM media WHERE is_available = 1 AND is_in_library = 1',
+      );
+      final count = rows.where((row) {
+        final path = MediaEntry.canonicalSource(row['path'] as String);
+        return p.equals(root, path) || p.isWithin(root, path);
+      }).length;
+      db.execute('UPDATE folders SET file_count = ? WHERE path = ?', [
+        count,
+        folderPath,
+      ]);
       return null;
 
     case 'updateFolderScanStats':
@@ -1139,33 +1206,36 @@ Object? _dispatchAction(Database db, String action, Object? params) {
       final map = (params as Map).cast<String, Object?>();
       final kind = map['kind'] as String?;
       final sql = StringBuffer('''
-        SELECT DISTINCT artist FROM media
-        WHERE artist IS NOT NULL AND TRIM(artist) != ''
+        SELECT DISTINCT coalesce(nullif(trim(artist), ''),
+          nullif(trim(album_artist), ''), 'Unknown Artist') AS artist_name
+        FROM media WHERE is_in_library = 1
         ''');
       final args = <Object?>[];
       if (kind != null) {
         sql.write(' AND kind = ?');
         args.add(kind);
       }
-      sql.write(' ORDER BY LOWER(artist) COLLATE NOCASE ASC');
+      sql.write(' ORDER BY LOWER(artist_name) COLLATE NOCASE ASC');
       final rows = db.select(sql.toString(), args);
-      return rows.map((r) => r['artist'] as String).toList();
+      return rows.map((r) => r['artist_name'] as String).toList();
 
     case 'getDistinctAlbums':
       final map = (params as Map).cast<String, Object?>();
       final artist = map['artist'] as String?;
       final sql = StringBuffer('''
-        SELECT DISTINCT album FROM media
-        WHERE album IS NOT NULL AND TRIM(album) != ''
+        SELECT DISTINCT coalesce(nullif(trim(album), ''), 'Unknown Album') AS album_name
+        FROM media WHERE is_in_library = 1 AND kind = 'audio'
         ''');
       final args = <Object?>[];
       if (artist != null) {
-        sql.write(' AND artist = ?');
+        sql.write(
+          " AND unicode_lower(coalesce(nullif(trim(artist), ''), nullif(trim(album_artist), ''), 'Unknown Artist')) = unicode_lower(?)",
+        );
         args.add(artist);
       }
-      sql.write(' ORDER BY LOWER(album) COLLATE NOCASE ASC');
+      sql.write(' ORDER BY LOWER(album_name) COLLATE NOCASE ASC');
       final rows = db.select(sql.toString(), args);
-      return rows.map((r) => r['album'] as String).toList();
+      return rows.map((r) => r['album_name'] as String).toList();
 
     // ---------------- Playlists ----------------
     case 'createPlaylist':
@@ -1259,12 +1329,14 @@ Object? _dispatchAction(Database db, String action, Object? params) {
           INSERT INTO playlist_entries (id, playlist_id, media_id, position, added_at)
           VALUES (?, ?, ?, ?, ?)
         ''');
-
-        for (final mediaId in mediaIds) {
-          final entryId = _generateId('$playlistId-$mediaId-$nextPos');
-          stmt.execute([entryId, playlistId, mediaId, nextPos++, now]);
+        try {
+          for (final mediaId in mediaIds) {
+            final entryId = _generateId('$playlistId-$mediaId-$nextPos');
+            stmt.execute([entryId, playlistId, mediaId, nextPos++, now]);
+          }
+        } finally {
+          stmt.close();
         }
-        stmt.close();
 
         db.execute('UPDATE playlists SET updated_at = ? WHERE id = ?', [
           now,
@@ -1328,18 +1400,22 @@ Object? _dispatchAction(Database db, String action, Object? params) {
         if (oldIndex >= 0 &&
             oldIndex < entries.length &&
             newIndex >= 0 &&
-            newIndex < entries.length) {
+            newIndex <= entries.length) {
           final idList = entries.map((r) => r['id'] as String).toList();
           final movedId = idList.removeAt(oldIndex);
-          idList.insert(newIndex, movedId);
+          final insertionIndex = newIndex > oldIndex ? newIndex - 1 : newIndex;
+          idList.insert(insertionIndex, movedId);
 
           final stmt = db.prepare(
             'UPDATE playlist_entries SET position = ? WHERE id = ?',
           );
-          for (var i = 0; i < idList.length; i++) {
-            stmt.execute([i, idList[i]]);
+          try {
+            for (var i = 0; i < idList.length; i++) {
+              stmt.execute([i, idList[i]]);
+            }
+          } finally {
+            stmt.close();
           }
-          stmt.close();
 
           db.execute('UPDATE playlists SET updated_at = ? WHERE id = ?', [
             DateTime.now().millisecondsSinceEpoch,
@@ -1553,6 +1629,68 @@ void _insertOrUpdateMediaRow(Database db, Map<String, Object?> m) {
   );
 }
 
+void _untrackRemovedFolder(Database db, String folderPath) {
+  final removedRoot = MediaEntry.canonicalSource(folderPath);
+  final remainingRoots = db
+      .select('SELECT path FROM folders')
+      .map((row) => MediaEntry.canonicalSource(row['path'] as String))
+      .toList();
+  final rows = db.select(
+    'SELECT canonical_source, path FROM media WHERE is_in_library = 1',
+  );
+  final update = db.prepare(
+    'UPDATE media SET is_in_library = 0 WHERE canonical_source = ?',
+  );
+  try {
+    for (final row in rows) {
+      final path = MediaEntry.canonicalSource(row['path'] as String);
+      final wasCovered =
+          p.equals(removedRoot, path) || p.isWithin(removedRoot, path);
+      final stillCovered = remainingRoots.any(
+        (root) => p.equals(root, path) || p.isWithin(root, path),
+      );
+      if (wasCovered && !stillCovered) {
+        update.execute([row['canonical_source']]);
+      }
+    }
+  } finally {
+    update.close();
+  }
+}
+
+void _markMissingFilesInFolder(
+  Database db,
+  String folderPath,
+  Set<String> discovered,
+) {
+  final root = MediaEntry.canonicalSource(folderPath);
+  final rows = db.select(
+    'SELECT canonical_source, path FROM media WHERE is_available = 1',
+  );
+  db.execute('BEGIN TRANSACTION');
+  try {
+    final statement = db.prepare(
+      'UPDATE media SET is_available = 0 WHERE canonical_source = ?',
+    );
+    try {
+      for (final row in rows) {
+        final source = row['canonical_source'] as String;
+        final path = MediaEntry.canonicalSource(row['path'] as String);
+        if ((p.equals(root, path) || p.isWithin(root, path)) &&
+            !discovered.contains(source)) {
+          statement.execute([source]);
+        }
+      }
+    } finally {
+      statement.close();
+    }
+    db.execute('COMMIT');
+  } catch (_) {
+    db.execute('ROLLBACK');
+    rethrow;
+  }
+}
+
 void _batchUpsertPaths(Database db, List<String> paths) {
   if (paths.isEmpty) return;
 
@@ -1569,14 +1707,15 @@ void _batchUpsertPaths(Database db, List<String> paths) {
       )
       ON CONFLICT(canonical_source) DO UPDATE SET
         path = excluded.path,
-        is_available = 1
+        is_available = 1,
+        is_in_library = 1
     ''');
     try {
       for (final rawPath in paths) {
         final normalized = MediaEntry.normalizeSourcePath(rawPath);
         final canonical = MediaEntry.canonicalSource(rawPath);
         final id = _generateId(canonical);
-        final kind = _detectKindFromExtension(normalized).name;
+        final kind = MediaCatalog.kindFromExtension(normalized).name;
         final fileName = MediaEntry.titleFromPath(normalized);
 
         stmt.execute([id, canonical, normalized, kind, fileName, now]);
@@ -1671,28 +1810,23 @@ List<Map<String, Object?>> _queryMediaRows(
   final sortBy = map['sortBy'] as String?;
   final ascending = map['ascending'] as bool? ?? true;
 
-  final ftsMatch = rawSearchQuery != null
-      ? _buildFts5MatchExpression(rawSearchQuery)
-      : null;
-  final useFts = ftsMatch != null && ftsMatch.isNotEmpty;
-
-  final sql = StringBuffer();
+  final sql = StringBuffer(
+    'SELECT media.* FROM media WHERE media.is_in_library = 1',
+  );
   final args = <Object?>[];
-
-  if (useFts) {
+  final query = rawSearchQuery?.trim();
+  if (query != null && query.isNotEmpty) {
+    final lower = query.runes.any((character) => character > 127)
+        ? 'unicode_lower'
+        : 'lower';
     sql.write('''
-      SELECT media.*
-      FROM media
-      JOIN media_fts ON media.rowid = media_fts.rowid
-      WHERE media_fts MATCH ?
+      AND (instr($lower(coalesce(media.title, '')), $lower(?)) > 0
+        OR instr($lower(coalesce(media.artist, '')), $lower(?)) > 0
+        OR instr($lower(coalesce(media.album_artist, '')), $lower(?)) > 0
+        OR instr($lower(coalesce(media.album, '')), $lower(?)) > 0
+        OR instr($lower(media.path), $lower(?)) > 0)
     ''');
-    args.add(ftsMatch);
-  } else {
-    sql.write('''
-      SELECT media.*
-      FROM media
-      WHERE 1=1
-    ''');
+    args.addAll(List<String>.filled(5, query));
   }
 
   if (kind != null) {
@@ -1700,11 +1834,15 @@ List<Map<String, Object?>> _queryMediaRows(
     args.add(kind);
   }
   if (artist != null) {
-    sql.write(' AND media.artist = ?');
+    sql.write(
+      " AND unicode_lower(coalesce(nullif(trim(media.artist), ''), nullif(trim(media.album_artist), ''), 'Unknown Artist')) = unicode_lower(?)",
+    );
     args.add(artist);
   }
   if (album != null) {
-    sql.write(' AND media.album = ?');
+    sql.write(
+      " AND unicode_lower(coalesce(nullif(trim(media.album), ''), 'Unknown Album')) = unicode_lower(?)",
+    );
     args.add(album);
   }
   if (isFavorite != null) {
@@ -1736,27 +1874,30 @@ List<Map<String, Object?>> _queryMediaRows(
       sql.write(' ORDER BY media.duration_ms $dir');
       break;
     case 'added_at':
+    case 'addedAt':
       sql.write(' ORDER BY media.added_at $dir');
       break;
     case 'last_played_at':
+    case 'lastPlayedAt':
       sql.write(' ORDER BY media.last_played_at $dir');
       break;
     case 'play_count':
+    case 'playCount':
       sql.write(' ORDER BY media.play_count $dir');
       break;
-    case 'rank':
-      if (useFts) {
-        sql.write(' ORDER BY media_fts.rank $dir');
-      } else {
-        sql.write(' ORDER BY media.added_at $dir');
-      }
+    case 'fileSize':
+      sql.write(' ORDER BY media.file_size $dir');
+      break;
+    case 'trackNumber':
+      sql.write(
+        ' ORDER BY coalesce(media.disc_number, 1) $dir, coalesce(media.track_number, 0) $dir, lower(media.title) ASC',
+      );
+      break;
+    case 'year':
+      sql.write(' ORDER BY media.year $dir');
       break;
     default:
-      if (useFts) {
-        sql.write(' ORDER BY media_fts.rank ASC');
-      } else {
-        sql.write(' ORDER BY media.added_at DESC');
-      }
+      sql.write(' ORDER BY media.added_at DESC');
   }
 
   if (limit != null) {
@@ -1766,53 +1907,13 @@ List<Map<String, Object?>> _queryMediaRows(
       sql.write(' OFFSET ?');
       args.add(offset);
     }
+  } else if (offset != null) {
+    sql.write(' LIMIT -1 OFFSET ?');
+    args.add(offset);
   }
 
   final rows = db.select(sql.toString(), args);
   return rows.map((r) => Map<String, Object?>.from(r)).toList();
-}
-
-String? _buildFts5MatchExpression(String query) {
-  final clean = query.replaceAll(RegExp(r'["*():^{}+_~^#@!\[\]]'), ' ').trim();
-  if (clean.isEmpty) return null;
-
-  final words = clean
-      .split(RegExp(r'\s+'))
-      .where((w) => w.isNotEmpty)
-      .map((w) => '"${w.replaceAll('"', '""')}*"')
-      .toList();
-
-  if (words.isEmpty) return null;
-  return words.join(' ');
-}
-
-MediaKind _detectKindFromExtension(String path) {
-  final ext = p.extension(path).toLowerCase();
-  switch (ext) {
-    case '.mp3':
-    case '.flac':
-    case '.m4a':
-    case '.aac':
-    case '.wav':
-    case '.ogg':
-    case '.opus':
-    case '.wma':
-    case '.aiff':
-    case '.alac':
-      return MediaKind.audio;
-    case '.mp4':
-    case '.mkv':
-    case '.avi':
-    case '.mov':
-    case '.webm':
-    case '.wmv':
-    case '.flv':
-    case '.m4v':
-    case '.ts':
-      return MediaKind.video;
-    default:
-      return MediaKind.unknown;
-  }
 }
 
 int _idSeedCounter = 0;

@@ -3,8 +3,11 @@ import 'package:flutter/material.dart';
 import '../../../data/repositories/media_library_repository.dart';
 import '../../../domain/models/library_models.dart';
 import '../../player/player_controller.dart';
-import '../theme/library_theme.dart';
-import '../widgets/empty_library_view.dart';
+import '../../core/app_theme.dart';
+import '../../core/components/media_tile.dart';
+import '../../core/components/media_row.dart';
+import '../widgets/library_artwork.dart';
+import '../../core/components/empty_state.dart';
 import '../widgets/playlist_create_dialog.dart';
 
 /// Playlists view featuring playlist management, detail tracklist view,
@@ -29,6 +32,7 @@ class _PlaylistsViewState extends State<PlaylistsView> {
   PlaylistRecord? _selectedPlaylist;
   List<PlaylistRecord>? _playlists;
   List<PlaylistEntryRecord>? _entries;
+  String? _selectedEntry;
   bool _isLoading = false;
   Future<void>? _reloadFuture;
   bool _reloadAgain = false;
@@ -48,6 +52,10 @@ class _PlaylistsViewState extends State<PlaylistsView> {
       widget.repository.addListener(_onRepoChanged);
       _reload();
     } else if (oldWidget.searchQuery != widget.searchQuery) {
+      if (widget.searchQuery?.trim().isNotEmpty ?? false) {
+        _selectedPlaylist = null;
+        _entries = null;
+      }
       _reload();
     }
   }
@@ -115,7 +123,11 @@ class _PlaylistsViewState extends State<PlaylistsView> {
       widget.repository,
     );
     if (playlist != null && mounted) {
-      setState(() => _selectedPlaylist = playlist);
+      setState(() {
+        _selectedPlaylist = playlist;
+        _entries = null;
+      });
+      _reload();
     }
   }
 
@@ -123,26 +135,26 @@ class _PlaylistsViewState extends State<PlaylistsView> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: LibraryTheme.surface,
+        backgroundColor: AppTheme.surface,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-          side: const BorderSide(color: LibraryTheme.border),
+          borderRadius: BorderRadius.circular(AppRadii.artwork),
+          side: const BorderSide(color: AppTheme.border),
         ),
-        title: const Text('Delete Playlist', style: LibraryTheme.sectionTitle),
+        title: const Text('Delete playlist', style: AppTheme.sectionTitle),
         content: Text(
           'Are you sure you want to delete "${pl.title}"? The media files themselves will remain in your library.',
-          style: LibraryTheme.rowSecondary,
+          style: AppTheme.rowSecondary,
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
             child: const Text(
               'Cancel',
-              style: TextStyle(color: LibraryTheme.secondaryText),
+              style: TextStyle(color: AppTheme.secondaryText),
             ),
           ),
           FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: LibraryTheme.danger),
+            style: FilledButton.styleFrom(backgroundColor: AppTheme.danger),
             onPressed: () => Navigator.of(ctx).pop(true),
             child: const Text('Delete'),
           ),
@@ -150,10 +162,30 @@ class _PlaylistsViewState extends State<PlaylistsView> {
       ),
     );
 
-    if (confirmed == true) {
+    if (confirmed == true && mounted) {
       await widget.repository.deletePlaylist(pl.id);
-      if (_selectedPlaylist?.id == pl.id) {
+      if (mounted && _selectedPlaylist?.id == pl.id) {
         setState(() => _selectedPlaylist = null);
+      }
+    }
+  }
+
+  Future<void> _renamePlaylist(PlaylistRecord playlist) async {
+    final title = await showDialog<String>(
+      context: context,
+      builder: (_) => _RenamePlaylistDialog(initialTitle: playlist.title),
+    );
+    if (title != null && title.isNotEmpty && mounted) {
+      try {
+        await widget.repository.renamePlaylist(playlist.id, title);
+      } catch (_) {
+        if (mounted) {
+          ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+            const SnackBar(
+              content: Text('Could not rename the playlist. Try again.'),
+            ),
+          );
+        }
       }
     }
   }
@@ -161,8 +193,10 @@ class _PlaylistsViewState extends State<PlaylistsView> {
   Future<void> _playPlaylist(
     List<PlaylistEntryRecord> entries, {
     bool shuffle = false,
+    int startIndex = 0,
   }) async {
     final paths = entries
+        .where((e) => e.mediaItem?.isAvailable ?? false)
         .map((e) => e.mediaItem?.path)
         .whereType<String>()
         .toList();
@@ -173,7 +207,17 @@ class _PlaylistsViewState extends State<PlaylistsView> {
       paths.shuffle();
     }
 
-    await widget.controller.openPaths(paths, append: false, initialIndex: 0);
+    final initialIndex = shuffle
+        ? 0
+        : entries
+              .take(startIndex)
+              .where((e) => e.mediaItem?.isAvailable ?? false)
+              .length;
+    await widget.controller.openPaths(
+      paths,
+      append: false,
+      initialIndex: initialIndex,
+    );
   }
 
   @override
@@ -182,6 +226,7 @@ class _PlaylistsViewState extends State<PlaylistsView> {
       return _buildPlaylistDetailView(_selectedPlaylist!);
     }
 
+    final accent = Theme.of(context).colorScheme.primary;
     final allPlaylists = _playlists ?? const <PlaylistRecord>[];
     final query = widget.searchQuery?.trim().toLowerCase();
     final playlists = query != null && query.isNotEmpty
@@ -191,16 +236,16 @@ class _PlaylistsViewState extends State<PlaylistsView> {
         : allPlaylists;
 
     return Scaffold(
-      backgroundColor: LibraryTheme.background,
+      backgroundColor: AppTheme.background,
       body: _isLoading && _playlists == null
-          ? const Center(
+          ? Center(
               child: CircularProgressIndicator(
                 strokeWidth: 2,
-                valueColor: AlwaysStoppedAnimation<Color>(LibraryTheme.accent),
+                valueColor: AlwaysStoppedAnimation<Color>(accent),
               ),
             )
           : playlists.isEmpty
-          ? EmptyLibraryView(
+          ? EmptyState(
               title: query != null && query.isNotEmpty
                   ? 'No playlists found'
                   : 'No playlists created yet',
@@ -216,28 +261,30 @@ class _PlaylistsViewState extends State<PlaylistsView> {
               children: [
                 // Header bar
                 Container(
-                  color: LibraryTheme.surface,
+                  color: AppTheme.surface,
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 24,
-                    vertical: 12,
+                    horizontal: AppSpace.lg,
+                    vertical: AppSpace.sm,
                   ),
                   child: Row(
                     children: [
                       Text(
                         'Playlists (${playlists.length})',
-                        style: LibraryTheme.sectionTitle,
+                        style: AppTheme.sectionTitle,
                       ),
                       const Spacer(),
                       FilledButton.icon(
                         style: FilledButton.styleFrom(
-                          backgroundColor: LibraryTheme.accent,
-                          foregroundColor: LibraryTheme.background,
+                          backgroundColor: accent,
+                          foregroundColor: AppTheme.background,
                           padding: const EdgeInsets.symmetric(
-                            horizontal: 16,
+                            horizontal: AppSpace.md,
                             vertical: 10,
                           ),
                           shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
+                            borderRadius: BorderRadius.circular(
+                              AppRadii.control,
+                            ),
                           ),
                         ),
                         onPressed: _createPlaylist,
@@ -250,11 +297,11 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                     ],
                   ),
                 ),
-                const Divider(height: 1, color: LibraryTheme.border),
+                const Divider(height: 1, color: AppTheme.border),
                 // Playlists Grid
                 Expanded(
                   child: GridView.builder(
-                    padding: const EdgeInsets.all(24),
+                    padding: const EdgeInsets.all(AppSpace.lg),
                     gridDelegate:
                         const SliverGridDelegateWithMaxCrossAxisExtent(
                           maxCrossAxisExtent: 240,
@@ -275,7 +322,24 @@ class _PlaylistsViewState extends State<PlaylistsView> {
   }
 
   Widget _buildPlaylistCard(PlaylistRecord pl) {
-    return InkWell(
+    return MediaTile(
+      artwork: FutureBuilder<List<PlaylistEntryRecord>>(
+        future: widget.repository.getPlaylistEntries(pl.id),
+        builder: (context, snapshot) {
+          final entries = snapshot.data;
+          final media = entries == null || entries.isEmpty
+              ? null
+              : entries.first.mediaItem;
+          return LibraryArtwork(
+            path: media?.metadata.artworkUri,
+            mediaPath: media?.path,
+            repository: widget.repository,
+            icon: Icons.queue_music_rounded,
+          );
+        },
+      ),
+      title: pl.title,
+      subtitle: '${pl.entryCount} items',
       onTap: () {
         setState(() {
           _selectedPlaylist = pl;
@@ -283,97 +347,23 @@ class _PlaylistsViewState extends State<PlaylistsView> {
         });
         _reload();
       },
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: LibraryTheme.surface,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: LibraryTheme.border),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: Container(
-                decoration: BoxDecoration(
-                  color: LibraryTheme.raisedSurface,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Center(
-                  child: Icon(
-                    Icons.queue_music_rounded,
-                    size: 48,
-                    color: LibraryTheme.accent,
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    pl.title,
-                    style: LibraryTheme.rowPrimary.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                PopupMenuButton<String>(
-                  icon: const Icon(
-                    Icons.more_vert_rounded,
-                    size: 16,
-                    color: LibraryTheme.mutedText,
-                  ),
-                  color: LibraryTheme.surface,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    side: const BorderSide(color: LibraryTheme.border),
-                  ),
-                  onSelected: (action) {
-                    if (action == 'delete') {
-                      _deletePlaylist(pl);
-                    }
-                  },
-                  itemBuilder: (_) => [
-                    const PopupMenuItem(
-                      value: 'delete',
-                      child: Row(
-                        children: [
-                          Icon(
-                            Icons.delete_outline_rounded,
-                            size: 16,
-                            color: LibraryTheme.danger,
-                          ),
-                          SizedBox(width: 8),
-                          Text(
-                            'Delete playlist',
-                            style: TextStyle(
-                              color: LibraryTheme.danger,
-                              fontSize: 13,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-            const SizedBox(height: 2),
-            Text('${pl.entryCount} items', style: LibraryTheme.metadata),
-          ],
-        ),
+      trailing: PopupMenuButton<String>(
+        tooltip: 'Playlist actions',
+        icon: const Icon(Icons.more_vert_rounded, size: 18),
+        onSelected: (action) {
+          if (action == 'delete') _deletePlaylist(pl);
+          if (action == 'rename') _renamePlaylist(pl);
+        },
+        itemBuilder: (_) => const [
+          PopupMenuItem(value: 'rename', child: Text('Rename playlist')),
+          PopupMenuItem(value: 'delete', child: Text('Delete playlist')),
+        ],
       ),
     );
   }
 
-  // --- Playlist Detail View with Reorderable Tracks ---
-
   Widget _buildPlaylistDetailView(PlaylistRecord pl) {
+    final accent = Theme.of(context).colorScheme.primary;
     final entries = _entries ?? const <PlaylistEntryRecord>[];
     final totalDuration = entries.fold<Duration>(
       Duration.zero,
@@ -381,19 +371,24 @@ class _PlaylistsViewState extends State<PlaylistsView> {
     );
 
     return Scaffold(
-      backgroundColor: LibraryTheme.background,
+      backgroundColor: AppTheme.background,
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           // Navigation back breadcrumb
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+            padding: const EdgeInsets.fromLTRB(
+              AppSpace.md,
+              AppSpace.md,
+              AppSpace.md,
+              0,
+            ),
             child: Row(
               children: [
                 IconButton(
                   icon: const Icon(Icons.arrow_back_rounded),
                   tooltip: 'Back to playlists',
-                  color: LibraryTheme.secondaryText,
+                  color: AppTheme.secondaryText,
                   onPressed: () {
                     setState(() {
                       _selectedPlaylist = null;
@@ -403,14 +398,14 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                   },
                 ),
                 const SizedBox(width: 8),
-                Text('Playlists', style: LibraryTheme.rowSecondary),
+                Text('Playlists', style: AppTheme.rowSecondary),
                 const SizedBox(width: 6),
-                const Text('›', style: LibraryTheme.metadata),
+                const Text('›', style: AppTheme.metadata),
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
                     pl.title,
-                    style: LibraryTheme.rowPrimary.copyWith(
+                    style: AppTheme.rowPrimary.copyWith(
                       fontWeight: FontWeight.w600,
                     ),
                     maxLines: 1,
@@ -422,23 +417,24 @@ class _PlaylistsViewState extends State<PlaylistsView> {
           ),
           // Playlist hero banner
           Padding(
-            padding: const EdgeInsets.all(24),
+            padding: const EdgeInsets.all(AppSpace.lg),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                Container(
-                  width: 140,
-                  height: 140,
-                  decoration: BoxDecoration(
-                    color: LibraryTheme.raisedSurface,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: LibraryTheme.border),
-                  ),
-                  child: const Center(
-                    child: Icon(
-                      Icons.queue_music_rounded,
-                      size: 56,
-                      color: LibraryTheme.accent,
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(AppRadii.artwork),
+                  child: SizedBox(
+                    width: 140,
+                    height: 140,
+                    child: LibraryArtwork(
+                      path: entries.isEmpty
+                          ? null
+                          : entries.first.mediaItem?.metadata.artworkUri,
+                      mediaPath: entries.isEmpty
+                          ? null
+                          : entries.first.mediaItem?.path,
+                      repository: widget.repository,
+                      icon: Icons.queue_music_rounded,
                     ),
                   ),
                 ),
@@ -447,28 +443,40 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(pl.title, style: LibraryTheme.pageTitle),
+                      Text(
+                        pl.title,
+                        style: AppTheme.pageTitle,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                       const SizedBox(height: 6),
                       Text(
                         '${entries.length} items • ${_formatDuration(totalDuration)}',
-                        style: LibraryTheme.metadata,
+                        style: AppTheme.metadata,
                       ),
                       const SizedBox(height: 16),
-                      Row(
+                      Wrap(
+                        spacing: 12,
+                        runSpacing: 8,
                         children: [
                           FilledButton.icon(
                             style: FilledButton.styleFrom(
-                              backgroundColor: LibraryTheme.accent,
-                              foregroundColor: LibraryTheme.background,
+                              backgroundColor: accent,
+                              foregroundColor: AppTheme.background,
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 20,
-                                vertical: 12,
+                                vertical: AppSpace.sm,
                               ),
                               shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
+                                borderRadius: BorderRadius.circular(
+                                  AppRadii.control,
+                                ),
                               ),
                             ),
-                            onPressed: entries.isNotEmpty
+                            onPressed:
+                                entries.any(
+                                  (e) => e.mediaItem?.isAvailable ?? false,
+                                )
                                 ? () => _playPlaylist(entries)
                                 : null,
                             icon: const Icon(Icons.play_arrow_rounded),
@@ -477,22 +485,24 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                               style: TextStyle(fontWeight: FontWeight.w600),
                             ),
                           ),
-                          const SizedBox(width: 12),
                           OutlinedButton.icon(
                             style: OutlinedButton.styleFrom(
-                              foregroundColor: LibraryTheme.primaryText,
-                              side: const BorderSide(
-                                color: LibraryTheme.border,
-                              ),
+                              foregroundColor: AppTheme.primaryText,
+                              side: const BorderSide(color: AppTheme.border),
                               padding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 12,
+                                horizontal: AppSpace.md,
+                                vertical: AppSpace.sm,
                               ),
                               shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
+                                borderRadius: BorderRadius.circular(
+                                  AppRadii.control,
+                                ),
                               ),
                             ),
-                            onPressed: entries.isNotEmpty
+                            onPressed:
+                                entries.any(
+                                  (e) => e.mediaItem?.isAvailable ?? false,
+                                )
                                 ? () => _playPlaylist(entries, shuffle: true)
                                 : null,
                             icon: const Icon(Icons.shuffle_rounded, size: 18),
@@ -506,24 +516,24 @@ class _PlaylistsViewState extends State<PlaylistsView> {
               ],
             ),
           ),
-          const Divider(height: 1, color: LibraryTheme.border),
+          const Divider(height: 1, color: AppTheme.border),
           // Reorderable tracks list
           Expanded(
             child: entries.isEmpty
                 ? const Center(
                     child: Text(
                       'No tracks in this playlist yet',
-                      style: LibraryTheme.metadata,
+                      style: AppTheme.metadata,
                     ),
                   )
                 : Theme(
                     data: Theme.of(
                       context,
-                    ).copyWith(canvasColor: LibraryTheme.surface),
+                    ).copyWith(canvasColor: AppTheme.surface),
                     child: ReorderableListView.builder(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 24,
-                        vertical: 16,
+                        horizontal: AppSpace.lg,
+                        vertical: AppSpace.md,
                       ),
                       itemCount: entries.length,
                       // ignore: deprecated_member_use
@@ -533,7 +543,6 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                           oldIndex,
                           newIndex,
                         );
-                        setState(() {});
                       },
                       itemBuilder: (context, index) {
                         final entry = entries[index];
@@ -542,84 +551,103 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                         final artist = item?.artist ?? 'Unknown artist';
                         final duration =
                             item?.metadata.duration ?? Duration.zero;
+                        final isSelected = _selectedEntry == entry.id;
 
-                        return Container(
+                        return MediaRow(
                           key: ValueKey(entry.id),
-                          margin: const EdgeInsets.symmetric(vertical: 2),
-                          decoration: BoxDecoration(
-                            color: LibraryTheme.surface,
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(
-                              color: LibraryTheme.border.withValues(alpha: 0.5),
+                          onSelect: () {
+                            if (_selectedEntry != entry.id) {
+                              setState(() => _selectedEntry = entry.id);
+                            }
+                          },
+                          onPlay: item?.isAvailable == true
+                              ? () => _playPlaylist(entries, startIndex: index)
+                              : null,
+                          builder: (context, rowFocus) => Container(
+                            margin: const EdgeInsets.symmetric(vertical: 2),
+                            decoration: BoxDecoration(
+                              color: isSelected
+                                  ? AppTheme.hover
+                                  : Colors.transparent,
+                              border: isSelected
+                                  ? Border(
+                                      left: BorderSide(color: accent, width: 2),
+                                    )
+                                  : null,
                             ),
-                          ),
-                          child: InkWell(
-                            borderRadius: BorderRadius.circular(8),
-                            onDoubleTap: () async {
-                              if (item != null) {
-                                final paths = entries
-                                    .map((e) => e.mediaItem?.path)
-                                    .whereType<String>()
-                                    .toList();
-                                await widget.controller.openPaths(
-                                  paths,
-                                  append: false,
-                                  initialIndex: index,
-                                );
-                              }
-                            },
-                            child: ListTile(
-                              dense: true,
-                              leading: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const Icon(
-                                    Icons.drag_indicator_rounded,
-                                    size: 18,
-                                    color: LibraryTheme.mutedText,
-                                  ),
-                                  const SizedBox(width: 10),
-                                  Text(
-                                    '${index + 1}',
-                                    style: LibraryTheme.metadata,
-                                  ),
-                                ],
+                            child: InkWell(
+                              canRequestFocus: false,
+                              onTap: () {
+                                rowFocus.requestFocus();
+                                setState(() => _selectedEntry = entry.id);
+                              },
+                              borderRadius: BorderRadius.circular(
+                                AppRadii.control,
                               ),
-                              title: Text(
-                                title,
-                                style: LibraryTheme.rowPrimary,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              subtitle: Text(
-                                artist,
-                                style: LibraryTheme.rowSecondary,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              trailing: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(
-                                    _formatDuration(duration),
-                                    style: LibraryTheme.metadata,
-                                  ),
-                                  const SizedBox(width: 8),
-                                  IconButton(
-                                    icon: const Icon(
-                                      Icons.close_rounded,
-                                      size: 16,
+                              hoverColor: AppTheme.hover,
+                              onDoubleTap: item?.isAvailable == true
+                                  ? () => _playPlaylist(
+                                      entries,
+                                      startIndex: index,
+                                    )
+                                  : null,
+                              child: ListTile(
+                                dense: true,
+                                leading: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Icon(
+                                      Icons.drag_indicator_rounded,
+                                      size: 18,
+                                      color: AppTheme.mutedText,
                                     ),
-                                    tooltip: 'Remove from playlist',
-                                    color: LibraryTheme.mutedText,
-                                    visualDensity: VisualDensity.compact,
-                                    onPressed: () async {
-                                      await widget.repository
-                                          .removeFromPlaylist(pl.id, entry.id);
-                                      setState(() {});
-                                    },
-                                  ),
-                                ],
+                                    const SizedBox(width: 10),
+                                    Text(
+                                      '${index + 1}',
+                                      style: AppTheme.metadata,
+                                    ),
+                                  ],
+                                ),
+                                title: Text(
+                                  title,
+                                  style: AppTheme.rowPrimary,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                subtitle: Text(
+                                  item != null && !item.isAvailable
+                                      ? '$artist • Missing'
+                                      : artist,
+                                  style: AppTheme.rowSecondary,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                trailing: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      _formatDuration(duration),
+                                      style: AppTheme.metadata,
+                                    ),
+                                    const SizedBox(width: 8),
+                                    IconButton(
+                                      icon: const Icon(
+                                        Icons.close_rounded,
+                                        size: 16,
+                                      ),
+                                      tooltip: 'Remove from playlist',
+                                      color: AppTheme.mutedText,
+                                      visualDensity: VisualDensity.compact,
+                                      onPressed: () async {
+                                        await widget.repository
+                                            .removeFromPlaylist(
+                                              pl.id,
+                                              entry.id,
+                                            );
+                                      },
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
                           ),
@@ -632,4 +660,61 @@ class _PlaylistsViewState extends State<PlaylistsView> {
       ),
     );
   }
+}
+
+class _RenamePlaylistDialog extends StatefulWidget {
+  const _RenamePlaylistDialog({required this.initialTitle});
+
+  final String initialTitle;
+
+  @override
+  State<_RenamePlaylistDialog> createState() => _RenamePlaylistDialogState();
+}
+
+class _RenamePlaylistDialogState extends State<_RenamePlaylistDialog> {
+  late final TextEditingController _controller;
+  bool _empty = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialTitle);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    final title = _controller.text.trim();
+    if (title.isEmpty) {
+      setState(() => _empty = true);
+      return;
+    }
+    Navigator.pop(context, title);
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    backgroundColor: AppTheme.surface,
+    title: const Text('Rename playlist', style: AppTheme.sectionTitle),
+    content: TextField(
+      controller: _controller,
+      autofocus: true,
+      decoration: InputDecoration(
+        labelText: 'Playlist name',
+        errorText: _empty ? 'Enter a name' : null,
+      ),
+      onSubmitted: (_) => _save(),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Cancel'),
+      ),
+      FilledButton(onPressed: _save, child: const Text('Save')),
+    ],
+  );
 }

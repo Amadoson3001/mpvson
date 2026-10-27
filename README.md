@@ -4,9 +4,9 @@ A desktop video player for Windows and Linux, built with Flutter and powered by 
 
 Mpvson is standalone: it stores its state in the OS application-support directory, does not modify a system mpv profile, and needs no separate mpv installation on Windows.
 
-The interface gives video the full stage below the native title bar. A thin seek timeline and all controls sit along the bottom; the More menu contains open, recent-file and settings actions. Open the queue when needed; it docks on wide windows and becomes a drawer on smaller ones. Settings groups playback controls, shortcuts and application information into tabs. See [interface design notes](docs/ui-design.md).
+The interface uses a unified shell across Home, Videos, Music, Playlists, Folders, and Settings, paired with a persistent bottom transport bar for playback controls, the shared seek bar, and Now Playing access, while giving video a true-black full stage. A neutral graphite palette with an artwork-derived accent (falling back to warm lamp) and bundled Onest typography with tabular timecodes keep the chrome quiet so media artwork takes visual emphasis. The queue docks as a side panel on wide windows and opens as a sheet on narrow ones. See [interface design notes](docs/ui-design.md).
 
-Settings → Appearance offers Compact and Normal controls. Compact is the default: smaller buttons and a wider seek rail in a shallow bottom strip. Changes apply immediately and are remembered after restarting. See [control-size design](docs/control-density.md).
+Settings → Appearance offers Compact and Normal controls. Compact is the default: smaller buttons and a wider seek rail in the persistent bottom transport bar. Changes apply immediately and are remembered after restarting. See [control-size design](docs/control-density.md).
 
 ## Run on Windows
 

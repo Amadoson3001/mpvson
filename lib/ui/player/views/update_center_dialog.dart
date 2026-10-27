@@ -32,14 +32,26 @@ class UpdateCenterDialog extends StatelessWidget {
       final engineBusy = engineUpdates.busy;
 
       return Dialog(
-        insetPadding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadii.artwork),
+          side: const BorderSide(color: AppTheme.border),
+        ),
+        insetPadding: const EdgeInsets.symmetric(
+          horizontal: AppSpace.xl,
+          vertical: AppSpace.lg,
+        ),
         child: SizedBox(
           width: 620,
           height: dialogHeight,
           child: Column(
             children: [
               Padding(
-                padding: const EdgeInsets.fromLTRB(24, 12, 12, 8),
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpace.lg,
+                  AppSpace.sm,
+                  AppSpace.sm,
+                  AppSpace.xs,
+                ),
                 child: Row(
                   children: [
                     Expanded(
@@ -63,7 +75,12 @@ class UpdateCenterDialog extends StatelessWidget {
               const Divider(height: 1),
               Expanded(
                 child: SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(24, 10, 24, 18),
+                  padding: const EdgeInsets.fromLTRB(
+                    AppSpace.lg,
+                    10,
+                    AppSpace.lg,
+                    18,
+                  ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
@@ -89,7 +106,12 @@ class UpdateCenterDialog extends StatelessWidget {
               ),
               const Divider(height: 1),
               Padding(
-                padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+                padding: const EdgeInsets.fromLTRB(
+                  20,
+                  AppSpace.xs,
+                  20,
+                  AppSpace.sm,
+                ),
                 child: Align(
                   alignment: Alignment.centerRight,
                   child: TextButton(
@@ -157,8 +179,9 @@ class _ApplicationTrack extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final accent = Theme.of(context).colorScheme.primary;
     final release = updates.release;
-    final (status, statusColor) = _applicationStatus(updates.status);
+    final (status, statusColor) = _applicationStatus(updates.status, accent);
     final action = switch (updates.status) {
       'available' => 'Download package',
       'ready' => 'Open package',
@@ -173,7 +196,7 @@ class _ApplicationTrack extends StatelessWidget {
           _ => updates.configured,
         };
     return _ReleaseTrack(
-      railColor: AppTheme.accent,
+      railColor: accent,
       icon: Icons.desktop_windows_outlined,
       title: 'Application',
       status: status,
@@ -193,7 +216,7 @@ class _ApplicationTrack extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _applicationStatusContent(updates, release),
+                    _applicationStatusContent(updates, release, accent),
                     if (updates.error != null && updates.status != 'error') ...[
                       const SizedBox(height: 8),
                       _TrackNotice(
@@ -242,29 +265,31 @@ class _ApplicationTrack extends StatelessWidget {
     );
   }
 
-  static (String, Color) _applicationStatus(String value) => switch (value) {
-    'checking' => ('Checking', AppTheme.warning),
-    'available' => ('Update available', AppTheme.accent),
-    'downloading' => ('Downloading', AppTheme.warning),
-    'ready' => ('Downloaded', AppTheme.success),
-    'upToDate' => ('Up to date', AppTheme.success),
-    'error' => ('Check failed', AppTheme.danger),
-    'unconfigured' => ('Not configured', AppTheme.muted),
-    _ => ('Not checked', AppTheme.muted),
-  };
+  static (String, Color) _applicationStatus(String value, Color accent) =>
+      switch (value) {
+        'checking' => ('Checking', AppTheme.warning),
+        'available' => ('Update available', accent),
+        'downloading' => ('Downloading', AppTheme.warning),
+        'ready' => ('Downloaded', AppTheme.success),
+        'upToDate' => ('Up to date', AppTheme.success),
+        'error' => ('Check failed', AppTheme.danger),
+        'unconfigured' => ('Not configured', AppTheme.muted),
+        _ => ('Not checked', AppTheme.muted),
+      };
 
   static Widget _applicationStatusContent(
     UpdateService updates,
     ReleaseInfo? release,
+    Color accent,
   ) => switch (updates.status) {
     'unconfigured' => const _TrackNotice(
       icon: Icons.info_outline_rounded,
       color: AppTheme.muted,
       text: 'Update checks are not configured for this build.',
     ),
-    'checking' => const _TrackNotice(
+    'checking' => _TrackNotice(
       icon: Icons.sync_rounded,
-      color: AppTheme.accent,
+      color: accent,
       text: 'Checking for a newer Mpvson release…',
     ),
     'upToDate' => const _TrackNotice(
@@ -315,11 +340,12 @@ class _EngineTrack extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final accent = Theme.of(context).colorScheme.primary;
     final linux = defaultTargetPlatform == TargetPlatform.linux;
     final systemManaged =
         linux || !updates.selfManaged || updates.status == 'systemManaged';
     final release = updates.release;
-    final (status, color) = _statusLabel(updates.status, systemManaged);
+    final (status, color) = _statusLabel(updates.status, systemManaged, accent);
     final hasPendingAction =
         updates.status == 'readyToRestart' ||
         updates.pendingVersion != null ||
@@ -396,6 +422,7 @@ class _EngineTrack extends StatelessWidget {
                       loadedVersion,
                       systemManaged,
                       linux,
+                      accent,
                     ),
                     if (updates.configurationWarning case final warning?) ...[
                       const SizedBox(height: 8),
@@ -502,12 +529,16 @@ class _EngineTrack extends StatelessWidget {
     return button;
   }
 
-  static (String, Color) _statusLabel(String value, bool systemManaged) {
+  static (String, Color) _statusLabel(
+    String value,
+    bool systemManaged,
+    Color accent,
+  ) {
     if (systemManaged) return ('System managed', AppTheme.secondaryText);
     return switch (value) {
       'checking' => ('Checking', AppTheme.warning),
       'savingChannel' => ('Saving choice', AppTheme.warning),
-      'available' => ('Update available', AppTheme.accent),
+      'available' => ('Update available', accent),
       'downloading' => ('Downloading', AppTheme.warning),
       'staging' => ('Staging', AppTheme.warning),
       'readyToRestart' => ('Ready to restart', AppTheme.success),
@@ -526,6 +557,7 @@ class _EngineTrack extends StatelessWidget {
     String loadedVersion,
     bool systemManaged,
     bool linux,
+    Color accent,
   ) {
     if (systemManaged) {
       return _TrackNotice(
@@ -551,14 +583,14 @@ class _EngineTrack extends StatelessWidget {
         color: AppTheme.muted,
         text: 'Engine update checks are not configured for this build.',
       ),
-      'checking' => const _TrackNotice(
+      'checking' => _TrackNotice(
         icon: Icons.sync_rounded,
-        color: AppTheme.accent,
+        color: accent,
         text: 'Checking for a playback engine update…',
       ),
-      'savingChannel' => const _TrackNotice(
+      'savingChannel' => _TrackNotice(
         icon: Icons.sync_rounded,
-        color: AppTheme.accent,
+        color: accent,
         text: 'Saving the engine update channel…',
       ),
       'stableUnavailable' => _TrackNotice(
@@ -807,7 +839,7 @@ class _ProgressDetail extends StatelessWidget {
             ? 0
             : null,
         minHeight: 4,
-        borderRadius: BorderRadius.circular(5),
+        borderRadius: BorderRadius.circular(AppRadii.control),
       ),
       if (progress > 0) ...[
         const SizedBox(height: 5),
@@ -834,7 +866,7 @@ class _StatusPill extends StatelessWidget {
     padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
     decoration: BoxDecoration(
       color: color.withValues(alpha: 0.12),
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(AppRadii.control),
     ),
     child: AnimatedSwitcher(
       duration: AppMotion.duration(context, AppMotion.quick),

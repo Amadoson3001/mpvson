@@ -91,7 +91,7 @@ class _PlayerControlsState extends State<PlayerControls> {
                 children: [
                   AnimatedBuilder(
                     animation: timeline,
-                    builder: (context, _) => _SeekBar(
+                    builder: (context, _) => SharedSeekBar(
                       controller: controller,
                       onPreviewChanged: _updateScrubPosition,
                       onInteractionChanged: widget.onInteractionChanged,
@@ -102,22 +102,9 @@ class _PlayerControlsState extends State<PlayerControls> {
                     height: sizing.buttonExtent,
                     child: Row(
                       children: [
-                        _TransportButton(
-                          tooltip: 'Previous',
-                          icon: Icons.skip_previous_rounded,
-                          onPressed: controller.previous,
-                        ),
-                        SizedBox(width: dense ? 2 : 4),
-                        _PlayPauseButton(
-                          isPlaying: controller.isPlaying,
-                          isBuffering: controller.isBuffering,
-                          onPressed: controller.togglePlayPause,
-                        ),
-                        SizedBox(width: dense ? 2 : 4),
-                        _TransportButton(
-                          tooltip: 'Next',
-                          icon: Icons.skip_next_rounded,
-                          onPressed: controller.next,
+                        TransportButtons(
+                          controller: controller,
+                          compact: dense,
                         ),
                         SizedBox(width: dense ? 6 : 10),
                         _ToggleButton(
@@ -221,8 +208,8 @@ class _ActionsFooter extends StatelessWidget {
       height: PlayerControlStyle.of(context).compact ? 44 : 60,
       child: Padding(
         padding: PlayerControlStyle.of(context).compact
-            ? const EdgeInsets.symmetric(horizontal: 8, vertical: 6)
-            : const EdgeInsets.fromLTRB(14, 8, 14, 8),
+            ? const EdgeInsets.symmetric(horizontal: AppSpace.xs, vertical: 6)
+            : const EdgeInsets.fromLTRB(14, AppSpace.xs, 14, AppSpace.xs),
         child: Align(alignment: Alignment.centerRight, child: actions),
       ),
     ),
@@ -257,8 +244,9 @@ class _TimeReadout extends StatelessWidget {
   }
 }
 
-class _SeekBar extends StatefulWidget {
-  const _SeekBar({
+class SharedSeekBar extends StatefulWidget {
+  const SharedSeekBar({
+    super.key,
     required this.controller,
     required this.onPreviewChanged,
     required this.onInteractionChanged,
@@ -269,10 +257,10 @@ class _SeekBar extends StatefulWidget {
   final ValueChanged<bool>? onInteractionChanged;
 
   @override
-  State<_SeekBar> createState() => _SeekBarState();
+  State<SharedSeekBar> createState() => SharedSeekBarState();
 }
 
-class _SeekBarState extends State<_SeekBar> {
+class SharedSeekBarState extends State<SharedSeekBar> {
   static const _keyboardSeekDelay = Duration(milliseconds: 140);
 
   final FocusNode _focusNode = FocusNode(debugLabel: 'Seek video');
@@ -303,7 +291,7 @@ class _SeekBarState extends State<_SeekBar> {
   }
 
   @override
-  void didUpdateWidget(covariant _SeekBar oldWidget) {
+  void didUpdateWidget(covariant SharedSeekBar oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.controller != widget.controller) {
       oldWidget.controller.seekPreview.stateListenable.removeListener(
@@ -562,12 +550,14 @@ class _SeekBarState extends State<_SeekBar> {
                         overlayShape: const RoundSliderOverlayShape(
                           overlayRadius: 14,
                         ),
-                        activeTrackColor: AppTheme.accent,
+                        activeTrackColor: Theme.of(context).colorScheme.primary,
                         inactiveTrackColor: AppTheme.border,
                         disabledActiveTrackColor: AppTheme.muted,
                         disabledInactiveTrackColor: AppTheme.border,
-                        overlayColor: AppTheme.accent.withValues(alpha: 0.16),
-                        thumbColor: AppTheme.accent,
+                        overlayColor: Theme.of(
+                          context,
+                        ).colorScheme.primary.withValues(alpha: 0.16),
+                        thumbColor: Theme.of(context).colorScheme.primary,
                         padding: EdgeInsets.zero,
                       ),
                       child: SliderOverlay(
@@ -781,7 +771,7 @@ class _SeekPreview extends StatelessWidget {
           clipBehavior: Clip.antiAlias,
           decoration: BoxDecoration(
             color: AppTheme.card,
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(AppRadii.control),
             border: Border.all(color: borderColor),
             boxShadow: [
               BoxShadow(
@@ -827,7 +817,9 @@ class _SeekPreview extends StatelessWidget {
     Widget imageSurface;
     if (frame != null && frame.bytes.isNotEmpty) {
       imageSurface = ClipRRect(
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(7)),
+        borderRadius: const BorderRadius.vertical(
+          top: Radius.circular(AppRadii.control),
+        ),
         child: Image.memory(
           frame.bytes,
           fit: BoxFit.cover,
@@ -838,12 +830,16 @@ class _SeekPreview extends StatelessWidget {
       );
     } else if (isFailed) {
       imageSurface = const ClipRRect(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(7)),
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(AppRadii.control),
+        ),
         child: _PreviewUnavailableFrame(),
       );
     } else if (thumbnail != null && thumbnail!.bytes.isNotEmpty) {
       imageSurface = ClipRRect(
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(7)),
+        borderRadius: const BorderRadius.vertical(
+          top: Radius.circular(AppRadii.control),
+        ),
         child: Image.memory(
           thumbnail!.bytes,
           fit: BoxFit.cover,
@@ -854,7 +850,9 @@ class _SeekPreview extends StatelessWidget {
       );
     } else {
       imageSurface = const ClipRRect(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(7)),
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(AppRadii.control),
+        ),
         child: _PreviewPlaceholderFrame(),
       );
     }
@@ -875,7 +873,9 @@ class _SeekPreview extends StatelessWidget {
                     color: Colors.black.withValues(alpha: 0.68),
                     alignment: Alignment.center,
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpace.xs,
+                      ),
                       child: Row(
                         mainAxisSize: MainAxisSize.max,
                         mainAxisAlignment: MainAxisAlignment.center,
@@ -914,12 +914,12 @@ class _SeekPreview extends StatelessWidget {
                       color: Colors.black.withValues(alpha: 0.6),
                       shape: BoxShape.circle,
                     ),
-                    child: const SizedBox(
+                    child: SizedBox(
                       width: 10,
                       height: 10,
                       child: CircularProgressIndicator(
                         strokeWidth: 1.5,
-                        color: AppTheme.accent,
+                        color: Theme.of(context).colorScheme.primary,
                       ),
                     ),
                   ),
@@ -935,7 +935,9 @@ class _SeekPreview extends StatelessWidget {
                     alignment: Alignment.centerLeft,
                     child: FractionallySizedBox(
                       widthFactor: previewRatio,
-                      child: Container(color: AppTheme.accent),
+                      child: Container(
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
                     ),
                   ),
                 ),
@@ -944,7 +946,10 @@ class _SeekPreview extends StatelessWidget {
           ),
         ),
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpace.xs,
+            vertical: 5,
+          ),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -960,8 +965,10 @@ class _SeekPreview extends StatelessWidget {
                 Text(
                   diffText,
                   style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    color: isAhead ? AppTheme.accent : AppTheme.muted,
-                    fontSize: 10,
+                    color: isAhead
+                        ? Theme.of(context).colorScheme.primary
+                        : AppTheme.muted,
+                    fontSize: AppType.caption,
                     fontWeight: FontWeight.w500,
                     fontFeatures: const [FontFeature.tabularFigures()],
                   ),
@@ -989,27 +996,27 @@ class _SeekPreview extends StatelessWidget {
             height: 32,
             decoration: BoxDecoration(
               color: AppTheme.surface,
-              borderRadius: BorderRadius.circular(6),
+              borderRadius: BorderRadius.circular(AppRadii.control),
               border: Border.all(color: AppTheme.border),
             ),
             child: (bytes != null && bytes.isNotEmpty)
                 ? ClipRRect(
-                    borderRadius: BorderRadius.circular(5),
+                    borderRadius: BorderRadius.circular(AppRadii.control),
                     child: Image.memory(
                       bytes,
                       fit: BoxFit.cover,
                       gaplessPlayback: true,
-                      errorBuilder: (context, error, stackTrace) => const Icon(
+                      errorBuilder: (context, error, stackTrace) => Icon(
                         Icons.music_note_rounded,
                         size: 18,
-                        color: AppTheme.accent,
+                        color: Theme.of(context).colorScheme.primary,
                       ),
                     ),
                   )
-                : const Icon(
+                : Icon(
                     Icons.music_note_rounded,
                     size: 18,
-                    color: AppTheme.accent,
+                    color: Theme.of(context).colorScheme.primary,
                   ),
           ),
           const SizedBox(width: 8),
@@ -1025,7 +1032,7 @@ class _SeekPreview extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                       color: AppTheme.secondaryText,
-                      fontSize: 10,
+                      fontSize: AppType.caption,
                       fontWeight: FontWeight.w500,
                     ),
                   ),
@@ -1044,8 +1051,10 @@ class _SeekPreview extends StatelessWidget {
                       Text(
                         diffText,
                         style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                          color: isAhead ? AppTheme.accent : AppTheme.muted,
-                          fontSize: 10,
+                          color: isAhead
+                              ? Theme.of(context).colorScheme.primary
+                              : AppTheme.muted,
+                          fontSize: AppType.caption,
                           fontWeight: FontWeight.w500,
                           fontFeatures: const [FontFeature.tabularFigures()],
                         ),
@@ -1109,12 +1118,51 @@ class _PreviewUnavailableFrame extends StatelessWidget {
             'Preview unavailable',
             style: TextStyle(
               color: AppTheme.secondaryText.withValues(alpha: 0.7),
-              fontSize: 10,
+              fontSize: AppType.caption,
               fontWeight: FontWeight.w500,
             ),
           ),
         ],
       ),
+    ),
+  );
+}
+
+/// Previous, play/pause and next controls used by both shell and overlay.
+class TransportButtons extends StatelessWidget {
+  const TransportButtons({
+    super.key,
+    required this.controller,
+    this.compact = false,
+  });
+  final PlayerController controller;
+  final bool compact;
+  @override
+  Widget build(BuildContext context) => PlayerControlStyle(
+    compact: compact,
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _TransportButton(
+          tooltip: 'Previous',
+          icon: Icons.skip_previous_rounded,
+          onPressed: controller.current == null ? null : controller.previous,
+        ),
+        SizedBox(width: compact ? 2 : 4),
+        _PlayPauseButton(
+          isPlaying: controller.isPlaying,
+          isBuffering: controller.isBuffering,
+          onPressed: controller.current == null
+              ? null
+              : controller.togglePlayPause,
+        ),
+        SizedBox(width: compact ? 2 : 4),
+        _TransportButton(
+          tooltip: 'Next',
+          icon: Icons.skip_next_rounded,
+          onPressed: controller.current == null ? null : controller.next,
+        ),
+      ],
     ),
   );
 }
@@ -1128,7 +1176,7 @@ class _TransportButton extends StatelessWidget {
 
   final String tooltip;
   final IconData icon;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) => SizedBox.square(
@@ -1204,7 +1252,7 @@ class _PlayPauseButton extends StatefulWidget {
 
   final bool isPlaying;
   final bool isBuffering;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
 
   @override
   State<_PlayPauseButton> createState() => _PlayPauseButtonState();
@@ -1268,7 +1316,9 @@ class _PlayPauseButtonState extends State<_PlayPauseButton>
         tooltip: widget.isPlaying ? 'Pause' : 'Play',
         onPressed: widget.onPressed,
         style: style.buttonStyle.copyWith(
-          backgroundColor: const WidgetStatePropertyAll(AppTheme.accent),
+          backgroundColor: WidgetStatePropertyAll(
+            Theme.of(context).colorScheme.primary,
+          ),
           foregroundColor: const WidgetStatePropertyAll(
             AppTheme.accentForeground,
           ),

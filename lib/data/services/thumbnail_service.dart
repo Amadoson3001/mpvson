@@ -2119,7 +2119,9 @@ class MediaKitThumbnailExtractor implements ThumbnailExtractor {
             outputDirectory,
             deadline,
             imageOutput: false,
-            videoTrack: 'no',
+            // A video-only file is unloaded if both video and audio are
+            // disabled. The null output keeps this metadata pass headless.
+            videoTrack: 'auto',
           );
         } catch (error) {
           _recordDiagnostic(
@@ -2267,7 +2269,10 @@ class MediaKitThumbnailExtractor implements ThumbnailExtractor {
         .timeout(_remaining(deadline));
     await player.setProperty('sid', 'no').timeout(_remaining(deadline));
     await player.setProperty('vid', videoTrack).timeout(_remaining(deadline));
-    await player.setProperty('aid', 'no').timeout(_remaining(deadline));
+    // Keep audio selected so mpv exposes attached cover-art tracks, but send it
+    // to a null output instead of opening the user's audio device.
+    await player.setProperty('ao', 'null').timeout(_remaining(deadline));
+    await player.setProperty('aid', 'auto').timeout(_remaining(deadline));
     // Clear the previous capture's one-frame limit before opening either pass.
     await player.setProperty('frames', 'all').timeout(_remaining(deadline));
     await player
@@ -2278,7 +2283,7 @@ class MediaKitThumbnailExtractor implements ThumbnailExtractor {
         .setProperty('demuxer-readahead-secs', '0')
         .timeout(_remaining(deadline));
     await player
-        .setProperty('demuxer-max-bytes', '0')
+        .setProperty('demuxer-max-bytes', '2097152')
         .timeout(_remaining(deadline));
     await player
         .setProperty('demuxer-max-back-bytes', '0')
@@ -2321,10 +2326,46 @@ class MediaKitThumbnailExtractor implements ThumbnailExtractor {
       }
       final video = _realVideoTracks(player);
       if (video.isNotEmpty) return video;
+      final nativeTracks = await _readNativeVideoTracks(native, deadline);
+      if (nativeTracks.isNotEmpty) return nativeTracks;
       await _readDuration(player, native, deadline);
       await Future<void>.delayed(const Duration(milliseconds: 80));
     }
     return _realVideoTracks(player);
+  }
+
+  Future<List<VideoTrack>> _readNativeVideoTracks(
+    NativePlayer native,
+    DateTime deadline,
+  ) async {
+    Future<String?> read(String property) async {
+      if (!DateTime.now().isBefore(deadline)) return null;
+      try {
+        final remaining = _remaining(deadline);
+        final timeout = remaining < const Duration(milliseconds: 700)
+            ? remaining
+            : const Duration(milliseconds: 700);
+        final value = (await native.getProperty(property).timeout(timeout))
+            .trim();
+        return value.isEmpty || value == 'unavailable' ? null : value;
+      } catch (_) {
+        return null;
+      }
+    }
+
+    final count = int.tryParse(await read('track-list/count') ?? '') ?? 0;
+    final tracks = <VideoTrack>[];
+    for (var index = 0; index < count && index < 32; index++) {
+      if (await read('track-list/$index/type') != 'video') continue;
+      final id = await read('track-list/$index/id');
+      if (id == null || id.isEmpty) continue;
+      final isArtwork = await read('track-list/$index/albumart') == 'yes';
+      final isImage = await read('track-list/$index/image') == 'yes';
+      tracks.add(
+        VideoTrack(id, null, null, albumart: isArtwork, image: isImage),
+      );
+    }
+    return tracks;
   }
 
   Future<Duration> _readDuration(
@@ -2464,8 +2505,9 @@ class MediaKitThumbnailExtractor implements ThumbnailExtractor {
           if (native is! NativePlayer) return Duration.zero;
           await native.setProperty('vo', 'null').timeout(_remaining(deadline));
           await native.setProperty('sid', 'no').timeout(_remaining(deadline));
-          await native.setProperty('vid', 'no').timeout(_remaining(deadline));
-          await native.setProperty('aid', 'no').timeout(_remaining(deadline));
+          await native.setProperty('vid', 'auto').timeout(_remaining(deadline));
+          await native.setProperty('ao', 'null').timeout(_remaining(deadline));
+          await native.setProperty('aid', 'auto').timeout(_remaining(deadline));
           await native
               .setProperty('cache-on-disk', 'no')
               .timeout(_remaining(deadline));
@@ -2474,7 +2516,7 @@ class MediaKitThumbnailExtractor implements ThumbnailExtractor {
               .setProperty('demuxer-readahead-secs', '0')
               .timeout(_remaining(deadline));
           await native
-              .setProperty('demuxer-max-bytes', '0')
+              .setProperty('demuxer-max-bytes', '2097152')
               .timeout(_remaining(deadline));
           await native
               .setProperty('demuxer-max-back-bytes', '0')

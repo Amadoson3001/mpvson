@@ -37,6 +37,9 @@ typedef FolderScanCompletedCallback =
 typedef FileAvailabilityCallback =
     Future<void> Function(String filePath, bool isAvailable);
 
+typedef FolderReconciliationCallback =
+    Future<void> Function(String folderPath, List<String> discoveredPaths);
+
 typedef RegisteredFoldersProvider =
     Future<List<LibraryFolderRecord>> Function();
 
@@ -59,8 +62,10 @@ class MediaScannerService {
     FolderAvailabilityCallback? onFolderAvailabilityChanged,
     FolderScanCompletedCallback? onFolderScanCompleted,
     FileAvailabilityCallback? onFileAvailabilityChanged,
+    FolderReconciliationCallback? onFolderReconciled,
     RegisteredFoldersProvider? getRegisteredFolders,
     Duration debounceDuration = const Duration(milliseconds: 500),
+    Duration reconnectInterval = const Duration(seconds: 30),
     int maxConcurrentProbes = 4,
     DirectoryWatcherFactory? watcherFactory,
     p.Context? pathContext,
@@ -81,9 +86,13 @@ class MediaScannerService {
                        lastScannedAt: lastScannedAt,
                      ))
                : null),
-       _onFileAvailabilityChanged = onFileAvailabilityChanged,
+       _onFileAvailabilityChanged =
+           onFileAvailabilityChanged ?? database?.markFileAvailability,
+       _onFolderReconciled =
+           onFolderReconciled ?? database?.reconcileFolderFiles,
        _getRegisteredFolders = getRegisteredFolders ?? database?.getAllFolders,
        _debounceDuration = debounceDuration,
+       _reconnectInterval = reconnectInterval,
        _maxConcurrentProbes = maxConcurrentProbes,
        _watcherFactory = watcherFactory ?? _defaultWatcherFactory,
        _pathContext = pathContext ?? p.context;
@@ -95,8 +104,10 @@ class MediaScannerService {
   final FolderAvailabilityCallback? _onFolderAvailabilityChanged;
   final FolderScanCompletedCallback? _onFolderScanCompleted;
   final FileAvailabilityCallback? _onFileAvailabilityChanged;
+  final FolderReconciliationCallback? _onFolderReconciled;
   final RegisteredFoldersProvider? _getRegisteredFolders;
   final Duration _debounceDuration;
+  final Duration _reconnectInterval;
   final int _maxConcurrentProbes;
   final DirectoryWatcherFactory _watcherFactory;
   final p.Context _pathContext;
@@ -109,9 +120,11 @@ class MediaScannerService {
   final Map<String, StreamSubscription<WatchEvent>> _watcherSubscriptions =
       <String, StreamSubscription<WatchEvent>>{};
   final Map<String, Timer> _debounceTimers = <String, Timer>{};
+  final Map<String, Timer> _reconnectTimers = <String, Timer>{};
   final Map<String, Map<String, ChangeType>> _pendingEvents =
       <String, Map<String, ChangeType>>{};
   final Set<String> _pendingFullRescans = <String>{};
+  final Map<String, Set<String>> _knownDirectories = <String, Set<String>>{};
   final Map<String, DateTime> _pendingEventStarts = <String, DateTime>{};
   final Map<String, Future<void>> _watcherDrains = <String, Future<void>>{};
 
@@ -123,6 +136,7 @@ class MediaScannerService {
   bool _isDisposed = false;
   Future<void>? _currentScanFuture;
   Future<void> _scanTransitionTail = Future<void>.value();
+  DateTime? _lastStatusEmission;
 
   /// Current scan status.
   LibraryScanStatus get scanStatus => _status;
@@ -197,6 +211,8 @@ class MediaScannerService {
     final norm = _pathContext.normalize(_pathContext.absolute(path));
     _explicitFolders.remove(norm);
     _stopWatching(norm);
+    _knownDirectories.remove(norm);
+    _reconnectTimers.remove(norm)?.cancel();
   }
 
   /// Scans a specific folder.
@@ -216,6 +232,7 @@ class MediaScannerService {
       }
     } else if (_getRegisteredFolders != null) {
       final dbFolders = await _getRegisteredFolders();
+      if (_isDisposed) return;
       for (final f in dbFolders) {
         registerFolder(f.path);
       }
@@ -319,6 +336,8 @@ class MediaScannerService {
         if (!exists) {
           // Disconnected drive or missing folder is marked unavailable (is_available = 0), NEVER deleted!
           await _onFolderAvailabilityChanged?.call(root, false);
+          _stopWatching(root);
+          _scheduleReconnect(root);
           if (_isCancelled || _isDisposed || !_explicitFolders.contains(root)) {
             continue;
           }
@@ -326,13 +345,21 @@ class MediaScannerService {
         }
 
         // Folder is available
+        _reconnectTimers.remove(root)?.cancel();
+        _startWatching(root);
         await _onFolderAvailabilityChanged?.call(root, true);
         if (_isCancelled || _isDisposed || !_explicitFolders.contains(root)) {
           continue;
         }
 
         final folderDiscovered = <String>[];
-        await for (final file in _traverseDirectory(root)) {
+        final directories = <String>{};
+        var traversalComplete = true;
+        await for (final file in _traverseDirectory(
+          root,
+          onError: () => traversalComplete = false,
+          onDirectory: directories.add,
+        )) {
           if (_isCancelled || _isDisposed || !_explicitFolders.contains(root)) {
             break;
           }
@@ -358,6 +385,14 @@ class MediaScannerService {
         if (_isCancelled || _isDisposed || !_explicitFolders.contains(root)) {
           break;
         }
+
+        if (traversalComplete) {
+          _knownDirectories[root] = directories;
+          await _onFolderReconciled?.call(root, folderDiscovered);
+          if (_isCancelled || _isDisposed || !_explicitFolders.contains(root)) {
+            break;
+          }
+        }
         await _onFolderScanCompleted?.call(
           root,
           fileCount: folderDiscovered.length,
@@ -382,6 +417,7 @@ class MediaScannerService {
         await _enrichFiles(
           allDiscoveredFiles,
           shouldContinue: _isPathInRegisteredFolder,
+          skipUnchanged: true,
         );
       }
 
@@ -404,7 +440,11 @@ class MediaScannerService {
   }
 
   /// Traverses [root] directory iteratively without following symlinks or junctions.
-  Stream<String> _traverseDirectory(String root) async* {
+  Stream<String> _traverseDirectory(
+    String root, {
+    void Function()? onError,
+    void Function(String path)? onDirectory,
+  }) async* {
     final queue = Queue<String>()..add(root);
     final visitedDirs = <String>{};
 
@@ -413,6 +453,7 @@ class MediaScannerService {
       final current = queue.removeFirst();
       final normCurrent = _pathContext.normalize(current);
       if (!visitedDirs.add(normCurrent)) continue;
+      onDirectory?.call(normCurrent);
 
       final dir = Directory(current);
       Stream<FileSystemEntity> entityStream;
@@ -420,6 +461,7 @@ class MediaScannerService {
         entityStream = dir.list(recursive: false, followLinks: false);
       } catch (_) {
         // Unreadable directory or permission denied - do NOT fail scan!
+        onError?.call();
         continue;
       }
 
@@ -434,6 +476,7 @@ class MediaScannerService {
           try {
             type = await FileSystemEntity.type(entity.path, followLinks: false);
           } catch (_) {
+            onError?.call();
             continue;
           }
 
@@ -455,6 +498,7 @@ class MediaScannerService {
         }
       } catch (_) {
         // Stream iteration error on directory - continue safely
+        onError?.call();
         continue;
       }
     }
@@ -464,22 +508,35 @@ class MediaScannerService {
   Future<void> _enrichFiles(
     List<String> filePaths, {
     bool Function(String path)? shouldContinue,
+    bool ignoreScanCancellation = false,
+    bool skipUnchanged = false,
   }) async {
-    if (filePaths.isEmpty || _isCancelled || _isDisposed) return;
+    bool stopped() => _isDisposed || (_isCancelled && !ignoreScanCancellation);
+    if (filePaths.isEmpty || stopped()) return;
 
     final queue = Queue<String>.from(filePaths);
     final activeWorkers = <Future<void>>[];
     int completed = 0;
 
     Future<void> worker() async {
-      while (queue.isNotEmpty && !_isCancelled && !_isDisposed) {
+      while (queue.isNotEmpty && !stopped()) {
         final path = queue.removeFirst();
         if (!(shouldContinue?.call(path) ?? true)) continue;
         try {
+          if (skipUnchanged && _database != null) {
+            final stat = await File(path).stat();
+            final existing = await _database.getMediaByCanonicalSource(path);
+            if (existing != null &&
+                existing.metadata.duration > Duration.zero &&
+                existing.fileSize == stat.size &&
+                existing.modifiedAt?.millisecondsSinceEpoch ==
+                    stat.modified.millisecondsSinceEpoch) {
+              continue;
+            }
+          }
+          if (stopped() || !(shouldContinue?.call(path) ?? true)) break;
           final probeResult = await _probeService.probe(path);
-          if (_isCancelled ||
-              _isDisposed ||
-              !(shouldContinue?.call(path) ?? true)) {
+          if (stopped() || !(shouldContinue?.call(path) ?? true)) {
             break;
           }
 
@@ -491,9 +548,7 @@ class MediaScannerService {
             modifiedAt: probeResult.modifiedAt,
           );
         } catch (_) {
-          if (_isCancelled ||
-              _isDisposed ||
-              !(shouldContinue?.call(path) ?? true)) {
+          if (stopped() || !(shouldContinue?.call(path) ?? true)) {
             break;
           }
           // Probe error or unreadable file: do NOT fail scan, fall back to basic file stats
@@ -539,27 +594,60 @@ class MediaScannerService {
       _watchers[norm] = watcher;
       _watcherSubscriptions[norm] = watcher.events.listen(
         (event) => _onWatchEvent(norm, event),
-        onError: (Object error) {
-          // Folder became inaccessible or disconnected
-          final update = _onFolderAvailabilityChanged?.call(norm, false);
-          if (update != null) {
-            unawaited(
-              update.catchError((Object callbackError, StackTrace stackTrace) {
-                if (kDebugMode) {
-                  debugPrint(
-                    'MediaScannerService watcher availability error: '
-                    '$callbackError\n$stackTrace',
-                  );
-                }
-              }),
-            );
-          }
-        },
+        onError: (Object error) => _handleWatcherUnavailable(norm),
+        onDone: () => _handleWatcherUnavailable(norm),
         cancelOnError: false,
       );
     } catch (_) {
       // Directory cannot be watched yet (e.g. not created yet or drive unmounted)
     }
+  }
+
+  void _handleWatcherUnavailable(String root) {
+    if (_isDisposed || !_explicitFolders.contains(root)) return;
+    _stopWatching(root);
+    _scheduleReconnect(root);
+    final update = _onFolderAvailabilityChanged?.call(root, false);
+    if (update != null) {
+      unawaited(
+        update
+            .then((_) {
+              if (!_isDisposed && _explicitFolders.contains(root)) {
+                _updateStatus(_status, force: true);
+              }
+            })
+            .catchError((Object error, StackTrace stackTrace) {
+              if (kDebugMode) {
+                debugPrint(
+                  'MediaScannerService watcher availability error: $error\n$stackTrace',
+                );
+              }
+            }),
+      );
+    }
+  }
+
+  void _scheduleReconnect(String root) {
+    if (_isDisposed ||
+        !_explicitFolders.contains(root) ||
+        _reconnectTimers.containsKey(root)) {
+      return;
+    }
+    _reconnectTimers[root] = Timer(_reconnectInterval, () async {
+      _reconnectTimers.remove(root);
+      if (_isDisposed || !_explicitFolders.contains(root)) return;
+      try {
+        if (await Directory(root).exists()) {
+          if (!_isDisposed && _explicitFolders.contains(root)) {
+            await _runScanRoots(<String>[root], replaceCurrent: false);
+          }
+        } else {
+          _scheduleReconnect(root);
+        }
+      } catch (_) {
+        _scheduleReconnect(root);
+      }
+    });
   }
 
   void _stopWatching(String folderPath) {
@@ -576,6 +664,29 @@ class MediaScannerService {
 
   void _onWatchEvent(String rootFolder, WatchEvent event) {
     if (_isDisposed) return;
+    final eventPath = _pathContext.normalize(_pathContext.absolute(event.path));
+    if (event.type == ChangeType.REMOVE &&
+        _pathContext.equals(rootFolder, eventPath)) {
+      _handleWatcherUnavailable(rootFolder);
+      return;
+    }
+    if (!MediaCatalog.isSupportedFile(event.path)) {
+      if (event.type == ChangeType.ADD) {
+        unawaited(_checkAddedDirectory(rootFolder, eventPath));
+        return;
+      }
+      if (event.type == ChangeType.REMOVE &&
+          (_pathContext.extension(event.path).isEmpty ||
+              (_knownDirectories[rootFolder]?.any(
+                    (path) => _pathContext.equals(path, eventPath),
+                  ) ??
+                  false))) {
+        _pendingEvents.remove(rootFolder);
+        _pendingFullRescans.add(rootFolder);
+      } else {
+        return;
+      }
+    }
     if (MediaCatalog.isSupportedFile(event.path) &&
         !_pendingFullRescans.contains(rootFolder)) {
       final events = _pendingEvents.putIfAbsent(
@@ -590,6 +701,23 @@ class MediaScannerService {
         _pendingFullRescans.add(rootFolder);
       }
     }
+    _scheduleWatcherDrain(rootFolder);
+  }
+
+  Future<void> _checkAddedDirectory(String rootFolder, String path) async {
+    try {
+      if (!await Directory(path).exists() ||
+          _isDisposed ||
+          !_explicitFolders.contains(rootFolder)) {
+        return;
+      }
+      _pendingEvents.remove(rootFolder);
+      _pendingFullRescans.add(rootFolder);
+      _scheduleWatcherDrain(rootFolder);
+    } catch (_) {}
+  }
+
+  void _scheduleWatcherDrain(String rootFolder) {
     final now = DateTime.now();
     final started = _pendingEventStarts.putIfAbsent(rootFolder, () => now);
     final maximumDelayRemaining =
@@ -677,6 +805,7 @@ class MediaScannerService {
       if (_isDisposed || !_explicitFolders.contains(rootFolder)) return;
       await _enrichFiles(
         validAdded,
+        ignoreScanCancellation: true,
         shouldContinue: (path) =>
             !_isDisposed && _explicitFolders.contains(rootFolder),
       );
@@ -686,10 +815,28 @@ class MediaScannerService {
       if (_isDisposed || !_explicitFolders.contains(rootFolder)) return;
       await _onFileAvailabilityChanged?.call(path, false);
     }
+    if (!_isDisposed && _explicitFolders.contains(rootFolder)) {
+      await _database?.refreshFolderFileCount(rootFolder);
+      _updateStatus(_status, force: true);
+    }
   }
 
-  void _updateStatus(LibraryScanStatus newStatus) {
+  void _updateStatus(LibraryScanStatus newStatus, {bool force = false}) {
+    final previous = _status;
     _status = newStatus;
+    final now = DateTime.now();
+    final onlyCountsChanged =
+        previous.phase == newStatus.phase &&
+        previous.currentFolder == newStatus.currentFolder &&
+        previous.errorMessage == newStatus.errorMessage;
+    if (!force &&
+        onlyCountsChanged &&
+        _lastStatusEmission != null &&
+        now.difference(_lastStatusEmission!) <
+            const Duration(milliseconds: 100)) {
+      return;
+    }
+    _lastStatusEmission = now;
     if (!_statusController.isClosed) {
       _statusController.add(_status);
     }
@@ -709,6 +856,10 @@ class MediaScannerService {
       timer.cancel();
     }
     _debounceTimers.clear();
+    for (final timer in _reconnectTimers.values) {
+      timer.cancel();
+    }
+    _reconnectTimers.clear();
 
     for (final sub in _watcherSubscriptions.values) {
       await sub.cancel();
@@ -717,6 +868,7 @@ class MediaScannerService {
     _watchers.clear();
     _pendingEvents.clear();
     _pendingFullRescans.clear();
+    _knownDirectories.clear();
     _pendingEventStarts.clear();
     await Future.wait(_watcherDrains.values, eagerError: false);
     _watcherDrains.clear();

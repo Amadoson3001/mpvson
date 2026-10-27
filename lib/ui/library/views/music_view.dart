@@ -3,9 +3,15 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import '../../../data/repositories/media_library_repository.dart';
 import '../../../domain/models/library_models.dart';
+import '../../../domain/models/media_entry.dart';
 import '../../player/player_controller.dart';
-import '../theme/library_theme.dart';
-import '../widgets/empty_library_view.dart';
+import '../../core/app_theme.dart';
+import '../../core/components/media_tile.dart';
+import '../../core/components/media_row.dart';
+import '../../core/components/media_accent_scope.dart';
+import '../../core/components/empty_state.dart';
+import '../widgets/add_to_playlist_dialog.dart';
+import '../widgets/library_artwork.dart';
 
 enum MusicSubtab {
   songs,
@@ -40,7 +46,10 @@ class MusicView extends StatefulWidget {
 
 class _MusicViewState extends State<MusicView> {
   MusicSubtab _currentSubtab = MusicSubtab.songs;
+  String? _selectedSongPath;
+  String? _hoveredSongPath;
   String? _selectedAlbum;
+  String? _selectedAlbumArtist;
   String? _selectedArtist;
   List<MediaItemRecord>? _items;
   List<MediaItemRecord>? _albumTracks;
@@ -64,6 +73,13 @@ class _MusicViewState extends State<MusicView> {
       widget.repository.addListener(_onRepoChanged);
       _reload();
     } else if (oldWidget.searchQuery != widget.searchQuery) {
+      if (widget.searchQuery?.trim().isNotEmpty ?? false) {
+        _selectedAlbum = null;
+        _selectedAlbumArtist = null;
+        _selectedArtist = null;
+        _albumTracks = null;
+        _artistSongs = null;
+      }
       _reload();
     }
   }
@@ -99,14 +115,24 @@ class _MusicViewState extends State<MusicView> {
       do {
         _reloadAgain = false;
         final album = _selectedAlbum;
+        final albumArtist = _selectedAlbumArtist;
         final artist = _selectedArtist;
         final List<MediaItemRecord> items;
         if (album != null) {
-          items = await widget.repository.queryMedia(
+          final matching = await widget.repository.queryMedia(
             kind: MediaKind.audio,
             album: album,
             sortBy: 'trackNumber',
           );
+          items = albumArtist == null
+              ? matching
+              : matching
+                    .where(
+                      (item) =>
+                          item.metadata.effectiveAlbumArtist.toLowerCase() ==
+                          albumArtist.toLowerCase(),
+                    )
+                    .toList();
         } else if (artist != null) {
           items = await widget.repository.queryMedia(
             kind: MediaKind.audio,
@@ -159,12 +185,17 @@ class _MusicViewState extends State<MusicView> {
     List<MediaItemRecord> songs,
     int initialIndex,
   ) async {
-    final paths = songs.map((s) => s.path).toList();
+    if (initialIndex < 0 ||
+        initialIndex >= songs.length ||
+        !songs[initialIndex].isAvailable) {
+      return;
+    }
+    final paths = songs.where((s) => s.isAvailable).map((s) => s.path).toList();
     if (paths.isEmpty) return;
     await widget.controller.openPaths(
       paths,
       append: false,
-      initialIndex: initialIndex,
+      initialIndex: songs.take(initialIndex).where((s) => s.isAvailable).length,
     );
   }
 
@@ -183,7 +214,10 @@ class _MusicViewState extends State<MusicView> {
         );
       });
 
-    final paths = sorted.map((s) => s.path).toList();
+    final paths = sorted
+        .where((s) => s.isAvailable)
+        .map((s) => s.path)
+        .toList();
     if (paths.isEmpty) return;
 
     if (shuffle) {
@@ -196,30 +230,36 @@ class _MusicViewState extends State<MusicView> {
   Widget build(BuildContext context) {
     // If drilling down into an album or artist, show detail view
     if (_selectedAlbum != null) {
-      return _buildAlbumDetailView(_selectedAlbum!);
+      return _detailAccent(
+        _buildAlbumDetailView(_selectedAlbum!),
+        _albumTracks,
+      );
     }
     if (_selectedArtist != null) {
-      return _buildArtistDetailView(_selectedArtist!);
+      return _detailAccent(
+        _buildArtistDetailView(_selectedArtist!),
+        _artistSongs,
+      );
     }
 
     final items = _items ?? const <MediaItemRecord>[];
 
     return Material(
-      color: LibraryTheme.background,
+      color: AppTheme.background,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           // Subtab Navigation Bar
           _buildSubtabHeader(),
-          const Divider(height: 1, color: LibraryTheme.border),
+          const Divider(height: 1, color: AppTheme.border),
           // Content stage
           Expanded(
             child: _isLoading && _items == null
-                ? const Center(
+                ? Center(
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
                       valueColor: AlwaysStoppedAnimation<Color>(
-                        LibraryTheme.accent,
+                        Theme.of(context).colorScheme.primary,
                       ),
                     ),
                   )
@@ -239,93 +279,102 @@ class _MusicViewState extends State<MusicView> {
     );
   }
 
+  void _changeSubtab(MusicSubtab tab) {
+    setState(() {
+      _currentSubtab = tab;
+      _selectedAlbum = null;
+      _selectedAlbumArtist = null;
+      _selectedArtist = null;
+      _items = null;
+    });
+    _reload();
+  }
+
+  Widget _detailAccent(Widget child, List<MediaItemRecord>? items) {
+    if (items == null || items.isEmpty) return child;
+    return MediaAccentScope(
+      controller: widget.controller,
+      entryOverride: MediaEntry.fromPath(items.first.path, id: items.first.id),
+      child: child,
+    );
+  }
+
   Widget _buildSubtabHeader() {
+    final songsSelected =
+        _currentSubtab != MusicSubtab.albums &&
+        _currentSubtab != MusicSubtab.artists;
     return Container(
-      color: LibraryTheme.surface,
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: [
-            _subtabButton('Songs', MusicSubtab.songs, Icons.music_note_rounded),
-            const SizedBox(width: 6),
-            _subtabButton('Albums', MusicSubtab.albums, Icons.album_rounded),
-            const SizedBox(width: 6),
-            _subtabButton('Artists', MusicSubtab.artists, Icons.person_rounded),
-            const SizedBox(width: 6),
-            _subtabButton(
-              'Favorites',
-              MusicSubtab.favorites,
-              Icons.favorite_rounded,
+      color: AppTheme.surface,
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpace.lg,
+        vertical: AppSpace.xs,
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  _subtabButton('Songs', MusicSubtab.songs, songsSelected),
+                  _subtabButton(
+                    'Albums',
+                    MusicSubtab.albums,
+                    _currentSubtab == MusicSubtab.albums,
+                  ),
+                  _subtabButton(
+                    'Artists',
+                    MusicSubtab.artists,
+                    _currentSubtab == MusicSubtab.artists,
+                  ),
+                ],
+              ),
             ),
-            const SizedBox(width: 6),
-            _subtabButton(
-              'Recently Added',
-              MusicSubtab.recentlyAdded,
-              Icons.access_time_rounded,
+          ),
+          if (songsSelected)
+            PopupMenuButton<MusicSubtab>(
+              tooltip: 'Filter songs',
+              onSelected: _changeSubtab,
+              icon: Icon(
+                Icons.filter_list_rounded,
+                color: _currentSubtab == MusicSubtab.songs
+                    ? AppTheme.secondaryText
+                    : Theme.of(context).colorScheme.primary,
+              ),
+              itemBuilder: (_) => const [
+                PopupMenuItem(
+                  value: MusicSubtab.songs,
+                  child: Text('All songs'),
+                ),
+                PopupMenuItem(
+                  value: MusicSubtab.favorites,
+                  child: Text('Favorites'),
+                ),
+                PopupMenuItem(
+                  value: MusicSubtab.recentlyAdded,
+                  child: Text('Recently added'),
+                ),
+                PopupMenuItem(
+                  value: MusicSubtab.recentlyPlayed,
+                  child: Text('Recently played'),
+                ),
+              ],
             ),
-            const SizedBox(width: 6),
-            _subtabButton(
-              'Recently Played',
-              MusicSubtab.recentlyPlayed,
-              Icons.history_rounded,
-            ),
-          ],
-        ),
+        ],
       ),
     );
   }
 
-  Widget _subtabButton(String title, MusicSubtab tab, IconData icon) {
-    final isSelected = _currentSubtab == tab;
-    return InkWell(
-      onTap: () {
-        setState(() {
-          _currentSubtab = tab;
-          _selectedAlbum = null;
-          _selectedArtist = null;
-          _items = null;
-        });
-        _reload();
-      },
-      borderRadius: BorderRadius.circular(8),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-        decoration: BoxDecoration(
-          color: isSelected ? LibraryTheme.raisedSurface : Colors.transparent,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color: isSelected
-                ? LibraryTheme.accent.withValues(alpha: 0.6)
-                : Colors.transparent,
-          ),
+  Widget _subtabButton(String title, MusicSubtab tab, bool selected) =>
+      TextButton(
+        onPressed: () => _changeSubtab(tab),
+        style: TextButton.styleFrom(
+          foregroundColor: selected
+              ? Theme.of(context).colorScheme.primary
+              : AppTheme.secondaryText,
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              icon,
-              size: 16,
-              color: isSelected
-                  ? LibraryTheme.accent
-                  : LibraryTheme.secondaryText,
-            ),
-            const SizedBox(width: 8),
-            Text(
-              title,
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
-                color: isSelected
-                    ? LibraryTheme.primaryText
-                    : LibraryTheme.secondaryText,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+        child: Text(title),
+      );
 
   Future<List<MediaItemRecord>> _fetchMediaForSubtab() async {
     final query = widget.searchQuery;
@@ -364,25 +413,31 @@ class _MusicViewState extends State<MusicView> {
   }
 
   Widget _buildEmptyStateForSubtab() {
+    final query = widget.searchQuery?.trim();
+    if (query != null && query.isNotEmpty) {
+      return EmptyState(
+        title: 'No music found',
+        message: 'No songs matched "$query". Try a different search.',
+        icon: Icons.search_off_rounded,
+      );
+    }
     switch (_currentSubtab) {
       case MusicSubtab.favorites:
-        return const EmptyLibraryView(
+        return const EmptyState(
           title: 'No favorite songs yet',
           message:
               'Click the heart icon on any song or track to add it to your favorites.',
-          actionLabel: '',
           icon: Icons.favorite_border_rounded,
         );
       case MusicSubtab.recentlyPlayed:
-        return const EmptyLibraryView(
+        return const EmptyState(
           title: 'No recently played music',
           message:
               'Songs you listen to will appear here in chronological order.',
-          actionLabel: '',
           icon: Icons.history_rounded,
         );
       default:
-        return EmptyLibraryView(
+        return EmptyState(
           title: 'No music found',
           message: widget.searchQuery != null && widget.searchQuery!.isNotEmpty
               ? 'No songs matched "${widget.searchQuery}". Try a different keyword.'
@@ -395,11 +450,14 @@ class _MusicViewState extends State<MusicView> {
 
   Widget _buildSongTableView(List<MediaItemRecord> songs) {
     return ListView.separated(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpace.lg,
+        vertical: AppSpace.md,
+      ),
       itemCount: songs.length + 1, // header row + songs
       separatorBuilder: (_, index) => index == 0
-          ? const Divider(height: 16, thickness: 1, color: LibraryTheme.border)
-          : const Divider(height: 1, color: LibraryTheme.surface),
+          ? const Divider(height: 16, thickness: 1, color: AppTheme.border)
+          : const Divider(height: 1, color: AppTheme.surface),
       itemBuilder: (context, index) {
         if (index == 0) {
           return _buildTableHeaderRow();
@@ -413,26 +471,26 @@ class _MusicViewState extends State<MusicView> {
 
   Widget _buildTableHeaderRow() {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpace.sm,
+        vertical: AppSpace.xs,
+      ),
       child: Row(
         children: [
-          const SizedBox(
-            width: 36,
-            child: Text('#', style: LibraryTheme.metadata),
-          ),
+          const SizedBox(width: 36, child: Text('#', style: AppTheme.metadata)),
           const Expanded(
             flex: 4,
-            child: Text('Title & Artist', style: LibraryTheme.metadata),
+            child: Text('Title', style: AppTheme.metadata),
           ),
           const Expanded(
             flex: 3,
-            child: Text('Album', style: LibraryTheme.metadata),
+            child: Text('Album', style: AppTheme.metadata),
           ),
           const SizedBox(
             width: 70,
             child: Text(
               'Duration',
-              style: LibraryTheme.metadata,
+              style: AppTheme.metadata,
               textAlign: TextAlign.right,
             ),
           ),
@@ -448,152 +506,198 @@ class _MusicViewState extends State<MusicView> {
     MediaItemRecord song,
     int index,
   ) {
+    final accent = Theme.of(context).colorScheme.primary;
     final isCurrent = widget.controller.current?.path == song.path;
     final isUnavailable = !song.isAvailable;
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(8),
-        color: isCurrent
-            ? LibraryTheme.accent.withValues(alpha: 0.1)
-            : Colors.transparent,
-      ),
-      child: Row(
-        children: [
-          // Clickable content region (double-tap to play)
-          Expanded(
-            child: InkWell(
-              onDoubleTap: () => _playSongCollection(collection, index),
-              borderRadius: BorderRadius.circular(8),
-              hoverColor: LibraryTheme.hover,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 6),
-                child: Row(
-                  children: [
-                    // Track index or playing indicator
-                    SizedBox(
-                      width: 36,
-                      child: isCurrent && widget.controller.isPlaying
-                          ? const Icon(
-                              Icons.volume_up_rounded,
-                              size: 16,
-                              color: LibraryTheme.accent,
-                            )
-                          : Text(
-                              '${index + 1}',
-                              style: LibraryTheme.metadata.copyWith(
-                                color: isCurrent
-                                    ? LibraryTheme.accent
-                                    : LibraryTheme.mutedText,
-                              ),
-                            ),
-                    ),
-                    // Title & Artist + Missing file indicator
-                    Expanded(
-                      flex: 4,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Row(
+    final isSelected = _selectedSongPath == song.path;
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hoveredSongPath = song.path),
+      onExit: (_) => setState(() {
+        if (_hoveredSongPath == song.path) _hoveredSongPath = null;
+      }),
+      child: MediaRow(
+        key: ValueKey(song.id),
+        onSelect: () {
+          if (_selectedSongPath != song.path) {
+            setState(() => _selectedSongPath = song.path);
+          }
+        },
+        onPlay: isUnavailable
+            ? null
+            : () => _playSongCollection(collection, index),
+        builder: (context, rowFocus) => Container(
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpace.sm,
+            vertical: AppSpace.xxs,
+          ),
+          decoration: BoxDecoration(
+            color: isSelected ? AppTheme.hover : Colors.transparent,
+            border: isSelected
+                ? Border(left: BorderSide(color: accent, width: 2))
+                : null,
+          ),
+          child: Row(
+            children: [
+              // Clickable content region (double-tap to play)
+              Expanded(
+                child: InkWell(
+                  canRequestFocus: false,
+                  onTap: () {
+                    rowFocus.requestFocus();
+                    setState(() => _selectedSongPath = song.path);
+                  },
+                  onDoubleTap: isUnavailable
+                      ? null
+                      : () => _playSongCollection(collection, index),
+                  borderRadius: BorderRadius.circular(AppRadii.control),
+                  hoverColor: AppTheme.hover,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    child: Row(
+                      children: [
+                        // Track index or playing indicator
+                        SizedBox(
+                          width: 36,
+                          child: _hoveredSongPath == song.path && !isUnavailable
+                              ? InkWell(
+                                  onTap: () =>
+                                      _playSongCollection(collection, index),
+                                  child: Icon(
+                                    Icons.play_arrow_rounded,
+                                    size: 20,
+                                    color: accent,
+                                  ),
+                                )
+                              : isCurrent && widget.controller.isPlaying
+                              ? Icon(
+                                  Icons.volume_up_rounded,
+                                  size: 16,
+                                  color: accent,
+                                )
+                              : Text(
+                                  '${index + 1}',
+                                  style: AppTheme.metadata.copyWith(
+                                    color: isCurrent
+                                        ? accent
+                                        : AppTheme.mutedText,
+                                  ),
+                                ),
+                        ),
+                        // Title & Artist + Missing file indicator
+                        Expanded(
+                          flex: 4,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
                             children: [
-                              Flexible(
-                                child: Text(
-                                  song.title,
-                                  style: LibraryTheme.rowPrimary.copyWith(
-                                    color: isUnavailable
-                                        ? LibraryTheme.mutedText
-                                        : isCurrent
-                                        ? LibraryTheme.accent
-                                        : LibraryTheme.primaryText,
-                                    fontWeight: isCurrent
-                                        ? FontWeight.w600
-                                        : FontWeight.w500,
+                              Row(
+                                children: [
+                                  Flexible(
+                                    child: Text(
+                                      song.title,
+                                      style: AppTheme.rowPrimary.copyWith(
+                                        color: isUnavailable
+                                            ? AppTheme.mutedText
+                                            : isCurrent
+                                            ? accent
+                                            : AppTheme.primaryText,
+                                        fontWeight: isCurrent
+                                            ? FontWeight.w600
+                                            : FontWeight.w500,
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
                                   ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
+                                  if (isUnavailable) ...[
+                                    const SizedBox(width: 6),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 5,
+                                        vertical: 1,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: AppTheme.danger.withValues(
+                                          alpha: 0.2,
+                                        ),
+                                        borderRadius: BorderRadius.circular(
+                                          AppRadii.control,
+                                        ),
+                                      ),
+                                      child: Text(
+                                        'Missing',
+                                        style: AppTheme.badge.copyWith(
+                                          fontSize: AppType.caption,
+                                          color: AppTheme.danger,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ],
                               ),
-                              if (isUnavailable) ...[
-                                const SizedBox(width: 6),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 5,
-                                    vertical: 1,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: LibraryTheme.danger.withValues(
-                                      alpha: 0.2,
-                                    ),
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                  child: Text(
-                                    'Missing',
-                                    style: LibraryTheme.badge.copyWith(
-                                      fontSize: 10,
-                                      color: LibraryTheme.danger,
-                                    ),
-                                  ),
-                                ),
-                              ],
+                              const SizedBox(height: 2),
+                              Text(
+                                song.artist,
+                                style: AppTheme.rowSecondary,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ],
                           ),
-                          const SizedBox(height: 2),
-                          Text(
-                            song.artist,
-                            style: LibraryTheme.rowSecondary,
+                        ),
+                        // Album
+                        Expanded(
+                          flex: 3,
+                          child: Text(
+                            song.album,
+                            style: AppTheme.rowSecondary,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
-                        ],
-                      ),
+                        ),
+                        // Duration
+                        SizedBox(
+                          width: 70,
+                          child: Text(
+                            _formatDuration(song.metadata.duration),
+                            style: AppTheme.metadata.copyWith(
+                              fontFeatures: const [
+                                FontFeature.tabularFigures(),
+                              ],
+                            ),
+                            textAlign: TextAlign.right,
+                          ),
+                        ),
+                      ],
                     ),
-                    // Album
-                    Expanded(
-                      flex: 3,
-                      child: Text(
-                        song.album,
-                        style: LibraryTheme.rowSecondary,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    // Duration
-                    SizedBox(
-                      width: 70,
-                      child: Text(
-                        _formatDuration(song.metadata.duration),
-                        style: LibraryTheme.metadata,
-                        textAlign: TextAlign.right,
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ),
-            ),
-          ),
-          // Favorite Button
-          SizedBox(
-            width: 48,
-            child: IconButton(
-              icon: Icon(
-                song.isFavorite
-                    ? Icons.favorite_rounded
-                    : Icons.favorite_border_rounded,
-                size: 18,
-                color: song.isFavorite
-                    ? LibraryTheme.accent
-                    : LibraryTheme.mutedText,
+              // Favorite Button
+              SizedBox(
+                width: 48,
+                child: IconButton(
+                  icon: Icon(
+                    song.isFavorite
+                        ? Icons.favorite_rounded
+                        : Icons.favorite_border_rounded,
+                    size: 18,
+                    color: song.isFavorite ? accent : AppTheme.mutedText,
+                  ),
+                  tooltip: song.isFavorite
+                      ? 'Remove favorite'
+                      : 'Add to favorites',
+                  onPressed: () => widget.repository.toggleFavorite(
+                    song.id,
+                    !song.isFavorite,
+                  ),
+                ),
               ),
-              tooltip: song.isFavorite ? 'Remove favorite' : 'Add to favorites',
-              onPressed: () =>
-                  widget.repository.toggleFavorite(song.id, !song.isFavorite),
-            ),
+              // More actions menu
+              SizedBox(width: 40, child: _buildItemActionMenu(song)),
+            ],
           ),
-          // More actions menu
-          SizedBox(width: 40, child: _buildItemActionMenu(song)),
-        ],
+        ),
       ),
     );
   }
@@ -603,13 +707,13 @@ class _MusicViewState extends State<MusicView> {
       icon: const Icon(
         Icons.more_vert_rounded,
         size: 18,
-        color: LibraryTheme.mutedText,
+        color: AppTheme.mutedText,
       ),
       tooltip: 'Actions',
-      color: LibraryTheme.surface,
+      color: AppTheme.surface,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(8),
-        side: const BorderSide(color: LibraryTheme.border),
+        borderRadius: BorderRadius.circular(AppRadii.control),
+        side: const BorderSide(color: AppTheme.border),
       ),
       onSelected: (action) async {
         switch (action) {
@@ -637,99 +741,129 @@ class _MusicViewState extends State<MusicView> {
           case 'toggle_favorite':
             await widget.repository.toggleFavorite(song.id, !song.isFavorite);
             break;
+          case 'add_playlist':
+            final added = await AddToPlaylistDialog.show(
+              context,
+              widget.repository,
+              song.id,
+            );
+            if (added && mounted) {
+              ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+                const SnackBar(content: Text('Added to playlist')),
+              );
+            }
+            break;
           case 'show_folder':
             _showInFolder(song.path);
             break;
         }
       },
-      itemBuilder: (context) => [
-        const PopupMenuItem(
-          value: 'play_now',
-          child: Row(
-            children: [
-              Icon(
-                Icons.play_arrow_rounded,
-                size: 18,
-                color: LibraryTheme.accent,
-              ),
-              SizedBox(width: 10),
-              Expanded(child: Text('Play now', style: LibraryTheme.rowPrimary)),
-            ],
-          ),
-        ),
-        const PopupMenuItem(
-          value: 'play_next',
-          child: Row(
-            children: [
-              Icon(
-                Icons.playlist_play_rounded,
-                size: 18,
-                color: LibraryTheme.secondaryText,
-              ),
-              SizedBox(width: 10),
-              Expanded(
-                child: Text('Play next', style: LibraryTheme.rowPrimary),
-              ),
-            ],
-          ),
-        ),
-        const PopupMenuItem(
-          value: 'add_queue',
-          child: Row(
-            children: [
-              Icon(
-                Icons.queue_music_rounded,
-                size: 18,
-                color: LibraryTheme.secondaryText,
-              ),
-              SizedBox(width: 10),
-              Expanded(
-                child: Text('Add to queue', style: LibraryTheme.rowPrimary),
-              ),
-            ],
-          ),
-        ),
-        PopupMenuItem(
-          value: 'toggle_favorite',
-          child: Row(
-            children: [
-              Icon(
-                song.isFavorite
-                    ? Icons.favorite_border_rounded
-                    : Icons.favorite_rounded,
-                size: 18,
-                color: LibraryTheme.accent,
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  song.isFavorite ? 'Remove favorite' : 'Favorite',
-                  style: LibraryTheme.rowPrimary,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+      itemBuilder: (context) {
+        final accent = Theme.of(context).colorScheme.primary;
+        return [
+          PopupMenuItem(
+            value: 'play_now',
+            enabled: song.isAvailable,
+            child: Row(
+              children: [
+                Icon(Icons.play_arrow_rounded, size: 18, color: accent),
+                const SizedBox(width: 10),
+                const Expanded(
+                  child: Text('Play now', style: AppTheme.rowPrimary),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
-        const PopupMenuDivider(height: 1),
-        const PopupMenuItem(
-          value: 'show_folder',
-          child: Row(
-            children: [
-              Icon(
-                Icons.folder_open_rounded,
-                size: 18,
-                color: LibraryTheme.secondaryText,
-              ),
-              SizedBox(width: 10),
-              Expanded(
-                child: Text('Show in folder', style: LibraryTheme.rowPrimary),
-              ),
-            ],
+          PopupMenuItem(
+            value: 'play_next',
+            enabled: song.isAvailable,
+            child: const Row(
+              children: [
+                Icon(
+                  Icons.playlist_play_rounded,
+                  size: 18,
+                  color: AppTheme.secondaryText,
+                ),
+                SizedBox(width: 10),
+                Expanded(child: Text('Play next', style: AppTheme.rowPrimary)),
+              ],
+            ),
           ),
-        ),
-      ],
+          PopupMenuItem(
+            value: 'add_queue',
+            enabled: song.isAvailable,
+            child: const Row(
+              children: [
+                Icon(
+                  Icons.queue_music_rounded,
+                  size: 18,
+                  color: AppTheme.secondaryText,
+                ),
+                SizedBox(width: 10),
+                Expanded(
+                  child: Text('Add to queue', style: AppTheme.rowPrimary),
+                ),
+              ],
+            ),
+          ),
+          const PopupMenuItem(
+            value: 'add_playlist',
+            child: Row(
+              children: [
+                Icon(
+                  Icons.playlist_add_rounded,
+                  size: 18,
+                  color: AppTheme.secondaryText,
+                ),
+                SizedBox(width: 10),
+                Expanded(
+                  child: Text('Add to playlist', style: AppTheme.rowPrimary),
+                ),
+              ],
+            ),
+          ),
+          PopupMenuItem(
+            value: 'toggle_favorite',
+            child: Row(
+              children: [
+                Icon(
+                  song.isFavorite
+                      ? Icons.favorite_border_rounded
+                      : Icons.favorite_rounded,
+                  size: 18,
+                  color: accent,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    song.isFavorite ? 'Remove favorite' : 'Favorite',
+                    style: AppTheme.rowPrimary,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const PopupMenuDivider(height: 1),
+          const PopupMenuItem(
+            value: 'show_folder',
+            child: Row(
+              children: [
+                Icon(
+                  Icons.folder_open_rounded,
+                  size: 18,
+                  color: AppTheme.secondaryText,
+                ),
+                SizedBox(width: 10),
+                Expanded(
+                  child: Text('Show in folder', style: AppTheme.rowPrimary),
+                ),
+              ],
+            ),
+          ),
+        ];
+      },
     );
   }
 
@@ -737,15 +871,26 @@ class _MusicViewState extends State<MusicView> {
 
   Widget _buildAlbumsGridView(List<MediaItemRecord> songs) {
     // Group songs by album
-    final Map<String, List<MediaItemRecord>> albumsMap = {};
+    final Map<(String, String), List<MediaItemRecord>> albumsMap = {};
     for (final song in songs) {
-      albumsMap.putIfAbsent(song.album, () => []).add(song);
+      albumsMap
+          .putIfAbsent((
+            song.album,
+            song.metadata.effectiveAlbumArtist,
+          ), () => [])
+          .add(song);
     }
 
-    final albums = albumsMap.keys.toList()..sort();
+    final albums = albumsMap.keys.toList()
+      ..sort((a, b) {
+        final title = a.$1.toLowerCase().compareTo(b.$1.toLowerCase());
+        return title != 0
+            ? title
+            : a.$2.toLowerCase().compareTo(b.$2.toLowerCase());
+      });
 
     return GridView.builder(
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.all(AppSpace.lg),
       gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
         maxCrossAxisExtent: 220,
         mainAxisSpacing: 24,
@@ -754,9 +899,10 @@ class _MusicViewState extends State<MusicView> {
       ),
       itemCount: albums.length,
       itemBuilder: (context, index) {
-        final albumName = albums[index];
-        final albumSongs = albumsMap[albumName]!;
-        final artist = albumSongs.first.artist;
+        final key = albums[index];
+        final albumName = key.$1;
+        final albumSongs = albumsMap[key]!;
+        final artist = key.$2;
         final trackCount = albumSongs.length;
 
         return _buildAlbumCard(albumName, artist, trackCount, albumSongs);
@@ -770,92 +916,29 @@ class _MusicViewState extends State<MusicView> {
     int trackCount,
     List<MediaItemRecord> albumSongs,
   ) {
-    return InkWell(
+    return MediaTile(
+      artwork: LibraryArtwork(
+        path: albumSongs.first.metadata.artworkUri,
+        mediaPath: albumSongs.first.path,
+        repository: widget.repository,
+      ),
+      title: albumName,
+      subtitle: artist,
       onTap: () {
         setState(() {
           _selectedAlbum = albumName;
+          _selectedAlbumArtist = artist;
           _albumTracks = null;
         });
         _reload();
       },
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: LibraryTheme.surface,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: LibraryTheme.border),
+      overlay: FilledButton.tonal(
+        onPressed: () => _playAlbum(albumSongs),
+        style: FilledButton.styleFrom(
+          padding: EdgeInsets.zero,
+          minimumSize: const Size(40, 40),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Square Cover Art with Hover Play Button
-            Expanded(
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  Container(
-                    decoration: BoxDecoration(
-                      color: LibraryTheme.raisedSurface,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: const Center(
-                      child: Icon(
-                        Icons.album_rounded,
-                        size: 48,
-                        color: LibraryTheme.mutedText,
-                      ),
-                    ),
-                  ),
-                  Positioned(
-                    right: 8,
-                    bottom: 8,
-                    child: Container(
-                      decoration: const BoxDecoration(
-                        color: LibraryTheme.accent,
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black45,
-                            blurRadius: 8,
-                            offset: Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: IconButton(
-                        icon: const Icon(
-                          Icons.play_arrow_rounded,
-                          color: LibraryTheme.background,
-                          size: 24,
-                        ),
-                        tooltip: 'Play album',
-                        onPressed: () => _playAlbum(albumSongs),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              albumName,
-              style: LibraryTheme.rowPrimary.copyWith(
-                fontWeight: FontWeight.w600,
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            const SizedBox(height: 2),
-            Text(
-              artist,
-              style: LibraryTheme.rowSecondary,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            const SizedBox(height: 2),
-            Text('$trackCount tracks', style: LibraryTheme.metadata),
-          ],
-        ),
+        child: const Icon(Icons.play_arrow_rounded),
       ),
     );
   }
@@ -884,36 +967,42 @@ class _MusicViewState extends State<MusicView> {
     );
 
     return Scaffold(
-      backgroundColor: LibraryTheme.background,
+      backgroundColor: AppTheme.background,
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           // Header back navigation
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+            padding: const EdgeInsets.fromLTRB(
+              AppSpace.md,
+              AppSpace.md,
+              AppSpace.md,
+              0,
+            ),
             child: Row(
               children: [
                 IconButton(
                   icon: const Icon(Icons.arrow_back_rounded),
                   tooltip: 'Back to albums',
-                  color: LibraryTheme.secondaryText,
+                  color: AppTheme.secondaryText,
                   onPressed: () {
                     setState(() {
                       _selectedAlbum = null;
+                      _selectedAlbumArtist = null;
                       _albumTracks = null;
                     });
                     _reload();
                   },
                 ),
                 const SizedBox(width: 8),
-                Text('Albums', style: LibraryTheme.rowSecondary),
+                Text('Albums', style: AppTheme.rowSecondary),
                 const SizedBox(width: 6),
-                const Text('›', style: LibraryTheme.metadata),
+                const Text('›', style: AppTheme.metadata),
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
                     albumName,
-                    style: LibraryTheme.rowPrimary.copyWith(
+                    style: AppTheme.rowPrimary.copyWith(
                       fontWeight: FontWeight.w600,
                     ),
                     maxLines: 1,
@@ -925,7 +1014,7 @@ class _MusicViewState extends State<MusicView> {
           ),
           // Album hero
           Padding(
-            padding: const EdgeInsets.all(24),
+            padding: const EdgeInsets.all(AppSpace.lg),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
@@ -933,16 +1022,20 @@ class _MusicViewState extends State<MusicView> {
                   width: 160,
                   height: 160,
                   decoration: BoxDecoration(
-                    color: LibraryTheme.raisedSurface,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: LibraryTheme.border),
+                    color: AppTheme.raisedSurface,
+                    borderRadius: BorderRadius.circular(AppRadii.artwork),
+                    border: Border.all(color: AppTheme.border),
                   ),
-                  child: const Center(
-                    child: Icon(
-                      Icons.album_rounded,
-                      size: 64,
-                      color: LibraryTheme.mutedText,
-                    ),
+                  clipBehavior: Clip.antiAlias,
+                  child: LibraryArtwork(
+                    path: sortedTracks.isEmpty
+                        ? null
+                        : sortedTracks.first.metadata.artworkUri,
+                    mediaPath: sortedTracks.isEmpty
+                        ? null
+                        : sortedTracks.first.path,
+                    repository: widget.repository,
+                    iconSize: 64,
                   ),
                 ),
                 const SizedBox(width: 24),
@@ -950,32 +1043,45 @@ class _MusicViewState extends State<MusicView> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(albumName, style: LibraryTheme.albumTitle),
+                      Text(
+                        albumName,
+                        style: AppTheme.albumTitle,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                       const SizedBox(height: 6),
                       Text(
                         artist,
-                        style: LibraryTheme.sectionTitle.copyWith(
-                          color: LibraryTheme.secondaryText,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTheme.sectionTitle.copyWith(
+                          color: AppTheme.secondaryText,
                         ),
                       ),
                       const SizedBox(height: 8),
                       Text(
                         '${sortedTracks.length} tracks • ${_formatDuration(totalDuration)}',
-                        style: LibraryTheme.metadata,
+                        style: AppTheme.metadata,
                       ),
                       const SizedBox(height: 16),
-                      Row(
+                      Wrap(
+                        spacing: 12,
+                        runSpacing: 8,
                         children: [
                           FilledButton.icon(
                             style: FilledButton.styleFrom(
-                              backgroundColor: LibraryTheme.accent,
-                              foregroundColor: LibraryTheme.background,
+                              backgroundColor: Theme.of(
+                                context,
+                              ).colorScheme.primary,
+                              foregroundColor: AppTheme.background,
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 20,
-                                vertical: 12,
+                                vertical: AppSpace.sm,
                               ),
                               shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
+                                borderRadius: BorderRadius.circular(
+                                  AppRadii.control,
+                                ),
                               ),
                             ),
                             onPressed: () => _playAlbum(sortedTracks),
@@ -985,19 +1091,18 @@ class _MusicViewState extends State<MusicView> {
                               style: TextStyle(fontWeight: FontWeight.w600),
                             ),
                           ),
-                          const SizedBox(width: 12),
                           OutlinedButton.icon(
                             style: OutlinedButton.styleFrom(
-                              foregroundColor: LibraryTheme.primaryText,
-                              side: const BorderSide(
-                                color: LibraryTheme.border,
-                              ),
+                              foregroundColor: AppTheme.primaryText,
+                              side: const BorderSide(color: AppTheme.border),
                               padding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 12,
+                                horizontal: AppSpace.md,
+                                vertical: AppSpace.sm,
                               ),
                               shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
+                                borderRadius: BorderRadius.circular(
+                                  AppRadii.control,
+                                ),
                               ),
                             ),
                             onPressed: () =>
@@ -1013,7 +1118,7 @@ class _MusicViewState extends State<MusicView> {
               ],
             ),
           ),
-          const Divider(height: 1, color: LibraryTheme.border),
+          const Divider(height: 1, color: AppTheme.border),
           // Tracklist
           Expanded(child: _buildSongTableView(sortedTracks)),
         ],
@@ -1032,7 +1137,7 @@ class _MusicViewState extends State<MusicView> {
     final artists = artistsMap.keys.toList()..sort();
 
     return GridView.builder(
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.all(AppSpace.lg),
       gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
         maxCrossAxisExtent: 200,
         mainAxisSpacing: 20,
@@ -1045,7 +1150,15 @@ class _MusicViewState extends State<MusicView> {
         final artistSongs = artistsMap[artistName]!;
         final albumCount = artistSongs.map((s) => s.album).toSet().length;
 
-        return InkWell(
+        return MediaTile(
+          artwork: LibraryArtwork(
+            path: artistSongs.first.metadata.artworkUri,
+            mediaPath: artistSongs.first.path,
+            repository: widget.repository,
+            icon: Icons.person_rounded,
+          ),
+          title: artistName,
+          subtitle: '${artistSongs.length} songs, $albumCount albums',
           onTap: () {
             setState(() {
               _selectedArtist = artistName;
@@ -1053,51 +1166,6 @@ class _MusicViewState extends State<MusicView> {
             });
             _reload();
           },
-          borderRadius: BorderRadius.circular(12),
-          child: Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: LibraryTheme.surface,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: LibraryTheme.border),
-            ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Container(
-                  width: 80,
-                  height: 80,
-                  decoration: const BoxDecoration(
-                    color: LibraryTheme.raisedSurface,
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Center(
-                    child: Icon(
-                      Icons.person_rounded,
-                      size: 40,
-                      color: LibraryTheme.accent,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 14),
-                Text(
-                  artistName,
-                  style: LibraryTheme.rowPrimary.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
-                  textAlign: TextAlign.center,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  '${artistSongs.length} songs • $albumCount albums',
-                  style: LibraryTheme.metadata,
-                  textAlign: TextAlign.center,
-                ),
-              ],
-            ),
-          ),
         );
       },
     );
@@ -1109,19 +1177,24 @@ class _MusicViewState extends State<MusicView> {
     final songs = _artistSongs ?? const <MediaItemRecord>[];
 
     return Scaffold(
-      backgroundColor: LibraryTheme.background,
+      backgroundColor: AppTheme.background,
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           // Header back navigation
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+            padding: const EdgeInsets.fromLTRB(
+              AppSpace.md,
+              AppSpace.md,
+              AppSpace.md,
+              0,
+            ),
             child: Row(
               children: [
                 IconButton(
                   icon: const Icon(Icons.arrow_back_rounded),
                   tooltip: 'Back to artists',
-                  color: LibraryTheme.secondaryText,
+                  color: AppTheme.secondaryText,
                   onPressed: () {
                     setState(() {
                       _selectedArtist = null;
@@ -1131,14 +1204,14 @@ class _MusicViewState extends State<MusicView> {
                   },
                 ),
                 const SizedBox(width: 8),
-                Text('Artists', style: LibraryTheme.rowSecondary),
+                Text('Artists', style: AppTheme.rowSecondary),
                 const SizedBox(width: 6),
-                const Text('›', style: LibraryTheme.metadata),
+                const Text('›', style: AppTheme.metadata),
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
                     artistName,
-                    style: LibraryTheme.rowPrimary.copyWith(
+                    style: AppTheme.rowPrimary.copyWith(
                       fontWeight: FontWeight.w600,
                     ),
                     maxLines: 1,
@@ -1149,21 +1222,21 @@ class _MusicViewState extends State<MusicView> {
             ),
           ),
           Padding(
-            padding: const EdgeInsets.all(24),
+            padding: const EdgeInsets.all(AppSpace.lg),
             child: Row(
               children: [
-                Container(
-                  width: 100,
-                  height: 100,
-                  decoration: const BoxDecoration(
-                    color: LibraryTheme.raisedSurface,
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Center(
-                    child: Icon(
-                      Icons.person_rounded,
-                      size: 50,
-                      color: LibraryTheme.accent,
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(AppRadii.artwork),
+                  child: SizedBox(
+                    width: 140,
+                    height: 140,
+                    child: LibraryArtwork(
+                      path: songs.isEmpty
+                          ? null
+                          : songs.first.metadata.artworkUri,
+                      mediaPath: songs.isEmpty ? null : songs.first.path,
+                      repository: widget.repository,
+                      icon: Icons.person_rounded,
                     ),
                   ),
                 ),
@@ -1172,31 +1245,37 @@ class _MusicViewState extends State<MusicView> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(artistName, style: LibraryTheme.pageTitle),
+                      Text(
+                        artistName,
+                        style: AppTheme.pageTitle,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                       const SizedBox(height: 6),
                       Text(
                         '${songs.length} songs in library',
-                        style: LibraryTheme.metadata,
+                        style: AppTheme.metadata,
                       ),
                       const SizedBox(height: 14),
-                      FilledButton.icon(
-                        style: FilledButton.styleFrom(
-                          backgroundColor: LibraryTheme.accent,
-                          foregroundColor: LibraryTheme.background,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 20,
-                            vertical: 10,
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          FilledButton.icon(
+                            onPressed: songs.isEmpty
+                                ? null
+                                : () => _playAlbum(songs),
+                            icon: const Icon(Icons.play_arrow_rounded),
+                            label: const Text('Play'),
                           ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
+                          OutlinedButton.icon(
+                            onPressed: songs.isEmpty
+                                ? null
+                                : () => _playAlbum(songs, shuffle: true),
+                            icon: const Icon(Icons.shuffle_rounded),
+                            label: const Text('Shuffle'),
                           ),
-                        ),
-                        onPressed: () => _playSongCollection(songs, 0),
-                        icon: const Icon(Icons.play_arrow_rounded),
-                        label: const Text(
-                          'Play all songs',
-                          style: TextStyle(fontWeight: FontWeight.w600),
-                        ),
+                        ],
                       ),
                     ],
                   ),
@@ -1204,7 +1283,7 @@ class _MusicViewState extends State<MusicView> {
               ],
             ),
           ),
-          const Divider(height: 1, color: LibraryTheme.border),
+          const Divider(height: 1, color: AppTheme.border),
           Expanded(child: _buildSongTableView(songs)),
         ],
       ),

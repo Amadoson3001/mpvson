@@ -1,33 +1,37 @@
-# Player interface refresh
+# Mpvson interface
 
-The player gives video the full application area below the native OS title bar. All application actions sit at the bottom, and the queue opens on request. There is no application header. Empty space belongs to the video stage rather than a permanently empty sidebar.
+Mpvson is a player for local collections. Keep the chrome quiet and give media artwork the visual emphasis. Video plays on a true-black stage.
 
-Core colors follow AppTheme: background #0B1220, surface #111A2C, card #182238, border #2C3A55, text #F2F5FA, accent #60CDFF. Existing secondary, muted and status colors remain shared tokens. Cyan marks the primary action, progress and selection.
+## Color
 
-Segoe UI is the desktop typeface, with Noto Sans and DejaVu Sans fallbacks on Linux. The scale uses 40 for the home action heading, 22 for dialog titles, 16 for section titles, 13 for body and controls, and 11–12 for metadata. Content and settings labels align left. Playback transport aligns left with the elapsed/total time.
+The shared base colors are defined in `lib/ui/core/tokens/colors.dart`.
 
-```text
-                         Video stage
+| Token | Value | Use |
+| --- | --- | --- |
+| Stage | `#000000` | Video stage |
+| Ground | `#17181A` | Main background |
+| Layer | `#222326` | Navigation and panels |
+| Line | `#33353A` | Dividers |
+| Ink | `#ECEBE8` | Primary text |
+| Ink dim | `#9A9A9F` | Secondary information |
+| Lamp | `#E9A23B` | Fallback accent |
 
-       Open a video                       Screen / play mark
-       Open files     Open URL
+`MediaAccentScope` derives a color from the current thumbnail, raises its contrast against the panel background, and falls back to lamp if artwork cannot be decoded. It transitions over 400 ms and respects reduced motion. Consume it through the theme's primary color or `MediaAccent`. Status colors are reserved for status and errors.
 
-       Continue watching
-       File title                         Resume position / progress
+## Type, space and shape
 
-During playback:
-       ───────────────────── seek ─────────────────────────────
-       previous play next  elapsed / total   volume speed queue more full
-```
+Onest is bundled under `assets/fonts`, with its OFL license. Use the shared type scale of 32, 20, 15, 13 and 11 pixels and weights 400 or 600. Timecodes use `FontFeature.tabularFigures()`. Use sentence case for labels and actions.
 
-At narrower window widths the queue overlays the stage as a drawer. Home and settings content can scroll at the 720×480 minimum size. Keyboard focus, text input shortcuts, drag and drop and native window chrome remain part of the desktop interaction.
+`AppSpace` holds the 4, 8, 12, 16, 24 and 32 pixel spacing steps. Controls use 6 pixel corners, artwork and dialogs use 10, and rows and bars are square. Prefer surface contrast and spacing to decorative borders.
 
-The initial design review removed the floating rounded control card, repeated bordered settings cards, visible full paths in the header, and the always-open queue. These elements made application chrome compete with the video. Borders now separate functional regions; the home screen's wide play mark is its one visual accent. No invented film artwork or metadata is needed.
+## Navigation and playback
 
-The October 16 refinement removes the application header entirely. Secondary actions share the bottom More menu. A continuous 3px timeline uses cyan for elapsed video. A round thumb appears on hover, dragging or keyboard focus; a timestamp previews the target when hovering or seeking. Previewing a time does not seek; dragging commits on release. There is no invented buffered range.
+The shell has Home, Videos, Music, Playlists, Folders and Settings. The shell stays mounted while the video stage is shown, preserving the selected library section. Opening audio leaves navigation in place; the artwork in the transport opens Now playing. The transport contains playback controls and the shared seek bar. The queue uses `QueuePanel` in the library and video player; on narrow windows the library queue opens as a sheet.
 
-The later [control-size setting](control-density.md) makes Compact the default, with a 60px strip and a 4px timeline. Normal retains the roomier 96px layout. Both modes use the same playback actions and interaction guards.
+Home offers file and URL actions and recent media. Music separates Songs, Albums and Artists, with favorites and recency as song filters. A click selects a song; Enter, a double click, or the hover play control starts playback. Folder management lives under Folders. Search supports Ctrl+K and `/`.
 
-Queue cards use real media imagery as their anchor. A 112×63 thumbnail sits beside a 15px semibold title and an 11px muted path. Narrow panels use a 96×54 thumbnail, while the title can wrap onto two lines. Known duration sits over the thumbnail's lower-right corner. The selected image has a thin cyan outline; there are no visible order numbers or Current/Playing badges.
+## Components and motion
 
-The drag grip overlays the image's left edge and appears on row hover or keyboard focus, so it reserves no extra column. Its hit area remains available for dragging, and search disables reordering. Remove, undo, clear, keyboard selection, and queue search retain their existing behavior. Thumbnail work belongs to a separate cached data service; a failed decode leaves a quiet movie placeholder and never prevents playback.
+Shared widgets live in `lib/ui/core/components`. `MediaTile` handles artwork, title and supporting text in collection grids. `MediaRow` supplies keyboard selection and activation. `SeekBar` uses the player's progress listenables. `LibraryArtwork` resolves and displays cached art with a single fallback.
+
+Use short fades for ordinary changes. Respect `MediaQuery.disableAnimations`. Avoid decorative gradients and glows. Never cover video with a colored stage. Errors should describe what failed and a practical next step.

@@ -36,6 +36,9 @@ abstract class MediaLibraryRepository extends ChangeNotifier {
   Future<MediaItemRecord?> getMediaByCanonicalSource(String canonicalSource);
   Future<MediaItemRecord?> getMediaById(String id);
 
+  /// Resolves cached artwork on demand after older cache entries are evicted.
+  Future<String?> resolveArtwork(String path) async => null;
+
   Future<void> toggleFavorite(String mediaId, bool isFavorite);
   Future<void> recordPlayback(String canonicalSource);
 

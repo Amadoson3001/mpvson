@@ -30,6 +30,9 @@ class SettingsDialog extends StatefulWidget {
     this.desktopIntegration,
     this.libraryRepository,
     this.pickDirectory,
+    this.showMediaLibrary = false,
+    this.embedded = false,
+    this.onClose,
   });
 
   final PlayerController controller;
@@ -40,6 +43,9 @@ class SettingsDialog extends StatefulWidget {
   final DesktopIntegrationService? desktopIntegration;
   final MediaLibraryRepository? libraryRepository;
   final Future<String?> Function()? pickDirectory;
+  final bool showMediaLibrary;
+  final bool embedded;
+  final VoidCallback? onClose;
 
   @override
   State<SettingsDialog> createState() => _SettingsDialogState();
@@ -66,6 +72,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
   @override
   void initState() {
     super.initState();
+    if (widget.showMediaLibrary) _section = _SettingsSection.mediaLibrary;
     if (widget.appPreferences == null) {
       unawaited(_preferences.load());
     }
@@ -82,125 +89,151 @@ class _SettingsDialogState extends State<SettingsDialog> {
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: widget.controller,
-    builder: (context, _) => Dialog(
-      insetPadding: const EdgeInsets.all(24),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final screenHeight = MediaQuery.sizeOf(context).height;
-          final availableWidth = constraints.maxWidth;
-          final availableHeight = constraints.maxHeight.isFinite
-              ? constraints.maxHeight
-              : screenHeight - 48;
-          final dialogWidth = availableWidth.isFinite
-              ? (availableWidth < 780 ? availableWidth : 780.0)
-              : 780.0;
-          final dialogHeight = availableHeight < 640 ? availableHeight : 640.0;
-          final useRail = availableWidth >= 700;
-          final compactViewport = dialogHeight <= 520;
+    builder: (context, _) => widget.embedded
+        ? _buildBody(context)
+        : Dialog(
+            insetPadding: const EdgeInsets.all(AppSpace.lg),
+            child: _buildBody(context),
+          ),
+  );
 
-          return SizedBox(
-            width: dialogWidth,
-            height: dialogHeight,
-            child: Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 4, 8, 4),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          'Settings',
-                          style: Theme.of(context).textTheme.titleLarge,
+  Widget _buildBody(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final screenHeight = MediaQuery.sizeOf(context).height;
+      final availableWidth = constraints.maxWidth;
+      final availableHeight = constraints.maxHeight.isFinite
+          ? constraints.maxHeight
+          : screenHeight - 48;
+      final dialogWidth = widget.embedded
+          ? availableWidth
+          : availableWidth.isFinite
+          ? (availableWidth < 780 ? availableWidth : 780.0)
+          : 780.0;
+      final dialogHeight = widget.embedded
+          ? availableHeight
+          : (availableHeight < 640 ? availableHeight : 640.0);
+      final useRail = availableWidth >= 700;
+      final compactViewport = dialogHeight <= 520;
+
+      return SizedBox(
+        width: dialogWidth,
+        height: dialogHeight,
+        child: Column(
+          children: [
+            if (!widget.embedded) ...[
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  20,
+                  AppSpace.xxs,
+                  AppSpace.xs,
+                  AppSpace.xxs,
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Settings',
+                        style: Theme.of(context).textTheme.titleLarge,
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Close settings',
+                      constraints: const BoxConstraints.tightFor(
+                        width: 44,
+                        height: 44,
+                      ),
+                      onPressed:
+                          widget.onClose ?? () => Navigator.of(context).pop(),
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+            ],
+            if (useRail)
+              Expanded(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    SizedBox(
+                      width: 184,
+                      child: ColoredBox(
+                        color: AppTheme.background,
+                        child: _SettingsNavigation(
+                          key: const ValueKey('settings-navigation-rail'),
+                          section: _section,
+                          wide: true,
+                          showMediaLibrary: !widget.embedded,
+                          onSelected: _selectSection,
                         ),
                       ),
-                      IconButton(
-                        tooltip: 'Close settings',
-                        constraints: const BoxConstraints.tightFor(
-                          width: 44,
-                          height: 44,
-                        ),
-                        onPressed: () => Navigator.of(context).pop(),
-                        icon: const Icon(Icons.close_rounded),
+                    ),
+                    const VerticalDivider(width: 1, thickness: 1),
+                    Expanded(
+                      child: _SettingsContentPane(
+                        section: _section,
+                        controller: widget.controller,
+                        updates: widget.updates,
+                        engineUpdates: widget.engineUpdates,
+                        pickSubtitle: widget.pickSubtitle,
+                        compactViewport: compactViewport,
+                        preferences: _preferences,
+                        desktopIntegration: _desktopIntegration,
+                        libraryRepository: _libraryRepository,
+                        pickDirectory: widget.pickDirectory,
                       ),
-                    ],
+                    ),
+                  ],
+                ),
+              )
+            else ...[
+              _SettingsNavigation(
+                key: const ValueKey('settings-top-navigation'),
+                section: _section,
+                wide: false,
+                showMediaLibrary: !widget.embedded,
+                onSelected: _selectSection,
+              ),
+              const Divider(height: 1),
+              Expanded(
+                child: _SettingsContentPane(
+                  section: _section,
+                  controller: widget.controller,
+                  updates: widget.updates,
+                  engineUpdates: widget.engineUpdates,
+                  pickSubtitle: widget.pickSubtitle,
+                  compactViewport: compactViewport,
+                  preferences: _preferences,
+                  desktopIntegration: _desktopIntegration,
+                  libraryRepository: _libraryRepository,
+                  pickDirectory: widget.pickDirectory,
+                ),
+              ),
+            ],
+            if (!widget.embedded) ...[
+              const Divider(height: 1),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  20,
+                  AppSpace.xxs,
+                  20,
+                  AppSpace.xs,
+                ),
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: FilledButton(
+                    onPressed:
+                        widget.onClose ?? () => Navigator.of(context).pop(),
+                    child: const Text('Done'),
                   ),
                 ),
-                const Divider(height: 1),
-                if (useRail)
-                  Expanded(
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        SizedBox(
-                          width: 184,
-                          child: ColoredBox(
-                            color: AppTheme.background,
-                            child: _SettingsNavigation(
-                              key: const ValueKey('settings-navigation-rail'),
-                              section: _section,
-                              wide: true,
-                              onSelected: _selectSection,
-                            ),
-                          ),
-                        ),
-                        const VerticalDivider(width: 1, thickness: 1),
-                        Expanded(
-                          child: _SettingsContentPane(
-                            section: _section,
-                            controller: widget.controller,
-                            updates: widget.updates,
-                            engineUpdates: widget.engineUpdates,
-                            pickSubtitle: widget.pickSubtitle,
-                            compactViewport: compactViewport,
-                            preferences: _preferences,
-                            desktopIntegration: _desktopIntegration,
-                            libraryRepository: _libraryRepository,
-                            pickDirectory: widget.pickDirectory,
-                          ),
-                        ),
-                      ],
-                    ),
-                  )
-                else ...[
-                  _SettingsNavigation(
-                    key: const ValueKey('settings-top-navigation'),
-                    section: _section,
-                    wide: false,
-                    onSelected: _selectSection,
-                  ),
-                  const Divider(height: 1),
-                  Expanded(
-                    child: _SettingsContentPane(
-                      section: _section,
-                      controller: widget.controller,
-                      updates: widget.updates,
-                      engineUpdates: widget.engineUpdates,
-                      pickSubtitle: widget.pickSubtitle,
-                      compactViewport: compactViewport,
-                      preferences: _preferences,
-                      desktopIntegration: _desktopIntegration,
-                      libraryRepository: _libraryRepository,
-                      pickDirectory: widget.pickDirectory,
-                    ),
-                  ),
-                ],
-                const Divider(height: 1),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
-                  child: Align(
-                    alignment: Alignment.centerRight,
-                    child: FilledButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      child: const Text('Done'),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          );
-        },
-      ),
-    ),
+              ),
+            ],
+          ],
+        ),
+      );
+    },
   );
 
   void _selectSection(_SettingsSection section) {
@@ -264,15 +297,20 @@ class _SettingsNavigation extends StatelessWidget {
     required this.section,
     required this.wide,
     required this.onSelected,
+    this.showMediaLibrary = true,
   });
 
   final _SettingsSection section;
   final bool wide;
+  final bool showMediaLibrary;
   final ValueChanged<_SettingsSection> onSelected;
 
   @override
   Widget build(BuildContext context) {
     final items = _SettingsSection.values
+        .where(
+          (item) => showMediaLibrary || item != _SettingsSection.mediaLibrary,
+        )
         .map(
           (item) => _SettingsNavigationItem(
             section: item,
@@ -285,7 +323,7 @@ class _SettingsNavigation extends StatelessWidget {
 
     if (wide) {
       return SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(10, 14, 10, 12),
+        padding: const EdgeInsets.fromLTRB(10, 14, 10, AppSpace.sm),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -297,7 +335,7 @@ class _SettingsNavigation extends StatelessWidget {
 
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.fromLTRB(10, 2, 10, 4),
+      padding: const EdgeInsets.fromLTRB(10, 2, 10, AppSpace.xxs),
       child: Row(mainAxisSize: MainAxisSize.min, children: items),
     );
   }
@@ -318,31 +356,37 @@ class _SettingsNavigationItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final accent = Theme.of(context).colorScheme.primary;
     final button = TextButton.icon(
       onPressed: onPressed,
       icon: Icon(section.icon, size: 18),
-      label: Text(section.label, maxLines: 1, overflow: TextOverflow.ellipsis),
+      label: Text(
+        section.label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+        ),
+      ),
       style:
           TextButton.styleFrom(
             alignment: Alignment.centerLeft,
-            foregroundColor: selected
-                ? AppTheme.accent
-                : AppTheme.secondaryText,
-            padding: EdgeInsets.symmetric(horizontal: wide ? 10 : 8),
+            foregroundColor: selected ? accent : AppTheme.secondaryText,
+            padding: EdgeInsets.symmetric(horizontal: wide ? 10 : AppSpace.xs),
             minimumSize: Size(wide ? double.infinity : 64, 40),
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(7),
+              borderRadius: BorderRadius.circular(AppRadii.control),
             ),
           ).copyWith(
             side: WidgetStateProperty.resolveWith((states) {
               if (states.contains(WidgetState.focused)) {
-                return const BorderSide(color: AppTheme.accent, width: 1.2);
+                return BorderSide(color: accent, width: 1.2);
               }
               return BorderSide.none;
             }),
             overlayColor: WidgetStateProperty.resolveWith((states) {
               if (states.contains(WidgetState.pressed)) {
-                return AppTheme.accent.withValues(alpha: 0.12);
+                return accent.withValues(alpha: 0.12);
               }
               if (states.contains(WidgetState.hovered) ||
                   states.contains(WidgetState.focused)) {
@@ -361,43 +405,21 @@ class _SettingsNavigationItem extends StatelessWidget {
             ? const EdgeInsets.only(bottom: 2)
             : const EdgeInsets.symmetric(horizontal: 2),
         decoration: BoxDecoration(
-          color: selected ? AppTheme.hover : Colors.transparent,
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: wide
-            ? Row(
-                children: [
-                  AnimatedContainer(
-                    duration: AppMotion.duration(context, AppMotion.quick),
+          border: wide
+              ? Border(
+                  left: BorderSide(
+                    color: selected ? accent : Colors.transparent,
                     width: 2,
-                    height: 24,
-                    decoration: BoxDecoration(
-                      color: selected ? AppTheme.accent : Colors.transparent,
-                      borderRadius: BorderRadius.circular(2),
-                    ),
                   ),
-                  Expanded(child: button),
-                ],
-              )
-            : Stack(
-                fit: StackFit.passthrough,
-                children: [
-                  button,
-                  Positioned(
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                    child: AnimatedContainer(
-                      duration: AppMotion.duration(context, AppMotion.quick),
-                      height: 2,
-                      decoration: BoxDecoration(
-                        color: selected ? AppTheme.accent : Colors.transparent,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
+                )
+              : Border(
+                  bottom: BorderSide(
+                    color: selected ? accent : Colors.transparent,
+                    width: 2,
                   ),
-                ],
-              ),
+                ),
+        ),
+        child: button,
       ),
     );
   }
@@ -433,7 +455,7 @@ class _SettingsContentPane extends StatelessWidget {
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
       Padding(
-        padding: const EdgeInsets.fromLTRB(20, 10, 20, 8),
+        padding: const EdgeInsets.fromLTRB(20, 10, 20, AppSpace.xs),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -518,6 +540,7 @@ class _AppearanceSettings extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final accent = Theme.of(context).colorScheme.primary;
     final compact = controller.controlDensity == ControlDensity.compact;
     final settingDescription = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -555,9 +578,7 @@ class _AppearanceSettings extends StatelessWidget {
       showSelectedIcon: false,
       style: ButtonStyle(
         backgroundColor: WidgetStateProperty.resolveWith((states) {
-          return states.contains(WidgetState.selected)
-              ? AppTheme.accent
-              : AppTheme.card;
+          return states.contains(WidgetState.selected) ? accent : AppTheme.card;
         }),
         foregroundColor: WidgetStateProperty.resolveWith((states) {
           return states.contains(WidgetState.selected)
@@ -565,16 +586,18 @@ class _AppearanceSettings extends StatelessWidget {
               : AppTheme.secondaryText;
         }),
         padding: const WidgetStatePropertyAll(
-          EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          EdgeInsets.symmetric(horizontal: AppSpace.sm, vertical: AppSpace.xs),
         ),
         side: WidgetStateProperty.resolveWith((states) {
           if (states.contains(WidgetState.focused)) {
-            return const BorderSide(color: AppTheme.accent, width: 2);
+            return BorderSide(color: accent, width: 2);
           }
           return const BorderSide(color: AppTheme.border);
         }),
         shape: WidgetStatePropertyAll(
-          RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppRadii.control),
+          ),
         ),
       ),
       onSelectionChanged: (selection) {
@@ -590,7 +613,7 @@ class _AppearanceSettings extends StatelessWidget {
             18,
             compactViewport ? 6 : 14,
             18,
-            compactViewport ? 8 : 18,
+            compactViewport ? AppSpace.xs : 18,
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -614,10 +637,12 @@ class _AppearanceSettings extends StatelessWidget {
                 ),
               SizedBox(height: compactViewport ? 8 : 18),
               Container(
-                padding: EdgeInsets.all(compactViewport ? 8 : 12),
+                padding: EdgeInsets.all(
+                  compactViewport ? AppSpace.xs : AppSpace.sm,
+                ),
                 decoration: BoxDecoration(
                   color: AppTheme.card,
-                  borderRadius: BorderRadius.circular(10),
+                  borderRadius: BorderRadius.circular(AppRadii.artwork),
                   border: Border.all(color: AppTheme.border),
                 ),
                 child: Column(
@@ -659,6 +684,7 @@ class _ControlBarPreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final accent = Theme.of(context).colorScheme.primary;
     final buttonSize = compact ? 32.0 : 44.0;
     final iconSize = compact ? 18.0 : 22.0;
     final previewHeight = compactViewport
@@ -674,7 +700,7 @@ class _ControlBarPreview extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: AppTheme.background,
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(AppRadii.artwork),
         border: Border.all(color: AppTheme.border),
       ),
       child: Stack(
@@ -717,8 +743,10 @@ class _ControlBarPreview extends StatelessWidget {
                     value: 0.38,
                     minHeight: compact ? 4 : 3,
                     backgroundColor: AppTheme.border,
-                    color: AppTheme.accent,
-                    borderRadius: const BorderRadius.all(Radius.circular(4)),
+                    color: accent,
+                    borderRadius: const BorderRadius.all(
+                      Radius.circular(AppRadii.control),
+                    ),
                   ),
                   Expanded(
                     child: Row(
@@ -735,8 +763,8 @@ class _ControlBarPreview extends StatelessWidget {
                             Container(
                               width: buttonSize,
                               height: buttonSize,
-                              decoration: const BoxDecoration(
-                                color: AppTheme.accent,
+                              decoration: BoxDecoration(
+                                color: accent,
                                 shape: BoxShape.circle,
                               ),
                               alignment: Alignment.center,
@@ -770,7 +798,7 @@ class _ControlBarPreview extends StatelessWidget {
                                 backgroundColor: AppTheme.border,
                                 color: AppTheme.secondaryText,
                                 borderRadius: BorderRadius.all(
-                                  Radius.circular(4),
+                                  Radius.circular(AppRadii.control),
                                 ),
                               ),
                             ),
@@ -812,7 +840,12 @@ class _PlaybackSettings extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => SingleChildScrollView(
-    padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
+    padding: const EdgeInsets.fromLTRB(
+      AppSpace.lg,
+      20,
+      AppSpace.lg,
+      AppSpace.lg,
+    ),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -943,7 +976,12 @@ class _VideoAudioSettingsState extends State<_VideoAudioSettings> {
 
   @override
   Widget build(BuildContext context) => SingleChildScrollView(
-    padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
+    padding: const EdgeInsets.fromLTRB(
+      AppSpace.lg,
+      20,
+      AppSpace.lg,
+      AppSpace.lg,
+    ),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -967,7 +1005,7 @@ class _VideoAudioSettingsState extends State<_VideoAudioSettings> {
           },
         ),
         Padding(
-          padding: const EdgeInsets.only(left: 33, bottom: 4),
+          padding: const EdgeInsets.only(left: 33, bottom: AppSpace.xxs),
           child: Text(
             switch (_draft.qualityPreset) {
               PlaybackQualityPreset.performance =>
@@ -1071,7 +1109,7 @@ class _VideoAudioSettingsState extends State<_VideoAudioSettings> {
         ),
         if (widget.controller.playbackSettingsError case final error?)
           Padding(
-            padding: const EdgeInsets.only(top: 8),
+            padding: const EdgeInsets.only(top: AppSpace.xs),
             child: Text(
               'Some settings were not confirmed by the playback engine: $error',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -1119,7 +1157,7 @@ class _PlaybackSettingSlider extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(top: 4, bottom: 2),
+    padding: const EdgeInsets.only(top: AppSpace.xxs, bottom: 2),
     child: Column(
       children: [
         Row(
@@ -1175,13 +1213,18 @@ class _DesktopIntegrationSettings extends StatelessWidget {
     builder: (context, _) {
       final currentOpenBehavior = preferences.preferences.openBehavior;
       return SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
+        padding: const EdgeInsets.fromLTRB(
+          AppSpace.lg,
+          20,
+          AppSpace.lg,
+          AppSpace.lg,
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const _SectionHeading(title: 'Opening files'),
             Padding(
-              padding: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.only(bottom: AppSpace.xs),
               child: Text(
                 'Choose what happens when opening new files while media is playing:',
                 style: Theme.of(
@@ -1246,7 +1289,10 @@ class _DesktopIntegrationSettings extends StatelessWidget {
             const Divider(height: 28),
             const _SectionHeading(title: 'System integration'),
             Padding(
-              padding: const EdgeInsets.only(top: 4, bottom: 8),
+              padding: const EdgeInsets.only(
+                top: AppSpace.xxs,
+                bottom: AppSpace.xs,
+              ),
               child: Row(
                 children: [
                   Expanded(
@@ -1284,6 +1330,15 @@ class _DesktopIntegrationSettings extends StatelessWidget {
   );
 }
 
+/// Folder management in the main application shell.
+class LibraryFoldersView extends StatelessWidget {
+  const LibraryFoldersView({super.key, required this.repository});
+  final MediaLibraryRepository repository;
+  @override
+  Widget build(BuildContext context) =>
+      _MediaLibrarySettings(libraryRepository: repository);
+}
+
 class _MediaLibrarySettings extends StatelessWidget {
   const _MediaLibrarySettings({
     required this.libraryRepository,
@@ -1299,9 +1354,15 @@ class _MediaLibrarySettings extends StatelessWidget {
     builder: (context, _) {
       final folders = libraryRepository.folders;
       final status = libraryRepository.scanStatus;
+      final accent = Theme.of(context).colorScheme.primary;
 
       return SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
+        padding: const EdgeInsets.fromLTRB(
+          AppSpace.lg,
+          20,
+          AppSpace.lg,
+          AppSpace.lg,
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1311,35 +1372,47 @@ class _MediaLibrarySettings extends StatelessWidget {
                   key: const ValueKey('add-folder-button'),
                   icon: const Icon(Icons.create_new_folder_outlined, size: 18),
                   label: const Text('Add folder'),
-                  onPressed: () async {
-                    try {
-                      final path = await (pickDirectory != null
-                          ? pickDirectory!()
-                          : getDirectoryPath());
-                      if (path != null && path.isNotEmpty) {
-                        await libraryRepository.addFolder(path);
-                      }
-                    } catch (_) {
-                      // Directory picker cancelled or failed.
-                    }
-                  },
+                  onPressed: !libraryRepository.isReady
+                      ? null
+                      : () async {
+                          try {
+                            final path = await (pickDirectory != null
+                                ? pickDirectory!()
+                                : getDirectoryPath());
+                            if (path != null && path.isNotEmpty) {
+                              await libraryRepository.addFolder(path);
+                            }
+                          } catch (_) {
+                            if (context.mounted) {
+                              ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    'Could not add the folder. Try again.',
+                                  ),
+                                ),
+                              );
+                            }
+                          }
+                        },
                 ),
                 const SizedBox(width: 12),
                 OutlinedButton.icon(
                   key: const ValueKey('rescan-all-button'),
                   icon: const Icon(Icons.refresh_rounded, size: 18),
                   label: const Text('Rescan all folders'),
-                  onPressed: () => unawaited(libraryRepository.rescanAll()),
+                  onPressed: libraryRepository.isReady
+                      ? () => unawaited(libraryRepository.rescanAll())
+                      : null,
                 ),
               ],
             ),
             const SizedBox(height: 16),
             Container(
               key: const ValueKey('library-scan-progress'),
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.all(AppSpace.sm),
               decoration: BoxDecoration(
                 color: AppTheme.card,
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(AppRadii.control),
                 border: Border.all(color: AppTheme.border),
               ),
               child: Column(
@@ -1354,18 +1427,14 @@ class _MediaLibrarySettings extends StatelessWidget {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           if (status.isScanning) ...[
-                            const Icon(
-                              Icons.sync_rounded,
-                              size: 16,
-                              color: AppTheme.accent,
-                            ),
+                            Icon(Icons.sync_rounded, size: 16, color: accent),
                             const SizedBox(width: 8),
                             Text(
                               'Scanning library…',
                               style: Theme.of(context).textTheme.bodySmall
                                   ?.copyWith(
                                     fontWeight: FontWeight.w600,
-                                    color: AppTheme.accent,
+                                    color: accent,
                                   ),
                             ),
                           ] else ...[
@@ -1419,7 +1488,7 @@ class _MediaLibrarySettings extends StatelessWidget {
                             )
                           : 0.0,
                       backgroundColor: AppTheme.border,
-                      color: AppTheme.accent,
+                      color: accent,
                     ),
                   ],
                 ],
@@ -1429,7 +1498,7 @@ class _MediaLibrarySettings extends StatelessWidget {
             const _SectionHeading(title: 'Library folders'),
             if (folders.isEmpty)
               Container(
-                padding: const EdgeInsets.symmetric(vertical: 24),
+                padding: const EdgeInsets.symmetric(vertical: AppSpace.lg),
                 alignment: Alignment.center,
                 child: Column(
                   children: [
@@ -1470,7 +1539,7 @@ class _MediaLibrarySettings extends StatelessWidget {
                           ? Icons.folder_rounded
                           : Icons.folder_off_rounded,
                       color: folder.isAvailable
-                          ? AppTheme.accent
+                          ? accent
                           : Theme.of(context).colorScheme.error,
                     ),
                     title: Text(
@@ -1525,7 +1594,12 @@ class _ShortcutsSettings extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => SingleChildScrollView(
-    padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
+    padding: const EdgeInsets.fromLTRB(
+      AppSpace.lg,
+      20,
+      AppSpace.lg,
+      AppSpace.lg,
+    ),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1590,7 +1664,12 @@ class _AboutSettings extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => SingleChildScrollView(
-    padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
+    padding: const EdgeInsets.fromLTRB(
+      AppSpace.lg,
+      20,
+      AppSpace.lg,
+      AppSpace.lg,
+    ),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1733,7 +1812,7 @@ class _DropdownSetting<T> extends StatelessWidget {
           DropdownButton<T>(
             value: value,
             underline: const SizedBox.shrink(),
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(AppRadii.control),
             items: items,
             onChanged: onChanged,
           ),
@@ -1787,7 +1866,7 @@ class _TrackSetting<T> extends StatelessWidget {
               value: selectedValue,
               hint: const Text('Unavailable'),
               underline: const SizedBox.shrink(),
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(AppRadii.control),
               items: tracks.map<DropdownMenuItem<T>>((track) {
                 final itemText = trackLabel(track);
                 final isSelected = track == selectedValue;
@@ -1834,27 +1913,30 @@ class _ShortcutRow extends StatelessWidget {
   final String action;
 
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 7),
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(
-          width: 142,
-          child: Text(
-            keys,
-            style: Theme.of(context).textTheme.labelMedium?.copyWith(
-              color: AppTheme.accent,
-              fontWeight: FontWeight.w600,
+  Widget build(BuildContext context) {
+    final accent = Theme.of(context).colorScheme.primary;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 7),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 142,
+            child: Text(
+              keys,
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                color: accent,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
-        ),
-        Expanded(
-          child: Text(action, style: Theme.of(context).textTheme.bodySmall),
-        ),
-      ],
-    ),
-  );
+          Expanded(
+            child: Text(action, style: Theme.of(context).textTheme.bodySmall),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _AboutRow extends StatelessWidget {

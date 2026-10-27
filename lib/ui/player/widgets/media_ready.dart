@@ -119,7 +119,9 @@ class _ReadyContent extends StatelessWidget {
               : hasResumePosition
               ? 'Ready to resume'
               : 'Ready to play',
-          style: textTheme.bodySmall?.copyWith(color: AppTheme.accent),
+          style: textTheme.bodySmall?.copyWith(
+            color: Theme.of(context).colorScheme.primary,
+          ),
         ),
         const SizedBox(height: 8),
         Text(
@@ -127,7 +129,7 @@ class _ReadyContent extends StatelessWidget {
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
           style: textTheme.headlineMedium?.copyWith(
-            fontSize: 30,
+            fontSize: AppType.display,
             height: 1.12,
             letterSpacing: -0.65,
           ),
@@ -158,12 +160,12 @@ class _ReadyContent extends StatelessWidget {
           if (duration > Duration.zero) ...[
             const SizedBox(height: 8),
             ClipRRect(
-              borderRadius: BorderRadius.circular(2),
+              borderRadius: BorderRadius.circular(AppRadii.square),
               child: LinearProgressIndicator(
                 value: progress,
                 minHeight: 3,
                 backgroundColor: AppTheme.border,
-                color: AppTheme.accent,
+                color: Theme.of(context).colorScheme.primary,
               ),
             ),
           ],

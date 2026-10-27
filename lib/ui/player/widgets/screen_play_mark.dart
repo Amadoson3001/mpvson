@@ -9,11 +9,17 @@ class ScreenPlayMark extends StatelessWidget {
   final double height;
 
   @override
-  Widget build(BuildContext context) =>
-      CustomPaint(size: Size(width, height), painter: _ScreenPlayPainter());
+  Widget build(BuildContext context) => CustomPaint(
+    size: Size(width, height),
+    painter: _ScreenPlayPainter(accent: Theme.of(context).colorScheme.primary),
+  );
 }
 
 class _ScreenPlayPainter extends CustomPainter {
+  const _ScreenPlayPainter({required this.accent});
+
+  final Color accent;
+
   @override
   void paint(Canvas canvas, Size size) {
     final screen = Rect.fromLTWH(
@@ -22,7 +28,10 @@ class _ScreenPlayPainter extends CustomPainter {
       size.width * 0.88,
       size.height * 0.68,
     );
-    final panel = RRect.fromRectAndRadius(screen, const Radius.circular(9));
+    final panel = RRect.fromRectAndRadius(
+      screen,
+      const Radius.circular(AppRadii.artwork),
+    );
     canvas.drawRRect(panel, Paint()..color = AppTheme.surface);
     canvas.drawRRect(
       panel,
@@ -33,7 +42,7 @@ class _ScreenPlayPainter extends CustomPainter {
     );
 
     final accentLine = Paint()
-      ..color = AppTheme.accent.withValues(alpha: 0.75)
+      ..color = accent.withValues(alpha: 0.75)
       ..strokeWidth = 2.2
       ..strokeCap = StrokeCap.round;
     canvas.drawLine(
@@ -48,7 +57,7 @@ class _ScreenPlayPainter extends CustomPainter {
       ..lineTo(center.dx + 11, center.dy)
       ..lineTo(center.dx - 7, center.dy + 11)
       ..close();
-    canvas.drawPath(play, Paint()..color = AppTheme.accent);
+    canvas.drawPath(play, Paint()..color = accent);
 
     final standPaint = Paint()
       ..color = AppTheme.border
@@ -68,5 +77,6 @@ class _ScreenPlayPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _ScreenPlayPainter oldDelegate) => false;
+  bool shouldRepaint(covariant _ScreenPlayPainter oldDelegate) =>
+      oldDelegate.accent != accent;
 }

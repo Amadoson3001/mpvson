@@ -7,6 +7,8 @@ export 'media_metadata.dart';
 
 enum ScanPhase { idle, discovering, enriching, reconciling, error }
 
+const _unchanged = Object();
+
 @immutable
 class LibraryScanStatus {
   const LibraryScanStatus({
@@ -32,19 +34,23 @@ class LibraryScanStatus {
 
   LibraryScanStatus copyWith({
     ScanPhase? phase,
-    String? currentFolder,
+    Object? currentFolder = _unchanged,
     int? discoveredCount,
     int? enrichedCount,
     int? totalToEnrich,
-    String? errorMessage,
+    Object? errorMessage = _unchanged,
   }) {
     return LibraryScanStatus(
       phase: phase ?? this.phase,
-      currentFolder: currentFolder ?? this.currentFolder,
+      currentFolder: identical(currentFolder, _unchanged)
+          ? this.currentFolder
+          : currentFolder as String?,
       discoveredCount: discoveredCount ?? this.discoveredCount,
       enrichedCount: enrichedCount ?? this.enrichedCount,
       totalToEnrich: totalToEnrich ?? this.totalToEnrich,
-      errorMessage: errorMessage ?? this.errorMessage,
+      errorMessage: identical(errorMessage, _unchanged)
+          ? this.errorMessage
+          : errorMessage as String?,
     );
   }
 }

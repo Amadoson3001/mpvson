@@ -1,9 +1,13 @@
+import 'dart:async';
 import 'dart:typed_data';
+import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
 import '../../../data/repositories/media_library_repository.dart';
 import '../../../domain/models/library_models.dart';
+import '../../../domain/models/media_entry.dart';
 import '../../player/player_controller.dart';
-import '../theme/library_theme.dart';
+import '../../core/app_theme.dart';
+import '../widgets/library_artwork.dart';
 
 /// Now playing view featuring large artwork, track metadata, full transport
 /// controls, timeline scrubber, volume, favorite toggle, and queue drawer.
@@ -24,12 +28,11 @@ class NowPlayingView extends StatefulWidget {
 }
 
 class _NowPlayingViewState extends State<NowPlayingView> {
-  bool _isQueuePanelOpen = false;
   Uint8List? _cachedArtwork;
   String? _cachedArtworkPath;
   MediaItemRecord? _currentMediaRecord;
-  double? _dragPositionRatio;
   int _metadataGeneration = 0;
+  int _artworkGeneration = 0;
 
   @override
   void initState() {
@@ -45,11 +48,13 @@ class _NowPlayingViewState extends State<NowPlayingView> {
     if (oldWidget.controller != widget.controller) {
       oldWidget.controller.removeListener(_onControllerChanged);
       widget.controller.addListener(_onControllerChanged);
+      _cachedArtworkPath = null;
       _syncMetadata();
     }
     if (oldWidget.repository != widget.repository) {
       oldWidget.repository?.removeListener(_onRepositoryChanged);
       widget.repository?.addListener(_onRepositoryChanged);
+      _currentMediaRecord = null;
       _syncMetadata();
     }
   }
@@ -57,6 +62,7 @@ class _NowPlayingViewState extends State<NowPlayingView> {
   @override
   void dispose() {
     _metadataGeneration++;
+    _artworkGeneration++;
     widget.controller.removeListener(_onControllerChanged);
     widget.repository?.removeListener(_onRepositoryChanged);
     super.dispose();
@@ -79,6 +85,7 @@ class _NowPlayingViewState extends State<NowPlayingView> {
     final generation = ++_metadataGeneration;
     final cur = widget.controller.current;
     if (cur == null) {
+      _artworkGeneration++;
       if (mounted) {
         setState(() {
           _cachedArtwork = null;
@@ -89,23 +96,25 @@ class _NowPlayingViewState extends State<NowPlayingView> {
       return;
     }
 
-    _cachedArtworkPath = cur.path;
-
-    // Load thumbnail / artwork
-    final thumb = await widget.controller.loadThumbnail(cur);
-    if (mounted &&
-        generation == _metadataGeneration &&
-        _cachedArtworkPath == cur.path) {
+    if (_cachedArtworkPath != cur.path) {
+      final artworkGeneration = ++_artworkGeneration;
       setState(() {
-        _cachedArtwork = thumb?.bytes;
+        _cachedArtworkPath = cur.path;
+        _cachedArtwork = null;
+        _currentMediaRecord = null;
       });
+      unawaited(_loadArtwork(cur, artworkGeneration));
     }
 
     // Load media record from repo if available
-    if (widget.repository != null) {
-      final record = await widget.repository!.getMediaByCanonicalSource(
-        cur.path,
-      );
+    final repository = widget.repository;
+    if (repository != null && repository.isReady) {
+      MediaItemRecord? record;
+      try {
+        record = await repository.getMediaByCanonicalSource(cur.path);
+      } catch (_) {
+        return;
+      }
       if (mounted &&
           generation == _metadataGeneration &&
           _cachedArtworkPath == cur.path) {
@@ -116,10 +125,15 @@ class _NowPlayingViewState extends State<NowPlayingView> {
     }
   }
 
-  String _formatDuration(Duration d) {
-    final minutes = d.inMinutes;
-    final seconds = d.inSeconds % 60;
-    return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+  Future<void> _loadArtwork(MediaEntry entry, int generation) async {
+    final thumb = await widget.controller
+        .loadThumbnail(entry)
+        .catchError((Object _) => null);
+    if (mounted &&
+        generation == _artworkGeneration &&
+        _cachedArtworkPath == entry.path) {
+      setState(() => _cachedArtwork = thumb?.bytes);
+    }
   }
 
   Future<void> _toggleFavorite() async {
@@ -137,132 +151,136 @@ class _NowPlayingViewState extends State<NowPlayingView> {
   @override
   Widget build(BuildContext context) {
     final entry = widget.controller.current;
-    final isPlaying = widget.controller.isPlaying;
-    final duration = widget.controller.duration > Duration.zero
-        ? widget.controller.duration
-        : (entry?.duration ?? Duration.zero);
-    final position = widget.controller.position;
 
     return LayoutBuilder(
       builder: (context, constraints) {
         final isNarrow = constraints.maxWidth < 800;
 
         return Scaffold(
-          backgroundColor: LibraryTheme.background,
-          body: Row(
+          backgroundColor: AppTheme.background,
+          body: Stack(
             children: [
-              // Main content stage
-              Expanded(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 32,
-                    vertical: 24,
+              if (_cachedArtwork != null)
+                Positioned.fill(
+                  child: ImageFiltered(
+                    imageFilter: ImageFilter.blur(sigmaX: 36, sigmaY: 36),
+                    child: Image.memory(_cachedArtwork!, fit: BoxFit.cover),
                   ),
-                  child: Center(
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 680),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          if (widget.onBack != null)
-                            Align(
-                              alignment: Alignment.centerLeft,
-                              child: IconButton(
-                                icon: const Icon(Icons.arrow_back_rounded),
-                                tooltip: 'Back',
-                                color: LibraryTheme.secondaryText,
-                                onPressed: widget.onBack,
-                              ),
-                            ),
-                          const SizedBox(height: 12),
-                          // Large square artwork
-                          _buildArtwork(context, isNarrow ? 260 : 340),
-                          const SizedBox(height: 28),
-                          // Title & Favorite row
-                          Row(
+                ),
+              Positioned.fill(
+                child: ColoredBox(
+                  color: Color.alphaBlend(
+                    Theme.of(
+                      context,
+                    ).colorScheme.primary.withValues(alpha: 0.1),
+                    AppTheme.background,
+                  ).withValues(alpha: 0.82),
+                ),
+              ),
+              Row(
+                children: [
+                  // Main content stage
+                  Expanded(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpace.xl,
+                        vertical: AppSpace.lg,
+                      ),
+                      child: Center(
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 680),
+                          child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.center,
                             children: [
-                              const SizedBox(
-                                width: 48,
-                              ), // balance favorite button
-                              Expanded(
-                                child: Text(
-                                  _currentMediaRecord?.title ??
-                                      entry?.title ??
-                                      'No Track Playing',
-                                  style: LibraryTheme.pageTitle,
-                                  textAlign: TextAlign.center,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
+                              if (widget.onBack != null)
+                                Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: IconButton(
+                                    icon: const Icon(Icons.arrow_back_rounded),
+                                    tooltip: 'Back',
+                                    color: AppTheme.secondaryText,
+                                    onPressed: widget.onBack,
+                                  ),
                                 ),
-                              ),
-                              IconButton(
-                                icon: Icon(
-                                  (_currentMediaRecord?.isFavorite ?? false)
-                                      ? Icons.favorite_rounded
-                                      : Icons.favorite_border_rounded,
-                                  color:
+                              const SizedBox(height: 12),
+                              // Large square artwork
+                              _buildArtwork(context, isNarrow ? 260 : 340),
+                              const SizedBox(height: 28),
+                              // Title & Favorite row
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  const SizedBox(
+                                    width: 48,
+                                  ), // balance favorite button
+                                  Expanded(
+                                    child: Text(
+                                      _currentMediaRecord?.title ??
+                                          entry?.title ??
+                                          'Nothing playing',
+                                      style: AppTheme.pageTitle,
+                                      textAlign: TextAlign.center,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                  IconButton(
+                                    icon: Icon(
                                       (_currentMediaRecord?.isFavorite ?? false)
-                                      ? LibraryTheme.accent
-                                      : LibraryTheme.mutedText,
+                                          ? Icons.favorite_rounded
+                                          : Icons.favorite_border_rounded,
+                                      color:
+                                          (_currentMediaRecord?.isFavorite ??
+                                              false)
+                                          ? Theme.of(
+                                              context,
+                                            ).colorScheme.primary
+                                          : AppTheme.mutedText,
+                                    ),
+                                    tooltip:
+                                        (_currentMediaRecord?.isFavorite ??
+                                            false)
+                                        ? 'Remove from favorites'
+                                        : 'Add to favorites',
+                                    onPressed: _currentMediaRecord != null
+                                        ? _toggleFavorite
+                                        : null,
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              // Artist
+                              Text(
+                                _currentMediaRecord?.artist ??
+                                    (entry == null ? '' : 'Unknown artist'),
+                                style: AppTheme.sectionTitle.copyWith(
+                                  color: AppTheme.secondaryText,
+                                  fontWeight: FontWeight.w500,
                                 ),
-                                tooltip:
-                                    (_currentMediaRecord?.isFavorite ?? false)
-                                    ? 'Remove from favorites'
-                                    : 'Add to favorites',
-                                onPressed: entry != null
-                                    ? _toggleFavorite
-                                    : null,
+                                textAlign: TextAlign.center,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              const SizedBox(height: 4),
+                              // Album
+                              Text(
+                                _currentMediaRecord?.album ?? '',
+                                style: AppTheme.rowSecondary.copyWith(
+                                  color: AppTheme.mutedText,
+                                ),
+                                textAlign: TextAlign.center,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                               ),
                             ],
                           ),
-                          const SizedBox(height: 8),
-                          // Artist
-                          Text(
-                            _currentMediaRecord?.artist ?? 'Unknown Artist',
-                            style: LibraryTheme.sectionTitle.copyWith(
-                              color: LibraryTheme.secondaryText,
-                              fontWeight: FontWeight.w500,
-                            ),
-                            textAlign: TextAlign.center,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          const SizedBox(height: 4),
-                          // Album
-                          Text(
-                            _currentMediaRecord?.album ?? '',
-                            style: LibraryTheme.rowSecondary.copyWith(
-                              color: LibraryTheme.mutedText,
-                            ),
-                            textAlign: TextAlign.center,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          const SizedBox(height: 28),
-                          // Timeline scrubber
-                          _buildTimelineScrubber(position, duration),
-                          const SizedBox(height: 20),
-                          // Transport controls
-                          _buildTransportControls(isPlaying),
-                          const SizedBox(height: 24),
-                          // Volume & Queue button row
-                          _buildVolumeAndQueueRow(),
-                        ],
+                        ),
                       ),
                     ),
                   ),
-                ),
+                ],
               ),
-              // Docked/slide-in Queue Panel on the right
-              if (_isQueuePanelOpen) ...[
-                const VerticalDivider(width: 1, color: LibraryTheme.border),
-                SizedBox(
-                  width: isNarrow ? constraints.maxWidth : 320,
-                  child: _buildQueuePanel(),
-                ),
-              ],
             ],
           ),
         );
@@ -275,9 +293,9 @@ class _NowPlayingViewState extends State<NowPlayingView> {
       width: size,
       height: size,
       decoration: BoxDecoration(
-        color: LibraryTheme.raisedSurface,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: LibraryTheme.border, width: 1.5),
+        color: AppTheme.raisedSurface,
+        borderRadius: BorderRadius.circular(AppRadii.artwork),
+        border: Border.all(color: AppTheme.border, width: 1.5),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.35),
@@ -293,301 +311,26 @@ class _NowPlayingViewState extends State<NowPlayingView> {
               fit: BoxFit.cover,
               errorBuilder: (_, _, _) => _buildFallbackArtwork(),
             )
+          : _currentMediaRecord != null
+          ? LibraryArtwork(
+              path: _currentMediaRecord!.metadata.artworkUri,
+              mediaPath: _currentMediaRecord!.path,
+              repository: widget.repository,
+              icon: Icons.music_note_rounded,
+              iconSize: 42,
+            )
           : _buildFallbackArtwork(),
     );
   }
 
-  Widget _buildFallbackArtwork() {
-    return Container(
-      decoration: const BoxDecoration(
-        gradient: RadialGradient(
-          center: Alignment(0, -0.1),
-          radius: 0.9,
-          colors: [
-            Color(0xFF223052),
-            LibraryTheme.surface,
-            LibraryTheme.background,
-          ],
-        ),
+  Widget _buildFallbackArtwork() => ColoredBox(
+    color: AppTheme.raisedSurface,
+    child: Center(
+      child: Icon(
+        Icons.music_note_rounded,
+        size: 42,
+        color: Theme.of(context).colorScheme.primary,
       ),
-      child: Center(
-        child: Container(
-          width: 90,
-          height: 90,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: LibraryTheme.raisedSurface,
-            border: Border.all(
-              color: LibraryTheme.accent.withValues(alpha: 0.3),
-              width: 3,
-            ),
-          ),
-          child: const Icon(
-            Icons.music_note_rounded,
-            size: 42,
-            color: LibraryTheme.accent,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTimelineScrubber(Duration position, Duration duration) {
-    final totalMs = duration.inMilliseconds;
-    final currentMs = _dragPositionRatio != null && totalMs > 0
-        ? (_dragPositionRatio! * totalMs).round()
-        : position.inMilliseconds;
-    final currentPos = Duration(milliseconds: currentMs);
-
-    final ratio = totalMs > 0 ? (currentMs / totalMs).clamp(0.0, 1.0) : 0.0;
-
-    return Column(
-      children: [
-        SliderTheme(
-          data: SliderThemeData(
-            trackHeight: 4,
-            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-            overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
-            activeTrackColor: LibraryTheme.accent,
-            inactiveTrackColor: LibraryTheme.border,
-            thumbColor: LibraryTheme.accent,
-            overlayColor: LibraryTheme.accent.withValues(alpha: 0.16),
-          ),
-          child: Slider(
-            value: ratio,
-            onChanged: totalMs > 0
-                ? (val) {
-                    setState(() => _dragPositionRatio = val);
-                  }
-                : null,
-            onChangeEnd: totalMs > 0
-                ? (val) {
-                    final target = Duration(
-                      milliseconds: (val * totalMs).round(),
-                    );
-                    widget.controller.seek(target);
-                    setState(() => _dragPositionRatio = null);
-                  }
-                : null,
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(_formatDuration(currentPos), style: LibraryTheme.metadata),
-              Text(_formatDuration(duration), style: LibraryTheme.metadata),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildTransportControls(bool isPlaying) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        // Shuffle
-        IconButton(
-          icon: const Icon(Icons.shuffle_rounded),
-          tooltip: 'Shuffle',
-          color: widget.controller.shuffle
-              ? LibraryTheme.accent
-              : LibraryTheme.mutedText,
-          onPressed: () => widget.controller.toggleShuffle(),
-        ),
-        const SizedBox(width: 16),
-        // Previous
-        IconButton(
-          icon: const Icon(Icons.skip_previous_rounded, size: 30),
-          tooltip: 'Previous',
-          color: LibraryTheme.primaryText,
-          onPressed: () => widget.controller.previous(),
-        ),
-        const SizedBox(width: 20),
-        // Play / Pause
-        Container(
-          width: 58,
-          height: 58,
-          decoration: const BoxDecoration(
-            color: LibraryTheme.accent,
-            shape: BoxShape.circle,
-          ),
-          child: IconButton(
-            icon: Icon(
-              isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
-              size: 32,
-              color: LibraryTheme.background,
-            ),
-            tooltip: isPlaying ? 'Pause' : 'Play',
-            onPressed: () => widget.controller.togglePlayPause(),
-          ),
-        ),
-        const SizedBox(width: 20),
-        // Next
-        IconButton(
-          icon: const Icon(Icons.skip_next_rounded, size: 30),
-          tooltip: 'Next',
-          color: LibraryTheme.primaryText,
-          onPressed: () => widget.controller.next(),
-        ),
-        const SizedBox(width: 16),
-        // Repeat
-        IconButton(
-          icon: Icon(
-            widget.controller.repeatMode == 'one'
-                ? Icons.repeat_one_rounded
-                : Icons.repeat_rounded,
-          ),
-          tooltip: 'Repeat: ${widget.controller.repeatMode}',
-          color: widget.controller.repeatMode != 'off'
-              ? LibraryTheme.accent
-              : LibraryTheme.mutedText,
-          onPressed: () => widget.controller.cycleRepeat(),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildVolumeAndQueueRow() {
-    final vol = widget.controller.volume;
-    final IconData volIcon = vol <= 0
-        ? Icons.volume_off_rounded
-        : vol < 50
-        ? Icons.volume_down_rounded
-        : Icons.volume_up_rounded;
-
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        IconButton(
-          icon: Icon(volIcon, size: 20),
-          tooltip: vol <= 0 ? 'Unmute' : 'Mute',
-          color: LibraryTheme.secondaryText,
-          onPressed: () => widget.controller.toggleMute(),
-        ),
-        SizedBox(
-          width: 120,
-          child: SliderTheme(
-            data: SliderThemeData(
-              trackHeight: 3,
-              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
-              activeTrackColor: LibraryTheme.secondaryText,
-              inactiveTrackColor: LibraryTheme.border,
-              thumbColor: LibraryTheme.primaryText,
-            ),
-            child: Slider(
-              value: vol.clamp(0.0, 100.0),
-              min: 0,
-              max: 100,
-              onChanged: (val) => widget.controller.setVolume(val),
-            ),
-          ),
-        ),
-        const SizedBox(width: 24),
-        IconButton(
-          icon: const Icon(Icons.queue_music_rounded, size: 22),
-          tooltip: _isQueuePanelOpen ? 'Hide queue' : 'Show queue',
-          color: _isQueuePanelOpen
-              ? LibraryTheme.accent
-              : LibraryTheme.secondaryText,
-          onPressed: () {
-            setState(() {
-              _isQueuePanelOpen = !_isQueuePanelOpen;
-            });
-          },
-        ),
-      ],
-    );
-  }
-
-  Widget _buildQueuePanel() {
-    final queue = widget.controller.queue;
-    final currentIndex = widget.controller.currentIndex;
-
-    return Material(
-      color: LibraryTheme.surface,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  'Queue (${queue.length})',
-                  style: LibraryTheme.sectionTitle,
-                ),
-                IconButton(
-                  icon: const Icon(Icons.close_rounded, size: 18),
-                  tooltip: 'Close queue',
-                  visualDensity: VisualDensity.compact,
-                  color: LibraryTheme.mutedText,
-                  onPressed: () => setState(() => _isQueuePanelOpen = false),
-                ),
-              ],
-            ),
-          ),
-          const Divider(height: 1, color: LibraryTheme.border),
-          Expanded(
-            child: queue.isEmpty
-                ? const Center(
-                    child: Text('Queue is empty', style: LibraryTheme.metadata),
-                  )
-                : ListView.separated(
-                    itemCount: queue.length,
-                    separatorBuilder: (_, _) =>
-                        const Divider(height: 1, color: LibraryTheme.border),
-                    itemBuilder: (context, index) {
-                      final item = queue[index];
-                      final isCurrent = index == currentIndex;
-
-                      return ListTile(
-                        dense: true,
-                        selected: isCurrent,
-                        selectedTileColor: LibraryTheme.accent.withValues(
-                          alpha: 0.1,
-                        ),
-                        leading: isCurrent
-                            ? const Icon(
-                                Icons.volume_up_rounded,
-                                size: 16,
-                                color: LibraryTheme.accent,
-                              )
-                            : Text(
-                                '${index + 1}',
-                                style: LibraryTheme.metadata,
-                              ),
-                        title: Text(
-                          item.title,
-                          style: LibraryTheme.rowPrimary.copyWith(
-                            color: isCurrent
-                                ? LibraryTheme.accent
-                                : LibraryTheme.primaryText,
-                            fontWeight: isCurrent
-                                ? FontWeight.w600
-                                : FontWeight.normal,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        trailing: IconButton(
-                          icon: const Icon(Icons.close_rounded, size: 16),
-                          tooltip: 'Remove',
-                          visualDensity: VisualDensity.compact,
-                          color: LibraryTheme.mutedText,
-                          onPressed: () => widget.controller.removeAt(index),
-                        ),
-                        onTap: () => widget.controller.playIndex(index),
-                      );
-                    },
-                  ),
-          ),
-        ],
-      ),
-    );
-  }
+    ),
+  );
 }

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../../data/repositories/media_library_repository.dart';
 import '../../../domain/models/library_models.dart';
-import '../theme/library_theme.dart';
+import '../../core/app_theme.dart';
 
 /// Modal dialog to create a new playlist.
 class PlaylistCreateDialog extends StatefulWidget {
@@ -36,6 +36,7 @@ class _PlaylistCreateDialogState extends State<PlaylistCreateDialog> {
   }
 
   Future<void> _submit() async {
+    if (_isCreating) return;
     final title = _titleController.text.trim();
     if (title.isEmpty) {
       setState(() => _error = 'Please enter a playlist title');
@@ -64,63 +65,65 @@ class _PlaylistCreateDialogState extends State<PlaylistCreateDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final accent = Theme.of(context).colorScheme.primary;
     return Dialog(
-      backgroundColor: LibraryTheme.surface,
+      backgroundColor: AppTheme.surface,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(14),
-        side: const BorderSide(color: LibraryTheme.border),
+        borderRadius: BorderRadius.circular(AppRadii.artwork),
+        side: const BorderSide(color: AppTheme.border),
       ),
-      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+      insetPadding: const EdgeInsets.symmetric(
+        horizontal: AppSpace.lg,
+        vertical: AppSpace.xl,
+      ),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 420),
-        child: Padding(
-          padding: const EdgeInsets.all(24),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(AppSpace.lg),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text('Create playlist', style: LibraryTheme.albumTitle),
+              Text('Create playlist', style: AppTheme.albumTitle),
               const SizedBox(height: 8),
               Text(
                 'Give your new playlist a descriptive name.',
-                style: LibraryTheme.rowSecondary,
+                style: AppTheme.rowSecondary,
               ),
               const SizedBox(height: 20),
               TextField(
                 controller: _titleController,
+                enabled: !_isCreating,
                 autofocus: true,
-                style: LibraryTheme.rowPrimary,
-                cursorColor: LibraryTheme.accent,
+                style: AppTheme.rowPrimary,
+                cursorColor: accent,
                 onSubmitted: (_) => _submit(),
                 decoration: InputDecoration(
                   hintText: 'e.g. Synthwave Favorites',
-                  hintStyle: LibraryTheme.metadata,
+                  hintStyle: AppTheme.metadata,
                   filled: true,
-                  fillColor: LibraryTheme.raisedSurface,
+                  fillColor: AppTheme.raisedSurface,
                   errorText: _error,
                   contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 16,
+                    horizontal: AppSpace.md,
                     vertical: 14,
                   ),
                   enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: const BorderSide(color: LibraryTheme.border),
+                    borderRadius: BorderRadius.circular(AppRadii.control),
+                    borderSide: const BorderSide(color: AppTheme.border),
                   ),
                   focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: const BorderSide(
-                      color: LibraryTheme.accent,
-                      width: 1.5,
-                    ),
+                    borderRadius: BorderRadius.circular(AppRadii.control),
+                    borderSide: BorderSide(color: accent, width: 1.5),
                   ),
                   errorBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: const BorderSide(color: LibraryTheme.danger),
+                    borderRadius: BorderRadius.circular(AppRadii.control),
+                    borderSide: const BorderSide(color: AppTheme.danger),
                   ),
                   focusedErrorBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(AppRadii.control),
                     borderSide: const BorderSide(
-                      color: LibraryTheme.danger,
+                      color: AppTheme.danger,
                       width: 1.5,
                     ),
                   ),
@@ -135,10 +138,10 @@ class _PlaylistCreateDialogState extends State<PlaylistCreateDialog> {
                         ? null
                         : () => Navigator.of(context).pop(),
                     style: TextButton.styleFrom(
-                      foregroundColor: LibraryTheme.secondaryText,
+                      foregroundColor: AppTheme.secondaryText,
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 12,
+                        horizontal: AppSpace.md,
+                        vertical: AppSpace.sm,
                       ),
                     ),
                     child: const Text('Cancel'),
@@ -147,17 +150,17 @@ class _PlaylistCreateDialogState extends State<PlaylistCreateDialog> {
                   FilledButton(
                     onPressed: _isCreating ? null : _submit,
                     style: FilledButton.styleFrom(
-                      backgroundColor: LibraryTheme.accent,
-                      foregroundColor: LibraryTheme.background,
+                      backgroundColor: accent,
+                      foregroundColor: AppTheme.background,
                       padding: const EdgeInsets.symmetric(
                         horizontal: 20,
-                        vertical: 12,
+                        vertical: AppSpace.sm,
                       ),
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(AppRadii.control),
                       ),
                       textStyle: const TextStyle(
-                        fontSize: 13.5,
+                        fontSize: AppType.small,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
@@ -168,7 +171,7 @@ class _PlaylistCreateDialogState extends State<PlaylistCreateDialog> {
                             child: CircularProgressIndicator(
                               strokeWidth: 2,
                               valueColor: AlwaysStoppedAnimation<Color>(
-                                LibraryTheme.background,
+                                AppTheme.background,
                               ),
                             ),
                           )

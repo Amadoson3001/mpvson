@@ -27,6 +27,7 @@ class EmptyLibrary extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final accent = Theme.of(context).colorScheme.primary;
     return LayoutBuilder(
       builder: (context, constraints) {
         final compact = constraints.maxWidth < 600;
@@ -35,9 +36,7 @@ class EmptyLibrary extends StatelessWidget {
         return DecoratedBox(
           decoration: BoxDecoration(
             color: AppTheme.background,
-            border: isDragging
-                ? Border.all(color: AppTheme.accent, width: 2)
-                : null,
+            border: isDragging ? Border.all(color: accent, width: 2) : null,
           ),
           child: SingleChildScrollView(
             child: ConstrainedBox(
@@ -158,7 +157,7 @@ class _HeroCopy extends StatelessWidget {
         Text(
           isDragging ? 'Drop to start playback' : 'Open a video',
           style: textTheme.headlineMedium?.copyWith(
-            fontSize: 38,
+            fontSize: AppType.display,
             height: 1.08,
             letterSpacing: -1.1,
           ),
@@ -241,7 +240,7 @@ class _RecentSection extends StatelessWidget {
           'Recent media',
           style: textTheme.titleMedium?.copyWith(
             color: AppTheme.secondaryText,
-            fontSize: 15,
+            fontSize: AppType.body,
           ),
         ),
         const SizedBox(height: 10),
@@ -275,6 +274,7 @@ class _RecentEntryState extends State<_RecentEntry> {
 
   @override
   Widget build(BuildContext context) {
+    final accent = Theme.of(context).colorScheme.primary;
     final entry = widget.entry;
     final durationMs = entry.duration.inMilliseconds;
     final positionMs = entry.position.inMilliseconds;
@@ -299,19 +299,22 @@ class _RecentEntryState extends State<_RecentEntry> {
         onHover: (value) {
           if (_isHovered != value) setState(() => _isHovered = value);
         },
-        borderRadius: BorderRadius.circular(7),
-        focusColor: AppTheme.accent.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(AppRadii.control),
+        focusColor: accent.withValues(alpha: 0.08),
         hoverColor: AppTheme.hover.withValues(alpha: 0.42),
         child: Container(
           decoration: BoxDecoration(
             border: Border.all(
               color: _hasFocus
-                  ? AppTheme.accent.withValues(alpha: 0.6)
+                  ? accent.withValues(alpha: 0.6)
                   : Colors.transparent,
             ),
-            borderRadius: BorderRadius.circular(7),
+            borderRadius: BorderRadius.circular(AppRadii.control),
           ),
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpace.xs,
+            vertical: 10,
+          ),
           child: Row(
             children: [
               const Icon(Icons.play_arrow_rounded, size: 20),
@@ -341,12 +344,12 @@ class _RecentEntryState extends State<_RecentEntry> {
                     if (durationMs > 0 && hasResume) ...[
                       const SizedBox(height: 7),
                       ClipRRect(
-                        borderRadius: BorderRadius.circular(2),
+                        borderRadius: BorderRadius.circular(AppRadii.square),
                         child: LinearProgressIndicator(
                           value: progress.toDouble(),
                           minHeight: 2.5,
                           backgroundColor: AppTheme.border,
-                          color: AppTheme.accent,
+                          color: accent,
                         ),
                       ),
                     ],
@@ -410,7 +413,7 @@ class _ErrorMessage extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Container(
     width: double.infinity,
-    padding: const EdgeInsets.only(left: 12, top: 2, bottom: 2),
+    padding: const EdgeInsets.only(left: AppSpace.sm, top: 2, bottom: 2),
     decoration: const BoxDecoration(
       border: Border(left: BorderSide(color: AppTheme.danger, width: 2)),
     ),

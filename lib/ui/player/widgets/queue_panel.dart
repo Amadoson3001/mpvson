@@ -80,7 +80,12 @@ class _QueuePanelState extends State<QueuePanel> {
           child: Column(
             children: [
               Padding(
-                padding: const EdgeInsets.fromLTRB(16, 10, 8, 8),
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpace.md,
+                  10,
+                  AppSpace.xs,
+                  AppSpace.xs,
+                ),
                 child: Row(
                   children: [
                     Expanded(
@@ -120,7 +125,12 @@ class _QueuePanelState extends State<QueuePanel> {
                 ),
               ),
               Padding(
-                padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpace.sm,
+                  0,
+                  AppSpace.sm,
+                  AppSpace.sm,
+                ),
                 child: TextField(
                   key: const ValueKey('queue-search'),
                   controller: _searchController,
@@ -350,10 +360,13 @@ class _QueueCount extends StatelessWidget {
       curve: AppMotion.standardCurve,
       child: Container(
         constraints: const BoxConstraints(minHeight: 26, minWidth: 28),
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpace.xs,
+          vertical: 3,
+        ),
         decoration: BoxDecoration(
           color: AppTheme.card,
-          borderRadius: BorderRadius.circular(7),
+          borderRadius: BorderRadius.circular(AppRadii.control),
           border: Border.all(color: AppTheme.border.withValues(alpha: 0.72)),
         ),
         child: AnimatedSwitcher(
@@ -365,7 +378,7 @@ class _QueueCount extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: Theme.of(context).textTheme.labelMedium?.copyWith(
-              color: AppTheme.accent,
+              color: Theme.of(context).colorScheme.primary,
               fontWeight: FontWeight.w700,
               fontFeatures: const [FontFeature.tabularFigures()],
             ),
@@ -573,10 +586,17 @@ class _QueueEntryState extends State<_QueueEntry> with WidgetsBindingObserver {
                   constraints: BoxConstraints(minHeight: thumbnailHeight + 16),
                   duration: AppMotion.duration(context, AppMotion.quick),
                   curve: AppMotion.standardCurve,
-                  padding: const EdgeInsets.fromLTRB(8, 8, 4, 8),
+                  padding: const EdgeInsets.fromLTRB(
+                    AppSpace.xs,
+                    AppSpace.xs,
+                    AppSpace.xxs,
+                    AppSpace.xs,
+                  ),
                   decoration: BoxDecoration(
                     color: widget.isCurrent
-                        ? AppTheme.accent.withValues(alpha: 0.022)
+                        ? Theme.of(
+                            context,
+                          ).colorScheme.primary.withValues(alpha: 0.022)
                         : Colors.transparent,
                     border: Border(
                       bottom: BorderSide(
@@ -617,7 +637,7 @@ class _QueueEntryState extends State<_QueueEntry> with WidgetsBindingObserver {
                                           color: widget.isCurrent
                                               ? AppTheme.text
                                               : AppTheme.secondaryText,
-                                          fontSize: 15,
+                                          fontSize: AppType.body,
                                           fontWeight: FontWeight.w600,
                                         ),
                                   ),
@@ -634,7 +654,7 @@ class _QueueEntryState extends State<_QueueEntry> with WidgetsBindingObserver {
                                           .labelSmall
                                           ?.copyWith(
                                             color: AppTheme.muted,
-                                            fontSize: 11,
+                                            fontSize: AppType.caption,
                                           ),
                                     ),
                                   ),
@@ -762,16 +782,16 @@ class _QueueThumbnail extends StatelessWidget {
         curve: AppMotion.standardCurve,
         decoration: BoxDecoration(
           color: AppTheme.card,
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(AppRadii.control),
           border: Border.all(
             color: selected
-                ? AppTheme.accent.withValues(alpha: 0.88)
+                ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.88)
                 : AppTheme.border.withValues(alpha: 0.72),
             width: selected ? 2 : 1,
           ),
         ),
         child: ClipRRect(
-          borderRadius: BorderRadius.circular(7),
+          borderRadius: BorderRadius.circular(AppRadii.control),
           child: Stack(
             fit: StackFit.expand,
             children: [
@@ -810,8 +830,8 @@ class _QueueThumbnail extends StatelessWidget {
                   bottom: 5,
                   child: DecoratedBox(
                     decoration: BoxDecoration(
-                      color: const Color(0xD9000000),
-                      borderRadius: BorderRadius.circular(4),
+                      color: AppColors.stage.withValues(alpha: 0.85),
+                      borderRadius: BorderRadius.circular(AppRadii.control),
                     ),
                     child: Padding(
                       padding: const EdgeInsets.symmetric(
@@ -823,7 +843,7 @@ class _QueueThumbnail extends StatelessWidget {
                         key: ValueKey('queue-duration-${entry.id}'),
                         style: Theme.of(context).textTheme.labelSmall?.copyWith(
                           color: AppTheme.text,
-                          fontSize: 10,
+                          fontSize: AppType.caption,
                           fontWeight: FontWeight.w600,
                           fontFeatures: const [FontFeature.tabularFigures()],
                         ),
@@ -916,7 +936,7 @@ class _QueueFooter extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Container(
     width: double.infinity,
-    padding: const EdgeInsets.fromLTRB(8, 5, 8, 5),
+    padding: const EdgeInsets.fromLTRB(AppSpace.xs, 5, AppSpace.xs, 5),
     decoration: const BoxDecoration(
       border: Border(top: BorderSide(color: AppTheme.border)),
     ),
@@ -936,7 +956,7 @@ class _QueueFooter extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
           ),
           style: TextButton.styleFrom(
-            foregroundColor: AppTheme.accent,
+            foregroundColor: Theme.of(context).colorScheme.primary,
             minimumSize: const Size(44, 44),
             padding: const EdgeInsets.symmetric(horizontal: 10),
           ),
@@ -953,7 +973,7 @@ class _QueueFooter extends StatelessWidget {
             style: TextButton.styleFrom(
               foregroundColor: AppTheme.secondaryText,
               minimumSize: const Size(44, 44),
-              padding: const EdgeInsets.symmetric(horizontal: 8),
+              padding: const EdgeInsets.symmetric(horizontal: AppSpace.xs),
             ),
           ),
         if (hasItems)
@@ -968,7 +988,7 @@ class _QueueFooter extends StatelessWidget {
             style: ButtonStyle(
               minimumSize: const WidgetStatePropertyAll(Size(44, 44)),
               padding: const WidgetStatePropertyAll(
-                EdgeInsets.symmetric(horizontal: 8),
+                EdgeInsets.symmetric(horizontal: AppSpace.xs),
               ),
               foregroundColor: WidgetStateProperty.resolveWith((states) {
                 if (states.contains(WidgetState.hovered) ||
@@ -987,11 +1007,13 @@ class _QueueFooter extends StatelessWidget {
                 return Colors.transparent;
               }),
               shape: WidgetStatePropertyAll(
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(AppRadii.control),
+                ),
               ),
               side: WidgetStateProperty.resolveWith((states) {
                 return states.contains(WidgetState.focused)
-                    ? const BorderSide(color: AppTheme.accent)
+                    ? BorderSide(color: Theme.of(context).colorScheme.primary)
                     : BorderSide.none;
               }),
             ),

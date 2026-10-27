@@ -408,9 +408,10 @@ class InMemoryMediaLibraryRepository extends MediaLibraryRepository {
 
   @override
   Future<List<String>> getDistinctAlbums({String? artist}) async {
+    final audio = _items.where((i) => i.kind == MediaKind.audio);
     final items = artist != null
-        ? _items.where((i) => i.artist.toLowerCase() == artist.toLowerCase())
-        : _items;
+        ? audio.where((i) => i.artist.toLowerCase() == artist.toLowerCase())
+        : audio;
     final albums = items.map((i) => i.album).toSet().toList()..sort();
     return albums;
   }

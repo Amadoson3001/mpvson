@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../data/services/playback_statistics.dart';
+import '../../core/app_theme.dart';
 
 /// Refresh is explicit so inspecting playback never starts a polling workload.
 class PlaybackInfoDialog extends StatefulWidget {
@@ -45,58 +46,81 @@ class _PlaybackInfoDialogState extends State<PlaybackInfoDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: const Text('Playback information'),
-    scrollable: true,
-    content: SizedBox(
-      width: 480,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const Text(
-            'Check the active decoder and dropped frames when playback stutters. Refresh to take another sample.',
-          ),
-          const SizedBox(height: 16),
-          if (_busy) const LinearProgressIndicator(),
-          if (_error != null)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              child: Text(
-                _error!,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
-              ),
+  Widget build(BuildContext context) {
+    final accent = Theme.of(context).colorScheme.primary;
+    return AlertDialog(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppRadii.artwork),
+        side: const BorderSide(color: AppTheme.border),
+      ),
+      title: const Text('Playback information'),
+      scrollable: true,
+      content: SizedBox(
+        width: 480,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              'Check the active decoder and dropped frames when playback stutters. Refresh to take another sample.',
             ),
-          if (_statistics case final statistics?)
-            for (final entry in statistics.values.entries)
+            const SizedBox(height: 16),
+            if (_busy)
+              LinearProgressIndicator(
+                color: accent,
+                borderRadius: BorderRadius.circular(AppRadii.control),
+              ),
+            if (_error != null)
               Padding(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(child: Text(entry.key)),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: SelectableText(
-                        entry.value,
-                        textAlign: TextAlign.end,
-                      ),
-                    ),
-                  ],
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Text(
+                  _error!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
                 ),
               ),
-        ],
+            if (_statistics case final statistics?)
+              for (final entry in statistics.values.entries)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(child: Text(entry.key)),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: SelectableText(
+                          entry.value,
+                          textAlign: TextAlign.end,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+          ],
+        ),
       ),
-    ),
-    actions: [
-      TextButton(
-        onPressed: _busy ? null : _refresh,
-        child: const Text('Refresh'),
-      ),
-      TextButton(
-        onPressed: () => Navigator.of(context).pop(),
-        child: const Text('Close'),
-      ),
-    ],
-  );
+      actions: [
+        TextButton(
+          style: TextButton.styleFrom(
+            foregroundColor: accent,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AppRadii.control),
+            ),
+          ),
+          onPressed: _busy ? null : _refresh,
+          child: const Text('Refresh'),
+        ),
+        TextButton(
+          style: TextButton.styleFrom(
+            foregroundColor: accent,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AppRadii.control),
+            ),
+          ),
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Close'),
+        ),
+      ],
+    );
+  }
 }

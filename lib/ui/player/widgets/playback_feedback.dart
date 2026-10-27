@@ -19,6 +19,7 @@ class PlaybackFeedback extends StatelessWidget {
   Widget build(BuildContext context) {
     final railProgress = progress?.clamp(0.0, 1.0).toDouble();
     final textTheme = Theme.of(context).textTheme;
+    final accent = Theme.of(context).colorScheme.primary;
 
     return Semantics(
       liveRegion: true,
@@ -50,7 +51,7 @@ class PlaybackFeedback extends StatelessWidget {
                   decoration: BoxDecoration(
                     color: AppTheme.surface.withValues(alpha: 0.96),
                     border: Border.all(color: AppTheme.border),
-                    borderRadius: BorderRadius.circular(10),
+                    borderRadius: BorderRadius.circular(AppRadii.artwork),
                   ),
                   child: Padding(
                     padding: const EdgeInsets.symmetric(
@@ -63,7 +64,7 @@ class PlaybackFeedback extends StatelessWidget {
                         Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Icon(icon, size: 20, color: AppTheme.accent),
+                            Icon(icon, size: 20, color: accent),
                             const SizedBox(width: 9),
                             Flexible(
                               child: Text(
@@ -72,7 +73,7 @@ class PlaybackFeedback extends StatelessWidget {
                                 overflow: TextOverflow.ellipsis,
                                 style: textTheme.bodyMedium?.copyWith(
                                   color: AppTheme.text,
-                                  fontSize: 13,
+                                  fontSize: AppType.small,
                                   fontFeatures: const [
                                     FontFeature.tabularFigures(),
                                   ],
@@ -84,12 +85,14 @@ class PlaybackFeedback extends StatelessWidget {
                         if (railProgress != null) ...[
                           const SizedBox(height: 7),
                           ClipRRect(
-                            borderRadius: BorderRadius.circular(1),
+                            borderRadius: BorderRadius.circular(
+                              AppRadii.square,
+                            ),
                             child: LinearProgressIndicator(
                               value: railProgress,
                               minHeight: 2,
                               backgroundColor: AppTheme.border,
-                              color: AppTheme.accent,
+                              color: accent,
                             ),
                           ),
                         ],

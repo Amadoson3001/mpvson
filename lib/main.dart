@@ -11,7 +11,6 @@ import 'package:window_manager/window_manager.dart';
 
 import 'app.dart';
 import 'data/repositories/app_preferences_repository.dart';
-import 'data/repositories/database/library_database.dart';
 import 'data/repositories/media_library_repository.dart';
 import 'data/repositories/media_library_repository_impl.dart';
 import 'data/repositories/session_repository.dart';
@@ -21,6 +20,7 @@ import 'data/services/diagnostic_log.dart';
 import 'data/services/engine_update_service.dart';
 import 'data/services/media_probe_service.dart';
 import 'data/services/media_probe_service_impl.dart';
+import 'data/services/library_playback_tracker.dart';
 import 'data/services/open_request_coordinator.dart';
 import 'data/services/playback_service.dart';
 import 'data/services/thumbnail_service.dart';
@@ -236,10 +236,13 @@ Future<void> main(List<String> arguments) async {
   final mediaProbeService = MediaProbeServiceImpl();
   final supportDir = await getApplicationSupportDirectory();
   final dbFile = File(p.join(supportDir.path, 'media_library.db'));
-  final libraryDb = await LibraryDatabase.open(path: dbFile.path);
   final libraryRepository = MediaLibraryRepositoryImpl(
-    database: libraryDb,
+    databasePath: dbFile.path,
     probeService: mediaProbeService,
+  );
+  final libraryPlaybackTracker = LibraryPlaybackTracker(
+    controller: readyController,
+    repository: libraryRepository,
   );
   unawaited(
     _initializeBackgroundService('media library', () async {
@@ -286,6 +289,7 @@ Future<void> main(List<String> arguments) async {
     navigatorKey: navigatorKey,
     appPreferences: appPreferences,
     libraryRepository: libraryRepository,
+    libraryPlaybackTracker: libraryPlaybackTracker,
     mediaProbeService: mediaProbeService,
     desktopIntegration: desktopIntegration,
   );
@@ -372,6 +376,7 @@ class _DesktopLifecycle extends WindowListener {
     required this.navigatorKey,
     this.appPreferences,
     this.libraryRepository,
+    this.libraryPlaybackTracker,
     this.mediaProbeService,
     this.desktopIntegration,
   });
@@ -383,6 +388,7 @@ class _DesktopLifecycle extends WindowListener {
   final GlobalKey<NavigatorState> navigatorKey;
   final AppPreferencesRepository? appPreferences;
   final MediaLibraryRepository? libraryRepository;
+  final LibraryPlaybackTracker? libraryPlaybackTracker;
   final MediaProbeService? mediaProbeService;
   final DesktopIntegrationService? desktopIntegration;
   bool _closing = false;
@@ -452,6 +458,7 @@ class _DesktopLifecycle extends WindowListener {
 
   Future<void> _releaseServices({bool discard = false}) async {
     windowManager.removeListener(this);
+    libraryPlaybackTracker?.dispose();
     try {
       desktopIntegration?.dispose();
     } on Object {
