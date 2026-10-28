@@ -176,6 +176,7 @@ CLAUDE.md
 .opencode/
 .claude/
 .cursor/
+.qoder/
 
 # --- Local shortcuts ----------------------------------------------------------
 *.lnk
