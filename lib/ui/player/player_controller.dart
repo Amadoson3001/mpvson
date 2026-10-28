@@ -1453,7 +1453,22 @@ class PlayerController extends ChangeNotifier {
 
   Future<void> playIndex(int index) => _openIndex(index);
 
-  Future<void> _openIndex(int index, {int? navigationCursor}) async {
+  /// Loads the restored current entry without starting playback so the player
+  /// can present its paused frame instead of a resume placeholder.
+  Future<void> prepareCurrentPaused() async {
+    if (!_acceptsCommands || _engineHasMedia || isLoading) return;
+    final entry = current;
+    if (entry == null || !MediaCatalog.kindFromExtension(entry.path).isVideo) {
+      return;
+    }
+    await _openIndex(_currentIndex, play: false);
+  }
+
+  Future<void> _openIndex(
+    int index, {
+    int? navigationCursor,
+    bool play = true,
+  }) async {
     if (!_acceptsCommands || index < 0 || index >= _queue.length) return;
     _syncCurrentProgress();
     final operation = ++_operation;
@@ -1508,6 +1523,7 @@ class PlayerController extends ChangeNotifier {
       return;
     }
 
+    if (!_acceptsCommands || operation != _operation) return;
     final pending = _PendingOpen(
       operation: operation,
       entryId: entry.id,
@@ -1518,7 +1534,7 @@ class PlayerController extends ChangeNotifier {
     _publishTransport();
 
     try {
-      await _playback.open(entry.path, play: true);
+      await _playback.open(entry.path, play: play);
       if (!_isCurrentOpen(pending)) return;
       // The load may already be confirmed by the service's latest state, since
       // native events can arrive while open() is still awaiting.
@@ -1755,6 +1771,31 @@ class PlayerController extends ChangeNotifier {
     if (!_acceptsCommands) return;
     _scheduleSave();
     _notifyIfOpen();
+  }
+
+  Future<void> stop() async {
+    if (!_acceptsCommands || current == null) return;
+    _transportCommandRevision++;
+    _updateQueueProgress(_currentIndex, position: position, duration: duration);
+    unawaited(_writeProgressCheckpoint());
+    _operation++;
+    _cancelPendingOpen(reason: 'playback stopped');
+    _clearPendingNavigation(current!.id);
+    _clearResume();
+    _markSourceDisplaced();
+    _engineHasMedia = false;
+    _engineEntryId = null;
+    _playbackState = _playbackState.copyWith(
+      isPlaying: false,
+      isBuffering: false,
+      clearNativeSource: true,
+      sourceLoaded: false,
+    );
+    final stopping = _playback.stop();
+    _publishTransport();
+    _notifyIfOpen();
+    _scheduleSave();
+    await stopping;
   }
 
   Future<void> togglePlayPause() async {
@@ -2026,10 +2067,12 @@ class PlayerController extends ChangeNotifier {
     await seek(Duration.zero);
   }
 
-  Future<void> toggleShuffle() {
+  Future<void> toggleShuffle() => setShuffle(!shuffle);
+
+  Future<void> setShuffle(bool target) {
     if (!_acceptsCommands) return Future<void>.value();
+    if (target == shuffle) return Future<void>.value();
     _transportCommandRevision++;
-    final target = !shuffle;
     _setShuffleIntent(target);
     _shufflePreferenceRevision++;
     _shufflePreferenceSequence = ++_queuePreferenceSequence;
@@ -2038,15 +2081,20 @@ class PlayerController extends ChangeNotifier {
     return _drainQueuePreferences();
   }
 
-  Future<void> cycleRepeat() {
-    if (!_acceptsCommands) return Future<void>.value();
+  Future<void> cycleRepeat() => setRepeatMode(switch (_repeatMode) {
+    'off' => 'all',
+    'all' => 'one',
+    _ => 'off',
+  });
+
+  Future<void> setRepeatMode(String mode) {
+    if (!_acceptsCommands ||
+        !const {'off', 'all', 'one'}.contains(mode) ||
+        mode == _repeatMode) {
+      return Future<void>.value();
+    }
     _transportCommandRevision++;
-    final nextMode = switch (_repeatMode) {
-      'off' => 'all',
-      'all' => 'one',
-      _ => 'off',
-    };
-    _repeatMode = nextMode;
+    _repeatMode = mode;
     _repeatPreferenceRevision++;
     _repeatPreferenceSequence = ++_queuePreferenceSequence;
     _scheduleSave();

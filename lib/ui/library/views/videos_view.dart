@@ -185,7 +185,7 @@ class _VideosViewState extends State<VideosView> {
                             widget.searchQuery!.isNotEmpty
                         ? 'No video files matched "${widget.searchQuery}".'
                         : 'Add your video folders to browse your movies, clips, and recorded videos.',
-                    actionLabel: 'Add folders',
+                    actionLabel: 'Add folder',
                     icon: Icons.video_library_rounded,
                     onAction: widget.searchQuery?.trim().isNotEmpty ?? false
                         ? null
@@ -202,6 +202,7 @@ class _VideosViewState extends State<VideosView> {
 
   Widget _buildToolbar() {
     final accent = Theme.of(context).colorScheme.primary;
+    final hasVideos = _videos?.isNotEmpty ?? false;
     return Container(
       color: AppTheme.surface,
       padding: const EdgeInsets.symmetric(
@@ -212,80 +213,82 @@ class _VideosViewState extends State<VideosView> {
         children: [
           Text('Videos', style: AppTheme.sectionTitle),
           const Spacer(),
-          // Sort dropdown
-          Text('Sort by: ', style: AppTheme.metadata),
-          const SizedBox(width: 6),
-          DropdownButton<String>(
-            value: _sortBy,
-            underline: const SizedBox.shrink(),
-            dropdownColor: AppTheme.surface,
-            style: AppTheme.rowPrimary.copyWith(fontSize: AppType.small),
-            icon: const Icon(
-              Icons.arrow_drop_down,
-              color: AppTheme.secondaryText,
-              size: 18,
+          if (hasVideos) ...[
+            // Sort dropdown
+            Text('Sort by: ', style: AppTheme.metadata),
+            const SizedBox(width: 6),
+            DropdownButton<String>(
+              value: _sortBy,
+              underline: const SizedBox.shrink(),
+              dropdownColor: AppTheme.surface,
+              style: AppTheme.rowPrimary.copyWith(fontSize: AppType.small),
+              icon: const Icon(
+                Icons.arrow_drop_down,
+                color: AppTheme.secondaryText,
+                size: 18,
+              ),
+              items: const [
+                DropdownMenuItem(value: 'title', child: Text('Title')),
+                DropdownMenuItem(value: 'addedAt', child: Text('Date added')),
+                DropdownMenuItem(value: 'duration', child: Text('Duration')),
+                DropdownMenuItem(value: 'fileSize', child: Text('File size')),
+              ],
+              onChanged: (val) {
+                if (val != null) {
+                  setState(() => _sortBy = val);
+                  _reload();
+                }
+              },
             ),
-            items: const [
-              DropdownMenuItem(value: 'title', child: Text('Title')),
-              DropdownMenuItem(value: 'addedAt', child: Text('Date added')),
-              DropdownMenuItem(value: 'duration', child: Text('Duration')),
-              DropdownMenuItem(value: 'fileSize', child: Text('File size')),
-            ],
-            onChanged: (val) {
-              if (val != null) {
-                setState(() => _sortBy = val);
+            IconButton(
+              icon: Icon(
+                _ascending
+                    ? Icons.arrow_upward_rounded
+                    : Icons.arrow_downward_rounded,
+                size: 16,
+                color: AppTheme.secondaryText,
+              ),
+              tooltip: _ascending ? 'Ascending' : 'Descending',
+              visualDensity: VisualDensity.compact,
+              onPressed: () {
+                setState(() => _ascending = !_ascending);
                 _reload();
-              }
-            },
-          ),
-          IconButton(
-            icon: Icon(
-              _ascending
-                  ? Icons.arrow_upward_rounded
-                  : Icons.arrow_downward_rounded,
-              size: 16,
-              color: AppTheme.secondaryText,
+              },
             ),
-            tooltip: _ascending ? 'Ascending' : 'Descending',
-            visualDensity: VisualDensity.compact,
-            onPressed: () {
-              setState(() => _ascending = !_ascending);
-              _reload();
-            },
-          ),
-          const SizedBox(width: 12),
-          const VerticalDivider(
-            width: 1,
-            indent: 6,
-            endIndent: 6,
-            color: AppTheme.border,
-          ),
-          const SizedBox(width: 12),
-          // Grid / List toggle
-          IconButton(
-            icon: Icon(
-              Icons.grid_view_rounded,
-              size: 18,
-              color: _viewMode == VideoViewMode.grid
-                  ? accent
-                  : AppTheme.mutedText,
+            const SizedBox(width: 12),
+            const VerticalDivider(
+              width: 1,
+              indent: 6,
+              endIndent: 6,
+              color: AppTheme.border,
             ),
-            tooltip: 'Grid view',
-            visualDensity: VisualDensity.compact,
-            onPressed: () => setState(() => _viewMode = VideoViewMode.grid),
-          ),
-          IconButton(
-            icon: Icon(
-              Icons.view_list_rounded,
-              size: 20,
-              color: _viewMode == VideoViewMode.list
-                  ? accent
-                  : AppTheme.mutedText,
+            const SizedBox(width: 12),
+            // Grid / List toggle
+            IconButton(
+              icon: Icon(
+                Icons.grid_view_rounded,
+                size: 18,
+                color: _viewMode == VideoViewMode.grid
+                    ? accent
+                    : AppTheme.mutedText,
+              ),
+              tooltip: 'Grid view',
+              visualDensity: VisualDensity.compact,
+              onPressed: () => setState(() => _viewMode = VideoViewMode.grid),
             ),
-            tooltip: 'List view',
-            visualDensity: VisualDensity.compact,
-            onPressed: () => setState(() => _viewMode = VideoViewMode.list),
-          ),
+            IconButton(
+              icon: Icon(
+                Icons.view_list_rounded,
+                size: 20,
+                color: _viewMode == VideoViewMode.list
+                    ? accent
+                    : AppTheme.mutedText,
+              ),
+              tooltip: 'List view',
+              visualDensity: VisualDensity.compact,
+              onPressed: () => setState(() => _viewMode = VideoViewMode.list),
+            ),
+          ],
         ],
       ),
     );

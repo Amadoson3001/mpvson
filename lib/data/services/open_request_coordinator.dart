@@ -12,10 +12,18 @@ typedef OpenPreferenceDialogHandler =
 typedef PlaybackCommandHandler =
     Future<void> Function({required List<String> paths, required bool playNow});
 
+enum OpenStatus { accepted, cancelled, rejected }
+
+class OpenResult {
+  const OpenResult(this.status, {this.rejectedCount = 0});
+  final OpenStatus status;
+  final int rejectedCount;
+}
+
 class _QueuedRequest {
   const _QueuedRequest(this.request, this.completer);
   final OpenRequest request;
-  final Completer<bool> completer;
+  final Completer<OpenResult> completer;
 }
 
 /// Validates inputs, resolves opening preferences, and serializes requests before calling playback commands.
@@ -25,8 +33,10 @@ class OpenRequestCoordinator {
     required this.isPlaybackActive,
     required this.executePlaybackCommand,
     required this.showPreferenceDialog,
+    this.ready,
   });
 
+  final Future<void> Function()? ready;
   final AppPreferencesRepository preferences;
   final ValueGetter<bool> isPlaybackActive;
   final PlaybackCommandHandler executePlaybackCommand;
@@ -37,8 +47,8 @@ class OpenRequestCoordinator {
   bool _isShowingDialog = false;
 
   /// Submits an open request to be processed in order.
-  Future<bool> handleOpenRequest(OpenRequest request) async {
-    final completer = Completer<bool>();
+  Future<OpenResult> handleOpenRequest(OpenRequest request) async {
+    final completer = Completer<OpenResult>();
     _queue.add(_QueuedRequest(request, completer));
     _processNext();
     return completer.future;
@@ -58,7 +68,7 @@ class OpenRequestCoordinator {
           }
         } catch (e) {
           if (!entry.completer.isCompleted) {
-            entry.completer.complete(false);
+            entry.completer.complete(const OpenResult(OpenStatus.rejected));
           }
         }
       }
@@ -67,41 +77,58 @@ class OpenRequestCoordinator {
     }
   }
 
-  Future<bool> _executeRequest(OpenRequest request) async {
-    // 1. Validate inputs: filter out non-existent or unsupported files if they are local files
+  Future<OpenResult> _executeRequest(OpenRequest request) async {
+    await ready?.call();
     final validPaths = <String>[];
+    var rejected = 0;
     for (final rawPath in request.sources) {
-      final trimmed = rawPath.trim();
-      if (trimmed.isEmpty) continue;
-      if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
-        validPaths.add(trimmed);
-      } else {
-        final file = File(trimmed);
-        if (file.existsSync()) {
-          validPaths.add(file.path);
+      final source = rawPath.trim();
+      if (source.isEmpty) {
+        rejected++;
+        continue;
+      }
+      try {
+        final uri = Uri.tryParse(source);
+        if (uri != null && (uri.scheme == 'http' || uri.scheme == 'https')) {
+          if (uri.host.isEmpty) {
+            rejected++;
+          } else {
+            validPaths.add(source);
+          }
+        } else {
+          final path = uri != null && uri.scheme == 'file'
+              ? uri.toFilePath(windows: Platform.isWindows)
+              : source;
+          if (await File(path).exists()) {
+            validPaths.add(path);
+          } else {
+            rejected++;
+          }
         }
+      } on Object {
+        rejected++;
       }
     }
 
     if (validPaths.isEmpty) {
-      return false;
+      return OpenResult(OpenStatus.rejected, rejectedCount: rejected);
     }
 
     // 2. If nothing is currently loaded or playing, open selection and play normally.
     final currentlyActive = isPlaybackActive();
     if (!currentlyActive) {
       await executePlaybackCommand(paths: validPaths, playNow: true);
-      return true;
+      return OpenResult(OpenStatus.accepted, rejectedCount: rejected);
     }
 
     // 3. Explicit intent bypasses saved preferences
     if (request.intent == OpenIntent.playNow) {
       await executePlaybackCommand(paths: validPaths, playNow: true);
-      return true;
+      return OpenResult(OpenStatus.accepted, rejectedCount: rejected);
     }
     if (request.intent == OpenIntent.enqueue) {
       await executePlaybackCommand(paths: validPaths, playNow: false);
-      return true;
+      return OpenResult(OpenStatus.accepted, rejectedCount: rejected);
     }
 
     // 4. Normal intent: resolve opening preferences
@@ -109,7 +136,7 @@ class OpenRequestCoordinator {
     if (pref == null || pref == OpenBehaviorPreference.askEveryTime) {
       if (_isShowingDialog) {
         // Prevent overlapping dialogs; discard or queue
-        return false;
+        return const OpenResult(OpenStatus.cancelled);
       }
       _isShowingDialog = true;
       OpenBehaviorPreference? chosen;
@@ -121,7 +148,7 @@ class OpenRequestCoordinator {
 
       if (chosen == null) {
         // Closing dialog cancels request without changing playback or saving preference
-        return false;
+        return const OpenResult(OpenStatus.cancelled);
       }
 
       if (pref != OpenBehaviorPreference.askEveryTime) {
@@ -132,10 +159,10 @@ class OpenRequestCoordinator {
 
     if (pref == OpenBehaviorPreference.playNewFilesNow) {
       await executePlaybackCommand(paths: validPaths, playNow: true);
-      return true;
+      return OpenResult(OpenStatus.accepted, rejectedCount: rejected);
     } else {
       await executePlaybackCommand(paths: validPaths, playNow: false);
-      return true;
+      return OpenResult(OpenStatus.accepted, rejectedCount: rejected);
     }
   }
 }

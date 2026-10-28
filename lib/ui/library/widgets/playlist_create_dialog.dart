@@ -151,7 +151,7 @@ class _PlaylistCreateDialogState extends State<PlaylistCreateDialog> {
                     onPressed: _isCreating ? null : _submit,
                     style: FilledButton.styleFrom(
                       backgroundColor: accent,
-                      foregroundColor: AppTheme.background,
+                      foregroundColor: AppTheme.accentForeground,
                       padding: const EdgeInsets.symmetric(
                         horizontal: 20,
                         vertical: AppSpace.sm,

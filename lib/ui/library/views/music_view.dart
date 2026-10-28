@@ -365,16 +365,31 @@ class _MusicViewState extends State<MusicView> {
     );
   }
 
-  Widget _subtabButton(String title, MusicSubtab tab, bool selected) =>
-      TextButton(
+  Widget _subtabButton(String title, MusicSubtab tab, bool selected) {
+    final accent = Theme.of(context).colorScheme.primary;
+    return Padding(
+      padding: const EdgeInsets.only(right: 4),
+      child: TextButton(
         onPressed: () => _changeSubtab(tab),
         style: TextButton.styleFrom(
-          foregroundColor: selected
-              ? Theme.of(context).colorScheme.primary
-              : AppTheme.secondaryText,
+          foregroundColor: selected ? accent : AppTheme.secondaryText,
+          backgroundColor: selected
+              ? accent.withValues(alpha: 0.10)
+              : Colors.transparent,
+          minimumSize: const Size(0, 34),
+          padding: const EdgeInsets.symmetric(horizontal: AppSpace.sm),
+          textStyle: TextStyle(
+            fontSize: AppType.small,
+            fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+          ),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppRadii.control),
+          ),
         ),
         child: Text(title),
-      );
+      ),
+    );
+  }
 
   Future<List<MediaItemRecord>> _fetchMediaForSubtab() async {
     final query = widget.searchQuery;
@@ -442,7 +457,7 @@ class _MusicViewState extends State<MusicView> {
           message: widget.searchQuery != null && widget.searchQuery!.isNotEmpty
               ? 'No songs matched "${widget.searchQuery}". Try a different keyword.'
               : 'Add your music folder to index and listen to your songs.',
-          actionLabel: 'Add folders',
+          actionLabel: 'Add folder',
           onAction: widget.onAddFolders,
         );
     }
@@ -1073,7 +1088,7 @@ class _MusicViewState extends State<MusicView> {
                               backgroundColor: Theme.of(
                                 context,
                               ).colorScheme.primary,
-                              foregroundColor: AppTheme.background,
+                              foregroundColor: AppTheme.accentForeground,
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 20,
                                 vertical: AppSpace.sm,

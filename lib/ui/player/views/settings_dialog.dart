@@ -15,6 +15,7 @@ import '../../../domain/models/playback_settings.dart';
 import '../../../domain/updates/engine_update_channel.dart';
 import '../../core/app_motion.dart';
 import '../../core/app_theme.dart';
+import '../../core/components/empty_state.dart';
 import '../../core/slider_overlay.dart';
 import '../player_controller.dart';
 import 'update_center_dialog.dart';
@@ -157,9 +158,9 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     SizedBox(
-                      width: 184,
+                      width: 208,
                       child: ColoredBox(
-                        color: AppTheme.background,
+                        color: AppTheme.surface,
                         child: _SettingsNavigation(
                           key: const ValueKey('settings-navigation-rail'),
                           section: _section,
@@ -405,6 +406,10 @@ class _SettingsNavigationItem extends StatelessWidget {
             ? const EdgeInsets.only(bottom: 2)
             : const EdgeInsets.symmetric(horizontal: 2),
         decoration: BoxDecoration(
+          color: selected ? accent.withValues(alpha: 0.10) : Colors.transparent,
+          borderRadius: wide
+              ? BorderRadius.circular(AppRadii.control)
+              : BorderRadius.zero,
           border: wide
               ? Border(
                   left: BorderSide(
@@ -474,6 +479,10 @@ class _SettingsContentPane extends StatelessWidget {
           reverseDuration: AppMotion.duration(context, AppMotion.quick),
           switchInCurve: AppMotion.enter,
           switchOutCurve: AppMotion.exit,
+          layoutBuilder: (currentChild, previousChildren) => Stack(
+            fit: StackFit.expand,
+            children: [...previousChildren, ?currentChild],
+          ),
           transitionBuilder: (child, animation) {
             if (AppMotion.reduce(context)) return child;
             final transition = CurvedAnimation(
@@ -1222,6 +1231,22 @@ class _DesktopIntegrationSettings extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            if (preferences.saveError != null) ...[
+              const Text(
+                'Settings could not be saved. Check access to the application data folder and retry.',
+              ),
+              TextButton(
+                onPressed: () async {
+                  try {
+                    await preferences.flush();
+                  } on Object {
+                    /* The error remains visible. */
+                  }
+                },
+                child: const Text('Retry saving'),
+              ),
+              const SizedBox(height: 12),
+            ],
             const _SectionHeading(title: 'Opening files'),
             Padding(
               padding: const EdgeInsets.only(bottom: AppSpace.xs),
@@ -1348,242 +1373,146 @@ class _MediaLibrarySettings extends StatelessWidget {
   final MediaLibraryRepository libraryRepository;
   final Future<String?> Function()? pickDirectory;
 
+  Future<void> _addFolder(BuildContext context) async {
+    try {
+      final path = await (pickDirectory != null
+          ? pickDirectory!()
+          : getDirectoryPath());
+      if (path == null || path.isEmpty) return;
+      await libraryRepository.addFolder(path);
+    } catch (_) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        const SnackBar(content: Text('Could not add the folder. Try again.')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) => ListenableBuilder(
     listenable: libraryRepository,
     builder: (context, _) {
       final folders = libraryRepository.folders;
-      final status = libraryRepository.scanStatus;
       final accent = Theme.of(context).colorScheme.primary;
+      final isReady = libraryRepository.isReady;
 
-      return SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(
-          AppSpace.lg,
-          20,
-          AppSpace.lg,
-          AppSpace.lg,
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              AppSpace.lg,
+              20,
+              AppSpace.lg,
+              AppSpace.md,
+            ),
+            child: Wrap(
+              spacing: AppSpace.sm,
+              runSpacing: AppSpace.xs,
               children: [
-                OutlinedButton.icon(
+                FilledButton.icon(
                   key: const ValueKey('add-folder-button'),
                   icon: const Icon(Icons.create_new_folder_outlined, size: 18),
                   label: const Text('Add folder'),
-                  onPressed: !libraryRepository.isReady
-                      ? null
-                      : () async {
-                          try {
-                            final path = await (pickDirectory != null
-                                ? pickDirectory!()
-                                : getDirectoryPath());
-                            if (path != null && path.isNotEmpty) {
-                              await libraryRepository.addFolder(path);
-                            }
-                          } catch (_) {
-                            if (context.mounted) {
-                              ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-                                const SnackBar(
-                                  content: Text(
-                                    'Could not add the folder. Try again.',
-                                  ),
-                                ),
-                              );
-                            }
-                          }
-                        },
+                  onPressed: isReady ? () => _addFolder(context) : null,
                 ),
-                const SizedBox(width: 12),
                 OutlinedButton.icon(
                   key: const ValueKey('rescan-all-button'),
                   icon: const Icon(Icons.refresh_rounded, size: 18),
-                  label: const Text('Rescan all folders'),
-                  onPressed: libraryRepository.isReady
+                  label: const Text('Rescan library'),
+                  onPressed: isReady && folders.isNotEmpty
                       ? () => unawaited(libraryRepository.rescanAll())
                       : null,
                 ),
               ],
             ),
-            const SizedBox(height: 16),
-            Container(
-              key: const ValueKey('library-scan-progress'),
-              padding: const EdgeInsets.all(AppSpace.sm),
-              decoration: BoxDecoration(
-                color: AppTheme.card,
-                borderRadius: BorderRadius.circular(AppRadii.control),
-                border: Border.all(color: AppTheme.border),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Wrap(
-                    alignment: WrapAlignment.spaceBetween,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    runSpacing: 6,
-                    children: [
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (status.isScanning) ...[
-                            Icon(Icons.sync_rounded, size: 16, color: accent),
-                            const SizedBox(width: 8),
+          ),
+          Expanded(
+            child: folders.isEmpty
+                ? const EmptyState(
+                    title: 'No folders added yet',
+                    message:
+                        'Add a media folder to index your videos and music.',
+                  )
+                : ListView.separated(
+                    padding: const EdgeInsets.fromLTRB(
+                      AppSpace.lg,
+                      0,
+                      AppSpace.lg,
+                      AppSpace.lg,
+                    ),
+                    itemCount: folders.length,
+                    separatorBuilder: (context, index) =>
+                        const Divider(height: 1),
+                    itemBuilder: (context, index) {
+                      final folder = folders[index];
+                      return ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(
+                          folder.isAvailable
+                              ? Icons.folder_rounded
+                              : Icons.folder_off_rounded,
+                          color: folder.isAvailable
+                              ? accent
+                              : Theme.of(context).colorScheme.error,
+                        ),
+                        title: Text(
+                          folder.path,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(
+                                color: folder.isAvailable
+                                    ? AppTheme.primaryText
+                                    : AppTheme.secondaryText,
+                              ),
+                        ),
+                        subtitle: Row(
+                          children: [
+                            Container(
+                              width: 6,
+                              height: 6,
+                              decoration: BoxDecoration(
+                                color: folder.isAvailable
+                                    ? AppTheme.success
+                                    : AppTheme.danger,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
                             Text(
-                              'Scanning library…',
+                              folder.isAvailable ? 'Available' : 'Unavailable',
                               style: Theme.of(context).textTheme.bodySmall
                                   ?.copyWith(
-                                    fontWeight: FontWeight.w600,
-                                    color: accent,
+                                    color: folder.isAvailable
+                                        ? AppTheme.secondaryText
+                                        : AppTheme.danger,
+                                    fontWeight: FontWeight.w500,
                                   ),
                             ),
-                          ] else ...[
-                            const Icon(
-                              Icons.check_circle_outline_rounded,
-                              size: 16,
-                              color: AppTheme.secondaryText,
-                            ),
-                            const SizedBox(width: 8),
+                            const Text(' · '),
                             Text(
-                              'Scan idle',
+                              '${folder.fileCount} ${folder.fileCount == 1 ? 'file' : 'files'}',
                               style: Theme.of(context).textTheme.bodySmall
                                   ?.copyWith(color: AppTheme.secondaryText),
                             ),
                           ],
-                        ],
-                      ),
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            'Discovered: ${status.discoveredCount}',
-                            style: Theme.of(context).textTheme.bodySmall
-                                ?.copyWith(
-                                  fontFeatures: const [
-                                    FontFeature.tabularFigures(),
-                                  ],
-                                ),
+                        ),
+                        trailing: IconButton(
+                          key: ValueKey('remove-folder-${folder.path}'),
+                          tooltip: 'Remove folder',
+                          icon: const Icon(
+                            Icons.delete_outline_rounded,
+                            size: 20,
                           ),
-                          const Text(' · '),
-                          Text(
-                            'Enriched: ${status.enrichedCount}',
-                            style: Theme.of(context).textTheme.bodySmall
-                                ?.copyWith(
-                                  fontFeatures: const [
-                                    FontFeature.tabularFigures(),
-                                  ],
-                                ),
+                          onPressed: () => unawaited(
+                            libraryRepository.removeFolder(folder.path),
                           ),
-                        ],
-                      ),
-                    ],
+                        ),
+                      );
+                    },
                   ),
-                  if (status.isScanning) ...[
-                    const SizedBox(height: 8),
-                    LinearProgressIndicator(
-                      value: status.totalToEnrich > 0
-                          ? (status.enrichedCount / status.totalToEnrich).clamp(
-                              0.0,
-                              1.0,
-                            )
-                          : 0.0,
-                      backgroundColor: AppTheme.border,
-                      color: accent,
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            const SizedBox(height: 20),
-            const _SectionHeading(title: 'Library folders'),
-            if (folders.isEmpty)
-              Container(
-                padding: const EdgeInsets.symmetric(vertical: AppSpace.lg),
-                alignment: Alignment.center,
-                child: Column(
-                  children: [
-                    Icon(
-                      Icons.folder_open_rounded,
-                      size: 36,
-                      color: AppTheme.secondaryText.withValues(alpha: 0.5),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'No folders added yet',
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: AppTheme.secondaryText,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Add a media folder to index video and audio files.',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: AppTheme.secondaryText.withValues(alpha: 0.7),
-                      ),
-                    ),
-                  ],
-                ),
-              )
-            else
-              ListView.separated(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: folders.length,
-                separatorBuilder: (context, index) => const Divider(height: 1),
-                itemBuilder: (context, index) {
-                  final folder = folders[index];
-                  return ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(
-                      folder.isAvailable
-                          ? Icons.folder_rounded
-                          : Icons.folder_off_rounded,
-                      color: folder.isAvailable
-                          ? accent
-                          : Theme.of(context).colorScheme.error,
-                    ),
-                    title: Text(
-                      folder.path,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: folder.isAvailable
-                            ? AppTheme.primaryText
-                            : AppTheme.secondaryText,
-                      ),
-                    ),
-                    subtitle: Row(
-                      children: [
-                        Text(
-                          folder.isAvailable ? 'Available' : 'Unavailable',
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(
-                                color: folder.isAvailable
-                                    ? AppTheme.secondaryText
-                                    : Theme.of(context).colorScheme.error,
-                                fontWeight: FontWeight.w500,
-                              ),
-                        ),
-                        const Text(' · '),
-                        Text(
-                          '${folder.fileCount} ${folder.fileCount == 1 ? 'file' : 'files'}',
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(color: AppTheme.secondaryText),
-                        ),
-                      ],
-                    ),
-                    trailing: IconButton(
-                      key: ValueKey('remove-folder-${folder.path}'),
-                      tooltip: 'Remove folder',
-                      icon: const Icon(Icons.delete_outline_rounded, size: 20),
-                      onPressed: () => unawaited(
-                        libraryRepository.removeFolder(folder.path),
-                      ),
-                    ),
-                  );
-                },
-              ),
-          ],
-        ),
+          ),
+        ],
       );
     },
   );
@@ -1636,6 +1565,7 @@ class _ShortcutsSettings extends StatelessWidget {
         ),
         const _ShortcutRow(keys: 'Ctrl + O', action: 'Open files'),
         const _ShortcutRow(keys: 'Ctrl + L', action: 'Open URL'),
+        const _ShortcutRow(keys: 'Ctrl + M', action: 'Open media library'),
         const _ShortcutRow(keys: 'P', action: 'Show or hide the queue'),
         const _ShortcutRow(keys: 'F11', action: 'Toggle fullscreen'),
         const _ShortcutRow(

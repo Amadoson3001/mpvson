@@ -16,17 +16,22 @@ abstract final class AppTheme {
   static const Color surface = AppColors.layer;
   static const Color card = AppColors.raised;
   static const Color raisedSurface = card;
-  static const Color hover = AppColors.line;
+  static const Color hover = AppColors.hover;
   static const Color border = AppColors.line;
+  static const Color borderStrong = AppColors.lineStrong;
   static const Color text = AppColors.ink;
   static const Color primaryText = text;
-  static const Color secondaryText = Color(0xFFBDBDC0);
+  static const Color secondaryText = AppColors.inkMuted;
   static const Color muted = AppColors.inkDim;
   static const Color mutedText = muted;
-  static const Color success = Color(0xFF83B89C);
-  static const Color warning = Color(0xFFD1AA68);
-  static const Color danger = Color(0xFFC98282);
-  static const Color accentForeground = background;
+  static const Color faint = AppColors.inkFaint;
+  static const Color success = AppColors.jade;
+  static const Color warning = AppColors.gold;
+  static const Color danger = AppColors.rose;
+  static const Color info = AppColors.sky;
+  static const Color stage = AppColors.stage;
+  static const Color onStage = AppColors.onStage;
+  static const Color accentForeground = AppColors.ground;
 
   // Typography tokens
   static const TextStyle pageTitle = TextStyle(
@@ -88,14 +93,19 @@ abstract final class AppTheme {
       secondary: accent,
       onSecondary: accentForeground,
       surface: surface,
+      surfaceContainerLowest: background,
+      surfaceContainerLow: surface,
       surfaceContainer: card,
+      surfaceContainerHigh: card,
       surfaceContainerHighest: hover,
       surfaceTint: Colors.transparent,
       outline: border,
-      outlineVariant: border,
+      outlineVariant: borderStrong,
       onSurface: text,
+      onSurfaceVariant: muted,
       error: danger,
       onError: accentForeground,
+      scrim: AppColors.scrim,
     );
 
     return ThemeData(
@@ -114,8 +124,20 @@ abstract final class AppTheme {
         backgroundColor: hover,
         textColor: accent,
       ),
-      splashColor: accent.withValues(alpha: 0.08),
-      highlightColor: accent.withValues(alpha: 0.05),
+      splashColor: accent.withValues(alpha: 0.10),
+      highlightColor: accent.withValues(alpha: 0.06),
+      focusColor: accent.withValues(alpha: 0.16),
+      scrollbarTheme: ScrollbarThemeData(
+        thumbColor: WidgetStateProperty.resolveWith(
+          (states) =>
+              states.contains(WidgetState.hovered) ||
+                  states.contains(WidgetState.dragged)
+              ? AppColors.inkFaint
+              : AppColors.lineStrong,
+        ),
+        thickness: const WidgetStatePropertyAll(6),
+        radius: const Radius.circular(3),
+      ),
       textTheme: const TextTheme(
         displaySmall: TextStyle(
           color: text,
@@ -217,9 +239,9 @@ abstract final class AppTheme {
       ),
       tooltipTheme: TooltipThemeData(
         decoration: BoxDecoration(
-          color: hover,
+          color: card,
           borderRadius: BorderRadius.circular(AppRadii.control),
-          border: Border.all(color: border),
+          border: Border.all(color: borderStrong),
         ),
         textStyle: const TextStyle(color: text, fontSize: AppType.caption),
         waitDuration: const Duration(milliseconds: 450),
@@ -247,11 +269,16 @@ abstract final class AppTheme {
       ),
       sliderTheme: SliderThemeData(
         activeTrackColor: accent,
-        inactiveTrackColor: border,
+        inactiveTrackColor: borderStrong,
         thumbColor: accent,
         overlayColor: accent.withValues(alpha: 0.14),
         trackHeight: 3,
         thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
+      ),
+      progressIndicatorTheme: const ProgressIndicatorThemeData(
+        color: accent,
+        linearTrackColor: border,
+        circularTrackColor: border,
       ),
       dialogTheme: DialogThemeData(
         backgroundColor: surface,
@@ -270,7 +297,7 @@ abstract final class AppTheme {
         ),
       ),
       snackBarTheme: SnackBarThemeData(
-        backgroundColor: hover,
+        backgroundColor: card,
         contentTextStyle: const TextStyle(color: text),
         behavior: SnackBarBehavior.floating,
         insetPadding: const EdgeInsets.fromLTRB(
@@ -281,6 +308,7 @@ abstract final class AppTheme {
         ),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppRadii.artwork),
+          side: const BorderSide(color: borderStrong),
         ),
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
@@ -301,6 +329,8 @@ abstract final class AppTheme {
             FilledButton.styleFrom(
               foregroundColor: accentForeground,
               backgroundColor: accent,
+              disabledForegroundColor: muted,
+              disabledBackgroundColor: accent.withValues(alpha: 0.28),
               minimumSize: const Size(44, 44),
               padding: const EdgeInsets.symmetric(horizontal: 18),
               shape: RoundedRectangleBorder(
@@ -325,9 +355,18 @@ abstract final class AppTheme {
                 borderRadius: BorderRadius.circular(AppRadii.control),
               ),
             ).copyWith(
+              backgroundColor: WidgetStateProperty.resolveWith(
+                (states) =>
+                    states.contains(WidgetState.hovered) ||
+                        states.contains(WidgetState.focused)
+                    ? hover
+                    : Colors.transparent,
+              ),
               side: WidgetStateProperty.resolveWith(
                 (states) => BorderSide(
-                  color: states.contains(WidgetState.focused) ? accent : border,
+                  color: states.contains(WidgetState.focused)
+                      ? accent
+                      : borderStrong,
                 ),
               ),
             ),

@@ -9,6 +9,8 @@ import 'package:window_manager/window_manager.dart';
 
 import '../../../domain/models/media_catalog.dart';
 import '../../../domain/models/media_entry.dart';
+import '../../../domain/models/open_request.dart';
+import '../../../data/services/open_request_coordinator.dart';
 import '../../../data/services/engine_update_service.dart';
 import '../../../data/services/update_service.dart';
 import '../../../data/services/playback_statistics.dart';
@@ -57,8 +59,10 @@ class PlayerScreen extends StatefulWidget {
     this.appPreferences,
     this.libraryRepository,
     this.desktopIntegration,
+    this.openCoordinator,
   });
 
+  final OpenRequestCoordinator? openCoordinator;
   final PlayerController controller;
   final UpdateService updates;
   final EngineUpdateService engineUpdates;
@@ -110,6 +114,7 @@ class _PlayerScreenState extends State<PlayerScreen>
   Widget? _queuePanelCache;
   PlayerController? _queuePanelCacheController;
   bool _isFullscreen = false;
+  bool _wasMaximizedBeforeFullscreen = false;
   bool _fullscreenReadInFlight = false;
   bool _fullscreenReadRequested = false;
   String? _focusedQueueEntryId;
@@ -129,6 +134,7 @@ class _PlayerScreenState extends State<PlayerScreen>
   bool _showPlayerView = false;
   String? _playerViewEntryId;
   String? _lastVideoEntryId;
+  String? _preparedPausedVideoId;
 
   bool get _nativeWindow =>
       widget.desktopWindow && widget.fullscreenSetter == null;
@@ -158,7 +164,10 @@ class _PlayerScreenState extends State<PlayerScreen>
     HardwareKeyboard.instance.addHandler(_recordKeyboardInput);
     if (_nativeWindow) windowManager.addListener(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _showControls();
+      if (mounted) {
+        _showControls();
+        _preparePausedVideo();
+      }
     });
   }
 
@@ -301,6 +310,19 @@ class _PlayerScreenState extends State<PlayerScreen>
     } else {
       _scheduleControlsHide();
     }
+    _preparePausedVideo();
+  }
+
+  /// Restored videos open in the stage paused instead of showing a resume card.
+  void _preparePausedVideo() {
+    if (!mounted || _isShowingLibrary) return;
+    final controller = widget.controller;
+    final current = controller.current;
+    if (current == null || controller.hasMedia || controller.isLoading) return;
+    if (!MediaCatalog.kindFromExtension(current.path).isVideo) return;
+    if (_preparedPausedVideoId == current.id) return;
+    _preparedPausedVideoId = current.id;
+    unawaited(controller.prepareCurrentPaused());
   }
 
   void _openLibrary() {
@@ -331,6 +353,7 @@ class _PlayerScreenState extends State<PlayerScreen>
       _showPlayerView = true;
       _playerViewEntryId = widget.controller.current?.id;
     });
+    _preparePausedVideo();
   }
 
   void _handleQueueFocusChange() {
@@ -710,6 +733,12 @@ class _PlayerScreenState extends State<PlayerScreen>
     if (HardwareKeyboard.instance.isControlPressed &&
         key == LogicalKeyboardKey.keyL) {
       unawaited(_openUrl());
+      return KeyEventResult.handled;
+    }
+    if (HardwareKeyboard.instance.isControlPressed &&
+        key == LogicalKeyboardKey.keyM &&
+        widget.libraryRepository != null) {
+      _openLibrary();
       return KeyEventResult.handled;
     }
 
@@ -1102,7 +1131,7 @@ class _PlayerScreenState extends State<PlayerScreen>
     } else {
       contentState = 'video';
       content = ColoredBox(
-        color: Colors.black,
+        color: AppTheme.stage,
         child: LayoutBuilder(
           builder: (context, constraints) {
             _updateViewportDimensions(context, constraints);
@@ -1210,8 +1239,8 @@ class _PlayerScreenState extends State<PlayerScreen>
                             ),
                             label: const Text('Home'),
                             style: TextButton.styleFrom(
-                              foregroundColor: Colors.white,
-                              backgroundColor: Colors.black.withValues(
+                              foregroundColor: AppTheme.onStage,
+                              backgroundColor: AppTheme.stage.withValues(
                                 alpha: 0.65,
                               ),
                               padding: const EdgeInsets.symmetric(
@@ -1229,9 +1258,9 @@ class _PlayerScreenState extends State<PlayerScreen>
                           overflow: TextOverflow.ellipsis,
                           style: Theme.of(context).textTheme.titleMedium
                               ?.copyWith(
-                                color: Colors.white,
+                                color: AppTheme.onStage,
                                 shadows: const [
-                                  Shadow(color: Colors.black, blurRadius: 5),
+                                  Shadow(color: AppTheme.stage, blurRadius: 5),
                                 ],
                               ),
                         ),
@@ -1372,7 +1401,7 @@ class _PlayerScreenState extends State<PlayerScreen>
             .map((file) => file.path)
             .where((path) => path.isNotEmpty)
             .toList();
-        unawaited(_openPaths(paths, append: widget.controller.hasMedia));
+        unawaited(_openPaths(paths, origin: OpenOrigin.dragAndDrop));
       },
       child: contentArea,
     );
@@ -1446,10 +1475,38 @@ class _PlayerScreenState extends State<PlayerScreen>
         .toList();
   }
 
-  Future<void> _openPaths(List<String> paths, {bool append = false}) async {
+  Future<void> _openPaths(
+    List<String> paths, {
+    bool append = false,
+    OpenOrigin origin = OpenOrigin.filePicker,
+    bool playNow = false,
+  }) async {
     if (paths.isEmpty) return;
     try {
-      await widget.controller.openPaths(paths, append: append);
+      final coordinator = widget.openCoordinator;
+      if (coordinator == null) {
+        await widget.controller.openPaths(paths, append: append);
+        return;
+      }
+      final result = await coordinator.handleOpenRequest(
+        OpenRequest(
+          id: DateTime.now().microsecondsSinceEpoch.toString(),
+          sources: paths,
+          origin: origin,
+          intent: append
+              ? OpenIntent.enqueue
+              : playNow
+              ? OpenIntent.playNow
+              : OpenIntent.normal,
+        ),
+      );
+      if (result.status == OpenStatus.rejected) {
+        _showMessage(
+          'Could not open the selected media. Check the source and try again.',
+        );
+      } else if (result.rejectedCount > 0) {
+        _showMessage('Some selected sources could not be opened.');
+      }
     } catch (_) {
       _showMessage('Mpvson could not open that media.');
     }
@@ -1469,7 +1526,8 @@ class _PlayerScreenState extends State<PlayerScreen>
     await _openPaths([url.trim()]);
   }
 
-  Future<void> _playRecent(MediaEntry entry) => _openPaths([entry.path]);
+  Future<void> _playRecent(MediaEntry entry) =>
+      _openPaths([entry.path], playNow: true);
 
   Future<String?> _pickSubtitle() => _withControlsVisible(() async {
     if (widget.subtitlePicker != null) return widget.subtitlePicker!();
@@ -1600,15 +1658,46 @@ class _PlayerScreenState extends State<PlayerScreen>
     if (!widget.desktopWindow) return;
     try {
       _playerFocus.requestFocus();
+      if (_nativeWindow && value) {
+        _wasMaximizedBeforeFullscreen = await _leaveMaximizedState();
+      }
       if (widget.fullscreenSetter case final setter?) {
         await setter(value);
       } else {
         await windowManager.setFullScreen(value);
       }
+      if (_nativeWindow && !value && _wasMaximizedBeforeFullscreen) {
+        _wasMaximizedBeforeFullscreen = false;
+        await windowManager.maximize();
+      }
       _syncFullscreen(value);
     } catch (_) {
+      if (_nativeWindow && _wasMaximizedBeforeFullscreen) {
+        _wasMaximizedBeforeFullscreen = false;
+        try {
+          await windowManager.maximize();
+        } on Object {
+          // Leave the window restored if maximizing fails.
+        }
+      }
       _showMessage('Fullscreen could not be changed.');
     }
+  }
+
+  /// window_manager keeps the native title bar when fullscreen starts from a
+  /// maximized window, so start restored and re-maximize when fullscreen ends.
+  Future<bool> _leaveMaximizedState() async {
+    try {
+      if (!await windowManager.isMaximized()) return false;
+      await windowManager.unmaximize();
+      for (var attempt = 0; attempt < 30; attempt++) {
+        await Future<void>.delayed(const Duration(milliseconds: 16));
+        if (!await windowManager.isMaximized()) return true;
+      }
+    } on Object {
+      // Proceed without changing the window state.
+    }
+    return false;
   }
 
   void _showMessage(String message) {

@@ -201,7 +201,13 @@ static int my_application_command_line(GApplication* application,
   }
 
   GPtrArray* paths = g_ptr_array_new_with_free_func(g_free);
+  gboolean enqueue = g_variant_dict_contains(
+      g_application_command_line_get_options_dict(cmdline), "enqueue");
   for (gint i = 1; i < argc; i++) {
+    if (g_strcmp0(argv[i], "--enqueue") == 0) {
+      enqueue = TRUE;
+      continue;
+    }
     if (argv[i][0] == '-') {
       continue;
     }
@@ -220,6 +226,7 @@ static int my_application_command_line(GApplication* application,
   // When a secondary instance is invoked or new paths arrive while running,
   // notify Flutter via MethodChannel mpvson/single_instance.
   if (!is_primary_boot && paths->len > 0) {
+    if (enqueue) g_ptr_array_add(paths, g_strdup("--enqueue"));
     forward_paths_to_flutter(self, paths);
   }
 
@@ -313,9 +320,13 @@ MyApplication* my_application_new() {
 
   g_set_prgname(app_id);
 
-  return MY_APPLICATION(g_object_new(
+  MyApplication* app = MY_APPLICATION(g_object_new(
       my_application_get_type(),
       "application-id", app_id,
       "flags", G_APPLICATION_HANDLES_OPEN | G_APPLICATION_HANDLES_COMMAND_LINE,
       nullptr));
+  g_application_add_main_option(G_APPLICATION(app), "enqueue", 0,
+                                G_OPTION_FLAG_NONE, G_OPTION_ARG_NONE,
+                                "Add media to the queue", nullptr);
+  return app;
 }

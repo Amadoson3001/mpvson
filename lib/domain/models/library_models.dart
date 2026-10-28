@@ -1,4 +1,6 @@
 import 'package:meta/meta.dart';
+
+import 'media_catalog.dart';
 import 'media_kind.dart';
 import 'media_metadata.dart';
 
@@ -121,7 +123,7 @@ class MediaItemRecord {
   String get title {
     final t = metadata.title?.trim();
     if (t != null && t.isNotEmpty) return t;
-    return path.split(RegExp(r'[\\/]')).last;
+    return MediaCatalog.displayName(path.split(RegExp(r'[\\/]')).last);
   }
 
   String get artist => metadata.effectiveArtist;

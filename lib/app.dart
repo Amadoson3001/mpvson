@@ -5,6 +5,7 @@ import 'data/repositories/app_preferences_repository.dart';
 import 'data/repositories/media_library_repository.dart';
 import 'data/services/desktop_integration_service.dart';
 import 'data/services/engine_update_service.dart';
+import 'data/services/open_request_coordinator.dart';
 import 'data/services/update_service.dart';
 import 'ui/core/app_theme.dart';
 import 'ui/player/player_controller.dart';
@@ -26,8 +27,10 @@ class MpvsonApp extends StatelessWidget {
     this.appPreferences,
     this.libraryRepository,
     this.desktopIntegration,
+    this.openCoordinator,
   });
 
+  final OpenRequestCoordinator? openCoordinator;
   final PlayerController controller;
   final UpdateService updates;
   final EngineUpdateService engineUpdates;
@@ -50,6 +53,7 @@ class MpvsonApp extends StatelessWidget {
       theme: AppTheme.dark,
       home: PlayerScreen(
         controller: controller,
+        openCoordinator: openCoordinator,
         updates: updates,
         engineUpdates: engineUpdates,
         desktopWindow: desktopWindow,

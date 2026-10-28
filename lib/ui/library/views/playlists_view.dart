@@ -276,7 +276,7 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                       FilledButton.icon(
                         style: FilledButton.styleFrom(
                           backgroundColor: accent,
-                          foregroundColor: AppTheme.background,
+                          foregroundColor: AppTheme.accentForeground,
                           padding: const EdgeInsets.symmetric(
                             horizontal: AppSpace.md,
                             vertical: 10,
@@ -462,7 +462,7 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                           FilledButton.icon(
                             style: FilledButton.styleFrom(
                               backgroundColor: accent,
-                              foregroundColor: AppTheme.background,
+                              foregroundColor: AppTheme.accentForeground,
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 20,
                                 vertical: AppSpace.sm,

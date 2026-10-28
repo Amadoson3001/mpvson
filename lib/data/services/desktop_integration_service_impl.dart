@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
@@ -164,6 +165,7 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
     try {
       await mediaControlsChannel
           .invokeMethod('updateMetadata', <String, Object?>{
+            'trackId': _currentTrackId,
             'title': metadata.title,
             'artist': metadata.artist ?? metadata.effectiveArtist,
             'album': metadata.album ?? metadata.effectiveAlbum,
@@ -348,7 +350,8 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
     if (_lastSyncedEntryId != entry.id || _lastSyncedTitle != entry.title) {
       _lastSyncedEntryId = entry.id;
       _lastSyncedTitle = entry.title;
-      _currentTrackId = entry.id;
+      _currentTrackId =
+          '/dev/mpvson/mpvson/track/t${utf8.encode(entry.id).map((byte) => byte.toRadixString(16).padLeft(2, '0')).join()}';
 
       final metadata = _buildMetadataForEntry(entry, _controller!.duration);
       updateMetadata(metadata);
@@ -487,39 +490,15 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
         !_controller!.isClosing &&
         _controller!.closingState == ControllerClosingState.running;
 
-    final shouldKeepAwake = keepAwakePref && isPlaying;
     final isVideo =
-        _isVideoSource(_controller!.current?.path) &&
-        _controller!.videoOutputPolicy.visible;
+        _controller!.isVideo && _controller!.videoOutputPolicy.visible;
+    final shouldKeepAwake = keepAwakePref && isPlaying && isVideo;
 
     if (shouldKeepAwake != _isAwakeInhibited ||
         (shouldKeepAwake && isVideo != _lastIsVideoPlaying)) {
       _lastIsVideoPlaying = isVideo;
       setKeepAwake(shouldKeepAwake, isVideoPlaying: isVideo);
     }
-  }
-
-  bool _isVideoSource(String? path) {
-    if (path == null) return false;
-    final lower = path.toLowerCase();
-    const audioExtensions = <String>{
-      '.mp3',
-      '.flac',
-      '.wav',
-      '.aac',
-      '.ogg',
-      '.m4a',
-      '.wma',
-      '.opus',
-      '.alac',
-      '.aiff',
-      '.ape',
-      '.dsf',
-    };
-    for (final ext in audioExtensions) {
-      if (lower.endsWith(ext)) return false;
-    }
-    return true;
   }
 
   Future<dynamic> _handleSingleInstanceCall(MethodCall call) async {
@@ -530,6 +509,7 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
     if (args is List) {
       for (final item in args) {
         final s = item?.toString().trim();
+        if (s == '--enqueue') intent = OpenIntent.enqueue;
         if (s != null && s.isNotEmpty && !s.startsWith('--')) {
           paths.add(s);
         }
@@ -574,7 +554,10 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
           origin: OpenOrigin.osActivation,
           timestamp: DateTime.now(),
         );
-        return await _openRequestCoordinator!.handleOpenRequest(request);
+        return (await _openRequestCoordinator!.handleOpenRequest(
+              request,
+            )).status ==
+            OpenStatus.accepted;
       } else if (_controller != null) {
         await _controller!.openPaths(
           paths,
@@ -618,9 +601,29 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
         }
         return true;
       case 'stop':
-        if (_controller != null && _controller!.isPlaying) {
-          await _controller!.togglePlayPause();
-        }
+        await _controller?.stop();
+        return true;
+      case 'setRate':
+        final value = (call.arguments as Map?)?['rate'];
+        if (value is num) await _controller?.setRate(value.toDouble());
+        return true;
+      case 'setVolume':
+        final value = (call.arguments as Map?)?['volume'];
+        if (value is num) await _controller?.setVolume(value.toDouble() * 100);
+        return true;
+      case 'setShuffle':
+        final value = (call.arguments as Map?)?['shuffle'];
+        if (value is bool) await _controller?.setShuffle(value);
+        return true;
+      case 'setLoopStatus':
+        final value = (call.arguments as Map?)?['loopStatus'];
+        final mode = switch (value) {
+          'Track' => 'one',
+          'Playlist' => 'all',
+          'None' => 'off',
+          _ => null,
+        };
+        if (mode != null) await _controller?.setRepeatMode(mode);
         return true;
       case 'seek':
         return await _handleSeekCommand(call.arguments);

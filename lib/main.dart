@@ -252,7 +252,25 @@ Future<void> main(List<String> arguments) async {
 
   final navigatorKey = GlobalKey<NavigatorState>();
 
+  Future<void>? initialization;
+  Future<void> waitUntilReady() {
+    final active = initialization;
+    if (active != null) return active;
+    late final Future<void> attempt;
+    attempt =
+        (() async {
+          await readyController.initialize();
+          await WidgetsBinding.instance.endOfFrame;
+        })().catchError((Object error, StackTrace stack) {
+          if (identical(initialization, attempt)) initialization = null;
+          Error.throwWithStackTrace(error, stack);
+        });
+    initialization = attempt;
+    return attempt;
+  }
+
   final openCoordinator = OpenRequestCoordinator(
+    ready: waitUntilReady,
     preferences: appPreferences,
     isPlaybackActive: () =>
         readyController.isPlaying ||
@@ -300,6 +318,7 @@ Future<void> main(List<String> arguments) async {
   runApp(
     MpvsonApp(
       navigatorKey: navigatorKey,
+      openCoordinator: openCoordinator,
       controller: readyController,
       updates: readyUpdates,
       engineUpdates: engineUpdates,
@@ -324,10 +343,15 @@ Future<void> main(List<String> arguments) async {
   unawaited(engineUpdates.initialize());
   unawaited(readyPlayback.prepare());
 
+  unawaited(
+    waitUntilReady().catchError((Object error, StackTrace stack) {
+      stderr.writeln('Could not restore the playback session: $error');
+    }),
+  );
+
   final isEnqueue = arguments.contains('--enqueue');
   final paths = arguments.where((argument) => !argument.startsWith('--'));
   if (paths.isNotEmpty) {
-    await readyController.initialize().timeout(const Duration(seconds: 20));
     final origin = OpenOrigin.startupArgs;
     final intent = isEnqueue ? OpenIntent.enqueue : OpenIntent.normal;
     unawaited(
@@ -340,8 +364,6 @@ Future<void> main(List<String> arguments) async {
         ),
       ),
     );
-  } else {
-    unawaited(readyController.initialize());
   }
 }
 
@@ -423,6 +445,11 @@ class _DesktopLifecycle extends WindowListener {
   /// Runs one shutdown attempt, reporting a save failure instead of throwing.
   Future<SessionSaveException?> _attemptClose() async {
     try {
+      try {
+        await appPreferences?.flush();
+      } on Object catch (error) {
+        throw SessionSaveException('Could not save desktop settings.', error);
+      }
       if (controller.closingState == ControllerClosingState.awaitingDecision) {
         // A previous attempt parked the controller in its decision phase; only
         // an explicit retry starts a new save.

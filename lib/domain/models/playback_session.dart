@@ -1,4 +1,5 @@
 import 'control_density.dart';
+import 'media_catalog.dart';
 import 'media_entry.dart';
 import 'media_source.dart';
 import 'playback_settings.dart';
@@ -238,7 +239,7 @@ class PlaybackSession {
     var position = entry.position;
     if (position < Duration.zero) position = Duration.zero;
     if (duration > Duration.zero && position > duration) position = duration;
-    final title = entry.title.trim();
+    final title = MediaCatalog.displayName(entry.title.trim());
     return entry.copyWith(
       path: MediaEntry.normalizeSourcePath(entry.path),
       title: title.isEmpty ? MediaEntry.titleFromPath(entry.path) : title,

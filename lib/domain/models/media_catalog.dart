@@ -86,6 +86,16 @@ class MediaCatalog {
     return MediaKind.unknown;
   }
 
+  /// Strips a recognized media extension from a name for display.
+  static String displayName(String fileName) {
+    final ext = p.extension(fileName).toLowerCase().replaceFirst('.', '');
+    if (!audioExtensions.contains(ext) && !videoExtensions.contains(ext)) {
+      return fileName;
+    }
+    final base = p.basenameWithoutExtension(fileName);
+    return base.isEmpty ? fileName : base;
+  }
+
   /// File selector extension list (e.g. for open file dialogs).
   static List<String> get filePickerExtensions =>
       supportedExtensions.toList()..sort();

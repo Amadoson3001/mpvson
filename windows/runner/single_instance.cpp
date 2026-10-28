@@ -66,7 +66,11 @@ std::vector<std::string> SingleInstance::ResolvePaths(
     if (arg.empty()) {
       continue;
     }
-    // Skip command line flags/options
+    if (arg == L"--enqueue") {
+      resolved.emplace_back("--enqueue");
+      continue;
+    }
+    // Skip other command line flags/options
     if (arg[0] == L'-' || arg[0] == L'/') {
       continue;
     }

@@ -912,6 +912,12 @@ static void handle_update_metadata(MprisPlayer* self, FlValue* args) {
     return;
   }
 
+  FlValue* track_val = fl_value_lookup_string(args, "trackId");
+  if (track_val != nullptr && fl_value_get_type(track_val) == FL_VALUE_TYPE_STRING &&
+      g_variant_is_object_path(fl_value_get_string(track_val))) {
+    g_free(self->meta_track_id);
+    self->meta_track_id = g_strdup(fl_value_get_string(track_val));
+  }
   FlValue* title_val = fl_value_lookup_string(args, "title");
   if (title_val != nullptr && fl_value_get_type(title_val) == FL_VALUE_TYPE_STRING) {
     g_free(self->meta_title);

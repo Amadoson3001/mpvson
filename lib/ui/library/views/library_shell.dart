@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../../data/repositories/media_library_repository.dart';
+import '../../../domain/models/media_catalog.dart';
 import '../../player/player_controller.dart';
 import '../../core/app_theme.dart';
 import '../../core/components/seek_bar.dart';
@@ -330,15 +331,13 @@ class _LibraryShellState extends State<LibraryShell> {
           ],
           // Search input field
           Expanded(
-            child:
-                _currentSection == LibrarySection.home ||
-                    _currentSection == LibrarySection.nowPlaying ||
-                    _currentSection == LibrarySection.settings ||
-                    _currentSection == LibrarySection.folders
+            child: _currentSection == LibrarySection.home
+                ? const SizedBox.shrink()
+                : _currentSection == LibrarySection.nowPlaying ||
+                      _currentSection == LibrarySection.settings ||
+                      _currentSection == LibrarySection.folders
                 ? Text(
-                    _currentSection == LibrarySection.home
-                        ? 'Home'
-                        : _currentSection == LibrarySection.nowPlaying
+                    _currentSection == LibrarySection.nowPlaying
                         ? 'Now playing'
                         : _currentSection == LibrarySection.settings
                         ? 'Settings'
@@ -402,35 +401,21 @@ class _LibraryShellState extends State<LibraryShell> {
                     ),
                   ),
           ),
-          if (widget.onOpenFiles != null)
+          if (_currentSection != LibrarySection.home &&
+              widget.onOpenFiles != null)
             IconButton(
               onPressed: widget.onOpenFiles,
               tooltip: 'Open file',
               icon: const Icon(Icons.file_open_rounded),
             ),
-          if (widget.onOpenUrl != null)
+          if (_currentSection != LibrarySection.home &&
+              widget.onOpenUrl != null)
             IconButton(
               onPressed: widget.onOpenUrl,
               tooltip: 'Open URL',
               icon: const Icon(Icons.link_rounded),
             ),
           const SizedBox(width: 12),
-          PopupMenuButton<String>(
-            tooltip: 'Folders',
-            icon: const Icon(Icons.folder_open_rounded),
-            onSelected: (value) {
-              if (value == 'add') widget.onAddFolders?.call();
-              if (value == 'rescan') widget.repository.rescanAll();
-            },
-            itemBuilder: (_) => [
-              if (widget.onAddFolders != null)
-                const PopupMenuItem(value: 'add', child: Text('Add folder')),
-              const PopupMenuItem(
-                value: 'rescan',
-                child: Text('Rescan library'),
-              ),
-            ],
-          ),
           // Medium screen On-Demand Queue Toggle
           if (canDockQueue) ...[
             const SizedBox(width: 6),
@@ -588,34 +573,6 @@ class _LibraryShellState extends State<LibraryShell> {
               Icons.settings_rounded,
               isCollapsed,
             ),
-          // Add Folder Action button
-          if (!isCollapsed && widget.onAddFolders != null) ...[
-            Padding(
-              padding: const EdgeInsets.symmetric(
-                horizontal: AppSpace.md,
-                vertical: AppSpace.sm,
-              ),
-              child: OutlinedButton.icon(
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: AppTheme.primaryText,
-                  side: const BorderSide(color: AppTheme.border),
-                  padding: const EdgeInsets.symmetric(vertical: 10),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(AppRadii.control),
-                  ),
-                ),
-                onPressed: widget.onAddFolders,
-                icon: const Icon(Icons.create_new_folder_outlined, size: 16),
-                label: const Text(
-                  'Add folders',
-                  style: TextStyle(
-                    fontSize: AppType.small,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ),
-          ],
         ],
       ),
     );
@@ -650,6 +607,11 @@ class _LibraryShellState extends State<LibraryShell> {
           icon: Icon(icon, size: 22),
           tooltip: label,
           color: isSelected ? accent : AppTheme.secondaryText,
+          style: IconButton.styleFrom(
+            backgroundColor: isSelected
+                ? accent.withValues(alpha: 0.12)
+                : Colors.transparent,
+          ),
           onPressed: () => _selectSection(section),
         ),
       );
@@ -667,6 +629,10 @@ class _LibraryShellState extends State<LibraryShell> {
             vertical: 10,
           ),
           decoration: BoxDecoration(
+            color: isSelected
+                ? accent.withValues(alpha: 0.10)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(AppRadii.control),
             border: Border(
               left: BorderSide(
                 color: isSelected ? accent : Colors.transparent,
@@ -704,7 +670,6 @@ class _LibraryShellState extends State<LibraryShell> {
   // --- Drawer for < 960px Screens ---
 
   Widget _buildNavigationDrawer() {
-    final accent = Theme.of(context).colorScheme.primary;
     return Drawer(
       backgroundColor: AppTheme.surface,
       child: SafeArea(
@@ -758,23 +723,6 @@ class _LibraryShellState extends State<LibraryShell> {
                 'Settings',
                 Icons.settings_rounded,
               ),
-            if (widget.onAddFolders != null)
-              Padding(
-                padding: const EdgeInsets.all(AppSpace.md),
-                child: FilledButton.icon(
-                  style: FilledButton.styleFrom(
-                    backgroundColor: accent,
-                    foregroundColor: AppTheme.background,
-                    padding: const EdgeInsets.symmetric(vertical: AppSpace.sm),
-                  ),
-                  onPressed: () {
-                    Navigator.of(context).pop();
-                    widget.onAddFolders?.call();
-                  },
-                  icon: const Icon(Icons.add_rounded),
-                  label: const Text('Add folders'),
-                ),
-              ),
           ],
         ),
       ),
@@ -794,6 +742,11 @@ class _LibraryShellState extends State<LibraryShell> {
         ),
       ),
       child: ListTile(
+        selected: isSelected,
+        selectedColor: accent,
+        tileColor: isSelected
+            ? accent.withValues(alpha: 0.10)
+            : Colors.transparent,
         leading: Icon(
           icon,
           color: isSelected ? accent : AppTheme.secondaryText,
@@ -839,6 +792,9 @@ class _LibraryShellState extends State<LibraryShell> {
         final current = widget.controller.current;
         if (current == null) return const SizedBox.shrink();
         final title = current.title;
+        final isVideo =
+            widget.controller.isVideo ||
+            MediaCatalog.kindFromExtension(current.path).isVideo;
 
         return Column(
           mainAxisSize: MainAxisSize.min,
@@ -898,7 +854,10 @@ class _LibraryShellState extends State<LibraryShell> {
                                   future: widget.repository
                                       .getMediaByCanonicalSource(current.path),
                                   builder: (context, snapshot) => Text(
-                                    snapshot.data?.artist ?? 'Unknown artist',
+                                    isVideo
+                                        ? 'Video'
+                                        : snapshot.data?.artist ??
+                                              'Unknown artist',
                                     style: AppTheme.metadata,
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,

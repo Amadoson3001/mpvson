@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
+import 'media_catalog.dart';
+
 /// A single source in the player's queue or listening history.
 ///
 /// Queue entries carry a unique [id], even when two entries refer to the same
@@ -174,7 +176,9 @@ class MediaEntry {
           final lastSegment = uri.pathSegments.isEmpty
               ? ''
               : uri.pathSegments.last;
-          if (lastSegment.isNotEmpty) return Uri.decodeComponent(lastSegment);
+          if (lastSegment.isNotEmpty) {
+            return MediaCatalog.displayName(Uri.decodeComponent(lastSegment));
+          }
           return uri.host.isEmpty ? source : uri.host;
         } on Object {
           // A percent escape can be syntactically valid yet not decode as UTF-8.
@@ -184,7 +188,9 @@ class MediaEntry {
               .split('/')
               .where((segment) => segment.isNotEmpty);
           final rawSegment = segments.isEmpty ? '' : segments.last;
-          if (rawSegment.isNotEmpty) return rawSegment;
+          if (rawSegment.isNotEmpty) {
+            return MediaCatalog.displayName(rawSegment);
+          }
           return uri.host.isEmpty ? source : uri.host;
         }
       }
@@ -193,7 +199,7 @@ class MediaEntry {
 
     final normalized = normalizeSourcePath(source);
     final name = p.basename(normalized);
-    return name.isEmpty ? normalized : name;
+    return name.isEmpty ? normalized : MediaCatalog.displayName(name);
   }
 
   static int _asInt(Object? value) {

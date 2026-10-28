@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -69,6 +70,13 @@ class AppPreferencesRepository extends ChangeNotifier {
   final File? _customFile;
   DesktopPreferences _preferences = const DesktopPreferences();
   bool _loaded = false;
+  bool _primaryInvalid = false;
+  int _revision = 0;
+  int _savedRevision = 0;
+  Future<void>? _writeInFlight;
+  Object? _saveError;
+  Object? get saveError => _saveError;
+  bool get isSaving => _writeInFlight != null;
 
   DesktopPreferences get preferences => _preferences;
   bool get isLoaded => _loaded;
@@ -82,14 +90,27 @@ class AppPreferencesRepository extends ChangeNotifier {
   Future<void> load() async {
     try {
       final file = await _resolveFile();
+      final backup = File('${file.path}.bak');
+      Future<DesktopPreferences> read(File source) async {
+        final json =
+            jsonDecode(await source.readAsString()) as Map<String, Object?>;
+        return DesktopPreferences.fromJson(json);
+      }
+
       if (await file.exists()) {
-        final content = await file.readAsString();
-        final json = jsonDecode(content) as Map<String, Object?>;
-        _preferences = DesktopPreferences.fromJson(json);
+        try {
+          _preferences = await read(file);
+        } on Object {
+          _primaryInvalid = true;
+          if (await backup.exists()) _preferences = await read(backup);
+        }
+      } else if (await backup.exists()) {
+        _primaryInvalid = true;
+        _preferences = await read(backup);
       }
     } on Object {
-      // Fallback to default preferences on read failure.
-      _preferences = const DesktopPreferences();
+      // Keep defaults if neither copy can be read. Do not overwrite the backup.
+      _primaryInvalid = true;
     } finally {
       _loaded = true;
       notifyListeners();
@@ -98,17 +119,67 @@ class AppPreferencesRepository extends ChangeNotifier {
 
   Future<void> updatePreferences(DesktopPreferences preferences) async {
     _preferences = preferences;
+    _revision++;
     notifyListeners();
-    try {
-      final file = await _resolveFile();
-      await file.parent.create(recursive: true);
-      final jsonString = jsonEncode(_preferences.toJson());
-      final tempFile = File('${file.path}.tmp');
-      await tempFile.writeAsString(jsonString, flush: true);
-      await tempFile.rename(file.path);
-    } on Object {
-      // Best-effort atomic write.
-    }
+    await _drain();
+  }
+
+  Future<void> _drain() {
+    final active = _writeInFlight;
+    if (active != null) return active;
+    late final Future<void> write;
+    write =
+        Future<void>.microtask(() async {
+          while (_savedRevision != _revision) {
+            final revision = _revision;
+            final contents = jsonEncode(_preferences.toJson());
+            try {
+              final file = await _resolveFile();
+              await file.parent.create(recursive: true);
+              final temporary = File(
+                '${file.path}.${DateTime.now().microsecondsSinceEpoch}.$revision.tmp',
+              );
+              final backup = File('${file.path}.bak');
+              await temporary.writeAsString(contents, flush: true);
+              try {
+                if (_primaryInvalid) {
+                  // Keep the known-good backup while replacing a damaged primary.
+                  if (await file.exists()) await file.delete();
+                } else {
+                  if (await backup.exists()) await backup.delete();
+                  if (await file.exists()) await file.rename(backup.path);
+                }
+                try {
+                  await temporary.rename(file.path);
+                } on Object {
+                  if (!await file.exists() && await backup.exists()) {
+                    await backup.copy(file.path);
+                  }
+                  rethrow;
+                }
+              } finally {
+                if (await temporary.exists()) await temporary.delete();
+              }
+              _primaryInvalid = false;
+              _savedRevision = revision;
+              _saveError = null;
+            } on Object catch (error) {
+              _saveError = error;
+              break;
+            }
+          }
+        }).whenComplete(() {
+          _writeInFlight = null;
+          notifyListeners();
+        });
+    _writeInFlight = write;
+    return write;
+  }
+
+  /// Retry unsaved changes and report a failure to the caller.
+  Future<void> flush() async {
+    await _drain();
+    if (_saveError != null) throw _saveError!;
   }
 
   Future<void> setOpenBehavior(OpenBehaviorPreference preference) async {

@@ -38,8 +38,9 @@ class EmptyState extends StatelessWidget {
                 width: 64,
                 height: 64,
                 decoration: BoxDecoration(
-                  color: AppTheme.raisedSurface,
+                  color: accent.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(AppRadii.artwork),
+                  border: Border.all(color: accent.withValues(alpha: 0.22)),
                 ),
                 child: Icon(icon, size: 30, color: accent),
               ),
@@ -58,7 +59,7 @@ class EmptyState extends StatelessWidget {
                 FilledButton.icon(
                   style: FilledButton.styleFrom(
                     backgroundColor: accent,
-                    foregroundColor: AppTheme.background,
+                    foregroundColor: AppTheme.accentForeground,
                     padding: const EdgeInsets.symmetric(
                       horizontal: AppSpace.lg,
                       vertical: 14,
