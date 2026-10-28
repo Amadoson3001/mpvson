@@ -5,7 +5,6 @@ import '../../../domain/models/media_catalog.dart';
 import '../../player/player_controller.dart';
 import '../../core/app_theme.dart';
 import '../../core/components/seek_bar.dart';
-import '../../core/components/app_mark.dart';
 import '../../player/widgets/queue_panel.dart';
 import '../../player/widgets/player_controls.dart';
 import '../widgets/library_status_banner.dart';
@@ -495,35 +494,6 @@ class _LibraryShellState extends State<LibraryShell> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // App Logo / Title
-          Container(
-            height: 56,
-            padding: EdgeInsets.symmetric(
-              horizontal: isCollapsed ? AppSpace.sm : 20,
-            ),
-            alignment: isCollapsed ? Alignment.center : Alignment.centerLeft,
-            child: Row(
-              mainAxisAlignment: isCollapsed
-                  ? MainAxisAlignment.center
-                  : MainAxisAlignment.start,
-              children: [
-                const AppMark(size: 28),
-                if (!isCollapsed) ...[
-                  const SizedBox(width: 12),
-                  const Text(
-                    'Mpvson',
-                    style: TextStyle(
-                      color: AppTheme.primaryText,
-                      fontSize: AppType.body,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: -0.3,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          const Divider(height: 1, color: AppTheme.border),
           const SizedBox(height: 12),
           // Nav Items
           _navItem(
@@ -676,28 +646,6 @@ class _LibraryShellState extends State<LibraryShell> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 20, 20, AppSpace.md),
-              child: Row(
-                children: [
-                  const AppMark(size: 32),
-                  const SizedBox(width: 12),
-                  const Expanded(
-                    child: Text(
-                      'Mpvson',
-                      style: TextStyle(
-                        color: AppTheme.primaryText,
-                        fontSize: AppType.title,
-                        fontWeight: FontWeight.w700,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const Divider(height: 1, color: AppTheme.border),
             const SizedBox(height: 8),
             _drawerItem(LibrarySection.home, 'Home', Icons.home_rounded),
             _drawerItem(LibrarySection.videos, 'Videos', Icons.movie_rounded),
