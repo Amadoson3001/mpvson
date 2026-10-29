@@ -7,6 +7,7 @@ import '../../../domain/models/library_models.dart';
 import '../../../domain/models/media_entry.dart';
 import '../../player/player_controller.dart';
 import '../../core/app_theme.dart';
+import '../widgets/audio_volume_control.dart';
 import '../widgets/library_artwork.dart';
 
 /// Now playing view featuring large artwork, track metadata, full transport
@@ -205,7 +206,13 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                                 ),
                               const SizedBox(height: 12),
                               // Large square artwork
-                              _buildArtwork(context, isNarrow ? 260 : 340),
+                              AudioVolumeWheel(
+                                controller: widget.controller,
+                                child: _buildArtwork(
+                                  context,
+                                  isNarrow ? 260 : 340,
+                                ),
+                              ),
                               const SizedBox(height: 28),
                               // Title & Favorite row
                               Row(

@@ -26,6 +26,17 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   // plugins.
   ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
+  // On cold process startup, clear any stale NativeReferenceHolder file that
+  // might exist if the OS reused a PID from a previously dead process.
+  wchar_t temp_dir[MAX_PATH];
+  if (::GetTempPathW(MAX_PATH, temp_dir)) {
+    wchar_t holder_file[MAX_PATH];
+    swprintf_s(holder_file, MAX_PATH,
+               L"%scom.alexmercerind.media_kit.NativeReferenceHolder.%lu",
+               temp_dir, ::GetCurrentProcessId());
+    ::DeleteFileW(holder_file);
+  }
+
   flutter::DartProject project(L"data");
 
   std::vector<std::string> command_line_arguments =

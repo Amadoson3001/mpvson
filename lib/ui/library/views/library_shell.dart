@@ -8,6 +8,7 @@ import '../../core/components/seek_bar.dart';
 import '../../core/components/app_mark.dart';
 import '../../player/widgets/queue_panel.dart';
 import '../../player/widgets/player_controls.dart';
+import '../widgets/audio_volume_control.dart';
 import '../widgets/library_status_banner.dart';
 import '../widgets/library_artwork.dart';
 import 'music_view.dart';
@@ -799,103 +800,103 @@ class _LibraryShellState extends State<LibraryShell> {
         return Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              height: 60,
-              padding: const EdgeInsets.symmetric(horizontal: AppSpace.md),
-              decoration: const BoxDecoration(
-                color: AppTheme.surface,
-                border: Border(top: BorderSide(color: AppTheme.border)),
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: InkWell(
-                      onTap:
-                          widget.controller.isVideo &&
-                              widget.onBackToPlayer != null
-                          ? widget.onBackToPlayer
-                          : () => _selectSection(LibrarySection.nowPlaying),
-                      borderRadius: BorderRadius.circular(AppRadii.control),
-                      hoverColor: AppTheme.hover,
-                      child: Row(
-                        children: [
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(
-                              AppRadii.artwork,
-                            ),
-                            child: SizedBox(
-                              width: 40,
-                              height: 40,
-                              child: LibraryArtwork(
-                                mediaPath: current.path,
-                                repository: widget.repository,
-                                iconSize: 20,
+            AudioVolumeWheel(
+              controller: widget.controller,
+              child: Container(
+                height: 60,
+                padding: const EdgeInsets.symmetric(horizontal: AppSpace.md),
+                decoration: const BoxDecoration(
+                  color: AppTheme.surface,
+                  border: Border(top: BorderSide(color: AppTheme.border)),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: InkWell(
+                        onTap:
+                            widget.controller.isVideo &&
+                                widget.onBackToPlayer != null
+                            ? widget.onBackToPlayer
+                            : () => _selectSection(LibrarySection.nowPlaying),
+                        borderRadius: BorderRadius.circular(AppRadii.control),
+                        hoverColor: AppTheme.hover,
+                        child: Row(
+                          children: [
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(
+                                AppRadii.artwork,
+                              ),
+                              child: SizedBox(
+                                width: 40,
+                                height: 40,
+                                child: LibraryArtwork(
+                                  mediaPath: current.path,
+                                  repository: widget.repository,
+                                  iconSize: 20,
+                                ),
                               ),
                             ),
-                          ),
-                          const SizedBox(width: 12),
-                          // Title
-                          Expanded(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  title,
-                                  style: AppTheme.rowPrimary.copyWith(
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                                const SizedBox(height: 2),
-                                FutureBuilder(
-                                  key: ValueKey(current.path),
-                                  future: widget.repository
-                                      .getMediaByCanonicalSource(current.path),
-                                  builder: (context, snapshot) => Text(
-                                    isVideo
-                                        ? 'Video'
-                                        : snapshot.data?.artist ??
-                                              'Unknown artist',
-                                    style: AppTheme.metadata,
+                            const SizedBox(width: 12),
+                            // Title
+                            Expanded(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    title,
+                                    style: AppTheme.rowPrimary.copyWith(
+                                      fontWeight: FontWeight.w600,
+                                    ),
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                   ),
-                                ),
-                              ],
+                                  const SizedBox(height: 2),
+                                  FutureBuilder(
+                                    key: ValueKey(current.path),
+                                    future: widget.repository
+                                        .getMediaByCanonicalSource(
+                                          current.path,
+                                        ),
+                                    builder: (context, snapshot) => Text(
+                                      isVideo
+                                          ? 'Video'
+                                          : snapshot.data?.artist ??
+                                                'Unknown artist',
+                                      style: AppTheme.metadata,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 12),
-                  TransportButtons(
-                    controller: widget.controller,
-                    compact: false,
-                  ),
-                  IconButton(
-                    icon: Icon(
-                      widget.controller.volume <= 0
-                          ? Icons.volume_off_rounded
-                          : Icons.volume_up_rounded,
+                    const SizedBox(width: 12),
+                    TransportButtons(
+                      controller: widget.controller,
+                      compact: false,
                     ),
-                    tooltip: widget.controller.volume <= 0 ? 'Unmute' : 'Mute',
-                    onPressed: () => widget.controller.toggleMute(),
-                  ),
-                  if (isCompact) ...[
-                    IconButton(
-                      icon: const Icon(
-                        Icons.queue_music_rounded,
-                        size: 20,
-                        color: AppTheme.secondaryText,
+                    AudioVolumeControl(
+                      controller: widget.controller,
+                      compact: true,
+                    ),
+                    if (isCompact) ...[
+                      IconButton(
+                        icon: const Icon(
+                          Icons.queue_music_rounded,
+                          size: 20,
+                          color: AppTheme.secondaryText,
+                        ),
+                        tooltip: 'Queue',
+                        onPressed: _showCompactQueue,
                       ),
-                      tooltip: 'Queue',
-                      onPressed: _showCompactQueue,
-                    ),
+                    ],
                   ],
-                ],
+                ),
               ),
             ),
             SizedBox(height: 24, child: SeekBar(controller: widget.controller)),
