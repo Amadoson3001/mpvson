@@ -75,9 +75,7 @@ abstract final class NativePropertyNames {
 
 /// Interprets one observed libmpv property change.
 ///
-/// Returns null when the change carries no source lifecycle information. The
-/// rules and their native evidence are documented in
-/// `docs/native-source-probe.md`.
+/// Returns null when the change carries no source lifecycle information.
 NativeMediaEvent? interpretNativeProperty(String property, String value) {
   switch (property) {
     case NativePropertyNames.path:

@@ -5,8 +5,10 @@ import '../../../domain/models/media_catalog.dart';
 import '../../player/player_controller.dart';
 import '../../core/app_theme.dart';
 import '../../core/components/seek_bar.dart';
+import '../../core/components/app_mark.dart';
 import '../../player/widgets/queue_panel.dart';
 import '../../player/widgets/player_controls.dart';
+import '../widgets/audio_volume_control.dart';
 import '../widgets/library_status_banner.dart';
 import '../widgets/library_artwork.dart';
 import 'music_view.dart';
@@ -494,6 +496,35 @@ class _LibraryShellState extends State<LibraryShell> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          // App Logo / Title
+          Container(
+            height: 56,
+            padding: EdgeInsets.symmetric(
+              horizontal: isCollapsed ? AppSpace.sm : 20,
+            ),
+            alignment: isCollapsed ? Alignment.center : Alignment.centerLeft,
+            child: Row(
+              mainAxisAlignment: isCollapsed
+                  ? MainAxisAlignment.center
+                  : MainAxisAlignment.start,
+              children: [
+                const AppMark(size: 28),
+                if (!isCollapsed) ...[
+                  const SizedBox(width: 12),
+                  const Text(
+                    'Mpvson',
+                    style: TextStyle(
+                      color: AppTheme.primaryText,
+                      fontSize: AppType.body,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: -0.3,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const Divider(height: 1, color: AppTheme.border),
           const SizedBox(height: 12),
           // Nav Items
           _navItem(
@@ -646,6 +677,28 @@ class _LibraryShellState extends State<LibraryShell> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, AppSpace.md),
+              child: Row(
+                children: [
+                  const AppMark(size: 32),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Text(
+                      'Mpvson',
+                      style: TextStyle(
+                        color: AppTheme.primaryText,
+                        fontSize: AppType.title,
+                        fontWeight: FontWeight.w700,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1, color: AppTheme.border),
             const SizedBox(height: 8),
             _drawerItem(LibrarySection.home, 'Home', Icons.home_rounded),
             _drawerItem(LibrarySection.videos, 'Videos', Icons.movie_rounded),
@@ -747,103 +800,103 @@ class _LibraryShellState extends State<LibraryShell> {
         return Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              height: 60,
-              padding: const EdgeInsets.symmetric(horizontal: AppSpace.md),
-              decoration: const BoxDecoration(
-                color: AppTheme.surface,
-                border: Border(top: BorderSide(color: AppTheme.border)),
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: InkWell(
-                      onTap:
-                          widget.controller.isVideo &&
-                              widget.onBackToPlayer != null
-                          ? widget.onBackToPlayer
-                          : () => _selectSection(LibrarySection.nowPlaying),
-                      borderRadius: BorderRadius.circular(AppRadii.control),
-                      hoverColor: AppTheme.hover,
-                      child: Row(
-                        children: [
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(
-                              AppRadii.artwork,
-                            ),
-                            child: SizedBox(
-                              width: 40,
-                              height: 40,
-                              child: LibraryArtwork(
-                                mediaPath: current.path,
-                                repository: widget.repository,
-                                iconSize: 20,
+            AudioVolumeWheel(
+              controller: widget.controller,
+              child: Container(
+                height: 60,
+                padding: const EdgeInsets.symmetric(horizontal: AppSpace.md),
+                decoration: const BoxDecoration(
+                  color: AppTheme.surface,
+                  border: Border(top: BorderSide(color: AppTheme.border)),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: InkWell(
+                        onTap:
+                            widget.controller.isVideo &&
+                                widget.onBackToPlayer != null
+                            ? widget.onBackToPlayer
+                            : () => _selectSection(LibrarySection.nowPlaying),
+                        borderRadius: BorderRadius.circular(AppRadii.control),
+                        hoverColor: AppTheme.hover,
+                        child: Row(
+                          children: [
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(
+                                AppRadii.artwork,
+                              ),
+                              child: SizedBox(
+                                width: 40,
+                                height: 40,
+                                child: LibraryArtwork(
+                                  mediaPath: current.path,
+                                  repository: widget.repository,
+                                  iconSize: 20,
+                                ),
                               ),
                             ),
-                          ),
-                          const SizedBox(width: 12),
-                          // Title
-                          Expanded(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  title,
-                                  style: AppTheme.rowPrimary.copyWith(
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                                const SizedBox(height: 2),
-                                FutureBuilder(
-                                  key: ValueKey(current.path),
-                                  future: widget.repository
-                                      .getMediaByCanonicalSource(current.path),
-                                  builder: (context, snapshot) => Text(
-                                    isVideo
-                                        ? 'Video'
-                                        : snapshot.data?.artist ??
-                                              'Unknown artist',
-                                    style: AppTheme.metadata,
+                            const SizedBox(width: 12),
+                            // Title
+                            Expanded(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    title,
+                                    style: AppTheme.rowPrimary.copyWith(
+                                      fontWeight: FontWeight.w600,
+                                    ),
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                   ),
-                                ),
-                              ],
+                                  const SizedBox(height: 2),
+                                  FutureBuilder(
+                                    key: ValueKey(current.path),
+                                    future: widget.repository
+                                        .getMediaByCanonicalSource(
+                                          current.path,
+                                        ),
+                                    builder: (context, snapshot) => Text(
+                                      isVideo
+                                          ? 'Video'
+                                          : snapshot.data?.artist ??
+                                                'Unknown artist',
+                                      style: AppTheme.metadata,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 12),
-                  TransportButtons(
-                    controller: widget.controller,
-                    compact: false,
-                  ),
-                  IconButton(
-                    icon: Icon(
-                      widget.controller.volume <= 0
-                          ? Icons.volume_off_rounded
-                          : Icons.volume_up_rounded,
+                    const SizedBox(width: 12),
+                    TransportButtons(
+                      controller: widget.controller,
+                      compact: false,
                     ),
-                    tooltip: widget.controller.volume <= 0 ? 'Unmute' : 'Mute',
-                    onPressed: () => widget.controller.toggleMute(),
-                  ),
-                  if (isCompact) ...[
-                    IconButton(
-                      icon: const Icon(
-                        Icons.queue_music_rounded,
-                        size: 20,
-                        color: AppTheme.secondaryText,
+                    AudioVolumeControl(
+                      controller: widget.controller,
+                      compact: true,
+                    ),
+                    if (isCompact) ...[
+                      IconButton(
+                        icon: const Icon(
+                          Icons.queue_music_rounded,
+                          size: 20,
+                          color: AppTheme.secondaryText,
+                        ),
+                        tooltip: 'Queue',
+                        onPressed: _showCompactQueue,
                       ),
-                      tooltip: 'Queue',
-                      onPressed: _showCompactQueue,
-                    ),
+                    ],
                   ],
-                ],
+                ),
               ),
             ),
             SizedBox(height: 24, child: SeekBar(controller: widget.controller)),

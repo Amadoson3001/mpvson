@@ -26,8 +26,7 @@ next restart. If an engine fails after native player initialization, Mpvson
 persists the fallback choice and restarts in a clean process because MediaKit
 caches native bindings. A queued engine change can be discarded before
 restarting. The app-package manifest may remain unconfigured even while the
-default engine source is available. Setup and release instructions are in
-docs/updates.md.
+default engine source is available.
 
 Bundled playback engine: libmpv mpv v0.41.0-dev-gfffe7a23a, pinned in
 engine-provenance.json and verified by SHA-256 before it is bundled.

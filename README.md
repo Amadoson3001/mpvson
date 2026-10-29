@@ -4,9 +4,9 @@ A desktop video player for Windows and Linux, built with Flutter and powered by 
 
 Mpvson is standalone: it stores its state in the OS application-support directory, does not modify a system mpv profile, and needs no separate mpv installation on Windows.
 
-The interface uses a unified shell across Home, Videos, Music, Playlists, Folders, and Settings, paired with a persistent bottom transport bar for playback controls, the shared seek bar, and Now Playing access, while giving video a true-black full stage. A neutral graphite palette with an artwork-derived accent (falling back to warm lamp) and bundled Onest typography with tabular timecodes keep the chrome quiet so media artwork takes visual emphasis. The queue docks as a side panel on wide windows and opens as a sheet on narrow ones. See [interface design notes](docs/ui-design.md).
+The interface uses a unified shell across Home, Videos, Music, Playlists, Folders, and Settings, paired with a persistent bottom transport bar for playback controls, the shared seek bar, and Now Playing access, while giving video a true-black full stage. A neutral graphite palette with an artwork-derived accent (falling back to warm lamp) and bundled Onest typography with tabular timecodes keep the chrome quiet so media artwork takes visual emphasis. The queue docks as a side panel on wide windows and opens as a sheet on narrow ones.
 
-Settings → Appearance offers Compact and Normal controls. Compact is the default: smaller buttons and a wider seek rail in the persistent bottom transport bar. Changes apply immediately and are remembered after restarting. See [control-size design](docs/control-density.md).
+Settings → Appearance offers Compact and Normal controls. Compact is the default: smaller buttons and a wider seek rail in the persistent bottom transport bar. Changes apply immediately and are remembered after restarting.
 
 ## Run on Windows
 
@@ -41,8 +41,6 @@ Mpvson provides two distribution formats on Windows:
 - **System Media Transport Controls (SMTC)**: Native WinRT SMTC integration synchronizes playback state, track metadata (title, artist, album, and thumbnail artwork), timeline positions, and hardware media keys with the Windows 10/11 taskbar volume flyout and lock screen.
 - **Power requests (display awake)**: Uses Win32 power request APIs (`PowerRequestDisplayRequired`) to prevent monitor sleep and screen savers during video playback. The request automatically clears on pause, stop, or during audio-only playback, and can be toggled in Settings.
 - **Explorer file associations & context menus**: Registers file type capabilities across all supported media formats. Right-clicking media in Explorer offers both **Play with Mpvson** (default open) and **Add to queue** (`--enqueue`).
-
-See the [desktop integration guide](docs/desktop-integration.md) for architecture and packaging details.
 
 ## Run on Linux
 
@@ -118,10 +116,10 @@ For system-wide installation across all users, copy the files to `/usr/local/bin
 - Queue cards show cover art or a generated video frame, with duration over the image. Hover or focus a card to reveal its drag grip on the left.
 - Continue recent media from its saved position.
 - Select audio and subtitle tracks, load an external subtitle file, and adjust playback speed.
-- Tune quality, hardware decoding, picture and synchronization in Settings > Video & audio. See [playback tuning](docs/playback-tuning.md).
+- Tune quality, hardware decoding, picture and synchronization in Settings > Video & audio.
 - Inspect the active decoder and dropped frames through More > Playback information or the I key.
 - Control volume, seek, and enter fullscreen from the player or keyboard.
-- Scroll over video to change volume, click to pause/play, and double-click to toggle fullscreen.
+- Scroll over video, the audio artwork, or the mini player to change volume; click to pause/play and double-click to toggle fullscreen.
 - Right-click for playback, speed, audio/subtitle, volume and file actions. The menu also opens with Shift+F10.
 - Fullscreen controls and the cursor hide after inactivity. Keyboard focus, menus and dragging keep the controls available.
 - Escape dismisses the compact queue drawer if open, or exits fullscreen.
@@ -161,8 +159,6 @@ Mpvson includes an integrated local media library designed for fast indexing, ri
 - **Detachable storage resilience**: Tracks located on unmounted external drives or folders are marked unavailable rather than removed. Playback history, favorites, and playlist orders remain intact.
 - **SQLite backend**: Uses indexed SQLite storage (`media_library.db`) in application-support storage. Library indexing operates independently of the playback engine and never alters source files on disk.
 
-See the [library architecture guide](docs/library-architecture.md) for data schemas, indexing pipelines, and query design.
-
 ## Opening behavior and desktop settings
 
 When opening new media files (via Explorer double-click, command-line arguments, drag-and-drop, or file dialogs) while media is already playing or paused, Mpvson coordinates the request through a configurable opening behavior preference:
@@ -172,8 +168,6 @@ When opening new media files (via Explorer double-click, command-line arguments,
 - **Ask every time** (`askEveryTime`): Prompts the user with a modal preference dialog on each conflict.
 - **Initial choice prompt**: If unset, opening files during active playback displays a first-conflict dialog with "Keep playing and add to queue" or "Play new files now", automatically remembering the selection and noting that it can be modified anytime in Settings.
 - **Display sleep setting**: Under **Settings > Desktop integration**, toggle display sleep prevention (`keepAwakeDuringPlayback`) or launch the OS default applications settings.
-
-See the [desktop integration guide](docs/desktop-integration.md) for IPC flow, SMTC, MPRIS, and platform hooks.
 
 ## Data and privacy
 
@@ -197,7 +191,7 @@ Configure the application update manifest when building:
 flutter build linux --release --dart-define=MPVSON_UPDATE_MANIFEST=https://your-domain.example/releases/manifest.json
 ```
 
-Use the same dart-define with the Windows build command. Builds with no source configured say so in Settings. The updater checks version and platform, downloads a release, verifies SHA-256, and exposes the verified download. Installation happens after closing the player; do not replace loaded libraries during playback. See [update and release instructions](docs/updates.md) for the manifest format, generation tool, install flow, and rollback.
+Use the same dart-define with the Windows build command. Builds with no source configured say so in Settings. The updater checks version and platform, downloads a release, verifies SHA-256, and exposes the verified download. Installation happens after closing the player; do not replace loaded libraries during playback.
 
 Windows engine updates default to the stable channel. The latest upstream
 stable release, mpv v0.41.0, publishes Windows player archives but no compatible
@@ -231,9 +225,8 @@ That does not disable mpv engine updates.
 ## Development and checks
 
 ```sh
-dart format lib tool test
+dart format lib tool
 flutter analyze
-flutter test --no-pub --concurrency=1
 ```
 
 ### Release builds and engine verification
@@ -256,7 +249,7 @@ flutter build linux --release --target=lib/main.dart
 
 Engine provenance verification (`tool/engine_provenance.dart verify`) checks the pinned engine archive, SHA-256 digest, and license against `packaging/windows/engine-provenance.json`. The `inventory` command records the engine version, ffmpeg version, and build components for distribution.
 
-The desktop workflow in `.github/workflows/desktop.yml` validates formatting, static analysis, and tests before building Windows x64 and Linux x64 release binaries. It also verifies engine provenance and inventory, then packages release distribution archives (`dist/mpvson-windows-x64.zip` and `dist/mpvson-linux-x64.tar.gz`) with SHA-256 checksums.
+The desktop workflow in `.github/workflows/desktop.yml` validates formatting and static analysis before building Windows x64 and Linux x64 release binaries. It also verifies engine provenance and inventory, then packages release distribution archives (`dist/mpvson-windows-x64.zip` and `dist/mpvson-linux-x64.tar.gz`) with SHA-256 checksums.
 
 The code uses MVVM with injected playback and session services. App controls use Flutter widgets and focus handling; mpv owns decoding, audio/video synchronization, subtitle rendering, and GPU video output. UI controls do not use mpv's ASS renderer.
 
@@ -268,9 +261,8 @@ The code uses MVVM with injected playback and session services. App controls use
 | `lib/data` | Playback, storage, updates, and repositories |
 | `lib/ui` | View models, theme, player, queue, and settings |
 | `windows`, `linux` | Native desktop runners |
-| `test` | Playback/session, update integrity, and UI regression tests |
 | `tool` | Release tooling |
-| `docs` | Architecture, desktop integration, library, design, and update notes |
+| `packages/media_kit` | Vendored, patched media_kit core |
 | `packages/media_kit_video` | Vendored, patched media_kit video plugin |
 | `packaging` | Desktop integration assets |
 

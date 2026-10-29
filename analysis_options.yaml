@@ -10,7 +10,6 @@
 include: package:flutter_lints/flutter.yaml
 analyzer:
   exclude:
-    - "test-output/**"
     - build/**
     - windows/**
     - linux/**
