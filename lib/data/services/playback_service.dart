@@ -4,7 +4,9 @@ import 'dart:io';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
+import '../../domain/models/media_catalog.dart';
 import '../../domain/models/media_entry.dart';
+import '../../domain/models/media_kind.dart';
 import '../../domain/models/media_source.dart';
 import '../../domain/models/playback_settings.dart';
 import '../../domain/models/video_output_policy.dart';
@@ -239,7 +241,7 @@ class MediaKitPlaybackService
     // Assigned here rather than in the initializer list so the public parameter
     // name stays `diagnostics`; named parameters cannot be private.
     _diagnostics = diagnostics;
-    _videoController = videoController ?? VideoController(_player);
+    _videoController = videoController;
     _state = _snapshotFrom(
       _player.state,
     ).copyWith(sourceStart: 0, clearNativeSource: true);
@@ -320,7 +322,8 @@ class MediaKitPlaybackService
   NativeMediaEvents? _observedNativeEvents;
   final bool _ownsNativeEvents;
   DiagnosticSink? _diagnostics;
-  late final VideoController _videoController;
+  VideoController? _videoController;
+  bool _preferHardwareDecoding = true;
   final StreamController<PlaybackSnapshot> _stateController =
       StreamController<PlaybackSnapshot>.broadcast(sync: true);
   late final SnapshotEmitter<PlaybackSnapshot> _emitter =
@@ -331,6 +334,7 @@ class MediaKitPlaybackService
   _PendingPlaybackSettings? _activePlaybackSettings;
   Future<void>? _playbackSettingsDrain;
   final Map<String, String> _confirmedPlaybackProperties = <String, String>{};
+  bool? _appliedBufferingPolicyNetwork;
   final PlaybackSourceIdentity _identity = PlaybackSourceIdentity();
   StreamSubscription<NativeMediaEvent>? _nativeSubscription;
   Future<void>? _prepareFuture;
@@ -350,7 +354,32 @@ class MediaKitPlaybackService
   Player get player => _player;
 
   @override
-  VideoController get videoController => _videoController;
+  VideoController get videoController {
+    final existing = _videoController;
+    if (existing != null) return existing;
+    // Audio-only sessions never allocate a video output. The controller is
+    // created when a video is opened or a Video widget first renders.
+    final controller = VideoController(
+      _player,
+      configuration: VideoControllerConfiguration(
+        hwdec: _preferHardwareDecoding ? 'auto' : 'no',
+      ),
+    );
+    _videoController = controller;
+    _applyStoredVideoPolicy(controller);
+    return controller;
+  }
+
+  void _applyStoredVideoPolicy(VideoController controller) {
+    final visible = _videoOutputPolicy.visible;
+    _lastAppliedVisibility = visible;
+    unawaited(
+      controller.setRenderVisibility(visible).catchError((Object _) {}),
+    );
+    _lastAppliedWidth = null;
+    _lastAppliedHeight = null;
+    _scheduleResize(force: true);
+  }
 
   @override
   PlaybackSnapshot get state => _state;
@@ -369,9 +398,10 @@ class MediaKitPlaybackService
     if (_disposed) return;
     final visibilityChanged = _lastAppliedVisibility != policy.visible;
     _videoOutputPolicy = policy;
-    if (visibilityChanged) {
+    final controller = _videoController;
+    if (visibilityChanged && controller != null) {
       _lastAppliedVisibility = policy.visible;
-      unawaited(_videoController.setRenderVisibility(policy.visible));
+      unawaited(controller.setRenderVisibility(policy.visible));
     }
     _scheduleResize();
   }
@@ -419,9 +449,11 @@ class MediaKitPlaybackService
   }
 
   void _forceControllerSize({required int? width, required int? height}) {
+    final controller = _videoController;
+    if (controller == null) return;
     unawaited(() async {
       try {
-        await _videoController.setSize(width: width, height: height);
+        await controller.setSize(width: width, height: height);
       } catch (_) {
         // A source close can race the debounced resize. The next source or
         // viewport event reapplies its current policy.
@@ -510,6 +542,9 @@ class MediaKitPlaybackService
   }
 
   Future<void> _applyBufferingPolicy({required bool isNetwork}) async {
+    // The engine keeps these options across sources, so repeating the same
+    // native writes before every local-file open only delays playback.
+    if (_appliedBufferingPolicyNetwork == isNetwork) return;
     final nativePlayer = _player.platform;
     if (nativePlayer is! NativePlayer) return;
     try {
@@ -577,6 +612,7 @@ class MediaKitPlaybackService
             )
             .timeout(const Duration(seconds: 1));
       }
+      _appliedBufferingPolicyNetwork = isNetwork;
     } on Object catch (error) {
       _diagnostics?.record('playback.buffering_policy', error: error);
     }
@@ -606,6 +642,11 @@ class MediaKitPlaybackService
     );
     _lastAppliedWidth = null;
     _lastAppliedHeight = null;
+    if (MediaCatalog.kindFromExtension(path) != MediaKind.audio) {
+      // Attach the video output before opening so video sources keep their
+      // first-frame path. Known audio sources never allocate it.
+      videoController;
+    }
     _scheduleResize(force: true);
     await _applyBufferingPolicy(isNetwork: MediaEntry.isNetworkUrl(path));
     await _player.open(Media(path), play: play);
@@ -759,17 +800,19 @@ class MediaKitPlaybackService
   Future<PlaybackSettingsApplyResult> _applyPlaybackSettings(
     PlaybackSettings settings,
   ) async {
-    try {
-      // A runtime property write is deferred until VideoController has
-      // completed its native initialization, even while no source is open.
-      await _videoController.platform.future.timeout(
-        const Duration(seconds: 4),
-      );
-    } on Object catch (error) {
-      return PlaybackSettingsApplyResult(
-        supported: false,
-        reason: 'The native video output is not ready: $error',
-      );
+    _preferHardwareDecoding = settings.preferHardwareDecoding;
+    final controller = _videoController;
+    if (controller != null) {
+      try {
+        // A runtime property write is deferred until VideoController has
+        // completed its native initialization, even while no source is open.
+        await controller.platform.future.timeout(const Duration(seconds: 4));
+      } on Object catch (error) {
+        return PlaybackSettingsApplyResult(
+          supported: false,
+          reason: 'The native video output is not ready: $error',
+        );
+      }
     }
     if (_disposed) {
       return const PlaybackSettingsApplyResult(

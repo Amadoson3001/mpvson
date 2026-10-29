@@ -83,10 +83,25 @@ class _LibraryArtworkState extends State<LibraryArtwork> {
       builder: (context, snapshot) {
         final path = snapshot.data;
         if (path == null) return fallback();
-        return Image.file(
-          _file(path),
-          fit: BoxFit.cover,
-          errorBuilder: (_, _, _) => fallback(),
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            // Decode at the size the artwork is displayed at instead of the
+            // source resolution; album covers can otherwise cost megabytes
+            // each in the image cache.
+            final width = constraints.maxWidth;
+            final cacheWidth = width.isFinite && width > 0
+                ? (width * MediaQuery.devicePixelRatioOf(context))
+                      .round()
+                      .clamp(1, 4096)
+                      .toInt()
+                : null;
+            return Image.file(
+              _file(path),
+              fit: BoxFit.cover,
+              cacheWidth: cacheWidth,
+              errorBuilder: (_, _, _) => fallback(),
+            );
+          },
         );
       },
     );

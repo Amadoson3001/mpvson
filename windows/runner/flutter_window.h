@@ -8,6 +8,7 @@
 
 #include <memory>
 
+#include "engine_bridge.h"
 #include "power_management.h"
 #include "single_instance.h"
 #include "system_media_transport.h"
@@ -34,9 +35,9 @@ class FlutterWindow : public Win32Window {
 
   // The Flutter instance hosted by this window.
   std::unique_ptr<flutter::FlutterViewController> flutter_controller_;
-  std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> engine_channel_;
 
   // Native integration modules
+  std::unique_ptr<EngineBridge> engine_bridge_;
   std::unique_ptr<SingleInstance> single_instance_;
   std::unique_ptr<SystemMediaTransport> system_media_transport_;
   std::unique_ptr<PowerManagement> power_management_;

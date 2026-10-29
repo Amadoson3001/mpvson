@@ -1,7 +1,6 @@
 #include "flutter_window.h"
 
 #include <optional>
-#include <flutter/standard_method_codec.h>
 
 #include "flutter/generated_plugin_registrant.h"
 
@@ -36,62 +35,15 @@ bool FlutterWindow::OnCreate() {
     single_instance_->Initialize(hwnd, messenger);
   }
 
+  engine_bridge_ = std::make_unique<EngineBridge>();
+  engine_bridge_->Initialize(messenger);
+
   system_media_transport_ = std::make_unique<SystemMediaTransport>();
   system_media_transport_->Initialize(hwnd, messenger);
 
   power_management_ = std::make_unique<PowerManagement>();
   power_management_->Initialize(messenger);
 
-  engine_channel_ = std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
-      messenger, "mpvson/engine",
-      &flutter::StandardMethodCodec::GetInstance());
-  engine_channel_->SetMethodCallHandler([](const auto& call, auto result) {
-    const auto module = GetModuleHandleW(L"media_kit_video_plugin.dll");
-    if (module == nullptr) {
-      result->Error("engine_bridge", "The native video engine bridge is unavailable.");
-      return;
-    }
-    if (call.method_name() == "configure") {
-      const auto path = call.arguments() == nullptr
-          ? nullptr : std::get_if<std::string>(call.arguments());
-      if (path == nullptr || path->empty()) {
-        result->Error("engine_path", "An absolute engine library path is required.");
-        return;
-      }
-      const int length = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
-          path->data(), static_cast<int>(path->size()), nullptr, 0);
-      if (length <= 0) {
-        result->Error("engine_path", "The engine library path is not valid UTF-8.");
-        return;
-      }
-      std::wstring wide_path(length, L'\0');
-      MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path->data(),
-          static_cast<int>(path->size()), wide_path.data(), length);
-      using Configure = int (*)(const wchar_t*);
-      const auto configure = reinterpret_cast<Configure>(
-          GetProcAddress(module, "MpvsonConfigureEngine"));
-      const int code = configure == nullptr ? ERROR_PROC_NOT_FOUND : configure(wide_path.c_str());
-      if (code != 0) {
-        result->Error("engine_load", "Could not load the selected native engine. Windows error " + std::to_string(code));
-        return;
-      }
-      result->Success();
-    } else if (call.method_name() == "libraryPath") {
-      using LibraryPath = const wchar_t* (*)();
-      const auto library_path = reinterpret_cast<LibraryPath>(
-          GetProcAddress(module, "MpvsonEngineLibraryPath"));
-      const auto path = library_path == nullptr ? L"" : library_path();
-      const int length = WideCharToMultiByte(CP_UTF8, 0, path, -1,
-          nullptr, 0, nullptr, nullptr);
-      std::string value(length > 0 ? length : 1, '\0');
-      if (length > 0) WideCharToMultiByte(CP_UTF8, 0, path, -1,
-          value.data(), length, nullptr, nullptr);
-      value.resize(value.size() - 1);
-      result->Success(flutter::EncodableValue(value));
-    } else {
-      result->NotImplemented();
-    }
-  });
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
@@ -107,14 +59,6 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
-  if (power_management_) {
-    power_management_->CleanUp();
-    power_management_ = nullptr;
-  }
-  if (system_media_transport_) {
-    system_media_transport_->CleanUp();
-    system_media_transport_ = nullptr;
-  }
   if (single_instance_) {
     single_instance_->CleanUp();
     MSG pending = {};
@@ -124,8 +68,18 @@ void FlutterWindow::OnDestroy() {
     }
     single_instance_ = nullptr;
   }
-
-  engine_channel_ = nullptr;
+  if (engine_bridge_) {
+    engine_bridge_->CleanUp();
+    engine_bridge_ = nullptr;
+  }
+  if (system_media_transport_) {
+    system_media_transport_->CleanUp();
+    system_media_transport_ = nullptr;
+  }
+  if (power_management_) {
+    power_management_->CleanUp();
+    power_management_ = nullptr;
+  }
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }
@@ -149,7 +103,11 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
 
   switch (message) {
     case WM_FONTCHANGE:
-      flutter_controller_->engine()->ReloadSystemFonts();
+      // The controller is torn down in OnDestroy, which can still be followed
+      // by further messages for the window being destroyed.
+      if (flutter_controller_) {
+        flutter_controller_->engine()->ReloadSystemFonts();
+      }
       break;
     case WM_SINGLE_INSTANCE_ACTIVATE: {
       std::unique_ptr<std::vector<std::string>> paths(
@@ -162,6 +120,14 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
     case WM_SMTC_BUTTON_PRESS:
       if (system_media_transport_) {
         system_media_transport_->HandleButtonPress(static_cast<int>(wparam));
+      }
+      return 0;
+    case WM_SMTC_THUMBNAIL:
+      if (system_media_transport_) {
+        system_media_transport_->ApplyThumbnail(static_cast<uint64_t>(wparam),
+                                                reinterpret_cast<void*>(lparam));
+      } else {
+        SystemMediaTransport::ReleaseThumbnail(reinterpret_cast<void*>(lparam));
       }
       return 0;
   }

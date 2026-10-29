@@ -15,6 +15,9 @@ PowerManagement::~PowerManagement() {
 }
 
 void PowerManagement::Initialize(flutter::BinaryMessenger* messenger) {
+  // Both channel names are served with the same handler: the app uses
+  // "mpvson/power", while "mpvson/power_management" is kept for callers that
+  // speak the power_management API shape.
   power_channel_ = std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
       messenger, "mpvson/power",
       &flutter::StandardMethodCodec::GetInstance());

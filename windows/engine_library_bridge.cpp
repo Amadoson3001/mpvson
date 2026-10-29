@@ -15,9 +15,13 @@ bool Resolve(HMODULE module, const char* name, T& target) {
 }
 }  // namespace
 
-// Called on the platform thread before any player or video output exists.
-// Each process uses exactly one engine. Recovery after player initialization
-// starts a fresh process because media_kit caches its native API bindings.
+// The two entry points below are reached from the "mpvson/engine" method
+// channel, which the Flutter engine always invokes on the platform thread. Every
+// caller is therefore serialized by that thread's message loop, which is what
+// makes the process-wide state below safe: it is written once, before any player
+// or video output exists, and only read afterwards. Recovery after a failed
+// engine starts a fresh process because media_kit caches its native API
+// bindings.
 extern "C" __declspec(dllexport) int MpvsonConfigureEngine(const wchar_t* path) {
   if (path == nullptr || path[0] == L'\0') return ERROR_INVALID_PARAMETER;
   if (engine_module != nullptr) {

@@ -6,7 +6,9 @@ import '../../../domain/models/library_models.dart';
 import '../../../domain/models/media_entry.dart';
 import '../../../domain/models/media_thumbnail.dart';
 import '../../player/player_controller.dart';
+import '../../core/app_motion.dart';
 import '../../core/app_theme.dart';
+import '../../core/toast/app_toast.dart';
 import '../../core/components/media_row.dart';
 import '../../core/components/empty_state.dart';
 import '../widgets/add_to_playlist_dialog.dart';
@@ -45,6 +47,8 @@ class _VideosViewState extends State<VideosView> {
   bool _isLoading = false;
   Future<void>? _reloadFuture;
   bool _reloadAgain = false;
+  Timer? _reloadThrottle;
+  Timer? _searchReload;
 
   @override
   void initState() {
@@ -61,18 +65,32 @@ class _VideosViewState extends State<VideosView> {
       widget.repository.addListener(_onRepoChanged);
       _reload();
     } else if (oldWidget.searchQuery != widget.searchQuery) {
-      _reload();
+      _searchReload?.cancel();
+      _searchReload = Timer(const Duration(milliseconds: 150), () {
+        _searchReload = null;
+        if (mounted) _reload();
+      });
     }
   }
 
   @override
   void dispose() {
+    _reloadThrottle?.cancel();
+    _searchReload?.cancel();
     widget.repository.removeListener(_onRepoChanged);
     super.dispose();
   }
 
   void _onRepoChanged() {
-    _reload();
+    // Scan progress notifies frequently; coalesce those into one refresh.
+    if (_reloadThrottle?.isActive ?? false) {
+      _reloadAgain = true;
+      return;
+    }
+    _reloadThrottle = Timer(const Duration(milliseconds: 200), () {
+      _reloadThrottle = null;
+      if (mounted) _reload();
+    });
   }
 
   Future<void> _reload() {
@@ -363,112 +381,130 @@ class _VideosViewState extends State<VideosView> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   // Video Thumbnail Stage
-                  AspectRatio(
-                    aspectRatio: 16 / 9,
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        _VideoPreview(
-                          video: video,
-                          controller: widget.controller,
+                  RepaintBoundary(
+                    child: AnimatedScale(
+                      scale: (AppMotion.reduce(context) || !showPlayOverlay)
+                          ? 1.0
+                          : 1.025,
+                      duration: AppMotion.duration(context, AppMotion.hover),
+                      curve: AppMotion.enter,
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(AppRadii.artwork),
+                        child: AspectRatio(
+                          aspectRatio: 16 / 9,
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              _VideoPreview(
+                                video: video,
+                                controller: widget.controller,
+                              ),
+                              if (widget.controller.recent.any(
+                                (entry) =>
+                                    entry.path == video.path &&
+                                    entry.position > Duration.zero &&
+                                    entry.duration > Duration.zero,
+                              ))
+                                Positioned(
+                                  left: 0,
+                                  right: 0,
+                                  bottom: 0,
+                                  child: Builder(
+                                    builder: (context) {
+                                      final entry = widget.controller.recent
+                                          .firstWhere(
+                                            (entry) => entry.path == video.path,
+                                          );
+                                      return LinearProgressIndicator(
+                                        minHeight: 2,
+                                        value:
+                                            (entry.position.inMilliseconds /
+                                                    entry
+                                                        .duration
+                                                        .inMilliseconds)
+                                                .clamp(0.0, 1.0),
+                                        color: accent,
+                                        backgroundColor: Colors.transparent,
+                                      );
+                                    },
+                                  ),
+                                ),
+                              // Duration badge
+                              if (video.metadata.duration > Duration.zero)
+                                Positioned(
+                                  right: 8,
+                                  bottom: 8,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 6,
+                                      vertical: 2,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: Colors.black.withValues(
+                                        alpha: 0.75,
+                                      ),
+                                      borderRadius: BorderRadius.circular(
+                                        AppRadii.control,
+                                      ),
+                                    ),
+                                    child: Text(
+                                      _formatDuration(video.metadata.duration),
+                                      style: AppTheme.badge.copyWith(
+                                        fontSize: AppType.caption,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              // Missing file indicator badge
+                              if (isUnavailable)
+                                Positioned(
+                                  left: 8,
+                                  top: 8,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 6,
+                                      vertical: 2,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: AppTheme.danger.withValues(
+                                        alpha: 0.85,
+                                      ),
+                                      borderRadius: BorderRadius.circular(
+                                        AppRadii.control,
+                                      ),
+                                    ),
+                                    child: Text(
+                                      'File missing',
+                                      style: AppTheme.badge.copyWith(
+                                        fontSize: AppType.caption,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              // Subtle play button overlay on hover or focus
+                              if (showPlayOverlay)
+                                Center(
+                                  child: IconButton.filled(
+                                    onPressed: () => _playVideo(video),
+                                    tooltip: 'Play video',
+                                    style: IconButton.styleFrom(
+                                      backgroundColor: Colors.black.withValues(
+                                        alpha: 0.65,
+                                      ),
+                                      foregroundColor: accent,
+                                      minimumSize: const Size(40, 40),
+                                    ),
+                                    icon: const Icon(
+                                      Icons.play_arrow_rounded,
+                                      size: 22,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
                         ),
-                        if (widget.controller.recent.any(
-                          (entry) =>
-                              entry.path == video.path &&
-                              entry.position > Duration.zero &&
-                              entry.duration > Duration.zero,
-                        ))
-                          Positioned(
-                            left: 0,
-                            right: 0,
-                            bottom: 0,
-                            child: Builder(
-                              builder: (context) {
-                                final entry = widget.controller.recent
-                                    .firstWhere(
-                                      (entry) => entry.path == video.path,
-                                    );
-                                return LinearProgressIndicator(
-                                  minHeight: 2,
-                                  value:
-                                      (entry.position.inMilliseconds /
-                                              entry.duration.inMilliseconds)
-                                          .clamp(0.0, 1.0),
-                                  color: accent,
-                                  backgroundColor: Colors.transparent,
-                                );
-                              },
-                            ),
-                          ),
-                        // Duration badge
-                        if (video.metadata.duration > Duration.zero)
-                          Positioned(
-                            right: 8,
-                            bottom: 8,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 2,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Colors.black.withValues(alpha: 0.75),
-                                borderRadius: BorderRadius.circular(
-                                  AppRadii.control,
-                                ),
-                              ),
-                              child: Text(
-                                _formatDuration(video.metadata.duration),
-                                style: AppTheme.badge.copyWith(
-                                  fontSize: AppType.caption,
-                                ),
-                              ),
-                            ),
-                          ),
-                        // Missing file indicator badge
-                        if (isUnavailable)
-                          Positioned(
-                            left: 8,
-                            top: 8,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 2,
-                              ),
-                              decoration: BoxDecoration(
-                                color: AppTheme.danger.withValues(alpha: 0.85),
-                                borderRadius: BorderRadius.circular(
-                                  AppRadii.control,
-                                ),
-                              ),
-                              child: Text(
-                                'File missing',
-                                style: AppTheme.badge.copyWith(
-                                  fontSize: AppType.caption,
-                                  color: Colors.white,
-                                ),
-                              ),
-                            ),
-                          ),
-                        // Subtle play button overlay on hover or focus
-                        if (showPlayOverlay)
-                          Center(
-                            child: IconButton.filled(
-                              onPressed: () => _playVideo(video),
-                              tooltip: 'Play video',
-                              style: IconButton.styleFrom(
-                                backgroundColor: Colors.black.withValues(
-                                  alpha: 0.65,
-                                ),
-                                foregroundColor: accent,
-                                minimumSize: const Size(40, 40),
-                              ),
-                              icon: const Icon(
-                                Icons.play_arrow_rounded,
-                                size: 22,
-                              ),
-                            ),
-                          ),
-                      ],
+                      ),
                     ),
                   ),
                   // Card Bottom Details
@@ -728,8 +764,11 @@ class _VideosViewState extends State<VideosView> {
               video.id,
             );
             if (added && mounted) {
-              ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-                const SnackBar(content: Text('Added to playlist')),
+              AppToast.show(
+                context,
+                'Added to playlist',
+                tone: AppToastTone.success,
+                duration: const Duration(seconds: 3),
               );
             }
             break;

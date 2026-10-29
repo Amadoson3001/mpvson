@@ -11,10 +11,13 @@ import 'package:media_kit/media_kit.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import '../../domain/models/media_catalog.dart';
 import '../../domain/models/media_entry.dart';
+import '../../domain/models/media_kind.dart';
 import '../../domain/models/media_source.dart';
 import '../../domain/models/media_thumbnail.dart';
 import 'diagnostic_log.dart';
+import 'media_probe_service_impl.dart' show PureDartMediaParser;
 import 'thumbnail_image_poller.dart';
 
 /// A thumbnail image and the duration discovered while opening its source.
@@ -1933,9 +1936,11 @@ class MediaKitThumbnailExtractor implements ThumbnailExtractor {
     ThumbnailImageValidator? imageValidator,
     this._diagnostics,
     Player Function()? playerFactory,
+    PureDartMediaParser? pureDartParser,
   }) : _imageValidator =
            imageValidator ?? MediaKitThumbnailService._decodeImage,
-       _playerFactory = playerFactory ?? _defaultPlayerFactory;
+       _playerFactory = playerFactory ?? _defaultPlayerFactory,
+       _pureDartParser = pureDartParser ?? const PureDartMediaParser();
 
   static const Duration _nativeTimeout = Duration(seconds: 12);
   static const Duration _metadataWait = Duration(seconds: 4);
@@ -1944,6 +1949,7 @@ class MediaKitThumbnailExtractor implements ThumbnailExtractor {
   final ThumbnailImageValidator _imageValidator;
   final DiagnosticSink? _diagnostics;
   final Player Function() _playerFactory;
+  final PureDartMediaParser _pureDartParser;
 
   Player? _decoder;
   Future<void> _lock = Future<void>.value();
@@ -2099,6 +2105,8 @@ class MediaKitThumbnailExtractor implements ThumbnailExtractor {
     required Directory outputDirectory,
     ThumbnailCancellation? cancellation,
   }) async {
+    final audioArtwork = await _extractAudioArtwork(source, cancellation);
+    if (audioArtwork.handled) return audioArtwork.extraction;
     return _runSerialized<ThumbnailExtraction?>(
       cancellation: cancellation,
       defaultValue: null,
@@ -2248,6 +2256,38 @@ class MediaKitThumbnailExtractor implements ThumbnailExtractor {
 
         return ThumbnailExtraction(bytes: bytes, duration: duration);
       },
+    );
+  }
+
+  /// Reads embedded audio artwork without starting a native decoder.
+  ///
+  /// Capturing a frame from an audio-only container cannot produce a usable
+  /// thumbnail, and creating a decoder for every song delayed music artwork
+  /// substantially. Containers understood by the pure parser are resolved
+  /// here; anything else still falls back to the native path.
+  Future<({bool handled, ThumbnailExtraction? extraction})>
+  _extractAudioArtwork(
+    String source,
+    ThumbnailCancellation? cancellation,
+  ) async {
+    if (MediaCatalog.kindFromExtension(source) != MediaKind.audio) {
+      return (handled: false, extraction: null);
+    }
+    if (_disposed || (cancellation?.isCancelled ?? false)) {
+      return (handled: true, extraction: null);
+    }
+    final info = await _pureDartParser.parse(source);
+    if (_disposed || (cancellation?.isCancelled ?? false)) {
+      return (handled: true, extraction: null);
+    }
+    if (info == null) return (handled: false, extraction: null);
+    final artwork = info.embeddedArtworkBytes;
+    if (artwork == null || artwork.isEmpty) {
+      return (handled: true, extraction: null);
+    }
+    return (
+      handled: true,
+      extraction: ThumbnailExtraction(bytes: artwork, duration: info.duration),
     );
   }
 
@@ -2495,6 +2535,13 @@ class MediaKitThumbnailExtractor implements ThumbnailExtractor {
     String source, {
     ThumbnailCancellation? cancellation,
   }) async {
+    if (MediaCatalog.kindFromExtension(source) == MediaKind.audio) {
+      final info = await _pureDartParser.parse(source);
+      if (_disposed || (cancellation?.isCancelled ?? false)) {
+        return Duration.zero;
+      }
+      if (info != null) return info.duration;
+    }
     return _runSerialized<Duration>(
       cancellation: cancellation,
       defaultValue: Duration.zero,

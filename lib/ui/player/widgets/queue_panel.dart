@@ -5,6 +5,8 @@ import '../../../domain/models/media_entry.dart';
 import '../../../domain/models/media_thumbnail.dart';
 import '../../core/app_motion.dart';
 import '../../core/app_theme.dart';
+import '../../core/toast/app_toast.dart';
+import '../../core/components/playback_pulse.dart';
 import '../player_controller.dart';
 
 class QueuePanel extends StatefulWidget {
@@ -289,23 +291,18 @@ class _QueuePanelState extends State<QueuePanel> {
       await widget.controller.removeAt(index);
       if (!mounted) return;
       widget.onQueueFocus(null);
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(
-            content: const Text('Removed from queue'),
-            action: SnackBarAction(
-              label: 'Undo',
-              onPressed: widget.controller.undoRemove,
-            ),
-          ),
-        );
+      AppToast.show(
+        context,
+        'Removed from queue',
+        actionLabel: 'Undo',
+        onAction: () => unawaited(widget.controller.undoRemove()),
+      );
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Could not remove this item from the queue.'),
-          ),
+        AppToast.show(
+          context,
+          'Could not remove this item from the queue.',
+          tone: AppToastTone.danger,
         );
       }
     }
@@ -337,8 +334,10 @@ class _QueuePanelState extends State<QueuePanel> {
       await widget.controller.clearQueue();
     } catch (_) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not clear the queue.')),
+        AppToast.show(
+          context,
+          'Could not clear the queue.',
+          tone: AppToastTone.danger,
         );
       }
     }
@@ -661,6 +660,16 @@ class _QueueEntryState extends State<_QueueEntry> with WidgetsBindingObserver {
                                 ],
                               ),
                             ),
+                            if (widget.isCurrent && widget.isPlaying)
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                ),
+                                child: PlayingEqualizerGlyph(
+                                  index: widget.index,
+                                  size: 14,
+                                ),
+                              ),
                             IconButton(
                               tooltip: 'Remove ${entry.title} from queue',
                               onPressed: widget.onRemove,

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
@@ -6,29 +7,42 @@ import '../../../data/repositories/media_library_repository.dart';
 import '../../../domain/models/library_models.dart';
 import '../../../domain/models/media_entry.dart';
 import '../../player/player_controller.dart';
+import '../../core/app_motion.dart';
 import '../../core/app_theme.dart';
+import '../../core/components/seek_bar.dart';
+import '../../core/toast/app_toast.dart';
+import '../../player/widgets/player_controls.dart';
+import '../../player/widgets/player_control_style.dart';
 import '../widgets/audio_volume_control.dart';
 import '../widgets/library_artwork.dart';
+import 'now_playing_layout.dart';
 
 /// Now playing view featuring large artwork, track metadata, full transport
-/// controls, timeline scrubber, volume, favorite toggle, and queue drawer.
+/// controls, timeline scrubber, volume, favorite toggle, and queue access.
 class NowPlayingView extends StatefulWidget {
   const NowPlayingView({
     super.key,
     required this.controller,
     this.repository,
     this.onBack,
+    this.onOpenQueue,
   });
 
   final PlayerController controller;
   final MediaLibraryRepository? repository;
   final VoidCallback? onBack;
+  final VoidCallback? onOpenQueue;
 
   @override
   State<NowPlayingView> createState() => _NowPlayingViewState();
 }
 
 class _NowPlayingViewState extends State<NowPlayingView> {
+  static final ImageFilter _backgroundBlur = ImageFilter.blur(
+    sigmaX: 36,
+    sigmaY: 36,
+  );
+
   Uint8List? _cachedArtwork;
   String? _cachedArtworkPath;
   MediaItemRecord? _currentMediaRecord;
@@ -137,6 +151,31 @@ class _NowPlayingViewState extends State<NowPlayingView> {
     }
   }
 
+  Future<void> _closePlayer() async {
+    await widget.controller.closePlayer();
+    if (!mounted) return;
+    AppToast.show(
+      context,
+      'Player closed. Your queue is still available.',
+      duration: const Duration(seconds: 3),
+    );
+  }
+
+  /// Height of a single [IconButton] row.
+  ///
+  /// The app theme sets a 44px minimum, but an icon button keeps the 48px
+  /// padded touch target around itself, so the row is the larger of the two —
+  /// reading only the theme's minimum undercounts these rows by 4px each.
+  double _iconButtonExtent(BuildContext context) {
+    final style = Theme.of(context).iconButtonTheme.style;
+    final minimum = style?.minimumSize?.resolve(const <WidgetState>{});
+    final density = Theme.of(context).visualDensity;
+    return math.max(
+      kMinInteractiveDimension + density.vertical,
+      minimum?.height ?? 0,
+    );
+  }
+
   Future<void> _toggleFavorite() async {
     final repo = widget.repository;
     final record = _currentMediaRecord;
@@ -155,7 +194,27 @@ class _NowPlayingViewState extends State<NowPlayingView> {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final isNarrow = constraints.maxWidth < 800;
+        // The artwork is the only flexible element in the column, so it takes
+        // the height the rest of the content leaves behind. Measuring that
+        // remainder keeps the artwork from overshooting on shorter windows,
+        // where it used to stay at its maximum and push the transport row
+        // below the fold.
+        final artworkSize =
+            NowPlayingLayout(
+              title:
+                  _currentMediaRecord?.title ??
+                  entry?.title ??
+                  'Nothing playing',
+              artist:
+                  _currentMediaRecord?.artist ??
+                  (entry == null ? '' : 'Unknown artist'),
+              album: _currentMediaRecord?.album ?? '',
+            ).artworkSize(
+              viewportWidth: constraints.maxWidth,
+              viewportHeight: constraints.maxHeight,
+              iconButtonExtent: _iconButtonExtent(context),
+              textScaler: MediaQuery.textScalerOf(context),
+            );
 
         return Scaffold(
           backgroundColor: AppTheme.background,
@@ -163,9 +222,17 @@ class _NowPlayingViewState extends State<NowPlayingView> {
             children: [
               if (_cachedArtwork != null)
                 Positioned.fill(
-                  child: ImageFiltered(
-                    imageFilter: ImageFilter.blur(sigmaX: 36, sigmaY: 36),
-                    child: Image.memory(_cachedArtwork!, fit: BoxFit.cover),
+                  // The backdrop never changes while a track plays; keeping it
+                  // in its own layer avoids re-filtering on transport updates.
+                  child: RepaintBoundary(
+                    child: ImageFiltered(
+                      imageFilter: _backgroundBlur,
+                      child: Image.memory(
+                        _cachedArtwork!,
+                        fit: BoxFit.cover,
+                        filterQuality: FilterQuality.low,
+                      ),
+                    ),
                   ),
                 ),
               Positioned.fill(
@@ -176,6 +243,32 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                     ).colorScheme.primary.withValues(alpha: 0.1),
                     AppTheme.background,
                   ).withValues(alpha: 0.82),
+                ),
+              ),
+              Positioned.fill(
+                child: RepaintBoundary(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: RadialGradient(
+                        center: const Alignment(0, -0.25),
+                        radius: 0.85,
+                        colors: [
+                          (Theme.of(
+                                    context,
+                                  ).extension<MediaAccentPalette>()?.vibrant ??
+                                  Theme.of(context).colorScheme.primary)
+                              .withValues(alpha: 0.16),
+                          (Theme.of(
+                                    context,
+                                  ).extension<MediaAccentPalette>()?.muted ??
+                                  AppTheme.background)
+                              .withValues(alpha: 0.04),
+                          Colors.transparent,
+                        ],
+                        stops: const [0.0, 0.55, 1.0],
+                      ),
+                    ),
+                  ),
                 ),
               ),
               Row(
@@ -189,29 +282,56 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                       ),
                       child: Center(
                         child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 680),
+                          // Fill the viewport when the content is shorter, so
+                          // the column centers in the stage instead of leaving
+                          // the slack at the bottom.
+                          constraints: BoxConstraints(
+                            minHeight: constraints.maxHeight - 2 * AppSpace.lg,
+                            maxWidth: NowPlayingLayout.columnMaxWidth,
+                          ),
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             crossAxisAlignment: CrossAxisAlignment.center,
                             children: [
-                              if (widget.onBack != null)
-                                Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: IconButton(
-                                    icon: const Icon(Icons.arrow_back_rounded),
-                                    tooltip: 'Back',
+                              Row(
+                                children: [
+                                  if (widget.onBack != null)
+                                    IconButton(
+                                      icon: const Icon(
+                                        Icons.keyboard_arrow_down_rounded,
+                                        size: 28,
+                                      ),
+                                      tooltip: 'Collapse to mini player',
+                                      color: AppTheme.secondaryText,
+                                      onPressed: widget.onBack,
+                                    )
+                                  else
+                                    const SizedBox(width: 48),
+                                  const Spacer(),
+                                  // Replaces the mini player's queue shortcut,
+                                  // which is hidden while this screen is open.
+                                  if (widget.onOpenQueue != null)
+                                    IconButton(
+                                      icon: const Icon(
+                                        Icons.queue_music_rounded,
+                                      ),
+                                      tooltip: 'Open queue',
+                                      color: AppTheme.secondaryText,
+                                      onPressed: widget.onOpenQueue,
+                                    ),
+                                  IconButton(
+                                    icon: const Icon(Icons.close_rounded),
+                                    tooltip: 'Close player',
                                     color: AppTheme.secondaryText,
-                                    onPressed: widget.onBack,
+                                    onPressed: _closePlayer,
                                   ),
-                                ),
+                                ],
+                              ),
                               const SizedBox(height: 12),
                               // Large square artwork
                               AudioVolumeWheel(
                                 controller: widget.controller,
-                                child: _buildArtwork(
-                                  context,
-                                  isNarrow ? 260 : 340,
-                                ),
+                                child: _buildArtwork(context, artworkSize),
                               ),
                               const SizedBox(height: 28),
                               // Title & Favorite row
@@ -280,6 +400,33 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                               ),
+                              const SizedBox(height: AppSpace.xl),
+                              // Transport, timeline and volume, so this screen
+                              // can drive playback on its own.
+                              PlayerControlStyle(
+                                compact: false,
+                                child: Column(
+                                  children: [
+                                    SeekBar(controller: widget.controller),
+                                    const SizedBox(height: AppSpace.sm),
+                                    Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        TransportButtons(
+                                          controller: widget.controller,
+                                          compact: false,
+                                        ),
+                                        const SizedBox(width: AppSpace.lg),
+                                        AudioVolumeControl(
+                                          controller: widget.controller,
+                                          compact: false,
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              ),
                             ],
                           ),
                         ),
@@ -312,21 +459,35 @@ class _NowPlayingViewState extends State<NowPlayingView> {
         ],
       ),
       clipBehavior: Clip.antiAlias,
-      child: _cachedArtwork != null
-          ? Image.memory(
-              _cachedArtwork!,
-              fit: BoxFit.cover,
-              errorBuilder: (_, _, _) => _buildFallbackArtwork(),
-            )
-          : _currentMediaRecord != null
-          ? LibraryArtwork(
-              path: _currentMediaRecord!.metadata.artworkUri,
-              mediaPath: _currentMediaRecord!.path,
-              repository: widget.repository,
-              icon: Icons.music_note_rounded,
-              iconSize: 42,
-            )
-          : _buildFallbackArtwork(),
+      child: AnimatedSwitcher(
+        duration: AppMotion.duration(context, AppMotion.emphasized),
+        switchInCurve: AppMotion.enter,
+        switchOutCurve: AppMotion.exit,
+        transitionBuilder: (child, animation) {
+          if (AppMotion.reduce(context)) return child;
+          return FadeTransition(opacity: animation, child: child);
+        },
+        child: KeyedSubtree(
+          key: ValueKey<String>(_cachedArtworkPath ?? 'no-artwork'),
+          child: SizedBox.expand(
+            child: _cachedArtwork != null
+                ? Image.memory(
+                    _cachedArtwork!,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, _, _) => _buildFallbackArtwork(),
+                  )
+                : _currentMediaRecord != null
+                ? LibraryArtwork(
+                    path: _currentMediaRecord!.metadata.artworkUri,
+                    mediaPath: _currentMediaRecord!.path,
+                    repository: widget.repository,
+                    icon: Icons.music_note_rounded,
+                    iconSize: 42,
+                  )
+                : _buildFallbackArtwork(),
+          ),
+        ),
+      ),
     );
   }
 

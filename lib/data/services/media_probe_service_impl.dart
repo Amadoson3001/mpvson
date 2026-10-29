@@ -129,7 +129,7 @@ class PureDartMediaParser {
   /// Attempts to parse tags and artwork from known audio file containers.
   Future<DiscoveredMediaInfo?> parse(String filePath) async {
     final file = File(filePath);
-    if (!file.existsSync()) return null;
+    if (!await file.exists()) return null;
 
     RandomAccessFile? raf;
     try {
@@ -713,6 +713,21 @@ class MediaKitProbeEngine implements MediaProbeEngine {
   final Expando<Future<void>> _playerDisposals = Expando<Future<void>>(
     'probe player disposal',
   );
+  Timer? _idleDisposeTimer;
+  int _activeInspections = 0;
+  static const Duration _idleDisposeDelay = Duration(seconds: 5);
+
+  void _scheduleIdleDispose() {
+    _idleDisposeTimer?.cancel();
+    _idleDisposeTimer = Timer(_idleDisposeDelay, () {
+      _idleDisposeTimer = null;
+      if (_disposed || _activeInspections > 0) return;
+      final player = _player;
+      if (player == null) return;
+      _player = null;
+      unawaited(_disposePlayer(player));
+    });
+  }
 
   static Player _defaultPlayerFactory() => Player(
     configuration: const PlayerConfiguration(
@@ -732,6 +747,25 @@ class MediaKitProbeEngine implements MediaProbeEngine {
 
   @override
   Future<DiscoveredMediaInfo?> inspect(
+    String filePath, {
+    required bool isAudioHint,
+    CancellationToken? cancellationToken,
+  }) {
+    _idleDisposeTimer?.cancel();
+    _activeInspections++;
+    return _inspect(
+      filePath,
+      isAudioHint: isAudioHint,
+      cancellationToken: cancellationToken,
+    ).whenComplete(() {
+      _activeInspections--;
+      if (!_disposed && _player != null && _activeInspections == 0) {
+        _scheduleIdleDispose();
+      }
+    });
+  }
+
+  Future<DiscoveredMediaInfo?> _inspect(
     String filePath, {
     required bool isAudioHint,
     CancellationToken? cancellationToken,
@@ -1025,6 +1059,8 @@ class MediaKitProbeEngine implements MediaProbeEngine {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
+    _idleDisposeTimer?.cancel();
+    _idleDisposeTimer = null;
     final player = _player;
     _player = null;
     if (player != null) {
@@ -1118,6 +1154,9 @@ class MediaProbeServiceImpl implements MediaProbeService {
   final List<CancellationToken> _activeArtworkTokens = <CancellationToken>[];
   final Map<String, Future<String?>> _artworkRequests =
       <String, Future<String?>>{};
+  final Map<String, Future<File?>> _nearbyArtworkLookups =
+      <String, Future<File?>>{};
+  static const int _maximumNearbyArtworkDirectories = 128;
 
   final LinkedHashMap<String, _ArtworkCacheRecord> _artworkCache =
       LinkedHashMap<String, _ArtworkCacheRecord>();
@@ -1321,10 +1360,10 @@ class MediaProbeServiceImpl implements MediaProbeService {
   }
 
   /// Locates nearby cover, front, or folder artwork files in the same directory.
-  static File? findNearbyArtwork(String mediaFilePath) {
+  static Future<File?> findNearbyArtwork(String mediaFilePath) async {
     final file = File(mediaFilePath);
     final parentDir = file.parent;
-    if (!parentDir.existsSync()) return null;
+    if (!await parentDir.exists()) return null;
 
     const names = ['cover', 'front', 'folder', 'album', 'art'];
     const extensions = ['jpg', 'jpeg', 'png', 'webp', 'bmp'];
@@ -1333,7 +1372,7 @@ class MediaProbeServiceImpl implements MediaProbeService {
     for (final name in names) {
       for (final ext in extensions) {
         final candidate = File(p.join(parentDir.path, '$name.$ext'));
-        if (candidate.existsSync()) {
+        if (await candidate.exists()) {
           return candidate;
         }
       }
@@ -1341,22 +1380,19 @@ class MediaProbeServiceImpl implements MediaProbeService {
 
     // 2. Directory enumeration for case-insensitive and prefix match
     try {
-      final entries = parentDir.listSync(followLinks: false);
-      for (final name in names) {
-        for (final entry in entries) {
-          if (entry is! File) continue;
-          final base = p.basenameWithoutExtension(entry.path).toLowerCase();
-          final ext = p
-              .extension(entry.path)
-              .toLowerCase()
-              .replaceFirst('.', '');
-          if (!extensions.contains(ext)) continue;
-          if (base == name ||
+      await for (final entry in parentDir.list(followLinks: false)) {
+        if (entry is! File) continue;
+        final base = p.basenameWithoutExtension(entry.path).toLowerCase();
+        final ext = p.extension(entry.path).toLowerCase().replaceFirst('.', '');
+        if (!extensions.contains(ext)) continue;
+        if (names.any(
+          (name) =>
+              base == name ||
               base.startsWith('$name-') ||
               base.startsWith('${name}_') ||
-              base.startsWith('$name ')) {
-            return entry;
-          }
+              base.startsWith('$name '),
+        )) {
+          return entry;
         }
       }
     } catch (_) {}
@@ -1365,14 +1401,17 @@ class MediaProbeServiceImpl implements MediaProbeService {
   }
 
   @override
-  Future<ProbeResult> probe(String filePath, {int? priority}) {
+  Future<ProbeResult> probe(String filePath, {int? priority}) async {
     if (_disposed) {
       throw const ProbeCancelledException('Probe service has been disposed');
     }
 
     final file = File(filePath);
-    if (!file.existsSync()) {
+    if (!await file.exists()) {
       throw FileSystemException('Media file not found', filePath);
+    }
+    if (_disposed) {
+      throw const ProbeCancelledException('Probe service has been disposed');
     }
 
     final completer = Completer<ProbeResult>();
@@ -1507,7 +1546,7 @@ class MediaProbeServiceImpl implements MediaProbeService {
     if (_disposed) return null;
 
     final file = File(filePath);
-    if (!file.existsSync()) return null;
+    if (!await file.exists()) return null;
 
     final stat = await file.stat();
     final cacheDir = await _getArtworkCacheDirectory();
@@ -1521,7 +1560,7 @@ class MediaProbeServiceImpl implements MediaProbeService {
     final cachedRecord = _artworkCache[key];
     if (cachedRecord != null) {
       final cachedFile = File(cachedRecord.path);
-      if (cachedFile.existsSync()) {
+      if (await cachedFile.exists()) {
         _touchCacheRecord(key);
         return cachedRecord.path;
       } else {
@@ -1532,7 +1571,7 @@ class MediaProbeServiceImpl implements MediaProbeService {
 
     // Check disk directly in case record wasn't in memory
     final diskFile = File(p.join(cacheDir.path, '$key.png'));
-    if (diskFile.existsSync()) {
+    if (await diskFile.exists()) {
       final diskStat = await diskFile.stat();
       _recordCacheEntry(key, diskFile.path, diskStat.size);
       return diskFile.path;
@@ -1550,8 +1589,8 @@ class MediaProbeServiceImpl implements MediaProbeService {
 
       // 3. Fallback to nearby artwork if not embedded-only
       if ((rawBytes == null || rawBytes.isEmpty) && !embeddedOnly) {
-        final nearby = findNearbyArtwork(filePath);
-        if (nearby != null && nearby.existsSync()) {
+        final nearby = await _findNearbyArtwork(filePath);
+        if (nearby != null && await nearby.exists()) {
           rawBytes = await _readBoundedFile(nearby, _maxArtworkBytes);
         }
       }
@@ -1585,6 +1624,26 @@ class MediaProbeServiceImpl implements MediaProbeService {
     } finally {
       _activeArtworkTokens.remove(token);
     }
+  }
+
+  Future<File?> _findNearbyArtwork(String filePath) {
+    final directory = p.dirname(filePath);
+    final active = _nearbyArtworkLookups[directory];
+    if (active != null) return active;
+    if (_nearbyArtworkLookups.length >= _maximumNearbyArtworkDirectories) {
+      _nearbyArtworkLookups.remove(_nearbyArtworkLookups.keys.first);
+    }
+    late final Future<File?> lookup;
+    lookup = findNearbyArtwork(filePath).then((file) {
+      // Missing artwork can be added later, so only positive directory
+      // lookups are retained.
+      if (file == null && identical(_nearbyArtworkLookups[directory], lookup)) {
+        _nearbyArtworkLookups.remove(directory);
+      }
+      return file;
+    });
+    _nearbyArtworkLookups[directory] = lookup;
+    return lookup;
   }
 
   void _touchCacheRecord(String key) {
@@ -1645,9 +1704,7 @@ class MediaProbeServiceImpl implements MediaProbeService {
     }
 
     final artworkDir = Directory(p.join(baseDir.path, 'artwork_cache'));
-    if (!artworkDir.existsSync()) {
-      artworkDir.createSync(recursive: true);
-    }
+    await artworkDir.create(recursive: true);
     return _resolvedCacheDir = artworkDir;
   }
 

@@ -1,11 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../../data/repositories/media_library_repository.dart';
+import '../../../domain/models/library_models.dart';
 import '../../../domain/models/media_catalog.dart';
+import '../../../domain/models/media_entry.dart';
 import '../../player/player_controller.dart';
+import '../../core/app_motion.dart';
 import '../../core/app_theme.dart';
+import '../../core/toast/toast_layout.dart';
 import '../../core/components/seek_bar.dart';
 import '../../core/components/app_mark.dart';
+import '../../core/components/playback_pulse.dart';
 import '../../player/widgets/queue_panel.dart';
 import '../../player/widgets/player_controls.dart';
 import '../widgets/audio_volume_control.dart';
@@ -73,7 +78,8 @@ class LibraryShell extends StatefulWidget {
   State<LibraryShell> createState() => _LibraryShellState();
 }
 
-class _LibraryShellState extends State<LibraryShell> {
+class _LibraryShellState extends State<LibraryShell>
+    with TickerProviderStateMixin {
   late LibrarySection _currentSection;
   LibrarySection _previousSection = LibrarySection.home;
   final _searchController = TextEditingController();
@@ -81,6 +87,36 @@ class _LibraryShellState extends State<LibraryShell> {
   final _scaffoldKey = GlobalKey<ScaffoldState>();
   String _searchQuery = '';
   bool _isOnDemandQueueOpen = false;
+
+  late final AnimationController _nowPlayingMorphController =
+      AnimationController(
+        vsync: this,
+        duration: AppMotion.sheetEnter,
+        reverseDuration: AppMotion.sheetExit,
+        value: widget.initialSection == LibrarySection.nowPlaying ? 1.0 : 0.0,
+      );
+
+  late final Animation<double> _nowPlayingMorphCurve = CurvedAnimation(
+    parent: _nowPlayingMorphController,
+    curve: AppMotion.sheetEnterCurve,
+    reverseCurve: AppMotion.sheetExitCurve,
+  );
+
+  late final AnimationController _miniPlayerVisibilityController =
+      AnimationController(
+        vsync: this,
+        duration: const Duration(milliseconds: 260),
+        reverseDuration: const Duration(milliseconds: 220),
+        value: widget.controller.hasMedia ? 1.0 : 0.0,
+      );
+
+  late final Animation<double> _miniPlayerVisibilityCurve = CurvedAnimation(
+    parent: _miniPlayerVisibilityController,
+    curve: AppMotion.enter,
+    reverseCurve: AppMotion.exit,
+  );
+
+  MediaEntry? _lastDisplayEntry;
 
   bool get _isQueueOpen => widget.queueOpen ?? _isOnDemandQueueOpen;
 
@@ -96,6 +132,7 @@ class _LibraryShellState extends State<LibraryShell> {
         ? LibrarySection.settings
         : widget.initialSection;
     _isOnDemandQueueOpen = widget.queueOpen ?? false;
+    _lastDisplayEntry = widget.controller.current;
     _searchController.addListener(_onSearchChanged);
     widget.controller.addListener(_onPlaybackChanged);
   }
@@ -126,11 +163,16 @@ class _LibraryShellState extends State<LibraryShell> {
       _currentSection = LibrarySection.home;
       _previousSection = LibrarySection.home;
       _isOnDemandQueueOpen = false;
+      if (_nowPlayingMorphController.value > 0) {
+        _nowPlayingMorphController.value = 0.0;
+      }
     }
   }
 
   @override
   void dispose() {
+    _nowPlayingMorphController.dispose();
+    _miniPlayerVisibilityController.dispose();
     widget.controller.removeListener(_onPlaybackChanged);
     _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
@@ -139,10 +181,46 @@ class _LibraryShellState extends State<LibraryShell> {
   }
 
   void _onPlaybackChanged() {
-    if (mounted &&
-        widget.controller.current == null &&
-        _currentSection == LibrarySection.nowPlaying) {
-      setState(() => _currentSection = _previousSection);
+    if (!mounted) return;
+    final current = widget.controller.current;
+    final hasMedia = widget.controller.hasMedia;
+
+    if (current != null) {
+      _lastDisplayEntry = current;
+    }
+
+    if (current == null &&
+        (_currentSection == LibrarySection.nowPlaying ||
+            _nowPlayingMorphController.value > 0)) {
+      _closeNowPlaying();
+    }
+
+    if (hasMedia) {
+      if (_miniPlayerVisibilityController.value < 1.0 &&
+          _miniPlayerVisibilityController.status != AnimationStatus.forward) {
+        if (AppMotion.reduce(context)) {
+          _miniPlayerVisibilityController.value = 1.0;
+        } else {
+          _miniPlayerVisibilityController.forward();
+        }
+      }
+    } else {
+      if (_miniPlayerVisibilityController.value > 0.0 &&
+          _miniPlayerVisibilityController.status != AnimationStatus.reverse) {
+        if (AppMotion.reduce(context)) {
+          _miniPlayerVisibilityController.value = 0.0;
+          _lastDisplayEntry = null;
+          if (mounted) setState(() {});
+        } else {
+          _miniPlayerVisibilityController.reverse().then((_) {
+            if (mounted && !widget.controller.hasMedia) {
+              setState(() {
+                _lastDisplayEntry = null;
+              });
+            }
+          });
+        }
+      }
     }
   }
 
@@ -150,6 +228,39 @@ class _LibraryShellState extends State<LibraryShell> {
     setState(() {
       _searchQuery = _searchController.text;
     });
+  }
+
+  void _openNowPlaying() {
+    if (_currentSection != LibrarySection.nowPlaying) {
+      _previousSection = _currentSection;
+      _currentSection = LibrarySection.nowPlaying;
+    }
+    if (AppMotion.reduce(context)) {
+      _nowPlayingMorphController.value = 1.0;
+      if (mounted) setState(() {});
+    } else {
+      _nowPlayingMorphController.forward();
+      if (mounted) setState(() {});
+    }
+  }
+
+  void _closeNowPlaying() {
+    if (AppMotion.reduce(context)) {
+      _nowPlayingMorphController.value = 0.0;
+      if (mounted) {
+        setState(() {
+          _currentSection = _previousSection;
+        });
+      }
+    } else {
+      _nowPlayingMorphController.reverse().then((_) {
+        if (mounted) {
+          setState(() {
+            _currentSection = _previousSection;
+          });
+        }
+      });
+    }
   }
 
   void _selectSection(LibrarySection section) {
@@ -162,11 +273,17 @@ class _LibraryShellState extends State<LibraryShell> {
       widget.onCloseSettings?.call();
     }
     _searchController.clear();
+
+    if (section == LibrarySection.nowPlaying) {
+      _openNowPlaying();
+      return;
+    }
+
+    if (_nowPlayingMorphController.value > 0) {
+      _closeNowPlaying();
+    }
+
     setState(() {
-      if (section == LibrarySection.nowPlaying &&
-          _currentSection != LibrarySection.nowPlaying) {
-        _previousSection = _currentSection;
-      }
       _currentSection = section;
     });
   }
@@ -202,83 +319,106 @@ class _LibraryShellState extends State<LibraryShell> {
                 control: true,
               ): () =>
                   _searchFocus.requestFocus(),
+              const SingleActivator(LogicalKeyboardKey.escape): () {
+                if (_nowPlayingMorphController.value > 0) {
+                  _closeNowPlaying();
+                }
+              },
             },
-            child: Scaffold(
-              key: _scaffoldKey,
-              backgroundColor: AppTheme.background,
-              drawer: isCompact ? _buildNavigationDrawer() : null,
-              body: Column(
-                children: [
-                  Expanded(
-                    child: Row(
+            child: PlaybackPulseScope(
+              controller: widget.controller,
+              child: Scaffold(
+                key: _scaffoldKey,
+                backgroundColor: AppTheme.background,
+                drawer: isCompact ? _buildNavigationDrawer() : null,
+                body: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Column(
                       children: [
-                        // 1. Navigation: 208px sidebar on >=1180, collapsed 64px rail on 960-1179, drawer on <960
-                        if (isDesktopWide) ...[
-                          SizedBox(
-                            width: 208,
-                            child: _buildSideNav(isCollapsed: false),
-                          ),
-                          const VerticalDivider(
-                            width: 1,
-                            color: AppTheme.border,
-                          ),
-                        ] else if (isDesktopMedium) ...[
-                          SizedBox(
-                            width: 64,
-                            child: _buildSideNav(isCollapsed: true),
-                          ),
-                          const VerticalDivider(
-                            width: 1,
-                            color: AppTheme.border,
-                          ),
-                        ],
-
-                        // 2. Main Content Area: Top bar + Status Banner + Active Stage + Stacked Audio Bar
                         Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                          child: Row(
                             children: [
-                              // Header Bar (Search & Mobile Drawer Trigger)
-                              AnimatedBuilder(
-                                animation: widget.controller,
-                                builder: (context, _) => _buildHeaderBar(
-                                  isCompact,
-                                  !isCompact,
-                                  showBackLabel: width >= 600,
+                              // 1. Navigation: 208px sidebar on >=1180, collapsed 64px rail on 960-1179, drawer on <960
+                              if (isDesktopWide) ...[
+                                ToastRegion(
+                                  child: SizedBox(
+                                    width: 208,
+                                    child: _buildSideNav(isCollapsed: false),
+                                  ),
+                                ),
+                                const VerticalDivider(
+                                  width: 1,
+                                  color: AppTheme.border,
+                                ),
+                              ] else if (isDesktopMedium) ...[
+                                ToastRegion(
+                                  child: SizedBox(
+                                    width: 64,
+                                    child: _buildSideNav(isCollapsed: true),
+                                  ),
+                                ),
+                                const VerticalDivider(
+                                  width: 1,
+                                  color: AppTheme.border,
+                                ),
+                              ],
+
+                              // 2. Main Content Area: Top bar + Status Banner + Active Stage
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    // Header Bar (Search & Mobile Drawer Trigger)
+                                    AnimatedBuilder(
+                                      animation: widget.controller,
+                                      builder: (context, _) => _buildHeaderBar(
+                                        isCompact,
+                                        !isCompact,
+                                        showBackLabel: width >= 600,
+                                      ),
+                                    ),
+                                    // Status Banners (Scanning indicator, Unavailable drive warning)
+                                    LibraryStatusBanner(
+                                      repository: widget.repository,
+                                      onRescan: () =>
+                                          widget.repository.rescanAll(),
+                                    ),
+                                    // Main Stage View
+                                    Expanded(child: _buildContentStage()),
+                                  ],
                                 ),
                               ),
-                              // Status Banners (Scanning indicator, Unavailable drive warning)
-                              LibraryStatusBanner(
-                                repository: widget.repository,
-                                onRescan: () => widget.repository.rescanAll(),
-                              ),
-                              // Main Stage View
-                              Expanded(child: _buildContentStage()),
+
+                              // 3. Docked Queue Panel
+                              if (!isCompact && _isQueueOpen) ...[
+                                const VerticalDivider(
+                                  width: 1,
+                                  color: AppTheme.border,
+                                ),
+                                ToastRegion(
+                                  child: SizedBox(
+                                    width: 280,
+                                    child: QueuePanel(
+                                      controller: widget.controller,
+                                      onQueueFocus: (_) {},
+                                      onAddFiles:
+                                          widget.onAddQueueFiles ?? () {},
+                                      onClose: () => _setQueueOpen(false),
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ],
                           ),
                         ),
-
-                        // 3. Docked Queue Panel
-                        if (!isCompact && _isQueueOpen) ...[
-                          const VerticalDivider(
-                            width: 1,
-                            color: AppTheme.border,
-                          ),
-                          SizedBox(
-                            width: 280,
-                            child: QueuePanel(
-                              controller: widget.controller,
-                              onQueueFocus: (_) {},
-                              onAddFiles: widget.onAddQueueFiles ?? () {},
-                              onClose: () => _setQueueOpen(false),
-                            ),
-                          ),
-                        ],
+                        ToastRegion(child: _buildBottomMiniPlayer(isCompact)),
                       ],
                     ),
-                  ),
-                  _buildBottomMiniPlayer(isCompact),
-                ],
+                    _buildNowPlayingMorphOverlay(),
+                  ],
+                ),
               ),
             ),
           ),
@@ -299,7 +439,9 @@ class _LibraryShellState extends State<LibraryShell> {
     return Container(
       height: 56,
       padding: const EdgeInsets.symmetric(horizontal: AppSpace.md),
-      color: AppTheme.surface,
+      // Matches the stage behind it so the header and the content read as one
+      // continuous surface instead of two blocks split by a rule.
+      color: AppTheme.background,
       child: Row(
         children: [
           if (widget.onBackToPlayer != null) ...[
@@ -450,15 +592,19 @@ class _LibraryShellState extends State<LibraryShell> {
   // --- Content Stage ---
 
   Widget _buildContentStage() {
-    switch (_currentSection) {
+    final effectiveSection = _currentSection == LibrarySection.nowPlaying
+        ? _previousSection
+        : _currentSection;
+    final Widget stage;
+    switch (effectiveSection) {
       case LibrarySection.home:
-        return widget.home ?? const SizedBox.shrink();
+        stage = widget.home ?? const SizedBox.shrink();
       case LibrarySection.settings:
-        return widget.settings ?? const SizedBox.shrink();
+        stage = widget.settings ?? const SizedBox.shrink();
       case LibrarySection.folders:
-        return widget.folders ?? const SizedBox.shrink();
+        stage = widget.folders ?? const SizedBox.shrink();
       case LibrarySection.videos:
-        return VideosView(
+        stage = VideosView(
           repository: widget.repository,
           controller: widget.controller,
           searchQuery: _searchQuery,
@@ -466,7 +612,7 @@ class _LibraryShellState extends State<LibraryShell> {
           onShowInFolder: widget.onShowInFolder,
         );
       case LibrarySection.music:
-        return MusicView(
+        stage = MusicView(
           repository: widget.repository,
           controller: widget.controller,
           searchQuery: _searchQuery,
@@ -474,18 +620,73 @@ class _LibraryShellState extends State<LibraryShell> {
           onShowInFolder: widget.onShowInFolder,
         );
       case LibrarySection.playlists:
-        return PlaylistsView(
+        stage = PlaylistsView(
           repository: widget.repository,
           controller: widget.controller,
           searchQuery: _searchQuery,
         );
       case LibrarySection.nowPlaying:
-        return NowPlayingView(
-          controller: widget.controller,
-          repository: widget.repository,
-          onBack: () => _selectSection(_previousSection),
-        );
+        stage = widget.home ?? const SizedBox.shrink();
     }
+
+    return RepaintBoundary(
+      child: AnimatedSwitcher(
+        duration: AppMotion.duration(context, AppMotion.stage),
+        switchInCurve: AppMotion.enter,
+        switchOutCurve: AppMotion.exit,
+        transitionBuilder: (child, animation) =>
+            AppMotion.stageTransition(context, child, animation),
+        child: KeyedSubtree(
+          key: ValueKey<LibrarySection>(effectiveSection),
+          child: stage,
+        ),
+      ),
+    );
+  }
+
+  /// Morphing full Now Playing player sheet overlay.
+  ///
+  /// Expands smoothly upwards from the bottom edge to cover the entire window,
+  /// achieving a seamless 60fps morph even on low-end hardware by utilizing
+  /// purely compositor-driven translation over an opaque background with elevation shadow.
+  Widget _buildNowPlayingMorphOverlay() {
+    return AnimatedBuilder(
+      animation: _nowPlayingMorphCurve,
+      builder: (context, _) {
+        final progress = _nowPlayingMorphCurve.value;
+        if (progress <= 0.0001) return const SizedBox.shrink();
+
+        final reduced = AppMotion.reduce(context);
+        final slideOffset = reduced ? Offset.zero : Offset(0.0, 1.0 - progress);
+
+        return Positioned.fill(
+          child: FractionalTranslation(
+            translation: slideOffset,
+            child: RepaintBoundary(
+              child: DecoratedBox(
+                decoration: const BoxDecoration(
+                  color: AppTheme.background,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Color(0x66000000),
+                      blurRadius: 36,
+                      spreadRadius: 2,
+                      offset: Offset(0, -6),
+                    ),
+                  ],
+                ),
+                child: NowPlayingView(
+                  controller: widget.controller,
+                  repository: widget.repository,
+                  onBack: _closeNowPlaying,
+                  onOpenQueue: _showCompactQueue,
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 
   // --- Side Navigation & Collapsed Rail ---
@@ -496,35 +697,9 @@ class _LibraryShellState extends State<LibraryShell> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // App Logo / Title
-          Container(
-            height: 56,
-            padding: EdgeInsets.symmetric(
-              horizontal: isCollapsed ? AppSpace.sm : 20,
-            ),
-            alignment: isCollapsed ? Alignment.center : Alignment.centerLeft,
-            child: Row(
-              mainAxisAlignment: isCollapsed
-                  ? MainAxisAlignment.center
-                  : MainAxisAlignment.start,
-              children: [
-                const AppMark(size: 28),
-                if (!isCollapsed) ...[
-                  const SizedBox(width: 12),
-                  const Text(
-                    'Mpvson',
-                    style: TextStyle(
-                      color: AppTheme.primaryText,
-                      fontSize: AppType.body,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: -0.3,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          const Divider(height: 1, color: AppTheme.border),
+          // The brand block used to sit above the nav items; it is dropped so
+          // the sidebar starts straight into navigation and the window top is
+          // not split between "Mpvson" and the stage's own title.
           const SizedBox(height: 12),
           // Nav Items
           _navItem(
@@ -788,121 +963,293 @@ class _LibraryShellState extends State<LibraryShell> {
 
   Widget _buildBottomMiniPlayer(bool isCompact) {
     return AnimatedBuilder(
-      animation: widget.controller,
+      animation: Listenable.merge([
+        _miniPlayerVisibilityCurve,
+        _nowPlayingMorphCurve,
+        widget.controller,
+      ]),
       builder: (context, _) {
-        final current = widget.controller.current;
-        if (current == null) return const SizedBox.shrink();
-        final title = current.title;
+        final visibility = _miniPlayerVisibilityCurve.value;
+        if (visibility <= 0.001) {
+          return const SizedBox.shrink();
+        }
+
+        final displayEntry = widget.controller.current ?? _lastDisplayEntry;
+        if (displayEntry == null) {
+          return const SizedBox.shrink();
+        }
+
         final isVideo =
             widget.controller.isVideo ||
-            MediaCatalog.kindFromExtension(current.path).isVideo;
+            MediaCatalog.kindFromExtension(displayEntry.path).isVideo;
 
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            AudioVolumeWheel(
-              controller: widget.controller,
-              child: Container(
-                height: 60,
-                padding: const EdgeInsets.symmetric(horizontal: AppSpace.md),
-                decoration: const BoxDecoration(
-                  color: AppTheme.surface,
-                  border: Border(top: BorderSide(color: AppTheme.border)),
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: InkWell(
-                        onTap:
-                            widget.controller.isVideo &&
-                                widget.onBackToPlayer != null
-                            ? widget.onBackToPlayer
-                            : () => _selectSection(LibrarySection.nowPlaying),
-                        borderRadius: BorderRadius.circular(AppRadii.control),
-                        hoverColor: AppTheme.hover,
-                        child: Row(
-                          children: [
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(
-                                AppRadii.artwork,
-                              ),
-                              child: SizedBox(
-                                width: 40,
-                                height: 40,
-                                child: LibraryArtwork(
-                                  mediaPath: current.path,
-                                  repository: widget.repository,
-                                  iconSize: 20,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            // Title
-                            Expanded(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    title,
-                                    style: AppTheme.rowPrimary.copyWith(
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                  const SizedBox(height: 2),
-                                  FutureBuilder(
-                                    key: ValueKey(current.path),
-                                    future: widget.repository
-                                        .getMediaByCanonicalSource(
-                                          current.path,
-                                        ),
-                                    builder: (context, snapshot) => Text(
-                                      isVideo
-                                          ? 'Video'
-                                          : snapshot.data?.artist ??
-                                                'Unknown artist',
-                                      style: AppTheme.metadata,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    TransportButtons(
-                      controller: widget.controller,
-                      compact: false,
-                    ),
-                    AudioVolumeControl(
-                      controller: widget.controller,
-                      compact: true,
-                    ),
-                    if (isCompact) ...[
-                      IconButton(
-                        icon: const Icon(
-                          Icons.queue_music_rounded,
-                          size: 20,
-                          color: AppTheme.secondaryText,
-                        ),
-                        tooltip: 'Queue',
-                        onPressed: _showCompactQueue,
-                      ),
-                    ],
-                  ],
+        final morph = _nowPlayingMorphCurve.value;
+        // As the full sheet rises over the mini player, gently fade out the mini-player's controls
+        // so there is zero visual overlap with the rising sheet.
+        final controlsFade = (1.0 - (morph * 2.5)).clamp(0.0, 1.0);
+
+        final barContent = _buildMiniPlayerBar(
+          context,
+          displayEntry,
+          isVideo,
+          isCompact,
+          controlsOpacity: controlsFade,
+        );
+
+        final reduced = AppMotion.reduce(context);
+        if (reduced) {
+          return RepaintBoundary(
+            child: SizedBox(height: 84, child: barContent),
+          );
+        }
+
+        return ClipRect(
+          child: Align(
+            alignment: Alignment.topCenter,
+            heightFactor: visibility,
+            child: FractionalTranslation(
+              translation: Offset(0, 0.4 * (1.0 - visibility)),
+              child: Opacity(
+                opacity: visibility.clamp(0.0, 1.0),
+                child: RepaintBoundary(
+                  child: SizedBox(height: 84, child: barContent),
                 ),
               ),
             ),
-            SizedBox(height: 24, child: SeekBar(controller: widget.controller)),
-          ],
+          ),
         );
       },
     );
   }
+
+  Widget _buildMiniPlayerBar(
+    BuildContext context,
+    MediaEntry current,
+    bool isVideo,
+    bool isCompact, {
+    double controlsOpacity = 1.0,
+  }) {
+    final title = current.title;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        AudioVolumeWheel(
+          controller: widget.controller,
+          child: Container(
+            height: 60,
+            padding: const EdgeInsets.symmetric(horizontal: AppSpace.md),
+            decoration: const BoxDecoration(
+              color: AppTheme.surface,
+              border: Border(top: BorderSide(color: AppTheme.border)),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: InkWell(
+                    onTap:
+                        widget.controller.isVideo &&
+                            widget.onBackToPlayer != null
+                        ? widget.onBackToPlayer
+                        : _openNowPlaying,
+                    borderRadius: BorderRadius.circular(AppRadii.control),
+                    hoverColor: AppTheme.hover,
+                    child: Row(
+                      children: [
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(AppRadii.artwork),
+                          child: SizedBox(
+                            width: 40,
+                            height: 40,
+                            child: Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                LibraryArtwork(
+                                  mediaPath: current.path,
+                                  repository: widget.repository,
+                                  iconSize: 20,
+                                ),
+                                if (widget.controller.isPlaying && !isVideo)
+                                  Positioned(
+                                    right: 2,
+                                    bottom: 2,
+                                    child: Container(
+                                      padding: const EdgeInsets.all(2),
+                                      decoration: BoxDecoration(
+                                        color: Colors.black.withValues(
+                                          alpha: 0.75,
+                                        ),
+                                        borderRadius: BorderRadius.circular(4),
+                                      ),
+                                      child: const PlayingEqualizerGlyph(
+                                        isPlaying: true,
+                                        size: 10,
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        // Title and subtitle both come from the library
+                        // record when it exists, so the bar and the Now
+                        // Playing screen never disagree about a track.
+                        Expanded(
+                          child: _MiniPlayerSubtitle(
+                            key: ValueKey(current.path),
+                            repository: widget.repository,
+                            path: current.path,
+                            fallbackTitle: title,
+                            isVideo: isVideo,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Opacity(
+                  opacity: controlsOpacity,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TransportButtons(
+                        controller: widget.controller,
+                        compact: false,
+                      ),
+                      AudioVolumeControl(
+                        controller: widget.controller,
+                        compact: true,
+                      ),
+                      if (isCompact) ...[
+                        IconButton(
+                          icon: const Icon(
+                            Icons.queue_music_rounded,
+                            size: 20,
+                            color: AppTheme.secondaryText,
+                          ),
+                          tooltip: 'Queue',
+                          onPressed: _showCompactQueue,
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        SizedBox(height: 24, child: SeekBar(controller: widget.controller)),
+      ],
+    );
+  }
+}
+
+/// Title and subtitle for the bottom transport bar.
+///
+/// The controller notifies for many transport changes; resolving the library
+/// record once per track instead of once per rebuild keeps those notifications
+/// from issuing a database query each time. Both lines prefer the record so the
+/// bar and the Now Playing screen show the same title and artist.
+class _MiniPlayerSubtitle extends StatefulWidget {
+  const _MiniPlayerSubtitle({
+    super.key,
+    required this.repository,
+    required this.path,
+    required this.fallbackTitle,
+    required this.isVideo,
+  });
+
+  final MediaLibraryRepository repository;
+  final String path;
+  final String fallbackTitle;
+  final bool isVideo;
+
+  @override
+  State<_MiniPlayerSubtitle> createState() => _MiniPlayerSubtitleState();
+}
+
+class _MiniPlayerSubtitleState extends State<_MiniPlayerSubtitle> {
+  Future<MediaItemRecord?>? _record;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.repository.addListener(_onRepositoryChanged);
+    _resolve();
+  }
+
+  @override
+  void didUpdateWidget(_MiniPlayerSubtitle oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.repository != widget.repository) {
+      oldWidget.repository.removeListener(_onRepositoryChanged);
+      widget.repository.addListener(_onRepositoryChanged);
+    }
+    if (oldWidget.path != widget.path ||
+        oldWidget.repository != widget.repository ||
+        oldWidget.isVideo != widget.isVideo) {
+      _resolve();
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.repository.removeListener(_onRepositoryChanged);
+    super.dispose();
+  }
+
+  void _onRepositoryChanged() {
+    if (!widget.isVideo && _record == null && widget.repository.isReady) {
+      setState(_resolve);
+    }
+  }
+
+  void _resolve() {
+    if (widget.isVideo || !widget.repository.isReady) {
+      _record = null;
+      return;
+    }
+    _record = widget.repository
+        .getMediaByCanonicalSource(widget.path)
+        .catchError((Object _) => null);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.isVideo) {
+      return _lines(widget.fallbackTitle, 'Video');
+    }
+    final record = _record;
+    if (record == null) {
+      return _lines(widget.fallbackTitle, 'Unknown artist');
+    }
+    return FutureBuilder<MediaItemRecord?>(
+      future: record,
+      builder: (context, snapshot) => _lines(
+        snapshot.data?.title ?? widget.fallbackTitle,
+        snapshot.data?.artist ?? 'Unknown artist',
+      ),
+    );
+  }
+
+  Widget _lines(String title, String subtitle) => Column(
+    mainAxisSize: MainAxisSize.min,
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        title,
+        style: AppTheme.rowPrimary.copyWith(fontWeight: FontWeight.w600),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      const SizedBox(height: 2),
+      Text(
+        subtitle,
+        style: AppTheme.metadata,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+    ],
+  );
 }

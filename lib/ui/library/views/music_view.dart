@@ -6,10 +6,12 @@ import '../../../domain/models/library_models.dart';
 import '../../../domain/models/media_entry.dart';
 import '../../player/player_controller.dart';
 import '../../core/app_theme.dart';
+import '../../core/toast/app_toast.dart';
 import '../../core/components/media_tile.dart';
 import '../../core/components/media_row.dart';
 import '../../core/components/media_accent_scope.dart';
 import '../../core/components/empty_state.dart';
+import '../../core/components/playback_pulse.dart';
 import '../widgets/add_to_playlist_dialog.dart';
 import '../widgets/library_artwork.dart';
 
@@ -47,7 +49,6 @@ class MusicView extends StatefulWidget {
 class _MusicViewState extends State<MusicView> {
   MusicSubtab _currentSubtab = MusicSubtab.songs;
   String? _selectedSongPath;
-  String? _hoveredSongPath;
   String? _selectedAlbum;
   String? _selectedAlbumArtist;
   String? _selectedArtist;
@@ -57,11 +58,18 @@ class _MusicViewState extends State<MusicView> {
   bool _isLoading = false;
   Future<void>? _reloadFuture;
   bool _reloadAgain = false;
+  Timer? _reloadThrottle;
+  Timer? _searchReload;
+  String? _currentRowPath;
+  bool _currentRowPlaying = false;
 
   @override
   void initState() {
     super.initState();
     widget.repository.addListener(_onRepoChanged);
+    widget.controller.addListener(_onPlaybackChanged);
+    _currentRowPath = widget.controller.current?.path;
+    _currentRowPlaying = widget.controller.isPlaying;
     _reload();
   }
 
@@ -80,18 +88,48 @@ class _MusicViewState extends State<MusicView> {
         _albumTracks = null;
         _artistSongs = null;
       }
-      _reload();
+      _searchReload?.cancel();
+      _searchReload = Timer(const Duration(milliseconds: 150), () {
+        _searchReload = null;
+        if (mounted) _reload();
+      });
+    }
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller.removeListener(_onPlaybackChanged);
+      widget.controller.addListener(_onPlaybackChanged);
     }
   }
 
   @override
   void dispose() {
+    _reloadThrottle?.cancel();
+    _searchReload?.cancel();
     widget.repository.removeListener(_onRepoChanged);
+    widget.controller.removeListener(_onPlaybackChanged);
     super.dispose();
   }
 
+  void _onPlaybackChanged() {
+    final path = widget.controller.current?.path;
+    final playing = widget.controller.isPlaying;
+    if (path == _currentRowPath && playing == _currentRowPlaying) return;
+    _currentRowPath = path;
+    _currentRowPlaying = playing;
+    if (mounted) setState(() {});
+  }
+
   void _onRepoChanged() {
-    _reload();
+    // A scan publishes progress frequently. Reloading every collection on each
+    // notification staled the visible rows and flooded the database isolate, so
+    // coalesce bursts into one refresh per interval.
+    if (_reloadThrottle?.isActive ?? false) {
+      _reloadAgain = true;
+      return;
+    }
+    _reloadThrottle = Timer(const Duration(milliseconds: 200), () {
+      _reloadThrottle = null;
+      if (mounted) _reload();
+    });
   }
 
   Future<void> _reload() {
@@ -525,13 +563,9 @@ class _MusicViewState extends State<MusicView> {
     final isCurrent = widget.controller.current?.path == song.path;
     final isUnavailable = !song.isAvailable;
     final isSelected = _selectedSongPath == song.path;
-    return MouseRegion(
-      onEnter: (_) => setState(() => _hoveredSongPath = song.path),
-      onExit: (_) => setState(() {
-        if (_hoveredSongPath == song.path) _hoveredSongPath = null;
-      }),
-      child: MediaRow(
-        key: ValueKey(song.id),
+    return _HoverRegion(
+      key: ValueKey(song.id),
+      builder: (context, hovered) => MediaRow(
         onSelect: () {
           if (_selectedSongPath != song.path) {
             setState(() => _selectedSongPath = song.path);
@@ -573,30 +607,15 @@ class _MusicViewState extends State<MusicView> {
                         // Track index or playing indicator
                         SizedBox(
                           width: 36,
-                          child: _hoveredSongPath == song.path && !isUnavailable
-                              ? InkWell(
-                                  onTap: () =>
-                                      _playSongCollection(collection, index),
-                                  child: Icon(
-                                    Icons.play_arrow_rounded,
-                                    size: 20,
-                                    color: accent,
-                                  ),
-                                )
-                              : isCurrent && widget.controller.isPlaying
-                              ? Icon(
-                                  Icons.volume_up_rounded,
-                                  size: 16,
-                                  color: accent,
-                                )
-                              : Text(
-                                  '${index + 1}',
-                                  style: AppTheme.metadata.copyWith(
-                                    color: isCurrent
-                                        ? accent
-                                        : AppTheme.mutedText,
-                                  ),
-                                ),
+                          child: _TrackIndexCell(
+                            index: index,
+                            isCurrent: isCurrent,
+                            isPlaying: widget.controller.isPlaying,
+                            isUnavailable: isUnavailable,
+                            hovered: hovered,
+                            onPlay: () =>
+                                _playSongCollection(collection, index),
+                          ),
                         ),
                         // Title & Artist + Missing file indicator
                         Expanded(
@@ -763,8 +782,11 @@ class _MusicViewState extends State<MusicView> {
               song.id,
             );
             if (added && mounted) {
-              ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-                const SnackBar(content: Text('Added to playlist')),
+              AppToast.show(
+                context,
+                'Added to playlist',
+                tone: AppToastTone.success,
+                duration: const Duration(seconds: 3),
               );
             }
             break;
@@ -1301,6 +1323,70 @@ class _MusicViewState extends State<MusicView> {
           const Divider(height: 1, color: AppTheme.border),
           Expanded(child: _buildSongTableView(songs)),
         ],
+      ),
+    );
+  }
+}
+
+/// Tracks hover for one row and rebuilds only that row.
+class _HoverRegion extends StatefulWidget {
+  const _HoverRegion({super.key, required this.builder});
+
+  final Widget Function(BuildContext context, bool hovered) builder;
+
+  @override
+  State<_HoverRegion> createState() => _HoverRegionState();
+}
+
+class _HoverRegionState extends State<_HoverRegion> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) => MouseRegion(
+    onEnter: (_) {
+      if (!_hovered) setState(() => _hovered = true);
+    },
+    onExit: (_) {
+      if (_hovered) setState(() => _hovered = false);
+    },
+    child: widget.builder(context, _hovered),
+  );
+}
+
+/// Track number cell that reveals a play button on hover.
+class _TrackIndexCell extends StatelessWidget {
+  const _TrackIndexCell({
+    required this.index,
+    required this.isCurrent,
+    required this.isPlaying,
+    required this.isUnavailable,
+    required this.hovered,
+    required this.onPlay,
+  });
+
+  final int index;
+  final bool isCurrent;
+  final bool isPlaying;
+  final bool isUnavailable;
+  final bool hovered;
+  final VoidCallback onPlay;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = Theme.of(context).colorScheme.primary;
+    if (hovered && !isUnavailable) {
+      return InkWell(
+        onTap: onPlay,
+        child: Icon(Icons.play_arrow_rounded, size: 20, color: accent),
+      );
+    }
+    if (isCurrent && isPlaying) {
+      return PlayingEqualizerGlyph(index: index, size: 14, color: accent);
+    }
+    return Text(
+      '${index + 1}',
+      style: AppTheme.metadata.copyWith(
+        color: isCurrent ? accent : AppTheme.mutedText,
       ),
     );
   }

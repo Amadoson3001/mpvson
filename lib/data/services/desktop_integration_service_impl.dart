@@ -9,6 +9,7 @@ import '../../domain/models/media_entry.dart';
 import '../../domain/models/open_request.dart';
 import '../../ui/player/player_controller.dart';
 import '../repositories/app_preferences_repository.dart';
+import '../repositories/media_library_repository.dart';
 import 'desktop_integration_service.dart';
 import 'media_probe_service.dart';
 import 'open_request_coordinator.dart';
@@ -25,12 +26,15 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
     MethodChannel? mediaControlsChannel,
     MethodChannel? powerChannel,
     this._urlLauncher,
+    MediaLibraryRepository? libraryRepository,
   }) : singleInstanceChannel =
            singleInstanceChannel ??
            const MethodChannel('mpvson/single_instance'),
        mediaControlsChannel =
            mediaControlsChannel ?? const MethodChannel('mpvson/media_controls'),
-       powerChannel = powerChannel ?? const MethodChannel('mpvson/power');
+       powerChannel = powerChannel ?? const MethodChannel('mpvson/power') {
+    _libraryRepository = libraryRepository;
+  }
 
   final MethodChannel singleInstanceChannel;
   final MethodChannel mediaControlsChannel;
@@ -41,9 +45,11 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
   OpenRequestCoordinator? _openRequestCoordinator;
   AppPreferencesRepository? _preferences;
   final MediaProbeService? _mediaProbeService;
+  MediaLibraryRepository? _libraryRepository;
 
   SystemPlaybackStatus _playbackStatus = SystemPlaybackStatus.stopped;
   MediaMetadata _currentMetadata = MediaMetadata.empty;
+  String? _lastPlaybackSignature;
   bool _isAwakeInhibited = false;
 
   bool _initialized = false;
@@ -325,6 +331,13 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
     final pos = _controller!.position;
     final dur = _controller!.duration;
     final rate = _controller!.rate;
+    // The controller notifies for many reasons that do not change what the OS
+    // media session shows; only forward actual changes.
+    final signature =
+        '${newStatus.name}|${pos.inMilliseconds}|${dur.inMilliseconds}|'
+        '${rate.toStringAsFixed(3)}';
+    if (signature == _lastPlaybackSignature) return;
+    _lastPlaybackSignature = signature;
 
     updatePlaybackState(
       status: newStatus,
@@ -422,10 +435,34 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
   }
 
   void _probeMetadataIfAvailable(MediaEntry entry) async {
-    if (_mediaProbeService == null) return;
+    final controller = _controller;
+    if (controller == null) return;
+    // Library rows already carry parsed tags, so reading the record avoids
+    // starting a second native probe while the requested song is loading.
+    final library = _libraryRepository;
+    if (library != null && library.isReady) {
+      try {
+        final record = await library.getMediaByCanonicalSource(entry.path);
+        if (_disposed || controller.current?.id != entry.id) return;
+        if (record != null) {
+          updateMetadata(
+            record.metadata.copyWith(
+              duration: controller.duration > Duration.zero
+                  ? controller.duration
+                  : record.metadata.duration,
+            ),
+          );
+          return;
+        }
+      } on Object {
+        // Fall through to probing files that are not in the library.
+      }
+    }
+    final probe = _mediaProbeService;
+    if (probe == null) return;
     try {
-      final probed = await _mediaProbeService.probe(entry.path);
-      if (_controller?.current?.id == entry.id && !_disposed) {
+      final probed = await probe.probe(entry.path);
+      if (!_disposed && controller.current?.id == entry.id) {
         updateMetadata(probed.metadata);
       }
     } on Object {

@@ -8,8 +8,24 @@ abstract final class AppMotion {
   static const Duration emphasized = Duration(milliseconds: 380);
   static const Duration reveal = Duration(milliseconds: 120);
 
+  /// Slide and fade used by toasts entering and leaving a corner.
+  static const Duration toast = Duration(milliseconds: 220);
+  static const Duration press = Duration(milliseconds: 90);
+  static const Duration hover = Duration(milliseconds: 140);
+  static const Duration stage = Duration(milliseconds: 160);
+
+  /// Sheet expansion and collapse timings for Now Playing morph transition.
+  static const Duration sheetEnter = Duration(milliseconds: 320);
+  static const Duration sheetExit = Duration(milliseconds: 260);
+
   static const Curve enter = Curves.easeOutCubic;
   static const Curve exit = Curves.easeInCubic;
+
+  /// Ultra-smooth sheet deceleration curve (fast start, cushioned arrival).
+  static const Curve sheetEnterCurve = Cubic(0.12, 1.0, 0.24, 1.0);
+
+  /// Snappy departure curve for collapsing sheets.
+  static const Curve sheetExitCurve = Cubic(0.38, 0.0, 0.85, 0.25);
 
   /// The balanced curve used by standard transitions.
   ///
@@ -22,6 +38,26 @@ abstract final class AppMotion {
 
   static Duration duration(BuildContext context, Duration preferred) =>
       reduce(context) ? instant : preferred;
+
+  /// Composited shared-axis transition (fade + micro vertical glide) for stage/view swaps.
+  static Widget stageTransition(
+    BuildContext context,
+    Widget child,
+    Animation<double> animation,
+  ) {
+    if (reduce(context)) return child;
+    final curved = CurvedAnimation(parent: animation, curve: enter);
+    return FadeTransition(
+      opacity: curved,
+      child: SlideTransition(
+        position: Tween<Offset>(
+          begin: const Offset(0, 0.02),
+          end: Offset.zero,
+        ).animate(curved),
+        child: child,
+      ),
+    );
+  }
 }
 
 /// A single, restrained aperture reveal for a newly presented screen surface.

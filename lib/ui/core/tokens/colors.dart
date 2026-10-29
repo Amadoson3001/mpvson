@@ -44,3 +44,41 @@ class MediaAccent extends ThemeExtension<MediaAccent> {
   MediaAccent lerp(covariant MediaAccent? other, double t) =>
       MediaAccent(color: Color.lerp(color, other?.color ?? color, t)!);
 }
+
+/// Rich palette extracted from the current media's artwork.
+///
+/// Provides coordinated dominant, vibrant, and muted tones for ambient glows,
+/// backdrop lighting, and secondary highlights with guaranteed lerping.
+@immutable
+class MediaAccentPalette extends ThemeExtension<MediaAccentPalette> {
+  const MediaAccentPalette({
+    this.dominant = AppColors.lamp,
+    this.vibrant = AppColors.gold,
+    this.muted = AppColors.layer,
+  });
+
+  final Color dominant;
+  final Color vibrant;
+  final Color muted;
+
+  @override
+  MediaAccentPalette copyWith({
+    Color? dominant,
+    Color? vibrant,
+    Color? muted,
+  }) => MediaAccentPalette(
+    dominant: dominant ?? this.dominant,
+    vibrant: vibrant ?? this.vibrant,
+    muted: muted ?? this.muted,
+  );
+
+  @override
+  MediaAccentPalette lerp(covariant MediaAccentPalette? other, double t) {
+    if (other == null) return this;
+    return MediaAccentPalette(
+      dominant: Color.lerp(dominant, other.dominant, t) ?? dominant,
+      vibrant: Color.lerp(vibrant, other.vibrant, t) ?? vibrant,
+      muted: Color.lerp(muted, other.muted, t) ?? muted,
+    );
+  }
+}

@@ -19,16 +19,19 @@ class DesktopPreferences {
   const DesktopPreferences({
     this.openBehavior,
     this.keepAwakeDuringPlayback = true,
+    this.reduceMotion = false,
   });
 
   /// Null means first-time user has not chosen yet and will be prompted on first conflict.
   final OpenBehaviorPreference? openBehavior;
   final bool keepAwakeDuringPlayback;
+  final bool reduceMotion;
 
   DesktopPreferences copyWith({
     OpenBehaviorPreference? openBehavior,
     bool clearOpenBehavior = false,
     bool? keepAwakeDuringPlayback,
+    bool? reduceMotion,
   }) {
     return DesktopPreferences(
       openBehavior: clearOpenBehavior
@@ -36,6 +39,7 @@ class DesktopPreferences {
           : (openBehavior ?? this.openBehavior),
       keepAwakeDuringPlayback:
           keepAwakeDuringPlayback ?? this.keepAwakeDuringPlayback,
+      reduceMotion: reduceMotion ?? this.reduceMotion,
     );
   }
 
@@ -53,12 +57,14 @@ class DesktopPreferences {
     return DesktopPreferences(
       openBehavior: behavior,
       keepAwakeDuringPlayback: json['keepAwakeDuringPlayback'] as bool? ?? true,
+      reduceMotion: json['reduceMotion'] as bool? ?? false,
     );
   }
 
   Map<String, Object?> toJson() => <String, Object?>{
     if (openBehavior != null) 'openBehavior': openBehavior!.name,
     'keepAwakeDuringPlayback': keepAwakeDuringPlayback,
+    'reduceMotion': reduceMotion,
   };
 }
 

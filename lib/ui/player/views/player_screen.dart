@@ -16,6 +16,8 @@ import '../../../data/services/update_service.dart';
 import '../../../data/services/playback_statistics.dart';
 import '../../core/app_motion.dart';
 import '../../core/app_theme.dart';
+import '../../core/toast/app_toast.dart';
+import '../../core/toast/toast_layout.dart';
 import '../../core/components/media_accent_scope.dart';
 import '../player_controller.dart';
 import '../widgets/empty_library.dart';
@@ -141,8 +143,13 @@ class _PlayerScreenState extends State<PlayerScreen>
 
   bool get _isShowingLibrary {
     final current = widget.controller.current;
+    // A restored audio entry has no engine source yet, so its media kind is
+    // not detected. Extension-based classification keeps the library visible
+    // immediately instead of showing the video-style resume stage.
     final isAudioMedia =
-        widget.controller.isAudio && widget.controller.hasMedia;
+        (widget.controller.isAudio && widget.controller.hasMedia) ||
+        (current != null &&
+            MediaCatalog.kindFromExtension(current.path).isAudio);
     final showPlayerForCurrent =
         _showPlayerView && _playerViewEntryId == current?.id;
     return (_showLibrary ||
@@ -556,6 +563,7 @@ class _PlayerScreenState extends State<PlayerScreen>
       ThumbnailSuspensionReason.windowMinimized,
     );
     widget.controller.seekPreview.suspend();
+    widget.controller.setDisplayUpdatesSuspended(true);
     widget.controller.trimMemory();
     PaintingBinding.instance.imageCache.clear();
     PaintingBinding.instance.imageCache.clearLiveImages();
@@ -571,6 +579,7 @@ class _PlayerScreenState extends State<PlayerScreen>
       ThumbnailSuspensionReason.windowMinimized,
     );
     widget.controller.seekPreview.resume();
+    widget.controller.setDisplayUpdatesSuspended(false);
     _updateVideoOutputPolicy(visible: true);
     if (mounted) setState(() {});
   }
@@ -604,8 +613,14 @@ class _PlayerScreenState extends State<PlayerScreen>
 
   @override
   void onWindowBlur() {
+    widget.controller.setDisplayUpdatesLowPower(true);
     _cancelHeldSpeed();
     if (_contextMenu.isOpen) _contextMenu.close();
+  }
+
+  @override
+  void onWindowFocus() {
+    widget.controller.setDisplayUpdatesLowPower(false);
   }
 
   @override
@@ -1049,6 +1064,12 @@ class _PlayerScreenState extends State<PlayerScreen>
   Widget _buildPlayerArea() {
     final current = widget.controller.current;
     final showLibrary = _isShowingLibrary;
+    // Track classification can briefly describe the previous source, so the
+    // extension keeps known audio from attaching a video output.
+    final audioEntry =
+        widget.controller.isAudio ||
+        (current != null &&
+            MediaCatalog.kindFromExtension(current.path).isAudio);
     Widget? library;
     if (widget.libraryRepository != null) {
       library = LibraryShell(
@@ -1115,19 +1136,24 @@ class _PlayerScreenState extends State<PlayerScreen>
         padding: const EdgeInsets.only(bottom: 60),
         child: AnimatedBuilder(
           animation: Listenable.merge(<Listenable>[
-            widget.controller.positionListenable,
+            widget.controller.displayPositionListenable,
             widget.controller.durationListenable,
             widget.controller.bufferingListenable,
           ]),
           builder: (context, _) => MediaReady(
             entry: widget.controller.current ?? current,
-            position: widget.controller.position,
+            position: widget.controller.displayPosition,
             duration: widget.controller.duration,
             isOpening: widget.controller.isBuffering,
             onPlay: () => unawaited(widget.controller.togglePlayPause()),
           ),
         ),
       );
+    } else if (audioEntry) {
+      // Audio is presented by the library; the hidden stage must not attach a
+      // video output just to stay offstage.
+      contentState = 'audio';
+      content = const ColoredBox(color: AppTheme.stage);
     } else {
       contentState = 'video';
       content = ColoredBox(
@@ -1140,239 +1166,257 @@ class _PlayerScreenState extends State<PlayerScreen>
         ),
       );
     }
-    final stage = Stack(
-      fit: StackFit.expand,
-      children: [
-        PlayerContextMenu(
-          playerController: widget.controller,
-          menuController: _contextMenu,
-          onOpenFiles: _openFiles,
-          onOpenUrl: _openUrl,
-          onToggleQueue: _toggleQueue,
-          onSettings: _showSettings,
-          onLoadSubtitle: _loadSubtitle,
-          onToggleMute: _toggleMute,
-          onAdjustVolume: _adjustVolume,
-          onMenuVisibilityChanged: _handleMenuVisibility,
-          onFullscreen: widget.desktopWindow ? _toggleFullscreen : null,
-          isFullscreen: _isFullscreen,
-          queueOpen: _queueOpen,
-          child: MouseRegion(
-            key: const ValueKey('video-surface'),
-            cursor: _isFullscreen && !_controlsVisible && !_controlMenuOpen
-                ? SystemMouseCursors.none
-                : MouseCursor.defer,
-            child: Listener(
-              onPointerSignal: _onVideoPointerSignal,
-              child: GestureDetector(
-                key: _videoSurfaceKey,
-                behavior: HitTestBehavior.opaque,
-                onTap: widget.controller.hasMedia ? _toggleVideoPlayback : null,
-                onDoubleTap: widget.desktopWindow ? _toggleFullscreen : null,
-                child: AnimatedSwitcher(
-                  duration: AppMotion.duration(context, AppMotion.reveal),
-                  layoutBuilder: (currentChild, previousChildren) => Stack(
-                    fit: StackFit.expand,
-                    children: [...previousChildren, ?currentChild],
-                  ),
-                  transitionBuilder: (child, animation) {
-                    if (AppMotion.reduce(context)) {
-                      return FadeTransition(opacity: animation, child: child);
-                    }
-                    final transition = CurvedAnimation(
-                      parent: animation,
-                      curve: AppMotion.enter,
-                      reverseCurve: AppMotion.exit,
-                    );
-                    return FadeTransition(
-                      opacity: transition,
-                      child: ScaleTransition(
-                        scale: Tween<double>(
-                          begin: 0.985,
-                          end: 1,
-                        ).animate(transition),
-                        child: child,
-                      ),
-                    );
-                  },
-                  child: KeyedSubtree(
-                    key: ValueKey<String>('player-content-$contentState'),
-                    child: content,
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-        if (widget.controller.hasMedia &&
-            widget.controller.isVideo &&
-            current != null)
-          Positioned(
-            left: 16,
-            top: 12,
-            right: 24,
+    final Widget stage;
+    if (showLibrary && (audioEntry || current == null)) {
+      // The library covers the stage, and these states keep no video surface
+      // alive; building the hidden player chrome only costs memory and frames.
+      stage = const SizedBox.expand();
+    } else {
+      stage = Stack(
+        fit: StackFit.expand,
+        children: [
+          PlayerContextMenu(
+            playerController: widget.controller,
+            menuController: _contextMenu,
+            onOpenFiles: _openFiles,
+            onOpenUrl: _openUrl,
+            onToggleQueue: _toggleQueue,
+            onSettings: _showSettings,
+            onLoadSubtitle: _loadSubtitle,
+            onToggleMute: _toggleMute,
+            onAdjustVolume: _adjustVolume,
+            onMenuVisibilityChanged: _handleMenuVisibility,
+            onFullscreen: widget.desktopWindow ? _toggleFullscreen : null,
+            isFullscreen: _isFullscreen,
+            queueOpen: _queueOpen,
             child: MouseRegion(
-              onEnter: _controlsPointerEntered,
-              onExit: _controlsPointerExited,
-              child: AnimatedOpacity(
-                duration: AppMotion.duration(context, AppMotion.quick),
-                opacity: _controlsVisible ? 1 : 0,
-                child: IgnorePointer(
-                  ignoring: !_controlsVisible,
-                  child: Row(
-                    children: [
-                      if (widget.libraryRepository != null) ...[
-                        Focus(
-                          onFocusChange: (focused) {
-                            _backButtonFocused = focused;
-                            if (focused) {
-                              _showControls();
-                            } else if (!_hideBlocked) {
-                              _scheduleControlsHide(restart: true);
-                            }
-                          },
-                          child: TextButton.icon(
-                            onPressed: _backToHome,
-                            icon: const Icon(
-                              Icons.arrow_back_rounded,
-                              size: 20,
-                            ),
-                            label: const Text('Home'),
-                            style: TextButton.styleFrom(
-                              foregroundColor: AppTheme.onStage,
-                              backgroundColor: AppTheme.stage.withValues(
-                                alpha: 0.65,
-                              ),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                              ),
-                            ),
-                          ),
+              key: const ValueKey('video-surface'),
+              cursor: _isFullscreen && !_controlsVisible && !_controlMenuOpen
+                  ? SystemMouseCursors.none
+                  : MouseCursor.defer,
+              child: Listener(
+                onPointerSignal: _onVideoPointerSignal,
+                child: GestureDetector(
+                  key: _videoSurfaceKey,
+                  behavior: HitTestBehavior.opaque,
+                  onTap: widget.controller.hasMedia
+                      ? _toggleVideoPlayback
+                      : null,
+                  onDoubleTap: widget.desktopWindow ? _toggleFullscreen : null,
+                  child: AnimatedSwitcher(
+                    duration: AppMotion.duration(context, AppMotion.reveal),
+                    layoutBuilder: (currentChild, previousChildren) => Stack(
+                      fit: StackFit.expand,
+                      children: [...previousChildren, ?currentChild],
+                    ),
+                    transitionBuilder: (child, animation) {
+                      if (AppMotion.reduce(context)) {
+                        return FadeTransition(opacity: animation, child: child);
+                      }
+                      final transition = CurvedAnimation(
+                        parent: animation,
+                        curve: AppMotion.enter,
+                        reverseCurve: AppMotion.exit,
+                      );
+                      return FadeTransition(
+                        opacity: transition,
+                        child: ScaleTransition(
+                          scale: Tween<double>(
+                            begin: 0.985,
+                            end: 1,
+                          ).animate(transition),
+                          child: child,
                         ),
-                        const SizedBox(width: 12),
-                      ],
-                      Expanded(
-                        child: Text(
-                          current.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.titleMedium
-                              ?.copyWith(
-                                color: AppTheme.onStage,
-                                shadows: const [
-                                  Shadow(color: AppTheme.stage, blurRadius: 5),
-                                ],
-                              ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        Positioned.fill(
-          child: IgnorePointer(
-            child: Align(
-              alignment: _feedbackCentered
-                  ? Alignment.center
-                  : Alignment.topCenter,
-              child: Padding(
-                padding: const EdgeInsets.all(AppSpace.lg),
-                child: AnimatedSwitcher(
-                  duration: AppMotion.duration(context, AppMotion.quick),
-                  child: _feedbackLabel == null
-                      ? const SizedBox.shrink()
-                      : PlaybackFeedback(
-                          key: const ValueKey('playback-feedback'),
-                          icon: _feedbackIcon,
-                          label: _feedbackLabel!,
-                          progress: _feedbackProgress,
-                        ),
-                ),
-              ),
-            ),
-          ),
-        ),
-        if (_draggingFiles && current != null)
-          Positioned.fill(
-            child: IgnorePointer(
-              child: Container(
-                decoration: BoxDecoration(
-                  color: AppTheme.background.withValues(alpha: 0.6),
-                  border: Border.all(
-                    color: Theme.of(context).colorScheme.primary,
-                    width: 2,
-                  ),
-                ),
-                alignment: Alignment.center,
-                child: Text(
-                  widget.controller.hasMedia
-                      ? 'Drop videos to add them to the queue'
-                      : 'Drop a video to start playback',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-              ),
-            ),
-          ),
-        Positioned(
-          left: 0,
-          right: 0,
-          bottom: 0,
-          child: FocusScope(
-            node: _controlsFocusScope,
-            child: MouseRegion(
-              onEnter: _controlsPointerEntered,
-              onExit: _controlsPointerExited,
-              opaque: _controlsVisible,
-              hitTestBehavior: _controlsVisible
-                  ? HitTestBehavior.opaque
-                  : HitTestBehavior.deferToChild,
-              child: AnimatedOpacity(
-                key: const ValueKey('player-controls-visibility'),
-                duration: AppMotion.duration(context, AppMotion.quick),
-                opacity: _controlsVisible ? 1 : 0,
-                child: AnimatedSlide(
-                  offset: !AppMotion.reduce(context) && !_controlsVisible
-                      ? const Offset(0, 0.1)
-                      : Offset.zero,
-                  duration: AppMotion.duration(context, AppMotion.quick),
-                  curve: AppMotion.standardCurve,
-                  child: IgnorePointer(
-                    ignoring: !_controlsVisible,
-                    child: PlayerControls(
-                      controller: widget.controller,
-                      onMenuVisibilityChanged: _handleMenuVisibility,
-                      onInteractionChanged: _handleControlInteraction,
-                      onVolumeChanged: _showVolumeFeedback,
-                      showPlaybackControls: widget.controller.hasMedia,
-                      actions: PlayerActions(
-                        controller: widget.controller,
-                        onOpenFiles: _openFiles,
-                        onOpenUrl: _openUrl,
-                        onOpenRecent: _playRecent,
-                        onToggleQueue: _toggleQueue,
-                        onSettings: _showSettings,
-                        onPlaybackInfo: _showPlaybackInfo,
-                        onOpenLibrary: widget.libraryRepository != null
-                            ? _openLibrary
-                            : null,
-                        onMenuVisibilityChanged: _handleMenuVisibility,
-                        queueOpen: _queueOpen,
-                        isFullscreen: _isFullscreen,
-                        onFullscreen: widget.desktopWindow
-                            ? _toggleFullscreen
-                            : null,
-                      ),
+                      );
+                    },
+                    child: KeyedSubtree(
+                      key: ValueKey<String>('player-content-$contentState'),
+                      child: content,
                     ),
                   ),
                 ),
               ),
             ),
           ),
-        ),
-      ],
-    );
+          if (widget.controller.hasMedia &&
+              widget.controller.isVideo &&
+              current != null)
+            Positioned(
+              left: 16,
+              top: 12,
+              right: 24,
+              child: MouseRegion(
+                onEnter: _controlsPointerEntered,
+                onExit: _controlsPointerExited,
+                child: AnimatedOpacity(
+                  duration: AppMotion.duration(context, AppMotion.quick),
+                  opacity: _controlsVisible ? 1 : 0,
+                  child: IgnorePointer(
+                    ignoring: !_controlsVisible,
+                    child: Row(
+                      children: [
+                        if (widget.libraryRepository != null) ...[
+                          Focus(
+                            onFocusChange: (focused) {
+                              _backButtonFocused = focused;
+                              if (focused) {
+                                _showControls();
+                              } else if (!_hideBlocked) {
+                                _scheduleControlsHide(restart: true);
+                              }
+                            },
+                            child: TextButton.icon(
+                              onPressed: _backToHome,
+                              icon: const Icon(
+                                Icons.arrow_back_rounded,
+                                size: 20,
+                              ),
+                              label: const Text('Home'),
+                              style: TextButton.styleFrom(
+                                foregroundColor: AppTheme.onStage,
+                                backgroundColor: AppTheme.stage.withValues(
+                                  alpha: 0.65,
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                        ],
+                        Expanded(
+                          child: Text(
+                            current.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.titleMedium
+                                ?.copyWith(
+                                  color: AppTheme.onStage,
+                                  shadows: const [
+                                    Shadow(
+                                      color: AppTheme.stage,
+                                      blurRadius: 5,
+                                    ),
+                                  ],
+                                ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          Positioned.fill(
+            child: IgnorePointer(
+              child: Align(
+                alignment: _feedbackCentered
+                    ? Alignment.center
+                    : Alignment.topCenter,
+                child: Padding(
+                  padding: const EdgeInsets.all(AppSpace.lg),
+                  child: AnimatedSwitcher(
+                    duration: AppMotion.duration(context, AppMotion.quick),
+                    child: _feedbackLabel == null
+                        ? const SizedBox.shrink()
+                        : PlaybackFeedback(
+                            key: const ValueKey('playback-feedback'),
+                            icon: _feedbackIcon,
+                            label: _feedbackLabel!,
+                            progress: _feedbackProgress,
+                          ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          if (_draggingFiles && current != null)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: AppTheme.background.withValues(alpha: 0.6),
+                    border: Border.all(
+                      color: Theme.of(context).colorScheme.primary,
+                      width: 2,
+                    ),
+                  ),
+                  alignment: Alignment.center,
+                  child: Text(
+                    widget.controller.hasMedia
+                        ? 'Drop videos to add them to the queue'
+                        : 'Drop a video to start playback',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                ),
+              ),
+            ),
+          // While the library covers the stage, its transport strip cannot be
+          // seen; leaving it mounted made a second seek bar repaint on the
+          // playback cadence even during audio-only use.
+          if (!showLibrary)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: FocusScope(
+                node: _controlsFocusScope,
+                child: MouseRegion(
+                  onEnter: _controlsPointerEntered,
+                  onExit: _controlsPointerExited,
+                  opaque: _controlsVisible,
+                  hitTestBehavior: _controlsVisible
+                      ? HitTestBehavior.opaque
+                      : HitTestBehavior.deferToChild,
+                  child: AnimatedOpacity(
+                    key: const ValueKey('player-controls-visibility'),
+                    duration: AppMotion.duration(context, AppMotion.quick),
+                    opacity: _controlsVisible ? 1 : 0,
+                    child: AnimatedSlide(
+                      offset: !AppMotion.reduce(context) && !_controlsVisible
+                          ? const Offset(0, 0.1)
+                          : Offset.zero,
+                      duration: AppMotion.duration(context, AppMotion.quick),
+                      curve: AppMotion.standardCurve,
+                      child: IgnorePointer(
+                        ignoring: !_controlsVisible,
+                        child: ToastRegion(
+                          child: PlayerControls(
+                            controller: widget.controller,
+                            onMenuVisibilityChanged: _handleMenuVisibility,
+                            onInteractionChanged: _handleControlInteraction,
+                            onVolumeChanged: _showVolumeFeedback,
+                            showPlaybackControls: widget.controller.hasMedia,
+                            actions: PlayerActions(
+                              controller: widget.controller,
+                              onOpenFiles: _openFiles,
+                              onOpenUrl: _openUrl,
+                              onOpenRecent: _playRecent,
+                              onToggleQueue: _toggleQueue,
+                              onSettings: _showSettings,
+                              onPlaybackInfo: _showPlaybackInfo,
+                              onOpenLibrary: widget.libraryRepository != null
+                                  ? _openLibrary
+                                  : null,
+                              onMenuVisibilityChanged: _handleMenuVisibility,
+                              queueOpen: _queueOpen,
+                              isFullscreen: _isFullscreen,
+                              onFullscreen: widget.desktopWindow
+                                  ? _toggleFullscreen
+                                  : null,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      );
+    }
     final contentArea = MediaAccentScope(
       controller: widget.controller,
       child: library == null
@@ -1413,16 +1457,18 @@ class _PlayerScreenState extends State<PlayerScreen>
       return _queuePanelCache!;
     }
     _queuePanelCacheController = widget.controller;
-    return _queuePanelCache = FocusScope(
-      node: _queueFocusScope,
-      child: QueuePanel(
-        // One key for the one logical panel, so search text, focus and scroll
-        // survive presentation changes and unrelated screen rebuilds.
-        key: _queuePanelKey,
-        controller: widget.controller,
-        onClose: onClose,
-        onQueueFocus: (entryId) => _focusedQueueEntryId = entryId,
-        onAddFiles: _addQueueFiles,
+    return _queuePanelCache = ToastRegion(
+      child: FocusScope(
+        node: _queueFocusScope,
+        child: QueuePanel(
+          // One key for the one logical panel, so search text, focus and scroll
+          // survive presentation changes and unrelated screen rebuilds.
+          key: _queuePanelKey,
+          controller: widget.controller,
+          onClose: onClose,
+          onQueueFocus: (entryId) => _focusedQueueEntryId = entryId,
+          onAddFiles: _addQueueFiles,
+        ),
       ),
     );
   }
@@ -1553,17 +1599,12 @@ class _PlayerScreenState extends State<PlayerScreen>
       await widget.controller.removeAt(index);
       if (!mounted) return;
       _focusedQueueEntryId = null;
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(
-            content: const Text('Removed from queue'),
-            action: SnackBarAction(
-              label: 'Undo',
-              onPressed: widget.controller.undoRemove,
-            ),
-          ),
-        );
+      AppToast.show(
+        context,
+        'Removed from queue',
+        actionLabel: 'Undo',
+        onAction: () => unawaited(widget.controller.undoRemove()),
+      );
     } catch (_) {
       _showMessage('Could not remove this item from the queue.');
     }
@@ -1606,8 +1647,10 @@ class _PlayerScreenState extends State<PlayerScreen>
       if (path != null) await repository.addFolder(path);
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not add the folder. Try again.')),
+      AppToast.show(
+        context,
+        'Could not add the folder. Try again.',
+        tone: AppToastTone.danger,
       );
     }
   }
@@ -1702,9 +1745,7 @@ class _PlayerScreenState extends State<PlayerScreen>
 
   void _showMessage(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(message)));
+    AppToast.show(context, message, tone: AppToastTone.danger);
   }
 }
 

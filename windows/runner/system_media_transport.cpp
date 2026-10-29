@@ -4,6 +4,60 @@
 
 #include <chrono>
 
+namespace {
+
+// Reads |key| from |map| as a string. Returns true when the key was present and
+// held a string, in which case |out| is assigned.
+bool ReadString(const flutter::EncodableMap& map, const char* key,
+                std::string& out) {
+  const auto it = map.find(flutter::EncodableValue(key));
+  if (it == map.end()) {
+    return false;
+  }
+  const auto* value = std::get_if<std::string>(&it->second);
+  if (value == nullptr) {
+    return false;
+  }
+  out = *value;
+  return true;
+}
+
+// Reads |key| from |map| as a boolean, falling back to |default_value| when the
+// key is missing or holds another type.
+bool ReadBool(const flutter::EncodableMap& map, const char* key,
+              bool default_value) {
+  const auto it = map.find(flutter::EncodableValue(key));
+  if (it == map.end()) {
+    return default_value;
+  }
+  const auto* value = std::get_if<bool>(&it->second);
+  return value == nullptr ? default_value : *value;
+}
+
+// Reads |key| from |map| as a millisecond count, falling back to
+// |default_value| when the key is missing or holds another type. The 32-bit and
+// the floating point representations are accepted as well, because the standard
+// method codec narrows integers on 32-bit hosts and Dart may send either.
+int64_t ReadMilliseconds(const flutter::EncodableMap& map, const char* key,
+                         int64_t default_value) {
+  const auto it = map.find(flutter::EncodableValue(key));
+  if (it == map.end()) {
+    return default_value;
+  }
+  if (const auto* value = std::get_if<int32_t>(&it->second)) {
+    return *value;
+  }
+  if (const auto* value = std::get_if<int64_t>(&it->second)) {
+    return *value;
+  }
+  if (const auto* value = std::get_if<double>(&it->second)) {
+    return static_cast<int64_t>(*value);
+  }
+  return default_value;
+}
+
+}  // namespace
+
 SystemMediaTransport::SystemMediaTransport() = default;
 
 SystemMediaTransport::~SystemMediaTransport() {
@@ -128,48 +182,136 @@ void SystemMediaTransport::SetMetadata(const std::string& title,
                                        const std::string& artwork) {
   if (!smtc_) return;
   try {
-    auto updater = smtc_.DisplayUpdater();
-    updater.Type(winrt::Windows::Media::MediaPlaybackType::Music);
-    auto music = updater.MusicProperties();
+    // The updater is kept as a member so that an artwork thumbnail which is
+    // resolved asynchronously can still be applied to the same updater, and
+    // therefore keeps the metadata written below.
+    updater_ = smtc_.DisplayUpdater();
+    updater_.Type(winrt::Windows::Media::MediaPlaybackType::Music);
+    auto music = updater_.MusicProperties();
     music.Title(winrt::to_hstring(title));
     music.Artist(winrt::to_hstring(artist));
     music.AlbumTitle(winrt::to_hstring(album));
     music.AlbumArtist(winrt::to_hstring(album_artist));
 
-    if (!artwork.empty()) {
-      try {
-        if (artwork.rfind("http://", 0) == 0 ||
-            artwork.rfind("https://", 0) == 0 ||
-            artwork.rfind("ms-appx://", 0) == 0) {
-          winrt::Windows::Foundation::Uri uri(winrt::to_hstring(artwork));
-          updater.Thumbnail(
-              winrt::Windows::Storage::Streams::RandomAccessStreamReference::CreateFromUri(uri));
-        } else {
-          std::string path = artwork;
-          if (path.rfind("file:///", 0) == 0) {
-            path = path.substr(8);
-          } else if (path.rfind("file://", 0) == 0) {
-            path = path.substr(7);
-          }
-          auto file = winrt::Windows::Storage::StorageFile::GetFileFromPathAsync(
-              winrt::to_hstring(path)).get();
-          updater.Thumbnail(
-              winrt::Windows::Storage::Streams::RandomAccessStreamReference::CreateFromFile(file));
-        }
-      } catch (...) {
-        updater.Thumbnail(nullptr);
-      }
-    } else {
-      updater.Thumbnail(nullptr);
+    // Any thumbnail still in flight belongs to an older set of metadata.
+    const uint64_t sequence = ++metadata_sequence_;
+
+    if (artwork.empty()) {
+      updater_.Thumbnail(nullptr);
+      updater_.Update();
+      return;
     }
 
-    updater.Update();
+    if (artwork.rfind("http://", 0) == 0 ||
+        artwork.rfind("https://", 0) == 0 ||
+        artwork.rfind("ms-appx://", 0) == 0) {
+      // Remote (or packaged) artwork is referenced by URI, which does not
+      // require waiting on an asynchronous operation.
+      winrt::Windows::Foundation::Uri uri(winrt::to_hstring(artwork));
+      updater_.Thumbnail(
+          winrt::Windows::Storage::Streams::RandomAccessStreamReference::CreateFromUri(uri));
+      updater_.Update();
+      return;
+    }
+
+    std::string path = artwork;
+    if (path.rfind("file:///", 0) == 0) {
+      path = path.substr(8);
+    } else if (path.rfind("file://", 0) == 0) {
+      path = path.substr(7);
+    }
+
+    // Publish the metadata right away; the thumbnail follows once the file has
+    // been resolved.
+    updater_.Update();
+
+    // Resolving the artwork file is asynchronous. This runs on the UI thread,
+    // which is initialized as a single-threaded apartment (see the
+    // CoInitializeEx call in main.cpp). Waiting for the operation to complete
+    // from there trips cppwinrt's check_sta_blocking_wait() assertion in
+    // Windows.Foundation.h, and can deadlock for real, because the completion
+    // itself has to be marshalled back to the very thread that is blocked. So
+    // the completion handler is used instead, and the resulting reference is
+    // handed over to the UI thread through WM_SMTC_THUMBNAIL.
+    auto operation = winrt::Windows::Storage::StorageFile::GetFileFromPathAsync(
+        winrt::to_hstring(path));
+    operation.Completed(
+        [sequence, window_handle = window_handle_](
+            winrt::Windows::Foundation::IAsyncOperation<
+                winrt::Windows::Storage::StorageFile> const& operation,
+            winrt::Windows::Foundation::AsyncStatus status) {
+          winrt::Windows::Storage::Streams::RandomAccessStreamReference thumbnail{nullptr};
+          if (status == winrt::Windows::Foundation::AsyncStatus::Completed) {
+            try {
+              thumbnail = winrt::Windows::Storage::Streams::RandomAccessStreamReference::
+                  CreateFromFile(operation.GetResults());
+            } catch (...) {
+              thumbnail = nullptr;
+            }
+          }
+          if (window_handle == nullptr) {
+            return;
+          }
+          void* abi = winrt::detach_abi(thumbnail);
+          if (::PostMessageW(window_handle, WM_SMTC_THUMBNAIL,
+                             static_cast<WPARAM>(sequence),
+                             reinterpret_cast<LPARAM>(abi)) == 0) {
+            // The message was not queued, so nobody will take ownership of the
+            // reference.
+            ReleaseThumbnail(abi);
+          }
+        });
+  } catch (...) {
+    try {
+      if (updater_) {
+        updater_.Thumbnail(nullptr);
+        updater_.Update();
+      }
+    } catch (...) {
+    }
+  }
+}
+
+void SystemMediaTransport::ApplyThumbnail(uint64_t sequence,
+                                          void* thumbnail_abi) {
+  if (sequence != metadata_sequence_) {
+    // A newer setMetadata, clearMetadata or CleanUp call superseded this
+    // artwork.
+    ReleaseThumbnail(thumbnail_abi);
+    return;
+  }
+  if (!smtc_ || !updater_) {
+    ReleaseThumbnail(thumbnail_abi);
+    return;
+  }
+  try {
+    winrt::Windows::Storage::Streams::RandomAccessStreamReference thumbnail{nullptr};
+    if (thumbnail_abi != nullptr) {
+      // Takes ownership of the reference transferred through the message.
+      thumbnail = winrt::Windows::Storage::Streams::RandomAccessStreamReference{
+          thumbnail_abi, winrt::take_ownership_from_abi};
+    }
+    updater_.Thumbnail(thumbnail);
+    updater_.Update();
   } catch (...) {
   }
 }
 
+void SystemMediaTransport::ReleaseThumbnail(void* thumbnail_abi) {
+  if (thumbnail_abi == nullptr) {
+    return;
+  }
+  // Takes ownership of the reference and releases it at the end of the
+  // full-expression.
+  winrt::Windows::Storage::Streams::RandomAccessStreamReference{
+      thumbnail_abi, winrt::take_ownership_from_abi};
+}
+
 void SystemMediaTransport::ClearMetadata() {
   if (!smtc_) return;
+  // Discard any thumbnail that is still being resolved.
+  ++metadata_sequence_;
+  updater_ = nullptr;
   try {
     auto updater = smtc_.DisplayUpdater();
     updater.ClearAll();
@@ -187,6 +329,9 @@ void SystemMediaTransport::SetEnabled(bool enabled) {
 }
 
 void SystemMediaTransport::CleanUp() {
+  // Discard any thumbnail that is still being resolved.
+  ++metadata_sequence_;
+  updater_ = nullptr;
   if (smtc_ != nullptr) {
     try {
       if (button_token_.value != 0) {
@@ -215,31 +360,17 @@ void SystemMediaTransport::OnMethodCall(
   if (method == "setPlaybackStatus" || method == "updatePlaybackStatus" ||
       method == "updatePlaybackState") {
     if (arguments != nullptr) {
-      if (const auto* str = std::get_if<std::string>(arguments)) {
-        SetPlaybackStatus(*str);
+      if (const auto* status_string = std::get_if<std::string>(arguments)) {
+        SetPlaybackStatus(*status_string);
       } else if (const auto* map = std::get_if<flutter::EncodableMap>(arguments)) {
-        auto it = map->find(flutter::EncodableValue("status"));
-        if (it != map->end()) {
-          if (const auto* s = std::get_if<std::string>(&it->second)) {
-            SetPlaybackStatus(*s);
-          }
+        std::string status;
+        if (ReadString(*map, "status", status)) {
+          SetPlaybackStatus(status);
         }
-        int64_t position_ms = 0;
-        int64_t duration_ms = 0;
-        auto it_pos = map->find(flutter::EncodableValue("positionMs"));
-        if (it_pos == map->end()) it_pos = map->find(flutter::EncodableValue("position"));
-        if (it_pos != map->end()) {
-          if (const auto* val_i32 = std::get_if<int32_t>(&it_pos->second)) position_ms = *val_i32;
-          else if (const auto* val_i64 = std::get_if<int64_t>(&it_pos->second)) position_ms = *val_i64;
-          else if (const auto* val_dbl = std::get_if<double>(&it_pos->second)) position_ms = static_cast<int64_t>(*val_dbl);
-        }
-        auto it_dur = map->find(flutter::EncodableValue("durationMs"));
-        if (it_dur == map->end()) it_dur = map->find(flutter::EncodableValue("duration"));
-        if (it_dur != map->end()) {
-          if (const auto* val_i32 = std::get_if<int32_t>(&it_dur->second)) duration_ms = *val_i32;
-          else if (const auto* val_i64 = std::get_if<int64_t>(&it_dur->second)) duration_ms = *val_i64;
-          else if (const auto* val_dbl = std::get_if<double>(&it_dur->second)) duration_ms = static_cast<int64_t>(*val_dbl);
-        }
+        int64_t position_ms = ReadMilliseconds(*map, "position", 0);
+        position_ms = ReadMilliseconds(*map, "positionMs", position_ms);
+        int64_t duration_ms = ReadMilliseconds(*map, "duration", 0);
+        duration_ms = ReadMilliseconds(*map, "durationMs", duration_ms);
         if (duration_ms > 0 || position_ms > 0) {
           SetTimeline(position_ms, duration_ms);
         }
@@ -255,24 +386,17 @@ void SystemMediaTransport::OnMethodCall(
         std::string album_artist;
         std::string artwork;
 
-        auto get_str = [&](const char* key, std::string& target) {
-          auto it = map->find(flutter::EncodableValue(key));
-          if (it != map->end()) {
-            if (const auto* val = std::get_if<std::string>(&it->second)) {
-              target = *val;
-            }
-          }
-        };
-
-        get_str("title", title);
-        get_str("artist", artist);
-        get_str("album", album);
-        get_str("albumArtist", album_artist);
-        get_str("album_artist", album_artist);
-        get_str("artwork", artwork);
-        get_str("thumbnail", artwork);
-        get_str("artworkUri", artwork);
-        get_str("artworkPath", artwork);
+        ReadString(*map, "title", title);
+        ReadString(*map, "artist", artist);
+        ReadString(*map, "album", album);
+        ReadString(*map, "albumArtist", album_artist);
+        ReadString(*map, "album_artist", album_artist);
+        // The artwork aliases are tried in order, so the last one that is
+        // present wins.
+        ReadString(*map, "artwork", artwork);
+        ReadString(*map, "thumbnail", artwork);
+        ReadString(*map, "artworkUri", artwork);
+        ReadString(*map, "artworkPath", artwork);
 
         SetMetadata(title, artist, album, album_artist, artwork);
       }
@@ -282,20 +406,11 @@ void SystemMediaTransport::OnMethodCall(
     if (arguments != nullptr) {
       if (const auto* map = std::get_if<flutter::EncodableMap>(arguments)) {
         if (smtc_) {
-          auto check_bool = [&](const char* key, bool default_val) -> bool {
-            auto it = map->find(flutter::EncodableValue(key));
-            if (it != map->end()) {
-              if (const auto* val = std::get_if<bool>(&it->second)) {
-                return *val;
-              }
-            }
-            return default_val;
-          };
           try {
-            smtc_.IsPlayEnabled(check_bool("canPlay", true));
-            smtc_.IsPauseEnabled(check_bool("canPause", true));
-            smtc_.IsNextEnabled(check_bool("canGoNext", true));
-            smtc_.IsPreviousEnabled(check_bool("canGoPrevious", true));
+            smtc_.IsPlayEnabled(ReadBool(*map, "canPlay", true));
+            smtc_.IsPauseEnabled(ReadBool(*map, "canPause", true));
+            smtc_.IsNextEnabled(ReadBool(*map, "canGoNext", true));
+            smtc_.IsPreviousEnabled(ReadBool(*map, "canGoPrevious", true));
           } catch (...) {
           }
         }
@@ -305,29 +420,12 @@ void SystemMediaTransport::OnMethodCall(
   } else if (method == "setTimeline" || method == "updateTimeline") {
     if (arguments != nullptr) {
       if (const auto* map = std::get_if<flutter::EncodableMap>(arguments)) {
-        int64_t position_ms = 0;
-        int64_t duration_ms = 0;
-        int64_t start_ms = 0;
-
-        auto get_int64 = [&](const char* key, int64_t& target) {
-          auto it = map->find(flutter::EncodableValue(key));
-          if (it != map->end()) {
-            if (const auto* val_int = std::get_if<int32_t>(&it->second)) {
-              target = *val_int;
-            } else if (const auto* val_int64 = std::get_if<int64_t>(&it->second)) {
-              target = *val_int64;
-            } else if (const auto* val_double = std::get_if<double>(&it->second)) {
-              target = static_cast<int64_t>(*val_double);
-            }
-          }
-        };
-
-        get_int64("position", position_ms);
-        get_int64("positionMs", position_ms);
-        get_int64("duration", duration_ms);
-        get_int64("durationMs", duration_ms);
-        get_int64("start", start_ms);
-        get_int64("startMs", start_ms);
+        int64_t position_ms = ReadMilliseconds(*map, "position", 0);
+        position_ms = ReadMilliseconds(*map, "positionMs", position_ms);
+        int64_t duration_ms = ReadMilliseconds(*map, "duration", 0);
+        duration_ms = ReadMilliseconds(*map, "durationMs", duration_ms);
+        int64_t start_ms = ReadMilliseconds(*map, "start", 0);
+        start_ms = ReadMilliseconds(*map, "startMs", start_ms);
 
         SetTimeline(position_ms, duration_ms, start_ms);
       }

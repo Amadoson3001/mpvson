@@ -22,6 +22,7 @@ class MediaAccentScope extends StatefulWidget {
 class _MediaAccentScopeState extends State<MediaAccentScope> {
   String? _path;
   Color _color = AppColors.lamp;
+  MediaAccentPalette _palette = const MediaAccentPalette();
   int _generation = 0;
   @override
   void initState() {
@@ -57,14 +58,21 @@ class _MediaAccentScopeState extends State<MediaAccentScope> {
     _path = entry?.path;
     final generation = ++_generation;
     if (entry == null) {
-      if (mounted) setState(() => _color = AppColors.lamp);
+      if (mounted) {
+        setState(() {
+          _color = AppColors.lamp;
+          _palette = const MediaAccentPalette();
+        });
+      }
       return;
     }
     _extract(entry, generation);
   }
 
   Future<void> _extract(MediaEntry entry, int generation) async {
-    Color result = AppColors.lamp;
+    Color dominant = AppColors.lamp;
+    Color vibrant = AppColors.gold;
+    Color muted = AppColors.layer;
     try {
       final thumbnail = await widget.controller.loadThumbnail(entry);
       if (thumbnail != null) {
@@ -96,7 +104,9 @@ class _MediaAccentScopeState extends State<MediaAccentScope> {
             bin[3] += b;
           }
           if (bins.isNotEmpty) {
-            final best = bins.values.reduce((a, b) => a[0] > b[0] ? a : b);
+            final sorted = bins.values.toList()
+              ..sort((a, b) => b[0].compareTo(a[0]));
+            final best = sorted[0];
             final original = Color.fromARGB(
               255,
               best[1] ~/ best[0],
@@ -107,21 +117,55 @@ class _MediaAccentScopeState extends State<MediaAccentScope> {
               HSLColor.fromColor(original).saturation.clamp(0.35, 0.8),
             );
             hsl = hsl.withLightness(hsl.lightness.clamp(0.58, 0.78));
-            result = hsl.toColor();
-            while ((result.computeLuminance() + 0.05) /
+            dominant = hsl.toColor();
+            while ((dominant.computeLuminance() + 0.05) /
                         (AppColors.layer.computeLuminance() + 0.05) <
                     4.5 &&
                 hsl.lightness < 0.95) {
               hsl = hsl.withLightness((hsl.lightness + 0.02).clamp(0.0, 1.0));
-              result = hsl.toColor();
+              dominant = hsl.toColor();
             }
+
+            // Extract vibrant tone from second prominent cluster if available
+            if (sorted.length > 1) {
+              final sec = sorted[1];
+              final secColor = Color.fromARGB(
+                255,
+                sec[1] ~/ sec[0],
+                sec[2] ~/ sec[0],
+                sec[3] ~/ sec[0],
+              );
+              final secHsl = HSLColor.fromColor(
+                secColor,
+              ).withSaturation(0.7).withLightness(0.65);
+              vibrant = secHsl.toColor();
+            } else {
+              vibrant = HSLColor.fromColor(dominant)
+                  .withHue((HSLColor.fromColor(dominant).hue + 25) % 360)
+                  .toColor();
+            }
+
+            // Extract muted ambient tonal color
+            final darkHsl = HSLColor.fromColor(
+              original,
+            ).withSaturation(0.3).withLightness(0.18);
+            muted = darkHsl.toColor();
           }
         }
       }
     } catch (_) {
       /* Missing or undecodable artwork uses the fallback. */
     }
-    if (mounted && generation == _generation) setState(() => _color = result);
+    if (mounted && generation == _generation) {
+      setState(() {
+        _color = dominant;
+        _palette = MediaAccentPalette(
+          dominant: dominant,
+          vibrant: vibrant,
+          muted: muted,
+        );
+      });
+    }
   }
 
   @override
@@ -151,7 +195,10 @@ class _MediaAccentScopeState extends State<MediaAccentScope> {
             foregroundColor: WidgetStatePropertyAll(_color),
           ),
         ),
-        extensions: [MediaAccent(color: _color)],
+        extensions: [
+          MediaAccent(color: _color),
+          _palette,
+        ],
       ),
       child: widget.child,
     );

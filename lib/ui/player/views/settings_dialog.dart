@@ -15,6 +15,7 @@ import '../../../domain/models/playback_settings.dart';
 import '../../../domain/updates/engine_update_channel.dart';
 import '../../core/app_motion.dart';
 import '../../core/app_theme.dart';
+import '../../core/toast/app_toast.dart';
 import '../../core/components/empty_state.dart';
 import '../../core/slider_overlay.dart';
 import '../player_controller.dart';
@@ -507,6 +508,7 @@ class _SettingsContentPane extends StatelessWidget {
               _SettingsSection.appearance => _AppearanceSettings(
                 controller: controller,
                 compactViewport: compactViewport,
+                appPreferences: preferences,
               ),
               _SettingsSection.playback => _PlaybackSettings(
                 controller: controller,
@@ -542,10 +544,12 @@ class _AppearanceSettings extends StatelessWidget {
   const _AppearanceSettings({
     required this.controller,
     required this.compactViewport,
+    this.appPreferences,
   });
 
   final PlayerController controller;
   final bool compactViewport;
+  final AppPreferencesRepository? appPreferences;
 
   @override
   Widget build(BuildContext context) {
@@ -674,6 +678,53 @@ class _AppearanceSettings extends StatelessWidget {
                   ],
                 ),
               ),
+              if (appPreferences != null) ...[
+                const SizedBox(height: 16),
+                const Divider(color: AppTheme.border, height: 1),
+                const SizedBox(height: 14),
+                ListenableBuilder(
+                  listenable: appPreferences!,
+                  builder: (context, _) {
+                    final reduce = appPreferences!.preferences.reduceMotion;
+                    return Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Calm mode (Reduced motion)',
+                                style: Theme.of(context).textTheme.titleSmall
+                                    ?.copyWith(
+                                      color: AppTheme.secondaryText,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                              ),
+                              Text(
+                                'Disables animations and transitions app-wide for lower visual stimulation and maximum battery savings.',
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Switch(
+                          value: reduce,
+                          onChanged: (enabled) {
+                            unawaited(
+                              appPreferences!.updatePreferences(
+                                appPreferences!.preferences.copyWith(
+                                  reduceMotion: enabled,
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              ],
             ],
           ),
         );
@@ -1382,8 +1433,10 @@ class _MediaLibrarySettings extends StatelessWidget {
       await libraryRepository.addFolder(path);
     } catch (_) {
       if (!context.mounted) return;
-      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-        const SnackBar(content: Text('Could not add the folder. Try again.')),
+      AppToast.show(
+        context,
+        'Could not add the folder. Try again.',
+        tone: AppToastTone.danger,
       );
     }
   }

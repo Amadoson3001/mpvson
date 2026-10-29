@@ -292,6 +292,7 @@ Future<void> main(List<String> arguments) async {
     openRequestCoordinator: openCoordinator,
     preferences: appPreferences,
     mediaProbeService: mediaProbeService,
+    libraryRepository: libraryRepository,
   );
   unawaited(
     _initializeBackgroundService('desktop integration', () async {

@@ -4,6 +4,7 @@ import '../../../data/repositories/media_library_repository.dart';
 import '../../../domain/models/library_models.dart';
 import '../../player/player_controller.dart';
 import '../../core/app_theme.dart';
+import '../../core/toast/app_toast.dart';
 import '../../core/components/media_tile.dart';
 import '../../core/components/media_row.dart';
 import '../widgets/library_artwork.dart';
@@ -36,6 +37,8 @@ class _PlaylistsViewState extends State<PlaylistsView> {
   bool _isLoading = false;
   Future<void>? _reloadFuture;
   bool _reloadAgain = false;
+  Timer? _reloadThrottle;
+  Timer? _searchReload;
 
   @override
   void initState() {
@@ -56,18 +59,32 @@ class _PlaylistsViewState extends State<PlaylistsView> {
         _selectedPlaylist = null;
         _entries = null;
       }
-      _reload();
+      _searchReload?.cancel();
+      _searchReload = Timer(const Duration(milliseconds: 150), () {
+        _searchReload = null;
+        if (mounted) _reload();
+      });
     }
   }
 
   @override
   void dispose() {
+    _reloadThrottle?.cancel();
+    _searchReload?.cancel();
     widget.repository.removeListener(_onRepoChanged);
     super.dispose();
   }
 
   void _onRepoChanged() {
-    _reload();
+    // Scan progress notifies frequently; coalesce those into one refresh.
+    if (_reloadThrottle?.isActive ?? false) {
+      _reloadAgain = true;
+      return;
+    }
+    _reloadThrottle = Timer(const Duration(milliseconds: 200), () {
+      _reloadThrottle = null;
+      if (mounted) _reload();
+    });
   }
 
   Future<void> _reload() {
@@ -180,10 +197,10 @@ class _PlaylistsViewState extends State<PlaylistsView> {
         await widget.repository.renamePlaylist(playlist.id, title);
       } catch (_) {
         if (mounted) {
-          ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-            const SnackBar(
-              content: Text('Could not rename the playlist. Try again.'),
-            ),
+          AppToast.show(
+            context,
+            'Could not rename the playlist. Try again.',
+            tone: AppToastTone.danger,
           );
         }
       }

@@ -8,6 +8,7 @@
 #include <flutter/encodable_value.h>
 #include <flutter/method_channel.h>
 
+#include <cstdint>
 #include <memory>
 #include <string>
 
@@ -18,6 +19,7 @@
 #include <winrt/Windows.Storage.h>
 
 constexpr UINT WM_SMTC_BUTTON_PRESS = WM_USER + 102;
+constexpr UINT WM_SMTC_THUMBNAIL = WM_USER + 103;
 
 class SystemMediaTransport {
  public:
@@ -32,6 +34,13 @@ class SystemMediaTransport {
 
   // Handles a button press routed from the background thread via the window message loop.
   void HandleButtonPress(int button_id);
+
+  // Applies an artwork thumbnail that was resolved off the UI thread. Ownership
+  // of |thumbnail_abi| (which may be nullptr) is transferred to this call.
+  void ApplyThumbnail(uint64_t sequence, void* thumbnail_abi);
+
+  // Releases a thumbnail reference passed as a raw ABI pointer.
+  static void ReleaseThumbnail(void* thumbnail_abi);
 
   // Playback control
   void SetPlaybackStatus(const std::string& status);
@@ -53,6 +62,16 @@ class SystemMediaTransport {
   HWND window_handle_ = nullptr;
   winrt::Windows::Media::SystemMediaTransportControls smtc_{nullptr};
   winrt::event_token button_token_{0};
+
+  // Incremented for every setMetadata / clearMetadata / CleanUp call so that a
+  // thumbnail which is still being resolved can be discarded when it is no
+  // longer the artwork that should be displayed.
+  uint64_t metadata_sequence_ = 0;
+
+  // Kept alive between setMetadata and the thumbnail arriving asynchronously, so
+  // that the artwork can be applied to the same updater (and therefore keep the
+  // metadata that was written to it).
+  winrt::Windows::Media::SystemMediaTransportControlsDisplayUpdater updater_{nullptr};
 
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> channel_;
 };

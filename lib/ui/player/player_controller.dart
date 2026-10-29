@@ -24,6 +24,8 @@ import '../../domain/models/playback_settings.dart';
 import '../../domain/models/session_progress.dart';
 import '../../domain/models/video_output_policy.dart';
 
+import 'playback_position_smoother.dart';
+
 export '../../data/services/seek_preview_service.dart'
     show
         DisabledSeekPreviewBackend,
@@ -641,6 +643,28 @@ class PlayerController extends ChangeNotifier {
   /// Transport state of the current source.
   final ValueNotifier<TransportState> transportListenable =
       ValueNotifier<TransportState>(TransportState.idle);
+
+  final PlaybackPositionSmoother _positionSmoother = PlaybackPositionSmoother();
+
+  /// Interpolated playback position for display, updated on a display cadence.
+  ///
+  /// The engine reports the position about 15 times a second while audio is
+  /// playing, in 50-90 ms jumps, which makes a control bound to
+  /// [positionListenable] step visibly. [position] stays the engine value and
+  /// remains the source of truth for playback logic.
+  ValueNotifier<Duration> get displayPositionListenable =>
+      _positionSmoother.position;
+
+  /// The interpolated playback position. Intended for display only.
+  Duration get displayPosition => _positionSmoother.position.value;
+
+  /// Suspends display interpolation while the window is minimized or hidden.
+  void setDisplayUpdatesSuspended(bool suspended) =>
+      _positionSmoother.setSuspended(suspended);
+
+  /// Reduces display updates to one per second while the window is unfocused.
+  void setDisplayUpdatesLowPower(bool lowPower) =>
+      _positionSmoother.setLowPower(lowPower);
 
   Player get player => _playback.player;
   VideoController get videoController => _playback.videoController;
@@ -1304,6 +1328,12 @@ class PlayerController extends ChangeNotifier {
     final sourcePaths = List<String>.of(paths);
     final stagedEntries = <MediaEntry>[];
     String? firstRejected;
+    // Resolve history once; scanning it per staged path made opening a large
+    // collection grow with the collection times the history length.
+    final recentBySource = <String, MediaEntry>{
+      for (final entry in _recent)
+        MediaEntry.canonicalSource(entry.path): entry,
+    };
 
     bool isCurrentImport() =>
         _acceptsCommands &&
@@ -1325,8 +1355,12 @@ class PlayerController extends ChangeNotifier {
           continue;
         }
         final source = MediaEntry.normalizeSourcePath(validation.source!);
-        final recentEntry = _findRecent(source);
-        final entry = MediaEntry.fromPath(source, id: _newQueueId(source));
+        final canonicalSource = MediaEntry.canonicalSource(source);
+        final recentEntry = recentBySource[canonicalSource];
+        final entry = MediaEntry.fromPath(
+          source,
+          id: _newQueueIdForCanonical(canonicalSource),
+        );
         final isMusic =
             MediaCatalog.kindFromExtension(source) == MediaKind.audio;
         stagedEntries.add(
@@ -1798,6 +1832,42 @@ class PlayerController extends ChangeNotifier {
     await stopping;
   }
 
+  /// Stops playback and dismisses the now-playing item.
+  ///
+  /// The queue is kept, so ending a listening session does not discard entries
+  /// the user queued up; another entry can be started from the queue panel.
+  Future<void> closePlayer() async {
+    if (!_acceptsCommands || current == null) return;
+    await stop();
+    if (!_acceptsCommands || _currentIndex < 0) return;
+    _operation++;
+    _currentIndex = -1;
+    _engineHasMedia = false;
+    _engineEntryId = null;
+    _clearResume();
+    _mediaKind = MediaKind.unknown;
+    _metadata = MediaMetadata.empty;
+    _navigationHistory.clear();
+    _navigationCursor = -1;
+    _pendingNavigationEntryId = null;
+    _pendingNavigationCursor = null;
+    if (shuffle) _resetShuffleCycle();
+    _publishQueue();
+    _playbackState = _playbackState.copyWith(
+      isPlaying: false,
+      isBuffering: false,
+      position: Duration.zero,
+      duration: Duration.zero,
+      completed: false,
+      clearError: true,
+      clearNativeSource: true,
+      sourceLoaded: false,
+    );
+    _publishTransport();
+    _notifyIfOpen();
+    _scheduleSave();
+  }
+
   Future<void> togglePlayPause() async {
     if (!_acceptsCommands) return;
     _transportCommandRevision++;
@@ -1829,6 +1899,7 @@ class PlayerController extends ChangeNotifier {
       // A restored, stopped item has no engine position to change, so the saved
       // progress is updated directly and survives the next launch.
       _playbackState = _playbackState.copyWith(position: target);
+      _publishPosition(target);
       _updateQueueProgress(
         _currentIndex,
         position: target,
@@ -1851,6 +1922,7 @@ class PlayerController extends ChangeNotifier {
         return;
       }
       _playbackState = _playbackState.copyWith(position: target);
+      _publishPosition(target);
       _syncCurrentProgress();
       _notifyIfOpen();
       _scheduleSave();
@@ -2327,6 +2399,7 @@ class PlayerController extends ChangeNotifier {
   void _disposeNotifier() {
     if (_notifierDisposed) return;
     _notifierDisposed = true;
+    _positionSmoother.dispose();
     positionListenable.dispose();
     durationListenable.dispose();
     bufferingListenable.dispose();
@@ -2583,7 +2656,6 @@ class PlayerController extends ChangeNotifier {
       );
     }
 
-    final oldPosition = _playbackState.position;
     final oldPlaying = _playbackState.isPlaying;
     final oldBuffering = _playbackState.isBuffering;
     final oldSeekable = _playbackState.isSeekable;
@@ -2652,9 +2724,7 @@ class PlayerController extends ChangeNotifier {
         oldError != _error ||
         snapshot.completed != wasCompleted;
 
-    if (oldPosition != position) {
-      positionListenable.value = position;
-    }
+    _publishPosition(position);
     if (oldDuration != duration) {
       durationListenable.value = duration;
     }
@@ -2682,6 +2752,29 @@ class PlayerController extends ChangeNotifier {
     }
 
     _updateProgressTimer();
+  }
+
+  /// Publishes an engine position to the timeline listeners and re-anchors the
+  /// display interpolation on it.
+  ///
+  /// The engine value is the only authority on where playback is; the smoother
+  /// derives the value the user sees from it.
+  void _publishPosition(Duration position) {
+    if (positionListenable.value != position) {
+      positionListenable.value = position;
+    }
+    final duration = _playbackState.duration;
+    _positionSmoother.update(
+      reported: position,
+      duration: duration,
+      rate: _confirmedRate,
+      advancing:
+          _engineHasMedia &&
+          isPlaying &&
+          !isBuffering &&
+          duration > Duration.zero &&
+          position < duration,
+    );
   }
 
   static MediaKind _classifyMediaKind({
@@ -3059,7 +3152,6 @@ class PlayerController extends ChangeNotifier {
       return;
     }
     _queue[index] = updated;
-    if (index < _snapshotQueue.length) _snapshotQueue[index] = updated;
     final recentIndex = _recent.indexWhere(
       (item) =>
           MediaEntry.canonicalSource(item.path) ==
@@ -3085,6 +3177,8 @@ class PlayerController extends ChangeNotifier {
       currentIndex: _currentIndex,
       currentId: currentEntry?.id,
     );
+    _snapshotQueue = _queueSnapshot.entries;
+    _unmodifiableQueue = UnmodifiableListView<MediaEntry>(_snapshotQueue);
     if (!_notifierDisposed) queueListenable.value = _queueSnapshot;
   }
 
@@ -3113,14 +3207,6 @@ class PlayerController extends ChangeNotifier {
     return result;
   }
 
-  MediaEntry? _findRecent(String source) {
-    final sourceId = MediaEntry.canonicalSource(source);
-    for (final entry in _recent) {
-      if (MediaEntry.canonicalSource(entry.path) == sourceId) return entry;
-    }
-    return null;
-  }
-
   MediaEntry? _entryById(String id) {
     for (final entry in _queue) {
       if (entry.id == id) return entry;
@@ -3133,10 +3219,10 @@ class PlayerController extends ChangeNotifier {
   String _titleForEntry(String id) =>
       _entryById(id)?.title ?? 'the selected source';
 
-  String _newQueueId(String source) {
+  String _newQueueIdForCanonical(String canonicalSource) {
     _queueIdCounter++;
     final timestamp = DateTime.now().microsecondsSinceEpoch;
-    return '$timestamp-$_queueIdCounter-${MediaEntry.canonicalSource(source).hashCode}';
+    return '$timestamp-$_queueIdCounter-${canonicalSource.hashCode}';
   }
 
   String? _localPath(String source) {
@@ -3157,10 +3243,11 @@ class PlayerController extends ChangeNotifier {
     final currentEntry = _currentIndex >= 0 && _currentIndex < _queue.length
         ? _queue[_currentIndex]
         : null;
-    _snapshotQueue = List<MediaEntry>.of(_queue);
-    _unmodifiableQueue = UnmodifiableListView<MediaEntry>(_snapshotQueue);
+    final entries = _PersistentQueueEntries.from(_queue);
+    _snapshotQueue = entries;
+    _unmodifiableQueue = UnmodifiableListView<MediaEntry>(entries);
     _queueSnapshot = QueueSnapshot._(
-      entries: _PersistentQueueEntries.from(_queue),
+      entries: entries,
       revision: _queueRevision,
       currentIndex: _currentIndex,
       currentId: currentEntry?.id,

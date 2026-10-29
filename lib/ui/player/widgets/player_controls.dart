@@ -58,7 +58,7 @@ class _PlayerControlsState extends State<PlayerControls> {
     final actionWidget = widget.actions;
     final dense = controller.controlDensity == ControlDensity.compact;
     final timeline = Listenable.merge(<Listenable>[
-      controller.positionListenable,
+      controller.displayPositionListenable,
       controller.durationListenable,
     ]);
     if (!widget.showPlaybackControls) {
@@ -89,12 +89,14 @@ class _PlayerControlsState extends State<PlayerControls> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  AnimatedBuilder(
-                    animation: timeline,
-                    builder: (context, _) => SharedSeekBar(
-                      controller: controller,
-                      onPreviewChanged: _updateScrubPosition,
-                      onInteractionChanged: widget.onInteractionChanged,
+                  RepaintBoundary(
+                    child: AnimatedBuilder(
+                      animation: timeline,
+                      builder: (context, _) => SharedSeekBar(
+                        controller: controller,
+                        onPreviewChanged: _updateScrubPosition,
+                        onInteractionChanged: widget.onInteractionChanged,
+                      ),
                     ),
                   ),
                   SizedBox(height: dense ? 0 : 4),
@@ -135,7 +137,8 @@ class _PlayerControlsState extends State<PlayerControls> {
                         AnimatedBuilder(
                           animation: timeline,
                           builder: (context, _) => _TimeReadout(
-                            position: _scrubPosition ?? controller.position,
+                            position:
+                                _scrubPosition ?? controller.displayPosition,
                             duration: controller.duration,
                           ),
                         ),
@@ -475,9 +478,10 @@ class SharedSeekBarState extends State<SharedSeekBar> {
     final durationMs = controller.duration.inMilliseconds;
     final canSeek = durationMs > 0 && controller.isSeekable;
     final hasTimeline = durationMs > 0;
-    final positionMs = (_scrubPositionMs ?? controller.position.inMilliseconds)
-        .clamp(0, canSeek ? durationMs : 0)
-        .toDouble();
+    final positionMs =
+        (_scrubPositionMs ?? controller.displayPosition.inMilliseconds)
+            .clamp(0, canSeek ? durationMs : 0)
+            .toDouble();
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -625,7 +629,7 @@ class SharedSeekBarState extends State<SharedSeekBar> {
                                   caretOffset: caretOffset,
                                   previewRatio: previewRatio,
                                   previewTime: previewTime,
-                                  currentPosition: controller.position,
+                                  currentPosition: controller.displayPosition,
                                   controller: controller,
                                   previewState: controller.seekPreview.state,
                                   thumbnail: _entryThumbnail,
@@ -1162,12 +1166,18 @@ class TransportButtons extends StatelessWidget {
           icon: Icons.skip_next_rounded,
           onPressed: controller.current == null ? null : controller.next,
         ),
+        SizedBox(width: compact ? 2 : 4),
+        _TransportButton(
+          tooltip: 'Stop',
+          icon: Icons.stop_rounded,
+          onPressed: controller.current == null ? null : controller.stop,
+        ),
       ],
     ),
   );
 }
 
-class _TransportButton extends StatelessWidget {
+class _TransportButton extends StatefulWidget {
   const _TransportButton({
     required this.tooltip,
     required this.icon,
@@ -1179,16 +1189,45 @@ class _TransportButton extends StatelessWidget {
   final VoidCallback? onPressed;
 
   @override
-  Widget build(BuildContext context) => SizedBox.square(
-    dimension: PlayerControlStyle.of(context).buttonExtent,
-    child: IconButton(
-      tooltip: tooltip,
-      onPressed: onPressed,
-      style: PlayerControlStyle.of(context).buttonStyle,
-      icon: Icon(icon, size: PlayerControlStyle.of(context).compact ? 18 : 22),
-      padding: EdgeInsets.zero,
-    ),
-  );
+  State<_TransportButton> createState() => _TransportButtonState();
+}
+
+class _TransportButtonState extends State<_TransportButton> {
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final style = PlayerControlStyle.of(context);
+    final reduced = AppMotion.reduce(context);
+    return SizedBox.square(
+      dimension: style.buttonExtent,
+      child: AnimatedScale(
+        scale: (reduced || !_pressed) ? 1.0 : 0.92,
+        duration: AppMotion.duration(context, AppMotion.press),
+        curve: AppMotion.enter,
+        child: Listener(
+          onPointerDown: (_) {
+            if (widget.onPressed != null && !_pressed) {
+              setState(() => _pressed = true);
+            }
+          },
+          onPointerUp: (_) {
+            if (_pressed) setState(() => _pressed = false);
+          },
+          onPointerCancel: (_) {
+            if (_pressed) setState(() => _pressed = false);
+          },
+          child: IconButton(
+            tooltip: widget.tooltip,
+            onPressed: widget.onPressed,
+            style: style.buttonStyle,
+            icon: Icon(widget.icon, size: style.compact ? 18 : 22),
+            padding: EdgeInsets.zero,
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _ToggleButton extends StatelessWidget {
@@ -1270,6 +1309,7 @@ class _PlayPauseButtonState extends State<_PlayPauseButton>
     curve: AppMotion.standardCurve,
   );
   bool _reduceMotion = false;
+  bool _pressed = false;
 
   @override
   void didChangeDependencies() {
@@ -1312,51 +1352,69 @@ class _PlayPauseButtonState extends State<_PlayPauseButton>
     final iconSize = style.compact ? 21.0 : 27.0;
     return SizedBox.square(
       dimension: style.buttonExtent,
-      child: IconButton.filled(
-        tooltip: widget.isPlaying ? 'Pause' : 'Play',
-        onPressed: widget.onPressed,
-        style: style.buttonStyle.copyWith(
-          backgroundColor: WidgetStatePropertyAll(
-            Theme.of(context).colorScheme.primary,
-          ),
-          foregroundColor: const WidgetStatePropertyAll(
-            AppTheme.accentForeground,
-          ),
-          shape: const WidgetStatePropertyAll(CircleBorder()),
-        ),
-        icon: RepaintBoundary(
-          child: SizedBox.square(
-            dimension: iconSize,
-            child: AnimatedSwitcher(
-              duration: AppMotion.duration(context, AppMotion.quick),
-              switchInCurve: AppMotion.enter,
-              switchOutCurve: AppMotion.exit,
-              transitionBuilder: (child, animation) {
-                if (AppMotion.reduce(context)) return child;
-                return FadeTransition(opacity: animation, child: child);
-              },
-              child: widget.isBuffering
-                  ? const Center(
-                      key: ValueKey('playback-buffering'),
-                      child: SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: AppTheme.accentForeground,
+      child: AnimatedScale(
+        scale: (_reduceMotion || !_pressed) ? 1.0 : 0.92,
+        duration: AppMotion.duration(context, AppMotion.press),
+        curve: AppMotion.enter,
+        child: Listener(
+          onPointerDown: (_) {
+            if (widget.onPressed != null && !_pressed) {
+              setState(() => _pressed = true);
+            }
+          },
+          onPointerUp: (_) {
+            if (_pressed) setState(() => _pressed = false);
+          },
+          onPointerCancel: (_) {
+            if (_pressed) setState(() => _pressed = false);
+          },
+          child: IconButton.filled(
+            tooltip: widget.isPlaying ? 'Pause' : 'Play',
+            onPressed: widget.onPressed,
+            style: style.buttonStyle.copyWith(
+              backgroundColor: WidgetStatePropertyAll(
+                Theme.of(context).colorScheme.primary,
+              ),
+              foregroundColor: const WidgetStatePropertyAll(
+                AppTheme.accentForeground,
+              ),
+              shape: const WidgetStatePropertyAll(CircleBorder()),
+            ),
+            icon: RepaintBoundary(
+              child: SizedBox.square(
+                dimension: iconSize,
+                child: AnimatedSwitcher(
+                  duration: AppMotion.duration(context, AppMotion.quick),
+                  switchInCurve: AppMotion.enter,
+                  switchOutCurve: AppMotion.exit,
+                  transitionBuilder: (child, animation) {
+                    if (AppMotion.reduce(context)) return child;
+                    return FadeTransition(opacity: animation, child: child);
+                  },
+                  child: widget.isBuffering
+                      ? const Center(
+                          key: ValueKey('playback-buffering'),
+                          child: SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: AppTheme.accentForeground,
+                            ),
+                          ),
+                        )
+                      : KeyedSubtree(
+                          key: const ValueKey('playback-morph'),
+                          child: AnimatedIcon(
+                            key: ValueKey<bool>(widget.isPlaying),
+                            icon: AnimatedIcons.play_pause,
+                            progress: _playPauseProgress,
+                            size: iconSize,
+                            color: AppTheme.accentForeground,
+                          ),
                         ),
-                      ),
-                    )
-                  : KeyedSubtree(
-                      key: const ValueKey('playback-morph'),
-                      child: AnimatedIcon(
-                        key: ValueKey<bool>(widget.isPlaying),
-                        icon: AnimatedIcons.play_pause,
-                        progress: _playPauseProgress,
-                        size: iconSize,
-                        color: AppTheme.accentForeground,
-                      ),
-                    ),
+                ),
+              ),
             ),
           ),
         ),

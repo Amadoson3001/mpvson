@@ -21,42 +21,46 @@ class _SeekBarState extends State<SeekBar> {
   }
 
   @override
-  Widget build(BuildContext context) => ListenableBuilder(
-    listenable: Listenable.merge([
-      widget.controller.positionListenable,
-      widget.controller.durationListenable,
-    ]),
-    builder: (context, _) => Row(
-      children: [
-        const SizedBox(width: 12),
-        Text(
-          _time(_preview ?? widget.controller.position),
-          style: Theme.of(context).textTheme.labelSmall?.copyWith(
-            fontFeatures: const [FontFeature.tabularFigures()],
-          ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: PlayerControlStyle(
-            compact: true,
-            child: SharedSeekBar(
-              controller: widget.controller,
-              onPreviewChanged: (value) {
-                if (mounted) setState(() => _preview = value);
-              },
-              onInteractionChanged: null,
+  Widget build(BuildContext context) => RepaintBoundary(
+    // The strip is the only part of the library that changes per playback
+    // tick; isolating it keeps those frames from repainting the whole window.
+    child: ListenableBuilder(
+      listenable: Listenable.merge([
+        widget.controller.displayPositionListenable,
+        widget.controller.durationListenable,
+      ]),
+      builder: (context, _) => Row(
+        children: [
+          const SizedBox(width: 12),
+          Text(
+            _time(_preview ?? widget.controller.displayPosition),
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              fontFeatures: const [FontFeature.tabularFigures()],
             ),
           ),
-        ),
-        const SizedBox(width: 8),
-        Text(
-          _time(widget.controller.duration),
-          style: Theme.of(context).textTheme.labelSmall?.copyWith(
-            fontFeatures: const [FontFeature.tabularFigures()],
+          const SizedBox(width: 8),
+          Expanded(
+            child: PlayerControlStyle(
+              compact: true,
+              child: SharedSeekBar(
+                controller: widget.controller,
+                onPreviewChanged: (value) {
+                  if (mounted) setState(() => _preview = value);
+                },
+                onInteractionChanged: null,
+              ),
+            ),
           ),
-        ),
-        const SizedBox(width: 12),
-      ],
+          const SizedBox(width: 8),
+          Text(
+            _time(widget.controller.duration),
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+          ),
+          const SizedBox(width: 12),
+        ],
+      ),
     ),
   );
 }

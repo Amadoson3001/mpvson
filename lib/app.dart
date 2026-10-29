@@ -8,6 +8,7 @@ import 'data/services/engine_update_service.dart';
 import 'data/services/open_request_coordinator.dart';
 import 'data/services/update_service.dart';
 import 'ui/core/app_theme.dart';
+import 'ui/core/toast/app_toast_host.dart';
 import 'ui/player/player_controller.dart';
 import 'ui/player/views/player_screen.dart'
     show PlayerScreen, PlayerVideoBuilder, FullscreenSetter, SubtitleFilePicker;
@@ -46,24 +47,38 @@ class MpvsonApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      navigatorKey: navigatorKey,
-      title: 'Mpvson',
-      debugShowCheckedModeBanner: false,
-      theme: AppTheme.dark,
-      home: PlayerScreen(
-        controller: controller,
-        openCoordinator: openCoordinator,
-        updates: updates,
-        engineUpdates: engineUpdates,
-        desktopWindow: desktopWindow,
-        videoBuilder: videoBuilder ?? _nativeVideo,
-        enableNativeDrop: enableNativeDrop,
-        fullscreenSetter: fullscreenSetter,
-        subtitlePicker: subtitlePicker,
-        appPreferences: appPreferences,
-        libraryRepository: libraryRepository,
-        desktopIntegration: desktopIntegration,
+    return ListenableBuilder(
+      listenable: appPreferences ?? ValueNotifier<void>(null),
+      builder: (context, _) => MaterialApp(
+        navigatorKey: navigatorKey,
+        title: 'Mpvson',
+        debugShowCheckedModeBanner: false,
+        theme: AppTheme.dark,
+        builder: (context, child) {
+          final mq = MediaQuery.of(context);
+          final calmMode = appPreferences?.preferences.reduceMotion ?? false;
+          final effectiveData = calmMode
+              ? mq.copyWith(disableAnimations: true)
+              : mq;
+          return MediaQuery(
+            data: effectiveData,
+            child: AppToastHost(child: child!),
+          );
+        },
+        home: PlayerScreen(
+          controller: controller,
+          openCoordinator: openCoordinator,
+          updates: updates,
+          engineUpdates: engineUpdates,
+          desktopWindow: desktopWindow,
+          videoBuilder: videoBuilder ?? _nativeVideo,
+          enableNativeDrop: enableNativeDrop,
+          fullscreenSetter: fullscreenSetter,
+          subtitlePicker: subtitlePicker,
+          appPreferences: appPreferences,
+          libraryRepository: libraryRepository,
+          desktopIntegration: desktopIntegration,
+        ),
       ),
     );
   }
