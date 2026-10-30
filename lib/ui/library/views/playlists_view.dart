@@ -152,26 +152,26 @@ class _PlaylistsViewState extends State<PlaylistsView> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.surface,
+        backgroundColor: context.palette.surface,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppRadii.artwork),
-          side: const BorderSide(color: AppTheme.border),
+          side: BorderSide(color: context.palette.border),
         ),
-        title: const Text('Delete playlist', style: AppTheme.sectionTitle),
+        title: Text('Delete playlist', style: context.palette.sectionTitle),
         content: Text(
           'Are you sure you want to delete "${pl.title}"? The media files themselves will remain in your library.',
-          style: AppTheme.rowSecondary,
+          style: context.palette.rowSecondary,
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text(
+            child: Text(
               'Cancel',
-              style: TextStyle(color: AppTheme.secondaryText),
+              style: TextStyle(color: context.palette.secondaryText),
             ),
           ),
           FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: AppTheme.danger),
+            style: FilledButton.styleFrom(backgroundColor: context.palette.danger),
             onPressed: () => Navigator.of(ctx).pop(true),
             child: const Text('Delete'),
           ),
@@ -253,7 +253,7 @@ class _PlaylistsViewState extends State<PlaylistsView> {
         : allPlaylists;
 
     return Scaffold(
-      backgroundColor: AppTheme.background,
+      backgroundColor: context.palette.background,
       body: _isLoading && _playlists == null
           ? Center(
               child: CircularProgressIndicator(
@@ -278,7 +278,7 @@ class _PlaylistsViewState extends State<PlaylistsView> {
               children: [
                 // Header bar
                 Container(
-                  color: AppTheme.surface,
+                  color: context.palette.surface,
                   padding: const EdgeInsets.symmetric(
                     horizontal: AppSpace.lg,
                     vertical: AppSpace.sm,
@@ -287,13 +287,13 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                     children: [
                       Text(
                         'Playlists (${playlists.length})',
-                        style: AppTheme.sectionTitle,
+                        style: context.palette.sectionTitle,
                       ),
                       const Spacer(),
                       FilledButton.icon(
                         style: FilledButton.styleFrom(
                           backgroundColor: accent,
-                          foregroundColor: AppTheme.accentForeground,
+                          foregroundColor: context.palette.accentForeground,
                           padding: const EdgeInsets.symmetric(
                             horizontal: AppSpace.md,
                             vertical: 10,
@@ -314,7 +314,7 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                     ],
                   ),
                 ),
-                const Divider(height: 1, color: AppTheme.border),
+                Divider(height: 1, color: context.palette.border),
                 // Playlists Grid
                 Expanded(
                   child: LayoutBuilder(
@@ -405,7 +405,7 @@ class _PlaylistsViewState extends State<PlaylistsView> {
     );
 
     return Scaffold(
-      backgroundColor: AppTheme.background,
+      backgroundColor: context.palette.background,
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -422,7 +422,7 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                 IconButton(
                   icon: const Icon(Icons.arrow_back_rounded),
                   tooltip: 'Back to playlists',
-                  color: AppTheme.secondaryText,
+                  color: context.palette.secondaryText,
                   onPressed: () {
                     setState(() {
                       _selectedPlaylist = null;
@@ -432,14 +432,14 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                   },
                 ),
                 const SizedBox(width: 8),
-                Text('Playlists', style: AppTheme.rowSecondary),
+                Text('Playlists', style: context.palette.rowSecondary),
                 const SizedBox(width: 6),
-                const Text('›', style: AppTheme.metadata),
+                Text('›', style: context.palette.metadata),
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
                     pl.title,
-                    style: AppTheme.rowPrimary.copyWith(
+                    style: context.palette.rowPrimary.copyWith(
                       fontWeight: FontWeight.w600,
                     ),
                     maxLines: 1,
@@ -479,14 +479,14 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                     children: [
                       Text(
                         pl.title,
-                        style: AppTheme.pageTitle,
+                        style: context.palette.pageTitle,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
                       const SizedBox(height: 6),
                       Text(
                         '${entries.length} items • ${_formatDuration(totalDuration)}',
-                        style: AppTheme.metadata,
+                        style: context.palette.metadata,
                       ),
                       const SizedBox(height: 16),
                       Wrap(
@@ -496,7 +496,7 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                           FilledButton.icon(
                             style: FilledButton.styleFrom(
                               backgroundColor: accent,
-                              foregroundColor: AppTheme.accentForeground,
+                              foregroundColor: context.palette.accentForeground,
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 20,
                                 vertical: AppSpace.sm,
@@ -521,8 +521,8 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                           ),
                           OutlinedButton.icon(
                             style: OutlinedButton.styleFrom(
-                              foregroundColor: AppTheme.primaryText,
-                              side: const BorderSide(color: AppTheme.border),
+                              foregroundColor: context.palette.primaryText,
+                              side: BorderSide(color: context.palette.border),
                               padding: const EdgeInsets.symmetric(
                                 horizontal: AppSpace.md,
                                 vertical: AppSpace.sm,
@@ -550,20 +550,20 @@ class _PlaylistsViewState extends State<PlaylistsView> {
               ],
             ),
           ),
-          const Divider(height: 1, color: AppTheme.border),
+          Divider(height: 1, color: context.palette.border),
           // Reorderable tracks list
           Expanded(
             child: entries.isEmpty
-                ? const Center(
+                ? Center(
                     child: Text(
                       'No tracks in this playlist yet',
-                      style: AppTheme.metadata,
+                      style: context.palette.metadata,
                     ),
                   )
                 : Theme(
                     data: Theme.of(
                       context,
-                    ).copyWith(canvasColor: AppTheme.surface),
+                    ).copyWith(canvasColor: context.palette.surface),
                     child: ReorderableListView.builder(
                       padding: const EdgeInsets.symmetric(
                         horizontal: AppSpace.lg,
@@ -601,7 +601,7 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                             margin: const EdgeInsets.symmetric(vertical: 2),
                             decoration: BoxDecoration(
                               color: isSelected
-                                  ? AppTheme.hover
+                                  ? context.palette.hover
                                   : Colors.transparent,
                               border: isSelected
                                   ? Border(
@@ -618,7 +618,7 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                               borderRadius: BorderRadius.circular(
                                 AppRadii.control,
                               ),
-                              hoverColor: AppTheme.hover,
+                              hoverColor: context.palette.hover,
                               onDoubleTap: item?.isAvailable == true
                                   ? () => _playPlaylist(
                                       entries,
@@ -630,21 +630,21 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                                 leading: Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    const Icon(
+                                    Icon(
                                       Icons.drag_indicator_rounded,
                                       size: 18,
-                                      color: AppTheme.mutedText,
+                                      color: context.palette.mutedText,
                                     ),
                                     const SizedBox(width: 10),
                                     Text(
                                       '${index + 1}',
-                                      style: AppTheme.metadata,
+                                      style: context.palette.metadata,
                                     ),
                                   ],
                                 ),
                                 title: Text(
                                   title,
-                                  style: AppTheme.rowPrimary,
+                                  style: context.palette.rowPrimary,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                 ),
@@ -652,7 +652,7 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                                   item != null && !item.isAvailable
                                       ? '$artist • Missing'
                                       : artist,
-                                  style: AppTheme.rowSecondary,
+                                  style: context.palette.rowSecondary,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                 ),
@@ -661,7 +661,7 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                                   children: [
                                     Text(
                                       _formatDuration(duration),
-                                      style: AppTheme.metadata,
+                                      style: context.palette.metadata,
                                     ),
                                     const SizedBox(width: 8),
                                     IconButton(
@@ -670,7 +670,7 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                                         size: 16,
                                       ),
                                       tooltip: 'Remove from playlist',
-                                      color: AppTheme.mutedText,
+                                      color: context.palette.mutedText,
                                       visualDensity: VisualDensity.compact,
                                       onPressed: () async {
                                         await widget.repository
@@ -732,8 +732,8 @@ class _RenamePlaylistDialogState extends State<_RenamePlaylistDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-    backgroundColor: AppTheme.surface,
-    title: const Text('Rename playlist', style: AppTheme.sectionTitle),
+    backgroundColor: context.palette.surface,
+    title: Text('Rename playlist', style: context.palette.sectionTitle),
     content: TextField(
       controller: _controller,
       autofocus: true,

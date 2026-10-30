@@ -329,7 +329,7 @@ class _LibraryShellState extends State<LibraryShell>
               controller: widget.controller,
               child: Scaffold(
                 key: _scaffoldKey,
-                backgroundColor: AppTheme.background,
+                backgroundColor: context.palette.background,
                 drawer: isCompact ? _buildNavigationDrawer() : null,
                 body: Stack(
                   fit: StackFit.expand,
@@ -347,9 +347,9 @@ class _LibraryShellState extends State<LibraryShell>
                                     child: _buildSideNav(isCollapsed: false),
                                   ),
                                 ),
-                                const VerticalDivider(
+                                VerticalDivider(
                                   width: 1,
-                                  color: AppTheme.border,
+                                  color: context.palette.border,
                                 ),
                               ] else if (isDesktopMedium) ...[
                                 ToastRegion(
@@ -358,9 +358,9 @@ class _LibraryShellState extends State<LibraryShell>
                                     child: _buildSideNav(isCollapsed: true),
                                   ),
                                 ),
-                                const VerticalDivider(
+                                VerticalDivider(
                                   width: 1,
-                                  color: AppTheme.border,
+                                  color: context.palette.border,
                                 ),
                               ],
 
@@ -371,14 +371,16 @@ class _LibraryShellState extends State<LibraryShell>
                                       CrossAxisAlignment.stretch,
                                   children: [
                                     // Header Bar (Search & Mobile Drawer Trigger)
-                                    AnimatedBuilder(
-                                      animation: widget.controller,
-                                      builder: (context, _) => _buildHeaderBar(
-                                        isCompact,
-                                        !isCompact,
-                                        showBackLabel: width >= 600,
+                                    if (_currentSection !=
+                                        LibrarySection.settings)
+                                      AnimatedBuilder(
+                                        animation: widget.controller,
+                                        builder: (context, _) => _buildHeaderBar(
+                                          isCompact,
+                                          !isCompact,
+                                          showBackLabel: width >= 600,
+                                        ),
                                       ),
-                                    ),
                                     // Status Banners (Scanning indicator, Unavailable drive warning)
                                     LibraryStatusBanner(
                                       repository: widget.repository,
@@ -393,9 +395,9 @@ class _LibraryShellState extends State<LibraryShell>
 
                               // 3. Docked Queue Panel
                               if (!isCompact && _isQueueOpen) ...[
-                                const VerticalDivider(
+                                VerticalDivider(
                                   width: 1,
-                                  color: AppTheme.border,
+                                  color: context.palette.border,
                                 ),
                                 ToastRegion(
                                   child: SizedBox(
@@ -441,7 +443,7 @@ class _LibraryShellState extends State<LibraryShell>
       padding: const EdgeInsets.symmetric(horizontal: AppSpace.md),
       // Matches the stage behind it so the header and the content read as one
       // continuous surface instead of two blocks split by a rule.
-      color: AppTheme.background,
+      color: context.palette.background,
       child: Row(
         children: [
           if (widget.onBackToPlayer != null) ...[
@@ -451,7 +453,7 @@ class _LibraryShellState extends State<LibraryShell>
                 icon: const Icon(Icons.arrow_back_rounded, size: 20),
                 label: const Text('Return to video'),
                 style: TextButton.styleFrom(
-                  foregroundColor: AppTheme.primaryText,
+                  foregroundColor: context.palette.primaryText,
                 ),
               )
             else
@@ -459,7 +461,7 @@ class _LibraryShellState extends State<LibraryShell>
                 onPressed: widget.onBackToPlayer,
                 tooltip: 'Return to video',
                 icon: const Icon(Icons.arrow_back_rounded),
-                color: AppTheme.primaryText,
+                color: context.palette.primaryText,
               ),
             const SizedBox(width: 8),
           ],
@@ -467,7 +469,7 @@ class _LibraryShellState extends State<LibraryShell>
             IconButton(
               icon: const Icon(Icons.menu_rounded),
               tooltip: 'Open navigation',
-              color: AppTheme.primaryText,
+              color: context.palette.primaryText,
               onPressed: () => _scaffoldKey.currentState?.openDrawer(),
             ),
             const SizedBox(width: 8),
@@ -485,7 +487,7 @@ class _LibraryShellState extends State<LibraryShell>
                         : _currentSection == LibrarySection.settings
                         ? 'Settings'
                         : 'Folders',
-                    style: AppTheme.sectionTitle,
+                    style: context.palette.sectionTitle,
                   )
                 : Align(
                     alignment: Alignment.centerLeft,
@@ -496,17 +498,17 @@ class _LibraryShellState extends State<LibraryShell>
                         child: TextField(
                           controller: _searchController,
                           focusNode: _searchFocus,
-                          style: AppTheme.rowPrimary.copyWith(
+                          style: context.palette.rowPrimary.copyWith(
                             fontSize: AppType.small,
                           ),
                           cursorColor: accent,
                           decoration: InputDecoration(
                             hintText: 'Search ${_sectionName(_currentSection)}',
-                            hintStyle: AppTheme.metadata,
-                            prefixIcon: const Icon(
+                            hintStyle: context.palette.metadata,
+                            prefixIcon: Icon(
                               Icons.search_rounded,
                               size: 18,
-                              color: AppTheme.mutedText,
+                              color: context.palette.mutedText,
                             ),
                             suffixIcon: _searchQuery.isNotEmpty
                                 ? IconButton(
@@ -514,13 +516,13 @@ class _LibraryShellState extends State<LibraryShell>
                                       Icons.close_rounded,
                                       size: 16,
                                     ),
-                                    color: AppTheme.mutedText,
+                                    color: context.palette.mutedText,
                                     tooltip: 'Clear search',
                                     onPressed: () => _searchController.clear(),
                                   )
                                 : null,
                             filled: true,
-                            fillColor: AppTheme.raisedSurface,
+                            fillColor: context.palette.raisedSurface,
                             contentPadding: const EdgeInsets.symmetric(
                               vertical: AppSpace.xs,
                             ),
@@ -528,8 +530,8 @@ class _LibraryShellState extends State<LibraryShell>
                               borderRadius: BorderRadius.circular(
                                 AppRadii.control,
                               ),
-                              borderSide: const BorderSide(
-                                color: AppTheme.border,
+                              borderSide: BorderSide(
+                                color: context.palette.border,
                               ),
                             ),
                             focusedBorder: OutlineInputBorder(
@@ -566,7 +568,7 @@ class _LibraryShellState extends State<LibraryShell>
               icon: Icon(
                 Icons.queue_music_rounded,
                 size: 20,
-                color: queueOpen ? accent : AppTheme.secondaryText,
+                color: queueOpen ? accent : context.palette.secondaryText,
               ),
               tooltip: queueOpen ? 'Close queue' : 'Open queue',
               onPressed: () => _setQueueOpen(!queueOpen),
@@ -664,9 +666,9 @@ class _LibraryShellState extends State<LibraryShell>
             translation: slideOffset,
             child: RepaintBoundary(
               child: DecoratedBox(
-                decoration: const BoxDecoration(
-                  color: AppTheme.background,
-                  border: Border(top: BorderSide(color: AppTheme.border)),
+                decoration: BoxDecoration(
+                  color: context.palette.background,
+                  border: Border(top: BorderSide(color: context.palette.border)),
                 ),
                 child: NowPlayingView(
                   controller: widget.controller,
@@ -686,7 +688,7 @@ class _LibraryShellState extends State<LibraryShell>
 
   Widget _buildSideNav({required bool isCollapsed}) {
     return Container(
-      color: AppTheme.surface,
+      color: context.palette.sidebar,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -724,7 +726,7 @@ class _LibraryShellState extends State<LibraryShell>
             isCollapsed,
           ),
           const SizedBox(height: 16),
-          const Divider(height: 1, color: AppTheme.border),
+          Divider(height: 1, color: context.palette.border),
           const SizedBox(height: 8),
           _navItem(
             LibrarySection.folders,
@@ -775,7 +777,7 @@ class _LibraryShellState extends State<LibraryShell>
         child: IconButton(
           icon: Icon(icon, size: 22),
           tooltip: label,
-          color: isSelected ? accent : AppTheme.secondaryText,
+          color: isSelected ? accent : context.palette.secondaryText,
           style: IconButton.styleFrom(
             backgroundColor: isSelected
                 ? accent.withValues(alpha: 0.12)
@@ -791,7 +793,7 @@ class _LibraryShellState extends State<LibraryShell>
       child: InkWell(
         onTap: () => _selectSection(section),
         borderRadius: BorderRadius.circular(AppRadii.control),
-        hoverColor: AppTheme.hover,
+        hoverColor: context.palette.hover,
         child: Container(
           padding: const EdgeInsets.symmetric(
             horizontal: AppSpace.sm,
@@ -814,7 +816,7 @@ class _LibraryShellState extends State<LibraryShell>
               Icon(
                 icon,
                 size: 20,
-                color: isSelected ? accent : AppTheme.secondaryText,
+                color: isSelected ? accent : context.palette.secondaryText,
               ),
               const SizedBox(width: 14),
               Expanded(
@@ -823,7 +825,7 @@ class _LibraryShellState extends State<LibraryShell>
                   style: TextStyle(
                     fontSize: AppType.small,
                     fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
-                    color: isSelected ? accent : AppTheme.secondaryText,
+                    color: isSelected ? accent : context.palette.secondaryText,
                   ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -840,7 +842,7 @@ class _LibraryShellState extends State<LibraryShell>
 
   Widget _buildNavigationDrawer() {
     return Drawer(
-      backgroundColor: AppTheme.surface,
+      backgroundColor: context.palette.sidebar,
       child: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -851,11 +853,11 @@ class _LibraryShellState extends State<LibraryShell>
                 children: [
                   const AppMark(size: 32),
                   const SizedBox(width: 12),
-                  const Expanded(
+                  Expanded(
                     child: Text(
                       'Mpvson',
                       style: TextStyle(
-                        color: AppTheme.primaryText,
+                        color: context.palette.primaryText,
                         fontSize: AppType.title,
                         fontWeight: FontWeight.w700,
                       ),
@@ -866,7 +868,7 @@ class _LibraryShellState extends State<LibraryShell>
                 ],
               ),
             ),
-            const Divider(height: 1, color: AppTheme.border),
+            Divider(height: 1, color: context.palette.border),
             const SizedBox(height: 8),
             _drawerItem(LibrarySection.home, 'Home', Icons.home_rounded),
             _drawerItem(LibrarySection.videos, 'Videos', Icons.movie_rounded),
@@ -918,12 +920,12 @@ class _LibraryShellState extends State<LibraryShell>
             : Colors.transparent,
         leading: Icon(
           icon,
-          color: isSelected ? accent : AppTheme.secondaryText,
+          color: isSelected ? accent : context.palette.secondaryText,
         ),
         title: Text(
           label,
           style: TextStyle(
-            color: isSelected ? accent : AppTheme.secondaryText,
+            color: isSelected ? accent : context.palette.secondaryText,
             fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
           ),
         ),
@@ -939,7 +941,7 @@ class _LibraryShellState extends State<LibraryShell>
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: AppTheme.surface,
+      backgroundColor: context.palette.surface,
       builder: (sheetContext) => SizedBox(
         height: MediaQuery.sizeOf(sheetContext).height * 0.8,
         child: QueuePanel(
@@ -1023,19 +1025,20 @@ class _LibraryShellState extends State<LibraryShell>
     double controlsOpacity = 1.0,
   }) {
     final title = current.title;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        AudioVolumeWheel(
-          controller: widget.controller,
-          child: Container(
-            height: 60,
-            padding: const EdgeInsets.symmetric(horizontal: AppSpace.md),
-            decoration: const BoxDecoration(
-              color: AppTheme.surface,
-              border: Border(top: BorderSide(color: AppTheme.border)),
-            ),
-            child: Row(
+    return Container(
+      decoration: BoxDecoration(
+        color: context.palette.sidebar,
+        border: Border(top: BorderSide(color: context.palette.border)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          AudioVolumeWheel(
+            controller: widget.controller,
+            child: Container(
+              height: 60,
+              padding: const EdgeInsets.symmetric(horizontal: AppSpace.md),
+              child: Row(
               children: [
                 Expanded(
                   child: InkWell(
@@ -1045,7 +1048,7 @@ class _LibraryShellState extends State<LibraryShell>
                         ? widget.onBackToPlayer
                         : _openNowPlaying,
                     borderRadius: BorderRadius.circular(AppRadii.control),
-                    hoverColor: AppTheme.hover,
+                    hoverColor: context.palette.hover,
                     child: Row(
                       children: [
                         ClipRRect(
@@ -1117,10 +1120,10 @@ class _LibraryShellState extends State<LibraryShell>
                       ),
                       if (isCompact) ...[
                         IconButton(
-                          icon: const Icon(
+                          icon: Icon(
                             Icons.queue_music_rounded,
                             size: 20,
-                            color: AppTheme.secondaryText,
+                            color: context.palette.secondaryText,
                           ),
                           tooltip: 'Queue',
                           onPressed: _showCompactQueue,
@@ -1134,7 +1137,8 @@ class _LibraryShellState extends State<LibraryShell>
           ),
         ),
         SizedBox(height: 24, child: SeekBar(controller: widget.controller)),
-      ],
+        ],
+      ),
     );
   }
 }
@@ -1233,14 +1237,14 @@ class _MiniPlayerSubtitleState extends State<_MiniPlayerSubtitle> {
     children: [
       Text(
         title,
-        style: AppTheme.rowPrimary.copyWith(fontWeight: FontWeight.w600),
+        style: context.palette.rowPrimary.copyWith(fontWeight: FontWeight.w600),
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
       ),
       const SizedBox(height: 2),
       Text(
         subtitle,
-        style: AppTheme.metadata,
+        style: context.palette.metadata,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
       ),

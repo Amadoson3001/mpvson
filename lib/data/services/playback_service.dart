@@ -8,6 +8,7 @@ import '../../domain/models/media_catalog.dart';
 import '../../domain/models/media_entry.dart';
 import '../../domain/models/media_kind.dart';
 import '../../domain/models/media_source.dart';
+import '../../domain/models/playback_chapter.dart';
 import '../../domain/models/playback_settings.dart';
 import '../../domain/models/video_output_policy.dart';
 import 'diagnostic_log.dart';
@@ -32,6 +33,7 @@ PlaybackSnapshot applyNativeEvent(
         isBuffering: true,
         completed: false,
         position: Duration.zero,
+        chapters: const <PlaybackChapter>[],
       );
     case NativeMediaEventKind.loaded:
       return state.copyWith(isBuffering: false);
@@ -43,6 +45,8 @@ PlaybackSnapshot applyNativeEvent(
       );
     case NativeMediaEventKind.seekableChanged:
       return state.copyWith(seekable: event.seekable);
+    case NativeMediaEventKind.chaptersChanged:
+      return state.copyWith(chapters: event.chapters);
   }
 }
 
@@ -63,6 +67,7 @@ class PlaybackSnapshot {
     this.subtitleTracks = const <SubtitleTrack>[],
     this.currentAudioTrack = const AudioTrack('auto', null, null),
     this.currentSubtitleTrack = const SubtitleTrack('auto', null, null),
+    this.chapters = const <PlaybackChapter>[],
     this.error,
     this.sourceStart = 0,
     this.nativeSource,
@@ -84,6 +89,9 @@ class PlaybackSnapshot {
   final List<SubtitleTrack> subtitleTracks;
   final AudioTrack currentAudioTrack;
   final SubtitleTrack currentSubtitleTrack;
+
+  /// Chapter markers reported for the attached source, ordered by start time.
+  final List<PlaybackChapter> chapters;
   final String? error;
 
   /// Load attempt this snapshot belongs to.
@@ -117,6 +125,7 @@ class PlaybackSnapshot {
     List<SubtitleTrack>? subtitleTracks,
     AudioTrack? currentAudioTrack,
     SubtitleTrack? currentSubtitleTrack,
+    List<PlaybackChapter>? chapters,
     String? error,
     bool clearError = false,
     int? sourceStart,
@@ -139,6 +148,7 @@ class PlaybackSnapshot {
       subtitleTracks: subtitleTracks ?? this.subtitleTracks,
       currentAudioTrack: currentAudioTrack ?? this.currentAudioTrack,
       currentSubtitleTrack: currentSubtitleTrack ?? this.currentSubtitleTrack,
+      chapters: chapters ?? this.chapters,
       error: clearError ? null : error ?? this.error,
       sourceStart: sourceStart ?? this.sourceStart,
       nativeSource: clearNativeSource
@@ -635,6 +645,7 @@ class MediaKitPlaybackService
         completed: false,
         position: Duration.zero,
         duration: Duration.zero,
+        chapters: const <PlaybackChapter>[],
         clearError: true,
         clearNativeSource: true,
         sourceLoaded: false,
@@ -667,6 +678,7 @@ class MediaKitPlaybackService
         completed: false,
         position: Duration.zero,
         duration: Duration.zero,
+        chapters: const <PlaybackChapter>[],
         clearNativeSource: true,
         sourceLoaded: false,
       ),
@@ -989,6 +1001,8 @@ class MediaKitPlaybackService
         if (!attachment.hasSource) return;
         _emit(_stamped(applyNativeEvent(_state, event)));
       case NativeMediaEventKind.seekableChanged:
+        _emit(_stamped(applyNativeEvent(_state, event)));
+      case NativeMediaEventKind.chaptersChanged:
         _emit(_stamped(applyNativeEvent(_state, event)));
     }
   }

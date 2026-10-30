@@ -18,10 +18,10 @@ class OpenPreferenceDialog extends StatelessWidget {
   Widget build(BuildContext context) {
     final accent = Theme.of(context).colorScheme.primary;
     return AlertDialog(
-      backgroundColor: AppTheme.card,
+      backgroundColor: context.palette.card,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppRadii.artwork),
-        side: const BorderSide(color: AppTheme.border),
+        side: BorderSide(color: context.palette.border),
       ),
       titlePadding: const EdgeInsets.fromLTRB(
         AppSpace.lg,
@@ -41,10 +41,10 @@ class OpenPreferenceDialog extends StatelessWidget {
         AppSpace.lg,
         20,
       ),
-      title: const Text(
+      title: Text(
         'What should happen when you open new files?',
         style: TextStyle(
-          color: AppTheme.primaryText,
+          color: context.palette.primaryText,
           fontSize: AppType.title,
           fontWeight: FontWeight.w600,
         ),
@@ -55,10 +55,10 @@ class OpenPreferenceDialog extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Text(
+            Text(
               'You can change this anytime in Settings > Desktop integration > Opening files.',
               style: TextStyle(
-                color: AppTheme.secondaryText,
+                color: context.palette.secondaryText,
                 fontSize: AppType.small,
                 height: 1.4,
               ),
@@ -67,7 +67,7 @@ class OpenPreferenceDialog extends StatelessWidget {
             FilledButton(
               style: FilledButton.styleFrom(
                 backgroundColor: accent,
-                foregroundColor: AppTheme.deepBackground,
+                foregroundColor: context.palette.deepBackground,
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(AppRadii.control),
@@ -86,8 +86,8 @@ class OpenPreferenceDialog extends StatelessWidget {
             const SizedBox(height: 10),
             OutlinedButton(
               style: OutlinedButton.styleFrom(
-                foregroundColor: AppTheme.primaryText,
-                side: const BorderSide(color: AppTheme.border),
+                foregroundColor: context.palette.primaryText,
+                side: BorderSide(color: context.palette.border),
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(AppRadii.control),

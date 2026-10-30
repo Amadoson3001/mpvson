@@ -35,7 +35,7 @@ class EmptyLibrary extends StatelessWidget {
 
         return DecoratedBox(
           decoration: BoxDecoration(
-            color: AppTheme.background,
+            color: context.palette.background,
             border: isDragging ? Border.all(color: accent, width: 2) : null,
           ),
           child: SingleChildScrollView(
@@ -239,14 +239,14 @@ class _RecentSection extends StatelessWidget {
         Text(
           'Recent media',
           style: textTheme.titleMedium?.copyWith(
-            color: AppTheme.secondaryText,
+            color: context.palette.secondaryText,
             fontSize: AppType.body,
           ),
         ),
         const SizedBox(height: 10),
         for (var index = 0; index < entries.length; index++) ...[
           if (index > 0)
-            Divider(height: 1, color: AppTheme.border.withValues(alpha: 0.7)),
+            Divider(height: 1, color: context.palette.border.withValues(alpha: 0.7)),
           _RecentEntry(
             key: ValueKey(entries[index].id),
             entry: entries[index],
@@ -301,7 +301,7 @@ class _RecentEntryState extends State<_RecentEntry> {
         },
         borderRadius: BorderRadius.circular(AppRadii.control),
         focusColor: accent.withValues(alpha: 0.08),
-        hoverColor: AppTheme.hover.withValues(alpha: 0.42),
+        hoverColor: context.palette.hover.withValues(alpha: 0.42),
         child: Container(
           decoration: BoxDecoration(
             border: Border.all(
@@ -328,7 +328,7 @@ class _RecentEntryState extends State<_RecentEntry> {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: AppTheme.text,
+                        color: context.palette.text,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
@@ -348,7 +348,7 @@ class _RecentEntryState extends State<_RecentEntry> {
                         child: LinearProgressIndicator(
                           value: progress.toDouble(),
                           minHeight: 2.5,
-                          backgroundColor: AppTheme.border,
+                          backgroundColor: context.palette.border,
                           color: accent,
                         ),
                       ),
@@ -414,14 +414,14 @@ class _ErrorMessage extends StatelessWidget {
   Widget build(BuildContext context) => Container(
     width: double.infinity,
     padding: const EdgeInsets.only(left: AppSpace.sm, top: 2, bottom: 2),
-    decoration: const BoxDecoration(
-      border: Border(left: BorderSide(color: AppTheme.danger, width: 2)),
+    decoration: BoxDecoration(
+      border: Border(left: BorderSide(color: context.palette.danger, width: 2)),
     ),
     child: Row(
       children: [
-        const Icon(
+        Icon(
           Icons.error_outline_rounded,
-          color: AppTheme.danger,
+          color: context.palette.danger,
           size: 18,
         ),
         const SizedBox(width: 9),
@@ -430,7 +430,7 @@ class _ErrorMessage extends StatelessWidget {
             message,
             style: Theme.of(
               context,
-            ).textTheme.bodySmall?.copyWith(color: AppTheme.secondaryText),
+            ).textTheme.bodySmall?.copyWith(color: context.palette.secondaryText),
           ),
         ),
       ],

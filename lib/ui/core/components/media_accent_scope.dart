@@ -1,5 +1,6 @@
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import '../../../app.dart' show AppPreferencesScope;
 import '../../player/player_controller.dart';
 import '../../../domain/models/media_entry.dart';
 import '../tokens/colors.dart';
@@ -11,36 +12,60 @@ class MediaAccentScope extends StatefulWidget {
     required this.controller,
     required this.child,
     this.entryOverride,
+    this.enabled,
   });
   final PlayerController controller;
   final Widget child;
   final MediaEntry? entryOverride;
+  final bool? enabled;
+  /// Clamps extracted artwork color to enforce saturation >= 0.65 and balanced lightness
+  /// (0.45 - 0.55 in light mode, 0.60 - 0.70 in dark mode) so artwork accents remain
+  /// vibrant and high-contrast across all surfaces.
+  static Color clampAccentForVibrancy(Color color, Brightness brightness) {
+    if (color == AppColors.lamp) return color;
+    final hsl = HSLColor.fromColor(color);
+    final clampedSat = hsl.saturation.clamp(0.65, 1.0);
+    final clampedLight = brightness == Brightness.light
+        ? hsl.lightness.clamp(0.45, 0.55)
+        : hsl.lightness.clamp(0.60, 0.70);
+    return hsl.withSaturation(clampedSat).withLightness(clampedLight).toColor();
+  }
+
   @override
   State<MediaAccentScope> createState() => _MediaAccentScopeState();
 }
 
 class _MediaAccentScopeState extends State<MediaAccentScope> {
+  static final Map<String, (Color, MediaAccentPalette)> _paletteCache = {};
+  static const int _maxPaletteCache = 64;
+
   String? _path;
-  Color _color = AppColors.lamp;
-  MediaAccentPalette _palette = const MediaAccentPalette();
+  Color? _color;
+  MediaAccentPalette? _palette;
   int _generation = 0;
+  bool _dynamicArtworkEnabled = true;
+
   @override
   void initState() {
     super.initState();
     widget.controller.addListener(_changed);
-    _changed();
   }
 
   @override
   void didUpdateWidget(MediaAccentScope oldWidget) {
     super.didUpdateWidget(oldWidget);
+    var needsRefresh = false;
     if (oldWidget.controller != widget.controller) {
       oldWidget.controller.removeListener(_changed);
       widget.controller.addListener(_changed);
-      _path = '';
-      _changed();
-    } else if (oldWidget.entryOverride?.path != widget.entryOverride?.path) {
-      _path = '';
+      needsRefresh = true;
+    }
+    if (oldWidget.entryOverride?.path != widget.entryOverride?.path ||
+        oldWidget.enabled != widget.enabled) {
+      needsRefresh = true;
+    }
+    if (needsRefresh) {
+      _path = null;
       _changed();
     }
   }
@@ -52,16 +77,49 @@ class _MediaAccentScopeState extends State<MediaAccentScope> {
     super.dispose();
   }
 
+  bool get _isDynamicEnabled => widget.enabled ?? _dynamicArtworkEnabled;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final enabled = widget.enabled ??
+        (AppPreferencesScope.of(context)?.dynamicArtworkColor ?? true);
+    _dynamicArtworkEnabled = enabled;
+    if (!_isDynamicEnabled) {
+      _path = null;
+      _generation++;
+      if ((_color != null || _palette != null) && mounted) {
+        setState(() {
+          _color = null;
+          _palette = null;
+        });
+      }
+    } else {
+      _changed();
+    }
+  }
+
   void _changed() {
+    if (!_isDynamicEnabled) {
+      _path = null;
+      _generation++;
+      if ((_color != null || _palette != null) && mounted) {
+        setState(() {
+          _color = null;
+          _palette = null;
+        });
+      }
+      return;
+    }
     final entry = widget.entryOverride ?? widget.controller.current;
     if (entry?.path == _path) return;
     _path = entry?.path;
     final generation = ++_generation;
     if (entry == null) {
-      if (mounted) {
+      if (mounted && (_color != null || _palette != null)) {
         setState(() {
-          _color = AppColors.lamp;
-          _palette = const MediaAccentPalette();
+          _color = null;
+          _palette = null;
         });
       }
       return;
@@ -70,6 +128,18 @@ class _MediaAccentScopeState extends State<MediaAccentScope> {
   }
 
   Future<void> _extract(MediaEntry entry, int generation) async {
+    if (!_isDynamicEnabled) return;
+    final cached = _paletteCache[entry.path];
+    if (cached != null) {
+      if (mounted && generation == _generation) {
+        setState(() {
+          _color = cached.$1;
+          _palette = cached.$2;
+        });
+      }
+      return;
+    }
+
     Color dominant = AppColors.lamp;
     Color vibrant = AppColors.gold;
     Color muted = AppColors.layer;
@@ -113,18 +183,10 @@ class _MediaAccentScopeState extends State<MediaAccentScope> {
               best[2] ~/ best[0],
               best[3] ~/ best[0],
             );
-            var hsl = HSLColor.fromColor(original).withSaturation(
-              HSLColor.fromColor(original).saturation.clamp(0.35, 0.8),
-            );
-            hsl = hsl.withLightness(hsl.lightness.clamp(0.58, 0.78));
-            dominant = hsl.toColor();
-            while ((dominant.computeLuminance() + 0.05) /
-                        (AppColors.layer.computeLuminance() + 0.05) <
-                    4.5 &&
-                hsl.lightness < 0.95) {
-              hsl = hsl.withLightness((hsl.lightness + 0.02).clamp(0.0, 1.0));
-              dominant = hsl.toColor();
-            }
+            final hslOrig = HSLColor.fromColor(original);
+            final clampedSat = hslOrig.saturation.clamp(0.65, 1.0);
+            final clampedLight = hslOrig.lightness.clamp(0.48, 0.68);
+            dominant = hslOrig.withSaturation(clampedSat).withLightness(clampedLight).toColor();
 
             // Extract vibrant tone from second prominent cluster if available
             if (sorted.length > 1) {
@@ -137,18 +199,19 @@ class _MediaAccentScopeState extends State<MediaAccentScope> {
               );
               final secHsl = HSLColor.fromColor(
                 secColor,
-              ).withSaturation(0.7).withLightness(0.65);
+              ).withSaturation(0.75).withLightness(0.62);
               vibrant = secHsl.toColor();
             } else {
               vibrant = HSLColor.fromColor(dominant)
                   .withHue((HSLColor.fromColor(dominant).hue + 25) % 360)
+                  .withSaturation(0.75)
                   .toColor();
             }
 
             // Extract muted ambient tonal color
             final darkHsl = HSLColor.fromColor(
               original,
-            ).withSaturation(0.3).withLightness(0.18);
+            ).withSaturation(0.25).withLightness(0.20);
             muted = darkHsl.toColor();
           }
         }
@@ -156,48 +219,124 @@ class _MediaAccentScopeState extends State<MediaAccentScope> {
     } catch (_) {
       /* Missing or undecodable artwork uses the fallback. */
     }
-    if (mounted && generation == _generation) {
+    final extractedPalette = MediaAccentPalette(
+      dominant: dominant,
+      vibrant: vibrant,
+      muted: muted,
+    );
+    if (_paletteCache.length >= _maxPaletteCache) {
+      _paletteCache.remove(_paletteCache.keys.first);
+    }
+    _paletteCache[entry.path] = (dominant, extractedPalette);
+    if (mounted && generation == _generation && _isDynamicEnabled) {
       setState(() {
         _color = dominant;
-        _palette = MediaAccentPalette(
-          dominant: dominant,
-          vibrant: vibrant,
-          muted: muted,
-        );
+        _palette = extractedPalette;
       });
     }
   }
 
+
   @override
   Widget build(BuildContext context) {
+    if (!_isDynamicEnabled || _color == null) {
+      return widget.child;
+    }
+
     final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final color = MediaAccentScope.clampAccentForVibrancy(_color!, theme.brightness);
+    final onAccent = isDark ? const Color(0xFF09090B) : Colors.white;
+    final palette = _palette != null
+        ? MediaAccentPalette(
+            dominant: color,
+            vibrant: MediaAccentScope.clampAccentForVibrancy(_palette!.vibrant, theme.brightness),
+            muted: _palette!.muted,
+          )
+        : MediaAccentPalette(dominant: color);
+
     return AnimatedTheme(
       duration: MediaQuery.disableAnimationsOf(context)
           ? Duration.zero
           : const Duration(milliseconds: 400),
       data: theme.copyWith(
         colorScheme: theme.colorScheme.copyWith(
-          primary: _color,
-          secondary: _color,
+          primary: color,
+          onPrimary: onAccent,
+          secondary: color,
+          onSecondary: onAccent,
+        ),
+        switchTheme: SwitchThemeData(
+          thumbColor: WidgetStateProperty.resolveWith(
+            (states) => states.contains(WidgetState.selected)
+                ? onAccent
+                : theme.colorScheme.onSurfaceVariant,
+          ),
+          trackColor: WidgetStateProperty.resolveWith(
+            (states) => states.contains(WidgetState.selected)
+                ? color
+                : theme.colorScheme.surfaceContainer,
+          ),
+          trackOutlineColor: WidgetStatePropertyAll(
+            theme.colorScheme.outlineVariant,
+          ),
         ),
         sliderTheme: theme.sliderTheme.copyWith(
-          activeTrackColor: _color,
-          thumbColor: _color,
-          overlayColor: _color.withValues(alpha: 0.14),
+          activeTrackColor: color,
+          thumbColor: color,
+          overlayColor: color.withValues(alpha: 0.14),
+        ),
+        progressIndicatorTheme: theme.progressIndicatorTheme.copyWith(
+          color: color,
         ),
         filledButtonTheme: FilledButtonThemeData(
           style: theme.filledButtonTheme.style?.copyWith(
-            backgroundColor: WidgetStatePropertyAll(_color),
+            backgroundColor: WidgetStatePropertyAll(color),
+            foregroundColor: WidgetStatePropertyAll(onAccent),
+          ),
+        ),
+        elevatedButtonTheme: ElevatedButtonThemeData(
+          style: theme.elevatedButtonTheme.style?.copyWith(
+            backgroundColor: WidgetStatePropertyAll(color),
+            foregroundColor: WidgetStatePropertyAll(onAccent),
           ),
         ),
         textButtonTheme: TextButtonThemeData(
           style: theme.textButtonTheme.style?.copyWith(
-            foregroundColor: WidgetStatePropertyAll(_color),
+            foregroundColor: WidgetStatePropertyAll(color),
+          ),
+        ),
+        iconButtonTheme: IconButtonThemeData(
+          style: theme.iconButtonTheme.style?.copyWith(
+            foregroundColor: WidgetStateProperty.resolveWith(
+              (states) => states.contains(WidgetState.disabled)
+                  ? theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.4)
+                  : states.contains(WidgetState.selected)
+                  ? color
+                  : theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+        badgeTheme: theme.badgeTheme.copyWith(
+          textColor: color,
+        ),
+        segmentedButtonTheme: SegmentedButtonThemeData(
+          style: ButtonStyle(
+            backgroundColor: WidgetStateProperty.resolveWith((states) {
+              return states.contains(WidgetState.selected)
+                  ? color
+                  : theme.colorScheme.surfaceContainer;
+            }),
+            foregroundColor: WidgetStateProperty.resolveWith((states) {
+              return states.contains(WidgetState.selected)
+                  ? onAccent
+                  : theme.colorScheme.onSurface;
+            }),
           ),
         ),
         extensions: [
-          MediaAccent(color: _color),
-          _palette,
+          MediaAccent(color: color),
+          palette,
         ],
       ),
       child: widget.child,

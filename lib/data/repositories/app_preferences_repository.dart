@@ -3,8 +3,11 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart' show ThemeMode;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+
+import '../../domain/models/player_hotkeys.dart';
 
 /// User preference for how to handle opening files when playback is active or paused.
 enum OpenBehaviorPreference {
@@ -20,18 +23,57 @@ class DesktopPreferences {
     this.openBehavior,
     this.keepAwakeDuringPlayback = true,
     this.reduceMotion = false,
+    this.seekStepSeconds = 5,
+    this.syncStepMs = 50,
+    this.hotkeyOverrides,
+    this.themeMode = ThemeMode.dark,
+    this.accentPreset = 'lamp',
+    this.dynamicArtworkColor = true,
+    this.oledBlack = false,
   });
+
+  static const List<int> seekStepOptions = <int>[1, 2, 5, 10, 15, 30];
+  static const List<int> syncStepOptions = <int>[25, 50, 100, 250];
 
   /// Null means first-time user has not chosen yet and will be prompted on first conflict.
   final OpenBehaviorPreference? openBehavior;
   final bool keepAwakeDuringPlayback;
   final bool reduceMotion;
 
+  /// How far the seek shortcut jumps in one press.
+  final int seekStepSeconds;
+
+  /// Adjustment applied to audio/subtitle delay per shortcut press.
+  final int syncStepMs;
+
+  /// Saved key combinations; null means every action uses its default.
+  final PlayerHotkeys? hotkeyOverrides;
+  PlayerHotkeys get hotkeys => hotkeyOverrides ?? PlayerHotkeys.defaults;
+
+  /// Active theme mode (dark, light, or system).
+  final ThemeMode themeMode;
+
+  /// Accent color preset identifier (e.g. 'lamp', 'jade', 'sky', 'rose', 'amethyst', 'gold').
+  final String accentPreset;
+
+  /// Whether to dynamically tint the player based on media artwork during playback.
+  final bool dynamicArtworkColor;
+
+  /// Whether to use pitch black surfaces in dark mode for OLED displays.
+  final bool oledBlack;
+
   DesktopPreferences copyWith({
     OpenBehaviorPreference? openBehavior,
     bool clearOpenBehavior = false,
     bool? keepAwakeDuringPlayback,
     bool? reduceMotion,
+    int? seekStepSeconds,
+    int? syncStepMs,
+    PlayerHotkeys? hotkeyOverrides,
+    ThemeMode? themeMode,
+    String? accentPreset,
+    bool? dynamicArtworkColor,
+    bool? oledBlack,
   }) {
     return DesktopPreferences(
       openBehavior: clearOpenBehavior
@@ -40,6 +82,13 @@ class DesktopPreferences {
       keepAwakeDuringPlayback:
           keepAwakeDuringPlayback ?? this.keepAwakeDuringPlayback,
       reduceMotion: reduceMotion ?? this.reduceMotion,
+      seekStepSeconds: seekStepSeconds ?? this.seekStepSeconds,
+      syncStepMs: syncStepMs ?? this.syncStepMs,
+      hotkeyOverrides: hotkeyOverrides ?? this.hotkeyOverrides,
+      themeMode: themeMode ?? this.themeMode,
+      accentPreset: accentPreset ?? this.accentPreset,
+      dynamicArtworkColor: dynamicArtworkColor ?? this.dynamicArtworkColor,
+      oledBlack: oledBlack ?? this.oledBlack,
     );
   }
 
@@ -54,10 +103,29 @@ class DesktopPreferences {
         }
       }
     }
+    ThemeMode themeMode = ThemeMode.dark;
+    final rawThemeMode = json['themeMode'] as String?;
+    if (rawThemeMode != null) {
+      for (final value in ThemeMode.values) {
+        if (value.name == rawThemeMode) {
+          themeMode = value;
+          break;
+        }
+      }
+    }
     return DesktopPreferences(
       openBehavior: behavior,
       keepAwakeDuringPlayback: json['keepAwakeDuringPlayback'] as bool? ?? true,
       reduceMotion: json['reduceMotion'] as bool? ?? false,
+      seekStepSeconds: _readChoice(json['seekStepSeconds'], seekStepOptions, 5),
+      syncStepMs: _readChoice(json['syncStepMs'], syncStepOptions, 50),
+      hotkeyOverrides: json.containsKey('hotkeys')
+          ? PlayerHotkeys.fromJson(json['hotkeys'])
+          : null,
+      themeMode: themeMode,
+      accentPreset: json['accentPreset'] as String? ?? 'lamp',
+      dynamicArtworkColor: json['dynamicArtworkColor'] as bool? ?? true,
+      oledBlack: json['oledBlack'] as bool? ?? false,
     );
   }
 
@@ -65,7 +133,19 @@ class DesktopPreferences {
     if (openBehavior != null) 'openBehavior': openBehavior!.name,
     'keepAwakeDuringPlayback': keepAwakeDuringPlayback,
     'reduceMotion': reduceMotion,
+    'seekStepSeconds': seekStepSeconds,
+    'syncStepMs': syncStepMs,
+    'hotkeys': hotkeys.toJson(),
+    'themeMode': themeMode.name,
+    'accentPreset': accentPreset,
+    'dynamicArtworkColor': dynamicArtworkColor,
+    'oledBlack': oledBlack,
   };
+
+  static int _readChoice(Object? value, List<int> options, int fallback) {
+    final number = value is num ? value.toInt() : null;
+    return number != null && options.contains(number) ? number : fallback;
+  }
 }
 
 /// Repository that manages app-level desktop & opening preferences independently of playback session.
@@ -195,6 +275,48 @@ class AppPreferencesRepository extends ChangeNotifier {
   Future<void> setKeepAwake(bool keepAwake) async {
     await updatePreferences(
       _preferences.copyWith(keepAwakeDuringPlayback: keepAwake),
+    );
+  }
+
+  Future<void> setSeekStep(int seconds) async {
+    if (!DesktopPreferences.seekStepOptions.contains(seconds)) return;
+    await updatePreferences(_preferences.copyWith(seekStepSeconds: seconds));
+  }
+
+  Future<void> setSyncStep(int milliseconds) async {
+    if (!DesktopPreferences.syncStepOptions.contains(milliseconds)) return;
+    await updatePreferences(_preferences.copyWith(syncStepMs: milliseconds));
+  }
+
+  Future<void> setHotkey(PlayerAction action, HotkeyBinding binding) async {
+    await updatePreferences(
+      _preferences.copyWith(
+        hotkeyOverrides: _preferences.hotkeys.withBinding(action, binding),
+      ),
+    );
+  }
+
+  Future<void> setThemeMode(ThemeMode mode) async {
+    await updatePreferences(_preferences.copyWith(themeMode: mode));
+  }
+
+  Future<void> setAccentPreset(String preset) async {
+    await updatePreferences(_preferences.copyWith(accentPreset: preset));
+  }
+
+  Future<void> setDynamicArtworkColor(bool enabled) async {
+    await updatePreferences(
+      _preferences.copyWith(dynamicArtworkColor: enabled),
+    );
+  }
+
+  Future<void> setOledBlack(bool enabled) async {
+    await updatePreferences(_preferences.copyWith(oledBlack: enabled));
+  }
+
+  Future<void> resetHotkeys() async {
+    await updatePreferences(
+      _preferences.copyWith(hotkeyOverrides: PlayerHotkeys.defaults),
     );
   }
 }

@@ -22,7 +22,11 @@ class PlayerActions extends StatelessWidget {
     this.onFullscreen,
     this.onPlaybackInfo,
     this.onOpenLibrary,
+    this.onToggleMiniPlayer,
+    this.miniPlayerShortcut,
+    this.playbackInfoShortcut,
     this.isFullscreen = false,
+    this.isMiniPlayer = false,
   });
 
   final PlayerController controller;
@@ -36,7 +40,11 @@ class PlayerActions extends StatelessWidget {
   final VoidCallback? onFullscreen;
   final VoidCallback? onPlaybackInfo;
   final VoidCallback? onOpenLibrary;
+  final VoidCallback? onToggleMiniPlayer;
+  final String? miniPlayerShortcut;
+  final String? playbackInfoShortcut;
   final bool isFullscreen;
+  final bool isMiniPlayer;
 
   @override
   Widget build(BuildContext context) => Row(
@@ -103,12 +111,21 @@ class PlayerActions extends StatelessWidget {
               ),
             ),
           if (onPlaybackInfo != null)
-            const PopupMenuItem(
+            PopupMenuItem(
               value: 'playback-info',
               child: _ActionItem(
                 icon: Icons.query_stats_rounded,
                 label: 'Playback information',
-                shortcut: 'I',
+                shortcut: playbackInfoShortcut,
+              ),
+            ),
+          if (onToggleMiniPlayer != null)
+            PopupMenuItem(
+              value: 'mini-player',
+              child: _ActionItem(
+                icon: Icons.picture_in_picture_alt_rounded,
+                label: isMiniPlayer ? 'Exit mini player' : 'Mini player',
+                shortcut: miniPlayerShortcut,
               ),
             ),
           const PopupMenuItem(
@@ -185,6 +202,8 @@ class PlayerActions extends StatelessWidget {
         onOpenLibrary?.call();
       case 'playback-info':
         onPlaybackInfo?.call();
+      case 'mini-player':
+        onToggleMiniPlayer?.call();
     }
   }
 
@@ -206,7 +225,7 @@ class _ActionItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Row(
     children: [
-      Icon(icon, size: 19, color: AppTheme.secondaryText),
+      Icon(icon, size: 19, color: context.palette.secondaryText),
       const SizedBox(width: 12),
       Expanded(child: Text(label)),
       if (shortcut != null) ...[

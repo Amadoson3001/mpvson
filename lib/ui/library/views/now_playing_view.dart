@@ -208,6 +208,7 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                   (entry == null ? '' : 'Unknown artist'),
               album: _currentMediaRecord?.album ?? '',
             ).artworkSize(
+              context: context,
               viewportWidth: constraints.maxWidth,
               viewportHeight: constraints.maxHeight,
               iconButtonExtent: _iconButtonExtent(context),
@@ -222,9 +223,14 @@ class _NowPlayingViewState extends State<NowPlayingView> {
         final gapBelowArtist = isCompactHeight ? 2.0 : 4.0;
         final gapAboveTransport = isCompactHeight ? 16.0 : AppSpace.xl;
         final gapTimelineTransport = isCompactHeight ? 4.0 : AppSpace.sm;
+        final columnWidth = NowPlayingLayout.columnWidth(constraints.maxWidth);
+        final controlsShareRow = NowPlayingLayout.controlsShareRow(
+          viewportWidth: constraints.maxWidth,
+          isCompactHeight: isCompactHeight,
+        );
 
         return Scaffold(
-          backgroundColor: AppTheme.background,
+          backgroundColor: context.palette.background,
           body: Stack(
             children: [
               if (_cachedArtwork != null)
@@ -247,7 +253,7 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                     Theme.of(
                       context,
                     ).colorScheme.primary.withValues(alpha: 0.1),
-                    AppTheme.background,
+                    context.palette.background,
                   ).withValues(alpha: 0.82),
                 ),
               ),
@@ -267,7 +273,7 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                           (Theme.of(
                                     context,
                                   ).extension<MediaAccentPalette>()?.muted ??
-                                  AppTheme.background)
+                                  context.palette.background)
                               .withValues(alpha: 0.04),
                           Colors.transparent,
                         ],
@@ -313,7 +319,7 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                                         size: 28,
                                       ),
                                       tooltip: 'Collapse to mini player',
-                                      color: AppTheme.secondaryText,
+                                      color: context.palette.secondaryText,
                                       onPressed: widget.onBack,
                                     )
                                   else
@@ -327,13 +333,13 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                                         Icons.queue_music_rounded,
                                       ),
                                       tooltip: 'Open queue',
-                                      color: AppTheme.secondaryText,
+                                      color: context.palette.secondaryText,
                                       onPressed: widget.onOpenQueue,
                                     ),
                                   IconButton(
                                     icon: const Icon(Icons.close_rounded),
                                     tooltip: 'Close player',
-                                    color: AppTheme.secondaryText,
+                                    color: context.palette.secondaryText,
                                     onPressed: _closePlayer,
                                   ),
                                 ],
@@ -358,8 +364,8 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                                           entry?.title ??
                                           'Nothing playing',
                                       style: isCompactHeight
-                                          ? AppTheme.albumTitle
-                                          : AppTheme.pageTitle,
+                                          ? context.palette.albumTitle
+                                          : context.palette.pageTitle,
                                       textAlign: TextAlign.center,
                                       maxLines: 2,
                                       overflow: TextOverflow.ellipsis,
@@ -376,7 +382,7 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                                           ? Theme.of(
                                               context,
                                             ).colorScheme.primary
-                                          : AppTheme.mutedText,
+                                          : context.palette.mutedText,
                                     ),
                                     tooltip:
                                         (_currentMediaRecord?.isFavorite ??
@@ -394,8 +400,8 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                               Text(
                                 _currentMediaRecord?.artist ??
                                     (entry == null ? '' : 'Unknown artist'),
-                                style: AppTheme.sectionTitle.copyWith(
-                                  color: AppTheme.secondaryText,
+                                style: context.palette.sectionTitle.copyWith(
+                                  color: context.palette.secondaryText,
                                   fontWeight: FontWeight.w500,
                                 ),
                                 textAlign: TextAlign.center,
@@ -406,8 +412,8 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                               // Album
                               Text(
                                 _currentMediaRecord?.album ?? '',
-                                style: AppTheme.rowSecondary.copyWith(
-                                  color: AppTheme.mutedText,
+                                style: context.palette.rowSecondary.copyWith(
+                                  color: context.palette.mutedText,
                                 ),
                                 textAlign: TextAlign.center,
                                 maxLines: 1,
@@ -424,26 +430,14 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                                     children: [
                                       SeekBar(controller: widget.controller),
                                       SizedBox(height: gapTimelineTransport),
-                                      Row(
-                                        mainAxisAlignment:
-                                            MainAxisAlignment.center,
-                                        children: [
-                                          TransportButtons(
-                                            controller: widget.controller,
-                                            compact: isCompactHeight,
-                                          ),
-                                          SizedBox(
-                                            width: isCompactHeight
-                                                ? AppSpace.md
-                                                : AppSpace.lg,
-                                          ),
-                                          AudioVolumeControl(
-                                            controller: widget.controller,
-                                            compact: isCompactHeight,
-                                            showPercent: true,
-                                          ),
-                                        ],
-                                      ),
+                                      controlsShareRow
+                                          ? _buildInlineControls(
+                                              columnWidth,
+                                              isCompactHeight,
+                                            )
+                                          : _buildStackedControls(
+                                              isCompactHeight,
+                                            ),
                                     ],
                                   ),
                                 ),
@@ -463,14 +457,83 @@ class _NowPlayingViewState extends State<NowPlayingView> {
     );
   }
 
+  /// Transport and volume sharing one row.
+  ///
+  /// The play button keeps the stage's center line while the volume rides the
+  /// trailing edge, so the transport does not drift sideways with the width of
+  /// the group beside it. The volume is inset by the timeline's own inset so
+  /// its readout lines up with the duration on the row above.
+  Widget _buildInlineControls(double columnWidth, bool isCompactHeight) {
+    return SizedBox(
+      width: columnWidth,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Transform.translate(
+            // The transport's midpoint falls between the play and next
+            // buttons, so the row is nudged by that difference to put the play
+            // button itself on the center line.
+            offset: Offset(
+              TransportButtons.playButtonCenterOffset(compact: isCompactHeight),
+              0,
+            ),
+            child: TransportButtons(
+              controller: widget.controller,
+              compact: isCompactHeight,
+            ),
+          ),
+          Positioned(
+            right: SeekBar.sideInset,
+            child: AudioVolumeControl(
+              controller: widget.controller,
+              compact: isCompactHeight,
+              showPercent: true,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Transport and volume on separate rows, for stages too narrow to hold both.
+  Widget _buildStackedControls(bool isCompactHeight) {
+    return Column(
+      children: [
+        Center(
+          child: TransportButtons(
+            controller: widget.controller,
+            compact: isCompactHeight,
+          ),
+        ),
+        const SizedBox(height: AppSpace.sm),
+        Center(
+          child: AudioVolumeControl(
+            controller: widget.controller,
+            compact: isCompactHeight,
+            showPercent: true,
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildArtwork(BuildContext context, double size) {
     return Container(
       width: size,
       height: size,
       decoration: BoxDecoration(
-        color: AppTheme.raisedSurface,
-        borderRadius: BorderRadius.circular(AppRadii.artwork),
-        border: Border.all(color: AppTheme.border, width: 1.5),
+        color: context.palette.raisedSurface,
+        borderRadius: BorderRadius.circular(AppRadii.artworkHero),
+        border: Border.all(color: context.palette.border, width: 1.5),
+        boxShadow: [
+          // The ambient backdrop is the artwork itself, so its edges need a
+          // little lift to read against the glow instead of dissolving into it.
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.45),
+            blurRadius: 56,
+            offset: const Offset(0, 24),
+          ),
+        ],
       ),
       clipBehavior: Clip.antiAlias,
       child: AnimatedSwitcher(
@@ -509,7 +572,7 @@ class _NowPlayingViewState extends State<NowPlayingView> {
   }
 
   Widget _buildFallbackArtwork() => ColoredBox(
-    color: AppTheme.raisedSurface,
+    color: context.palette.raisedSurface,
     child: Center(
       child: Icon(
         Icons.music_note_rounded,

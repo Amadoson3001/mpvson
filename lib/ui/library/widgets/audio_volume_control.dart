@@ -18,6 +18,38 @@ class AudioVolumeControl extends StatefulWidget {
     this.showPercent = false,
   });
 
+  /// Extent of the mute button, matching the theme's compact icon button.
+  ///
+  /// The control's rows are built from the extents below instead of the
+  /// theme's touch target, so layout that reserves room for this widget
+  /// measures the same numbers it is laid out with.
+  static const double muteExtent = 40;
+
+  /// Slider length in the full-size presentation.
+  ///
+  /// Sized so the whole control still fits beside the transport on the Now
+  /// Playing stage without crowding the play button's center line.
+  static const double sliderWidth = 128;
+
+  /// Slider length in the compact presentation.
+  static const double compactSliderWidth = 84;
+
+  /// Readout width for the percent label, sized for three digits.
+  static const double percentWidth = 44;
+
+  /// Height of the control, set by the mute button.
+  static const double extent = 40;
+
+  /// Width of the whole control so surrounding layout can reserve it exactly.
+  static double preferredWidth({
+    required bool compact,
+    required bool showPercent,
+  }) {
+    final slider = compact ? compactSliderWidth : sliderWidth;
+    final percent = showPercent ? percentWidth : 0;
+    return muteExtent + slider + percent;
+  }
+
   final PlayerController controller;
   final bool compact;
   final bool showPercent;
@@ -129,15 +161,21 @@ class _AudioVolumeControlState extends State<AudioVolumeControl> {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              IconButton(
-                icon: Icon(icon, size: widget.compact ? 17 : 20),
-                tooltip: volume <= 0 ? 'Unmute' : 'Mute (${volume.round()}%)',
-                visualDensity: VisualDensity.compact,
-                color: AppTheme.secondaryText,
-                onPressed: _toggleMute,
+              SizedBox(
+                width: AudioVolumeControl.muteExtent,
+                height: AudioVolumeControl.muteExtent,
+                child: IconButton(
+                  icon: Icon(icon, size: widget.compact ? 17 : 20),
+                  tooltip: volume <= 0 ? 'Unmute' : 'Mute (${volume.round()}%)',
+                  visualDensity: VisualDensity.compact,
+                  color: context.palette.secondaryText,
+                  onPressed: _toggleMute,
+                ),
               ),
               SizedBox(
-                width: widget.compact ? 84 : 150,
+                width: widget.compact
+                    ? AudioVolumeControl.compactSliderWidth
+                    : AudioVolumeControl.sliderWidth,
                 child: MouseRegion(
                   cursor: SystemMouseCursors.click,
                   child: Tooltip(
@@ -152,10 +190,14 @@ class _AudioVolumeControlState extends State<AudioVolumeControl> {
                         overlayShape: RoundSliderOverlayShape(
                           overlayRadius: widget.compact ? 10 : 14,
                         ),
-                        activeTrackColor: AppTheme.accent,
-                        inactiveTrackColor: AppTheme.border,
-                        thumbColor: AppTheme.accent,
-                        overlayColor: AppTheme.accent.withValues(alpha: 0.14),
+                        activeTrackColor: Theme.of(context).colorScheme.primary,
+                        inactiveTrackColor: Theme.of(
+                          context,
+                        ).colorScheme.outlineVariant,
+                        thumbColor: Theme.of(context).colorScheme.primary,
+                        overlayColor: Theme.of(
+                          context,
+                        ).colorScheme.primary.withValues(alpha: 0.14),
                       ),
                       child: Slider(
                         value: volume,
@@ -171,11 +213,11 @@ class _AudioVolumeControlState extends State<AudioVolumeControl> {
               ),
               if (widget.showPercent)
                 SizedBox(
-                  width: 44,
+                  width: AudioVolumeControl.percentWidth,
                   child: Text(
                     '${volume.round()}%',
                     textAlign: TextAlign.right,
-                    style: AppTheme.metadata.copyWith(
+                    style: context.palette.metadata.copyWith(
                       fontFeatures: const [FontFeature.tabularFigures()],
                     ),
                   ),

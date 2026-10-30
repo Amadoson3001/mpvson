@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 
+import '../../../domain/models/player_hotkeys.dart';
 import '../../core/app_motion.dart';
 import '../../core/app_theme.dart';
 import '../player_controller.dart';
@@ -26,8 +27,11 @@ class PlayerContextMenu extends StatelessWidget {
     required this.onAdjustVolume,
     required this.onMenuVisibilityChanged,
     this.onFullscreen,
+    this.onToggleMiniPlayer,
     this.isFullscreen = false,
+    this.isMiniPlayer = false,
     this.queueOpen = false,
+    this.shortcutLabel,
   });
 
   final PlayerController playerController;
@@ -44,8 +48,11 @@ class PlayerContextMenu extends StatelessWidget {
   final ValueChanged<double> onAdjustVolume;
   final ValueChanged<bool> onMenuVisibilityChanged;
   final VoidCallback? onFullscreen;
+  final VoidCallback? onToggleMiniPlayer;
   final bool isFullscreen;
+  final bool isMiniPlayer;
   final bool queueOpen;
+  final String Function(PlayerAction action)? shortcutLabel;
 
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
@@ -70,7 +77,7 @@ class PlayerContextMenu extends StatelessWidget {
             controller: menuController,
             consumeOutsideTap: false,
             animated: !AppMotion.reduce(context),
-            style: _popupMenuStyle,
+            style: _popupMenuStyle(context),
             onOpen: () => onMenuVisibilityChanged(true),
             onClose: () => onMenuVisibilityChanged(false),
             menuChildren: _menuChildren(context),
@@ -90,12 +97,13 @@ class PlayerContextMenu extends StatelessWidget {
 
     return [
       _menuAction(
+        context,
         icon: playerController.isPlaying
             ? Icons.pause_rounded
             : Icons.play_arrow_rounded,
         animateLeadingIcon: !AppMotion.reduce(context),
         label: playerController.isPlaying ? 'Pause' : 'Play',
-        trailing: 'Space',
+        trailing: shortcutLabel?.call(PlayerAction.playPause) ?? 'Space',
         onPressed: canPlay
             ? () => unawaited(playerController.togglePlayPause())
             : null,
@@ -106,6 +114,7 @@ class PlayerContextMenu extends StatelessWidget {
         label: 'Seek',
         children: [
           _menuAction(
+            context,
             icon: Icons.replay_10_rounded,
             label: 'Back 10 seconds',
             onPressed: canSeek
@@ -115,6 +124,7 @@ class PlayerContextMenu extends StatelessWidget {
                 : null,
           ),
           _menuAction(
+            context,
             icon: Icons.forward_10_rounded,
             label: 'Forward 10 seconds',
             onPressed: canSeek
@@ -129,19 +139,19 @@ class PlayerContextMenu extends StatelessWidget {
         context,
         icon: Icons.speed_rounded,
         label: 'Playback speed',
-        children: _speedOptions(accent),
+        children: _speedOptions(context, accent),
       ),
       _submenu(
         context,
         icon: Icons.audiotrack_rounded,
         label: 'Audio',
-        children: _audioOptions(hasMedia, accent),
+        children: _audioOptions(context, hasMedia, accent),
       ),
       _submenu(
         context,
         icon: Icons.subtitles_rounded,
         label: 'Subtitles',
-        children: _subtitleOptions(hasMedia, accent),
+        children: _subtitleOptions(context, hasMedia, accent),
       ),
       _submenu(
         context,
@@ -149,12 +159,14 @@ class PlayerContextMenu extends StatelessWidget {
         label: 'Volume',
         children: [
           _menuAction(
+            context,
             icon: Icons.add_rounded,
             label: 'Increase volume',
             trailing: '+5',
             onPressed: () => onAdjustVolume(5),
           ),
           _menuAction(
+            context,
             icon: Icons.remove_rounded,
             label: 'Decrease volume',
             trailing: '−5',
@@ -162,11 +174,12 @@ class PlayerContextMenu extends StatelessWidget {
           ),
           const _MenuDivider(),
           _menuAction(
+            context,
             icon: playerController.volume <= 0
                 ? Icons.volume_up_rounded
                 : Icons.volume_off_rounded,
             label: playerController.volume <= 0 ? 'Unmute' : 'Mute',
-            trailing: 'M',
+            trailing: shortcutLabel?.call(PlayerAction.mute) ?? 'M',
             onPressed: onToggleMute,
           ),
         ],
@@ -178,12 +191,14 @@ class PlayerContextMenu extends StatelessWidget {
         label: 'Open',
         children: [
           _menuAction(
+            context,
             icon: Icons.video_file_outlined,
             label: 'Files',
             trailing: 'Ctrl+O',
             onPressed: onOpenFiles,
           ),
           _menuAction(
+            context,
             icon: Icons.link_rounded,
             label: 'URL',
             trailing: 'Ctrl+L',
@@ -192,21 +207,32 @@ class PlayerContextMenu extends StatelessWidget {
         ],
       ),
       _menuAction(
+        context,
         icon: queueOpen ? Icons.view_sidebar_rounded : Icons.queue_play_next,
         label: queueOpen ? 'Hide queue' : 'Show queue',
-        trailing: 'P',
+        trailing: shortcutLabel?.call(PlayerAction.queue) ?? 'P',
         onPressed: onToggleQueue,
       ),
       if (onFullscreen != null)
         _menuAction(
+          context,
           icon: isFullscreen
               ? Icons.fullscreen_exit_rounded
               : Icons.fullscreen_rounded,
           label: isFullscreen ? 'Exit fullscreen' : 'Fullscreen',
-          trailing: 'F11',
+          trailing: shortcutLabel?.call(PlayerAction.fullscreen) ?? 'F11',
           onPressed: onFullscreen,
         ),
+      if (onToggleMiniPlayer != null)
+        _menuAction(
+          context,
+          icon: Icons.picture_in_picture_alt_rounded,
+          label: isMiniPlayer ? 'Exit mini player' : 'Mini player',
+          trailing: shortcutLabel?.call(PlayerAction.miniPlayer),
+          onPressed: onToggleMiniPlayer,
+        ),
       _menuAction(
+        context,
         icon: Icons.settings_outlined,
         label: 'Settings',
         onPressed: onSettings,
@@ -214,9 +240,10 @@ class PlayerContextMenu extends StatelessWidget {
     ];
   }
 
-  List<Widget> _speedOptions(Color accent) => [
+  List<Widget> _speedOptions(BuildContext context, Color accent) => [
     for (final rate in _playbackRates)
       _menuAction(
+        context,
         icon: null,
         label: _speedLabel(rate),
         checked: (playerController.rate - rate).abs() < 0.01,
@@ -225,13 +252,18 @@ class PlayerContextMenu extends StatelessWidget {
       ),
   ];
 
-  List<Widget> _audioOptions(bool hasMedia, Color accent) {
+  List<Widget> _audioOptions(
+    BuildContext context,
+    bool hasMedia,
+    Color accent,
+  ) {
     if (!hasMedia) return const [];
 
     final tracks = _audioTrackOptions(playerController.audioTracks);
     return [
       for (final track in tracks)
         _menuAction(
+          context,
           icon: null,
           label: _trackLabel(track.id, track.title, track.language),
           checked: playerController.currentAudioTrack.id == track.id,
@@ -241,10 +273,15 @@ class PlayerContextMenu extends StatelessWidget {
     ];
   }
 
-  List<Widget> _subtitleOptions(bool hasMedia, Color accent) {
+  List<Widget> _subtitleOptions(
+    BuildContext context,
+    bool hasMedia,
+    Color accent,
+  ) {
     if (!hasMedia) {
       return [
         _menuAction(
+          context,
           icon: Icons.note_add_outlined,
           label: 'Load subtitle file',
           onPressed: null,
@@ -256,6 +293,7 @@ class PlayerContextMenu extends StatelessWidget {
     return [
       for (final track in tracks)
         _menuAction(
+          context,
           icon: null,
           label: _trackLabel(track.id, track.title, track.language),
           checked: playerController.currentSubtitleTrack.id == track.id,
@@ -264,6 +302,7 @@ class PlayerContextMenu extends StatelessWidget {
         ),
       const _MenuDivider(),
       _menuAction(
+        context,
         icon: Icons.note_add_outlined,
         label: 'Load subtitle file',
         onPressed: onLoadSubtitle,
@@ -278,14 +317,15 @@ class PlayerContextMenu extends StatelessWidget {
     required List<Widget> children,
   }) => SubmenuButton(
     animated: !AppMotion.reduce(context),
-    style: _submenuButtonStyle,
-    menuStyle: _submenuPopupMenuStyle,
+    style: _submenuButtonStyle(context),
+    menuStyle: _submenuPopupMenuStyle(context),
     leadingIcon: Icon(icon, size: 19),
     menuChildren: children,
     child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
   );
 
-  static MenuItemButton _menuAction({
+  static MenuItemButton _menuAction(
+    BuildContext context, {
     required IconData? icon,
     required String label,
     required VoidCallback? onPressed,
@@ -296,7 +336,7 @@ class PlayerContextMenu extends StatelessWidget {
   }) => MenuItemButton(
     onPressed: onPressed,
     semanticsLabel: checked ? '$label, selected' : label,
-    style: _menuItemButtonStyle,
+    style: _menuItemButtonStyle(context),
     leadingIcon: SizedBox(
       width: 20,
       child: _leadingMenuIcon(icon, animated: animateLeadingIcon),
@@ -310,8 +350,8 @@ class PlayerContextMenu extends StatelessWidget {
             : Text(
                 trailing ?? '',
                 textAlign: TextAlign.right,
-                style: const TextStyle(
-                  color: AppTheme.muted,
+                style: TextStyle(
+                  color: context.palette.muted,
                   fontSize: AppType.caption,
                 ),
               ),
@@ -341,14 +381,17 @@ class PlayerContextMenu extends StatelessWidget {
 
 const _playbackRates = <double>[0.5, 0.75, 1, 1.25, 1.5, 2];
 
-final _popupMenuStyle = _menuPanelStyle(AppTheme.surface);
-final _submenuPopupMenuStyle = _menuPanelStyle(AppTheme.card);
+MenuStyle _popupMenuStyle(BuildContext context) =>
+    _menuPanelStyle(context, context.palette.surface);
 
-MenuStyle _menuPanelStyle(Color color) => MenuStyle(
+MenuStyle _submenuPopupMenuStyle(BuildContext context) =>
+    _menuPanelStyle(context, context.palette.card);
+
+MenuStyle _menuPanelStyle(BuildContext context, Color color) => MenuStyle(
   backgroundColor: WidgetStatePropertyAll(color),
   surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
   shadowColor: WidgetStatePropertyAll(
-    AppTheme.background.withValues(alpha: 0.55),
+    context.palette.background.withValues(alpha: 0.55),
   ),
   elevation: const WidgetStatePropertyAll(10),
   padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(vertical: 5)),
@@ -356,34 +399,36 @@ MenuStyle _menuPanelStyle(Color color) => MenuStyle(
   shape: WidgetStatePropertyAll(
     RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(AppRadii.artwork),
-      side: const BorderSide(color: AppTheme.border),
+      side: BorderSide(color: context.palette.border),
     ),
   ),
 );
 
-final _menuItemButtonStyle = MenuItemButton.styleFrom(
-  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-  foregroundColor: AppTheme.text,
-  disabledForegroundColor: AppTheme.muted,
-  minimumSize: const Size(260, 40),
-  padding: const EdgeInsets.symmetric(horizontal: 10),
-  shape: RoundedRectangleBorder(
-    borderRadius: BorderRadius.circular(AppRadii.control),
-  ),
-  overlayColor: AppTheme.hover,
-);
+ButtonStyle _menuItemButtonStyle(BuildContext context) =>
+    MenuItemButton.styleFrom(
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      foregroundColor: context.palette.text,
+      disabledForegroundColor: context.palette.muted,
+      minimumSize: const Size(260, 40),
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppRadii.control),
+      ),
+      overlayColor: context.palette.hover,
+    );
 
-final _submenuButtonStyle = SubmenuButton.styleFrom(
-  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-  foregroundColor: AppTheme.text,
-  disabledForegroundColor: AppTheme.muted,
-  minimumSize: const Size(260, 40),
-  padding: const EdgeInsets.symmetric(horizontal: 10),
-  shape: RoundedRectangleBorder(
-    borderRadius: BorderRadius.circular(AppRadii.control),
-  ),
-  overlayColor: AppTheme.hover,
-);
+ButtonStyle _submenuButtonStyle(BuildContext context) =>
+    SubmenuButton.styleFrom(
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      foregroundColor: context.palette.text,
+      disabledForegroundColor: context.palette.muted,
+      minimumSize: const Size(260, 40),
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppRadii.control),
+      ),
+      overlayColor: context.palette.hover,
+    );
 
 class _MenuDivider extends StatelessWidget {
   const _MenuDivider();

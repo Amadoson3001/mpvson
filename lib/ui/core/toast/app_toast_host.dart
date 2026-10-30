@@ -256,10 +256,10 @@ class _ToastCardState extends State<_ToastCard> with TickerProviderStateMixin {
           type: MaterialType.transparency,
           child: Container(
             decoration: BoxDecoration(
-              color: AppTheme.card.withValues(alpha: 0.98),
+              color: context.palette.card.withValues(alpha: 0.98),
               borderRadius: BorderRadius.circular(AppRadii.artwork + 2),
               border: Border.all(
-                color: AppTheme.borderStrong.withValues(alpha: 0.75),
+                color: context.palette.borderStrong.withValues(alpha: 0.75),
               ),
             ),
             clipBehavior: Clip.antiAlias,
@@ -281,7 +281,7 @@ class _ToastCardState extends State<_ToastCard> with TickerProviderStateMixin {
                       Flexible(
                         child: Text(
                           request.message,
-                          style: AppTheme.rowPrimary.copyWith(
+                          style: context.palette.rowPrimary.copyWith(
                             fontSize: AppType.small,
                             height: 1.35,
                           ),
@@ -354,10 +354,10 @@ class _ToastCardState extends State<_ToastCard> with TickerProviderStateMixin {
   }
 
   Color _accentFor(AppToastTone tone) => switch (tone) {
-    AppToastTone.neutral => AppTheme.secondaryText,
+    AppToastTone.neutral => context.palette.secondaryText,
     AppToastTone.success => AppTheme.success,
     AppToastTone.warning => AppTheme.warning,
-    AppToastTone.danger => AppTheme.danger,
+    AppToastTone.danger => context.palette.danger,
   };
 
   IconData _iconFor(AppToastTone tone) => switch (tone) {
@@ -437,7 +437,7 @@ class _ToastClose extends StatelessWidget {
         child: Icon(
           Icons.close_rounded,
           size: 15,
-          color: visible ? AppTheme.text : AppTheme.faint,
+          color: visible ? context.palette.text : context.palette.faint,
         ),
       ),
     ),

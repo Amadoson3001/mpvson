@@ -531,14 +531,14 @@ class _SessionSaveErrorDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      backgroundColor: AppTheme.card,
+      backgroundColor: context.palette.card,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(8),
-        side: const BorderSide(color: AppTheme.border),
+        side: BorderSide(color: context.palette.border),
       ),
-      title: const Text(
+      title: Text(
         'Could not save playback session',
-        style: TextStyle(color: AppTheme.primaryText, fontSize: 18),
+        style: TextStyle(color: context.palette.primaryText, fontSize: 18),
       ),
       content: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 480),
@@ -546,15 +546,15 @@ class _SessionSaveErrorDialog extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
+            Text(
               'Mpvson was unable to save your current session state. You can retry saving, close without saving your progress, or cancel to keep the player open.',
-              style: TextStyle(color: AppTheme.secondaryText, fontSize: 14),
+              style: TextStyle(color: context.palette.secondaryText, fontSize: 14),
             ),
             if (error.isNotEmpty) ...[
               const SizedBox(height: 12),
               Text(
                 error,
-                style: const TextStyle(color: AppTheme.mutedText, fontSize: 12),
+                style: TextStyle(color: context.palette.mutedText, fontSize: 12),
               ),
             ],
           ],
@@ -563,23 +563,23 @@ class _SessionSaveErrorDialog extends StatelessWidget {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(_ClosePromptAction.cancel),
-          child: const Text(
+          child: Text(
             'Cancel',
-            style: TextStyle(color: AppTheme.mutedText),
+            style: TextStyle(color: context.palette.mutedText),
           ),
         ),
         TextButton(
           onPressed: () =>
               Navigator.of(context).pop(_ClosePromptAction.closeWithoutSaving),
-          child: const Text(
+          child: Text(
             'Close without saving',
-            style: TextStyle(color: AppTheme.danger),
+            style: TextStyle(color: context.palette.danger),
           ),
         ),
         FilledButton(
           style: FilledButton.styleFrom(
-            backgroundColor: AppTheme.accent,
-            foregroundColor: AppTheme.deepBackground,
+            backgroundColor: context.palette.accent,
+            foregroundColor: context.palette.deepBackground,
           ),
           onPressed: () => Navigator.of(context).pop(_ClosePromptAction.retry),
           child: const Text('Retry'),

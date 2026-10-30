@@ -6,6 +6,14 @@ import '../../player/widgets/player_control_style.dart';
 /// The player's preview-enabled seek control with timecodes for the shell.
 class SeekBar extends StatefulWidget {
   const SeekBar({super.key, required this.controller});
+
+  /// Inset that keeps the timecodes and the track off the stage's edges.
+  ///
+  /// Controls that share the timeline's band — the volume readout on the Now
+  /// Playing screen — align to the same line so the playback group reads as one
+  /// block instead of two slightly offset ones.
+  static const double sideInset = 12;
+
   final PlayerController controller;
   @override
   State<SeekBar> createState() => _SeekBarState();
@@ -31,7 +39,7 @@ class _SeekBarState extends State<SeekBar> {
       ]),
       builder: (context, _) => Row(
         children: [
-          const SizedBox(width: 12),
+          SizedBox(width: SeekBar.sideInset),
           Text(
             _time(_preview ?? widget.controller.displayPosition),
             style: Theme.of(context).textTheme.labelSmall?.copyWith(
@@ -58,7 +66,7 @@ class _SeekBarState extends State<SeekBar> {
               fontFeatures: const [FontFeature.tabularFigures()],
             ),
           ),
-          const SizedBox(width: 12),
+          SizedBox(width: SeekBar.sideInset),
         ],
       ),
     ),

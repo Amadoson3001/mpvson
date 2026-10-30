@@ -69,12 +69,12 @@ class _LibraryArtworkState extends State<LibraryArtwork> {
   @override
   Widget build(BuildContext context) {
     Widget fallback() => ColoredBox(
-      color: AppTheme.raisedSurface,
+      color: context.palette.raisedSurface,
       child: Center(
         child: Icon(
           widget.icon,
           size: widget.iconSize,
-          color: AppTheme.mutedText,
+          color: context.palette.mutedText,
         ),
       ),
     );

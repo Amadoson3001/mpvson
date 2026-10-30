@@ -39,7 +39,7 @@ class _OpenUrlDialogState extends State<OpenUrlDialog> {
     return AlertDialog(
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppRadii.artwork),
-        side: const BorderSide(color: AppTheme.border),
+        side: BorderSide(color: context.palette.border),
       ),
       titlePadding: const EdgeInsets.fromLTRB(24, 20, 24, 4),
       contentPadding: const EdgeInsets.fromLTRB(24, 8, 24, 8),
@@ -82,11 +82,11 @@ class _OpenUrlDialogState extends State<OpenUrlDialog> {
                   prefixIcon: const Icon(Icons.link_rounded),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(AppRadii.control),
-                    borderSide: const BorderSide(color: AppTheme.border),
+                    borderSide: BorderSide(color: context.palette.border),
                   ),
                   enabledBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(AppRadii.control),
-                    borderSide: const BorderSide(color: AppTheme.border),
+                    borderSide: BorderSide(color: context.palette.border),
                   ),
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(AppRadii.control),
@@ -113,7 +113,7 @@ class _OpenUrlDialogState extends State<OpenUrlDialog> {
         FilledButton.icon(
           style: FilledButton.styleFrom(
             backgroundColor: accent,
-            foregroundColor: AppTheme.accentForeground,
+            foregroundColor: context.palette.accentForeground,
             minimumSize: const Size(92, 44),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(AppRadii.control),

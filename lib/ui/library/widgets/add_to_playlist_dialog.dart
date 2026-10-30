@@ -73,17 +73,17 @@ class _AddToPlaylistDialogState extends State<AddToPlaylistDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      backgroundColor: AppTheme.surface,
-      title: const Text('Add to playlist', style: AppTheme.sectionTitle),
+      backgroundColor: context.palette.surface,
+      title: Text('Add to playlist', style: context.palette.sectionTitle),
       content: SizedBox(
         width: 360,
         child: FutureBuilder<List<PlaylistRecord>>(
           future: _playlists,
           builder: (context, snapshot) {
             if (snapshot.hasError) {
-              return const Text(
+              return Text(
                 'Could not load playlists.',
-                style: AppTheme.rowSecondary,
+                style: context.palette.rowSecondary,
               );
             }
             if (!snapshot.hasData) {
@@ -95,9 +95,9 @@ class _AddToPlaylistDialogState extends State<AddToPlaylistDialog> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 if (playlists.isEmpty)
-                  const Text(
+                  Text(
                     'Create a playlist to add this item.',
-                    style: AppTheme.rowSecondary,
+                    style: context.palette.rowSecondary,
                   )
                 else
                   Flexible(
@@ -109,11 +109,11 @@ class _AddToPlaylistDialogState extends State<AddToPlaylistDialog> {
                         return ListTile(
                           title: Text(
                             playlist.title,
-                            style: AppTheme.rowPrimary,
+                            style: context.palette.rowPrimary,
                           ),
                           subtitle: Text(
                             '${playlist.entryCount} items',
-                            style: AppTheme.metadata,
+                            style: context.palette.metadata,
                           ),
                           onTap: _saving ? null : () => _add(playlist),
                         );
@@ -122,7 +122,10 @@ class _AddToPlaylistDialogState extends State<AddToPlaylistDialog> {
                   ),
                 if (_error != null) ...[
                   const SizedBox(height: 12),
-                  Text(_error!, style: const TextStyle(color: AppTheme.danger)),
+                  Text(
+                    _error!,
+                    style: TextStyle(color: context.palette.danger),
+                  ),
                 ],
               ],
             );

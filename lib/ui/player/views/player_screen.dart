@@ -10,6 +10,7 @@ import 'package:window_manager/window_manager.dart';
 import '../../../domain/models/media_catalog.dart';
 import '../../../domain/models/media_entry.dart';
 import '../../../domain/models/open_request.dart';
+import '../../../domain/models/player_hotkeys.dart';
 import '../../../data/services/open_request_coordinator.dart';
 import '../../../data/services/engine_update_service.dart';
 import '../../../data/services/update_service.dart';
@@ -44,6 +45,9 @@ typedef UrlPrompt = Future<String?> Function(BuildContext context);
 typedef FullscreenSetter = Future<void> Function(bool fullscreen);
 
 const double _wideQueuePanelWidth = 352;
+const Size _miniPlayerSize = Size(600, 338);
+const Size _miniPlayerMinimumSize = Size(560, 315);
+const Size _windowMinimumSize = Size(720, 480);
 
 class PlayerScreen extends StatefulWidget {
   const PlayerScreen({
@@ -133,6 +137,9 @@ class _PlayerScreenState extends State<PlayerScreen>
   int _homeNavigationRequest = 0;
   bool _backButtonFocused = false;
   bool _settingsOpen = false;
+  bool _miniPlayer = false;
+  Rect? _miniPlayerRestoreBounds;
+  bool _miniRestoreMaximized = false;
   bool _showPlayerView = false;
   String? _playerViewEntryId;
   String? _lastVideoEntryId;
@@ -311,6 +318,13 @@ class _PlayerScreenState extends State<PlayerScreen>
       _lastVideoEntryId = current.id;
       if (_showLibrary) setState(() => _showLibrary = false);
     }
+    if (_miniPlayer) {
+      final audioEntry =
+          current == null ||
+          widget.controller.isAudio ||
+          MediaCatalog.kindFromExtension(current.path).isAudio;
+      if (audioEntry) unawaited(_exitMiniPlayer());
+    }
     if (_hideBlocked) {
       _controlsTimer?.cancel();
       if (!_controlsVisible) setState(() => _controlsVisible = true);
@@ -334,6 +348,7 @@ class _PlayerScreenState extends State<PlayerScreen>
   }
 
   void _openLibrary() {
+    if (_miniPlayer) unawaited(_exitMiniPlayer());
     setState(() {
       _showLibrary = true;
       _showPlayerView = false;
@@ -487,6 +502,112 @@ class _PlayerScreenState extends State<PlayerScreen>
   void _toggleMute() {
     unawaited(widget.controller.toggleMute());
     _showVolumeFeedback(widget.controller.volume);
+  }
+
+  /// Nudges the persisted audio or subtitle delay and reports the new value.
+  Future<void> _adjustPlaybackDelay({
+    required bool audio,
+    required bool later,
+  }) async {
+    final settings = widget.controller.playbackSettings;
+    final stepMs = widget.appPreferences?.preferences.syncStepMs ?? 50;
+    final step = later ? stepMs : -stepMs;
+    final current = audio
+        ? settings.audioDelaySeconds
+        : settings.subtitleDelaySeconds;
+    final boundedMs = ((current * 1000).round() + step).clamp(-10000, 10000);
+    final next = boundedMs / 1000;
+    final updated = audio
+        ? settings.copyWith(audioDelaySeconds: next)
+        : settings.copyWith(subtitleDelaySeconds: next);
+    final suffix = boundedMs > 0 ? '+' : '';
+    _showFeedback(
+      audio ? Icons.graphic_eq_rounded : Icons.closed_caption_rounded,
+      '${audio ? 'Audio' : 'Subtitle'} delay $suffix$boundedMs ms',
+      centered: true,
+    );
+    await widget.controller.setPlaybackSettings(updated);
+    if (mounted && widget.controller.playbackSettingsError != null) {
+      _showMessage('The playback engine did not accept the delay change.');
+    }
+  }
+
+  Future<void> _toggleMiniPlayer() =>
+      _miniPlayer ? _exitMiniPlayer() : _enterMiniPlayer();
+
+  Future<void> _enterMiniPlayer() async {
+    if (_miniPlayer || !_nativeWindow) return;
+    final current = widget.controller.current;
+    final isVideoEntry =
+        current != null && MediaCatalog.kindFromExtension(current.path).isVideo;
+    if (!isVideoEntry || _isShowingLibrary) {
+      _showMessage('Mini player is available while a video is playing.');
+      return;
+    }
+    var wasMaximized = false;
+    try {
+      if (_contextMenu.isOpen) _contextMenu.close();
+      if (_isFullscreen) await _setFullscreen(false);
+      wasMaximized = await _leaveMaximizedState();
+      final bounds = await windowManager.getBounds();
+      await windowManager.setMinimumSize(_miniPlayerMinimumSize);
+      await windowManager.setAlwaysOnTop(true);
+      await windowManager.setBounds(
+        Rect.fromLTWH(
+          bounds.right - _miniPlayerSize.width,
+          bounds.top,
+          _miniPlayerSize.width,
+          _miniPlayerSize.height,
+        ),
+      );
+      if (!mounted) return;
+      setState(() {
+        _miniPlayer = true;
+        _miniPlayerRestoreBounds = bounds;
+        _miniRestoreMaximized = wasMaximized;
+        _controlsVisible = true;
+      });
+      _showFeedback(
+        Icons.picture_in_picture_alt_rounded,
+        'Mini player on',
+        centered: true,
+      );
+    } catch (_) {
+      try {
+        await windowManager.setAlwaysOnTop(false);
+        await windowManager.setMinimumSize(_windowMinimumSize);
+        if (wasMaximized) await windowManager.maximize();
+      } on Object {
+        // Best effort while the window manager is unavailable.
+      }
+      _showMessage('Mini player could not be enabled.');
+    }
+  }
+
+  Future<void> _exitMiniPlayer() async {
+    if (!_miniPlayer) return;
+    final restoreBounds = _miniPlayerRestoreBounds;
+    final restoreMaximized = _miniRestoreMaximized;
+    if (mounted) {
+      setState(() {
+        _miniPlayer = false;
+        _miniPlayerRestoreBounds = null;
+        _miniRestoreMaximized = false;
+      });
+    }
+    try {
+      await windowManager.setAlwaysOnTop(false);
+      await windowManager.setMinimumSize(_windowMinimumSize);
+      if (restoreBounds != null) await windowManager.setBounds(restoreBounds);
+      if (restoreMaximized) await windowManager.maximize();
+    } catch (_) {
+      // The window may already be closing.
+    }
+    _showFeedback(
+      Icons.open_in_full_rounded,
+      'Mini player off',
+      centered: true,
+    );
   }
 
   void _onVideoPointerSignal(PointerSignalEvent event) {
@@ -705,11 +826,26 @@ class _PlayerScreenState extends State<PlayerScreen>
         context.findAncestorWidgetOfExactType<Slider>() != null;
   }
 
+  PlayerHotkeys get _hotkeys =>
+      widget.appPreferences?.preferences.hotkeys ?? PlayerHotkeys.defaults;
+
+  PlayerAction? _actionFor(KeyEvent event) {
+    final keyboard = HardwareKeyboard.instance;
+    if (keyboard.isMetaPressed) return null;
+    return _hotkeys.actionFor(
+      event.logicalKey,
+      ctrl: keyboard.isControlPressed,
+      alt: keyboard.isAltPressed,
+      shift: keyboard.isShiftPressed,
+    );
+  }
+
   KeyEventResult _handleKey(FocusNode node, KeyEvent event) {
     final key = event.logicalKey;
+    final action = _actionFor(event);
     // A held playback shortcut must unwind even if the focus changed before
     // the release. Fresh typing inside a text field remains untouched.
-    if (key == LogicalKeyboardKey.space && event is KeyUpEvent && _spaceHeld) {
+    if (action == PlayerAction.playPause && event is KeyUpEvent && _spaceHeld) {
       final togglePlayback = !_longSpacePress && !_textInputFocused;
       _cancelHeldSpeed();
       if (togglePlayback) unawaited(widget.controller.togglePlayPause());
@@ -731,11 +867,11 @@ class _PlayerScreenState extends State<PlayerScreen>
     }
 
     if (_textInputFocused) return KeyEventResult.ignored;
-    if (key == LogicalKeyboardKey.space && _controlsFocusScope.hasFocus) {
+    if (action == PlayerAction.playPause && _controlsFocusScope.hasFocus) {
       return KeyEventResult.ignored;
     }
 
-    if (key == LogicalKeyboardKey.space) {
+    if (action == PlayerAction.playPause) {
       if (event is KeyDownEvent && !_spaceHeld) {
         _spaceHeld = true;
         _longSpacePress = false;
@@ -774,45 +910,6 @@ class _PlayerScreenState extends State<PlayerScreen>
     }
 
     switch (key) {
-      case LogicalKeyboardKey.arrowLeft:
-        if (_sliderFocused || queueOwnsFocus) return KeyEventResult.ignored;
-        unawaited(widget.controller.seekRelative(const Duration(seconds: -5)));
-        _showControls();
-        return KeyEventResult.handled;
-      case LogicalKeyboardKey.arrowRight:
-        if (_sliderFocused || queueOwnsFocus) return KeyEventResult.ignored;
-        unawaited(widget.controller.seekRelative(const Duration(seconds: 5)));
-        _showControls();
-        return KeyEventResult.handled;
-      case LogicalKeyboardKey.arrowUp:
-        if (_sliderFocused || queueOwnsFocus) return KeyEventResult.ignored;
-        _adjustVolume(5);
-        _showControls();
-        return KeyEventResult.handled;
-      case LogicalKeyboardKey.arrowDown:
-        if (_sliderFocused || queueOwnsFocus) return KeyEventResult.ignored;
-        _adjustVolume(-5);
-        _showControls();
-        return KeyEventResult.handled;
-      case LogicalKeyboardKey.keyP:
-        _toggleQueue();
-        return KeyEventResult.handled;
-      case LogicalKeyboardKey.keyI:
-        if (HardwareKeyboard.instance.isControlPressed ||
-            HardwareKeyboard.instance.isAltPressed ||
-            HardwareKeyboard.instance.isMetaPressed) {
-          return KeyEventResult.ignored;
-        }
-        unawaited(_showPlaybackInfo());
-        return KeyEventResult.handled;
-      case LogicalKeyboardKey.keyM:
-        if (HardwareKeyboard.instance.isControlPressed ||
-            HardwareKeyboard.instance.isAltPressed ||
-            HardwareKeyboard.instance.isMetaPressed) {
-          return KeyEventResult.ignored;
-        }
-        _toggleMute();
-        return KeyEventResult.handled;
       case LogicalKeyboardKey.contextMenu:
         _openKeyboardContextMenu();
         return KeyEventResult.handled;
@@ -830,26 +927,12 @@ class _PlayerScreenState extends State<PlayerScreen>
         }
         break;
       case LogicalKeyboardKey.f11:
-      case LogicalKeyboardKey.keyF:
-        if (HardwareKeyboard.instance.isControlPressed ||
-            HardwareKeyboard.instance.isAltPressed ||
-            HardwareKeyboard.instance.isMetaPressed) {
-          return KeyEventResult.ignored;
-        }
         if (widget.desktopWindow) {
           unawaited(_toggleFullscreen());
           return KeyEventResult.handled;
         }
         break;
       case LogicalKeyboardKey.escape:
-        if (_contextMenu.isOpen) {
-          _contextMenu.close();
-          return KeyEventResult.handled;
-        }
-        if (_queueOpen) {
-          _closeQueuePanel();
-          return KeyEventResult.handled;
-        }
         if (_isFullscreen) {
           unawaited(_setFullscreen(false));
           return KeyEventResult.handled;
@@ -858,7 +941,63 @@ class _PlayerScreenState extends State<PlayerScreen>
       default:
         break;
     }
-    return KeyEventResult.ignored;
+
+    if (action == null) return KeyEventResult.ignored;
+    switch (action) {
+      case PlayerAction.playPause:
+        // Held-state handling above owns the play/pause shortcut.
+        return KeyEventResult.ignored;
+      case PlayerAction.seekBackward:
+      case PlayerAction.seekForward:
+        if (_sliderFocused || queueOwnsFocus) return KeyEventResult.ignored;
+        final stepSeconds =
+            widget.appPreferences?.preferences.seekStepSeconds ?? 5;
+        final step = action == PlayerAction.seekForward
+            ? stepSeconds
+            : -stepSeconds;
+        unawaited(widget.controller.seekRelative(Duration(seconds: step)));
+        _showControls();
+        return KeyEventResult.handled;
+      case PlayerAction.volumeUp:
+        if (_sliderFocused || queueOwnsFocus) return KeyEventResult.ignored;
+        _adjustVolume(5);
+        _showControls();
+        return KeyEventResult.handled;
+      case PlayerAction.volumeDown:
+        if (_sliderFocused || queueOwnsFocus) return KeyEventResult.ignored;
+        _adjustVolume(-5);
+        _showControls();
+        return KeyEventResult.handled;
+      case PlayerAction.mute:
+        _toggleMute();
+        return KeyEventResult.handled;
+      case PlayerAction.queue:
+        _toggleQueue();
+        return KeyEventResult.handled;
+      case PlayerAction.playbackInfo:
+        unawaited(_showPlaybackInfo());
+        return KeyEventResult.handled;
+      case PlayerAction.fullscreen:
+        if (!widget.desktopWindow) return KeyEventResult.ignored;
+        unawaited(_toggleFullscreen());
+        return KeyEventResult.handled;
+      case PlayerAction.miniPlayer:
+        if (!_nativeWindow) return KeyEventResult.ignored;
+        unawaited(_toggleMiniPlayer());
+        return KeyEventResult.handled;
+      case PlayerAction.subtitleEarlier:
+        unawaited(_adjustPlaybackDelay(audio: false, later: false));
+        return KeyEventResult.handled;
+      case PlayerAction.subtitleLater:
+        unawaited(_adjustPlaybackDelay(audio: false, later: true));
+        return KeyEventResult.handled;
+      case PlayerAction.audioEarlier:
+        unawaited(_adjustPlaybackDelay(audio: true, later: false));
+        return KeyEventResult.handled;
+      case PlayerAction.audioLater:
+        unawaited(_adjustPlaybackDelay(audio: true, later: true));
+        return KeyEventResult.handled;
+    }
   }
 
   @override
@@ -986,7 +1125,7 @@ class _PlayerScreenState extends State<PlayerScreen>
                                         child: GestureDetector(
                                           onTap: _toggleQueue,
                                           child: ColoredBox(
-                                            color: AppTheme.background
+                                            color: context.palette.background
                                                 .withValues(alpha: 0.6),
                                           ),
                                         ),
@@ -1189,8 +1328,13 @@ class _PlayerScreenState extends State<PlayerScreen>
             onAdjustVolume: _adjustVolume,
             onMenuVisibilityChanged: _handleMenuVisibility,
             onFullscreen: widget.desktopWindow ? _toggleFullscreen : null,
+            onToggleMiniPlayer: _nativeWindow
+                ? () => unawaited(_toggleMiniPlayer())
+                : null,
             isFullscreen: _isFullscreen,
+            isMiniPlayer: _miniPlayer,
             queueOpen: _queueOpen,
+            shortcutLabel: (action) => _hotkeys.bindingFor(action).label,
             child: MouseRegion(
               key: const ValueKey('video-surface'),
               cursor: _isFullscreen && !_controlsVisible && !_controlMenuOpen
@@ -1204,7 +1348,15 @@ class _PlayerScreenState extends State<PlayerScreen>
                   onTap: widget.controller.hasMedia
                       ? _toggleVideoPlayback
                       : null,
-                  onDoubleTap: widget.desktopWindow ? _toggleFullscreen : null,
+                  onDoubleTap: widget.desktopWindow
+                      ? () {
+                          if (_miniPlayer) {
+                            unawaited(_exitMiniPlayer());
+                          } else {
+                            unawaited(_toggleFullscreen());
+                          }
+                        }
+                      : null,
                   child: AnimatedSwitcher(
                     duration: AppMotion.duration(context, AppMotion.reveal),
                     layoutBuilder: (currentChild, previousChildren) => Stack(
@@ -1248,7 +1400,8 @@ class _PlayerScreenState extends State<PlayerScreen>
                     ignoring: !_controlsVisible,
                     child: Row(
                       children: [
-                        if (widget.libraryRepository != null) ...[
+                        if (!_miniPlayer &&
+                            widget.libraryRepository != null) ...[
                           Focus(
                             onFocusChange: (focused) {
                               _backButtonFocused = focused;
@@ -1295,6 +1448,27 @@ class _PlayerScreenState extends State<PlayerScreen>
                                 ),
                           ),
                         ),
+                        if (_miniPlayer) ...[
+                          const SizedBox(width: 12),
+                          TextButton.icon(
+                            key: const ValueKey('exit-mini-player'),
+                            onPressed: () => unawaited(_exitMiniPlayer()),
+                            icon: const Icon(
+                              Icons.open_in_full_rounded,
+                              size: 20,
+                            ),
+                            label: const Text('Exit mini player'),
+                            style: TextButton.styleFrom(
+                              foregroundColor: AppTheme.onStage,
+                              backgroundColor: AppTheme.stage.withValues(
+                                alpha: 0.65,
+                              ),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                              ),
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ),
@@ -1329,7 +1503,7 @@ class _PlayerScreenState extends State<PlayerScreen>
               child: IgnorePointer(
                 child: Container(
                   decoration: BoxDecoration(
-                    color: AppTheme.background.withValues(alpha: 0.6),
+                    color: context.palette.background.withValues(alpha: 0.6),
                     border: Border.all(
                       color: Theme.of(context).colorScheme.primary,
                       width: 2,
@@ -1383,24 +1557,38 @@ class _PlayerScreenState extends State<PlayerScreen>
                               onInteractionChanged: _handleControlInteraction,
                               onVolumeChanged: _showVolumeFeedback,
                               showPlaybackControls: widget.controller.hasMedia,
-                              actions: PlayerActions(
-                                controller: widget.controller,
-                                onOpenFiles: _openFiles,
-                                onOpenUrl: _openUrl,
-                                onOpenRecent: _playRecent,
-                                onToggleQueue: _toggleQueue,
-                                onSettings: _showSettings,
-                                onPlaybackInfo: _showPlaybackInfo,
-                                onOpenLibrary: widget.libraryRepository != null
-                                    ? _openLibrary
-                                    : null,
-                                onMenuVisibilityChanged: _handleMenuVisibility,
-                                queueOpen: _queueOpen,
-                                isFullscreen: _isFullscreen,
-                                onFullscreen: widget.desktopWindow
-                                    ? _toggleFullscreen
-                                    : null,
-                              ),
+                              actions: _miniPlayer
+                                  ? null
+                                  : PlayerActions(
+                                      controller: widget.controller,
+                                      onOpenFiles: _openFiles,
+                                      onOpenUrl: _openUrl,
+                                      onOpenRecent: _playRecent,
+                                      onToggleQueue: _toggleQueue,
+                                      onSettings: _showSettings,
+                                      onPlaybackInfo: _showPlaybackInfo,
+                                      onOpenLibrary:
+                                          widget.libraryRepository != null
+                                          ? _openLibrary
+                                          : null,
+                                      onMenuVisibilityChanged:
+                                          _handleMenuVisibility,
+                                      queueOpen: _queueOpen,
+                                      isFullscreen: _isFullscreen,
+                                      onFullscreen: widget.desktopWindow
+                                          ? _toggleFullscreen
+                                          : null,
+                                      onToggleMiniPlayer: _nativeWindow
+                                          ? () => unawaited(_toggleMiniPlayer())
+                                          : null,
+                                      isMiniPlayer: _miniPlayer,
+                                      miniPlayerShortcut: _hotkeys
+                                          .bindingFor(PlayerAction.miniPlayer)
+                                          .label,
+                                      playbackInfoShortcut: _hotkeys
+                                          .bindingFor(PlayerAction.playbackInfo)
+                                          .label,
+                                    ),
                             ),
                           ),
                         ),
@@ -1690,7 +1878,10 @@ class _PlayerScreenState extends State<PlayerScreen>
     );
   }
 
-  Future<void> _toggleFullscreen() => _setFullscreen(!_isFullscreen);
+  Future<void> _toggleFullscreen() async {
+    if (_miniPlayer) await _exitMiniPlayer();
+    await _setFullscreen(!_isFullscreen);
+  }
 
   Future<void> _setFullscreen(bool value) async {
     if (_contextMenu.isOpen) _contextMenu.close();
@@ -1754,12 +1945,12 @@ class _ErrorBanner extends StatelessWidget {
   Widget build(BuildContext context) => Container(
     width: double.infinity,
     padding: const EdgeInsets.symmetric(horizontal: 18, vertical: AppSpace.xs),
-    color: AppTheme.danger.withValues(alpha: 0.12),
+    color: context.palette.danger.withValues(alpha: 0.12),
     child: Row(
       children: [
-        const Icon(
+        Icon(
           Icons.error_outline_rounded,
-          color: AppTheme.danger,
+          color: context.palette.danger,
           size: 18,
         ),
         const SizedBox(width: 9),
@@ -1770,7 +1961,7 @@ class _ErrorBanner extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
             style: Theme.of(
               context,
-            ).textTheme.bodySmall?.copyWith(color: AppTheme.secondaryText),
+            ).textTheme.bodySmall?.copyWith(color: context.palette.secondaryText),
           ),
         ),
       ],

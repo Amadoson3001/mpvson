@@ -75,9 +75,9 @@ class _QueuePanelState extends State<QueuePanel> {
         final visible = snapshot.filterIndexed(_query);
 
         return Container(
-          decoration: const BoxDecoration(
-            color: AppTheme.surface,
-            border: Border(left: BorderSide(color: AppTheme.border)),
+          decoration: BoxDecoration(
+            color: context.palette.surface,
+            border: Border(left: BorderSide(color: context.palette.border)),
           ),
           child: Column(
             children: [
@@ -364,9 +364,9 @@ class _QueueCount extends StatelessWidget {
           vertical: 3,
         ),
         decoration: BoxDecoration(
-          color: AppTheme.card,
+          color: context.palette.card,
           borderRadius: BorderRadius.circular(AppRadii.control),
-          border: Border.all(color: AppTheme.border.withValues(alpha: 0.72)),
+          border: Border.all(color: context.palette.border.withValues(alpha: 0.72)),
         ),
         child: AnimatedSwitcher(
           duration: AppMotion.duration(context, AppMotion.quick),
@@ -599,7 +599,7 @@ class _QueueEntryState extends State<_QueueEntry> with WidgetsBindingObserver {
                         : Colors.transparent,
                     border: Border(
                       bottom: BorderSide(
-                        color: AppTheme.border.withValues(alpha: 0.52),
+                        color: context.palette.border.withValues(alpha: 0.52),
                       ),
                     ),
                   ),
@@ -634,8 +634,8 @@ class _QueueEntryState extends State<_QueueEntry> with WidgetsBindingObserver {
                                         .titleSmall
                                         ?.copyWith(
                                           color: widget.isCurrent
-                                              ? AppTheme.text
-                                              : AppTheme.secondaryText,
+                                              ? context.palette.text
+                                              : context.palette.secondaryText,
                                           fontSize: AppType.body,
                                           fontWeight: FontWeight.w600,
                                         ),
@@ -652,7 +652,7 @@ class _QueueEntryState extends State<_QueueEntry> with WidgetsBindingObserver {
                                           .textTheme
                                           .labelSmall
                                           ?.copyWith(
-                                            color: AppTheme.muted,
+                                            color: context.palette.muted,
                                             fontSize: AppType.caption,
                                           ),
                                     ),
@@ -674,7 +674,7 @@ class _QueueEntryState extends State<_QueueEntry> with WidgetsBindingObserver {
                               tooltip: 'Remove ${entry.title} from queue',
                               onPressed: widget.onRemove,
                               style: IconButton.styleFrom(
-                                foregroundColor: AppTheme.muted,
+                                foregroundColor: context.palette.muted,
                                 minimumSize: const Size(44, 44),
                                 padding: EdgeInsets.zero,
                               ),
@@ -712,10 +712,10 @@ class _QueueEntryState extends State<_QueueEntry> with WidgetsBindingObserver {
                                             AppMotion.quick,
                                           ),
                                           curve: AppMotion.standardCurve,
-                                          child: const Icon(
+                                          child: Icon(
                                             Icons.drag_indicator_rounded,
                                             size: 17,
-                                            color: AppTheme.secondaryText,
+                                            color: context.palette.secondaryText,
                                           ),
                                         ),
                                       ),
@@ -790,12 +790,12 @@ class _QueueThumbnail extends StatelessWidget {
         duration: AppMotion.duration(context, AppMotion.quick),
         curve: AppMotion.standardCurve,
         decoration: BoxDecoration(
-          color: AppTheme.card,
+          color: context.palette.card,
           borderRadius: BorderRadius.circular(AppRadii.control),
           border: Border.all(
             color: selected
                 ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.88)
-                : AppTheme.border.withValues(alpha: 0.72),
+                : context.palette.border.withValues(alpha: 0.72),
             width: selected ? 2 : 1,
           ),
         ),
@@ -828,10 +828,10 @@ class _QueueThumbnail extends StatelessWidget {
                           fit: BoxFit.cover,
                           gaplessPlayback: true,
                           errorBuilder: (context, error, stackTrace) =>
-                              _placeholder('error'),
+                              _placeholder(context, 'error'),
                         ),
                       )
-                    : _placeholder(snapshot.hasError ? 'error' : 'empty'),
+                    : _placeholder(context, snapshot.hasError ? 'error' : 'empty'),
               ),
               if (duration > Duration.zero)
                 Positioned(
@@ -851,7 +851,7 @@ class _QueueThumbnail extends StatelessWidget {
                         _QueueEntryState._formatTime(duration),
                         key: ValueKey('queue-duration-${entry.id}'),
                         style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                          color: AppTheme.text,
+                          color: context.palette.text,
                           fontSize: AppType.caption,
                           fontWeight: FontWeight.w600,
                           fontFeatures: const [FontFeature.tabularFigures()],
@@ -867,14 +867,14 @@ class _QueueThumbnail extends StatelessWidget {
     },
   );
 
-  Widget _placeholder(String state) => ColoredBox(
+  Widget _placeholder(BuildContext context, String state) => ColoredBox(
     key: ValueKey<String>('queue-placeholder-${entry.id}-$state'),
-    color: AppTheme.deepBackground,
+    color: context.palette.deepBackground,
     child: Center(
       child: Icon(
         Icons.movie_outlined,
         size: 23,
-        color: AppTheme.muted.withValues(alpha: 0.75),
+        color: context.palette.muted.withValues(alpha: 0.75),
       ),
     ),
   );
@@ -895,7 +895,7 @@ class _QueueEmpty extends StatelessWidget {
         children: [
           Icon(
             hasQueue ? Icons.search_off_rounded : Icons.queue_play_next_rounded,
-            color: AppTheme.muted,
+            color: context.palette.muted,
             size: 26,
           ),
           const SizedBox(height: 10),
@@ -904,7 +904,7 @@ class _QueueEmpty extends StatelessWidget {
             textAlign: TextAlign.center,
             style: Theme.of(
               context,
-            ).textTheme.bodyMedium?.copyWith(color: AppTheme.secondaryText),
+            ).textTheme.bodyMedium?.copyWith(color: context.palette.secondaryText),
           ),
           if (hasQueue && onClearSearch != null) ...[
             const SizedBox(height: 4),
@@ -946,8 +946,8 @@ class _QueueFooter extends StatelessWidget {
   Widget build(BuildContext context) => Container(
     width: double.infinity,
     padding: const EdgeInsets.fromLTRB(AppSpace.xs, 5, AppSpace.xs, 5),
-    decoration: const BoxDecoration(
-      border: Border(top: BorderSide(color: AppTheme.border)),
+    decoration: BoxDecoration(
+      border: Border(top: BorderSide(color: context.palette.border)),
     ),
     child: OverflowBar(
       alignment: MainAxisAlignment.spaceBetween,
@@ -980,7 +980,7 @@ class _QueueFooter extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
             ),
             style: TextButton.styleFrom(
-              foregroundColor: AppTheme.secondaryText,
+              foregroundColor: context.palette.secondaryText,
               minimumSize: const Size(44, 44),
               padding: const EdgeInsets.symmetric(horizontal: AppSpace.xs),
             ),
@@ -1003,15 +1003,15 @@ class _QueueFooter extends StatelessWidget {
                 if (states.contains(WidgetState.hovered) ||
                     states.contains(WidgetState.focused) ||
                     states.contains(WidgetState.pressed)) {
-                  return AppTheme.danger;
+                  return context.palette.danger;
                 }
-                return AppTheme.secondaryText;
+                return context.palette.secondaryText;
               }),
               overlayColor: WidgetStateProperty.resolveWith((states) {
                 if (states.contains(WidgetState.hovered) ||
                     states.contains(WidgetState.focused) ||
                     states.contains(WidgetState.pressed)) {
-                  return AppTheme.danger.withValues(alpha: 0.1);
+                  return context.palette.danger.withValues(alpha: 0.1);
                 }
                 return Colors.transparent;
               }),

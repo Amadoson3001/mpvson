@@ -29,6 +29,7 @@ class LibraryStatusBanner extends StatelessWidget {
         if (repository.initializationError != null) {
           banners.add(
             _buildErrorBanner(
+              context,
               'Could not open the library.',
               'Retry',
               () => repository.initialize(),
@@ -36,19 +37,20 @@ class LibraryStatusBanner extends StatelessWidget {
           );
         } else if (!repository.isReady) {
           banners.add(
-            const Padding(
+            Padding(
               padding: EdgeInsets.fromLTRB(
                 AppSpace.md,
                 AppSpace.xs,
                 AppSpace.md,
                 0,
               ),
-              child: Text('Opening library...', style: AppTheme.metadata),
+              child: Text('Opening library...', style: context.palette.metadata),
             ),
           );
         } else if (status.phase == ScanPhase.error) {
           banners.add(
             _buildErrorBanner(
+              context,
               'Could not scan the library. Check the folders and try again.',
               'Rescan',
               onRescan,
@@ -82,6 +84,7 @@ class LibraryStatusBanner extends StatelessWidget {
   }
 
   Widget _buildErrorBanner(
+    BuildContext context,
     String message,
     String action,
     VoidCallback? onAction,
@@ -98,19 +101,19 @@ class LibraryStatusBanner extends StatelessWidget {
         vertical: AppSpace.xs,
       ),
       decoration: BoxDecoration(
-        color: AppTheme.surface,
+        color: context.palette.surface,
         borderRadius: BorderRadius.circular(AppRadii.artwork),
-        border: Border.all(color: AppTheme.danger.withValues(alpha: 0.5)),
+        border: Border.all(color: context.palette.danger.withValues(alpha: 0.5)),
       ),
       child: Row(
         children: [
-          const Icon(
+          Icon(
             Icons.error_outline_rounded,
-            color: AppTheme.danger,
+            color: context.palette.danger,
             size: 18,
           ),
           const SizedBox(width: 12),
-          Expanded(child: Text(message, style: AppTheme.rowPrimary)),
+          Expanded(child: Text(message, style: context.palette.rowPrimary)),
           if (onAction != null)
             TextButton(onPressed: onAction, child: Text(action)),
         ],
@@ -147,7 +150,7 @@ class LibraryStatusBanner extends StatelessWidget {
         vertical: AppSpace.sm,
       ),
       decoration: BoxDecoration(
-        color: AppTheme.surface,
+        color: context.palette.surface,
         borderRadius: BorderRadius.circular(AppRadii.artwork),
         border: Border.all(color: accent.withValues(alpha: 0.4)),
       ),
@@ -164,16 +167,16 @@ class LibraryStatusBanner extends StatelessWidget {
                   strokeWidth: 2,
                   value: progress,
                   valueColor: AlwaysStoppedAnimation<Color>(accent),
-                  backgroundColor: AppTheme.border,
+                  backgroundColor: context.palette.border,
                 ),
               ),
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
                   phaseLabel,
-                  style: AppTheme.rowPrimary.copyWith(
+                  style: context.palette.rowPrimary.copyWith(
                     fontWeight: FontWeight.w600,
-                    color: AppTheme.primaryText,
+                    color: context.palette.primaryText,
                   ),
                 ),
               ),
@@ -183,8 +186,8 @@ class LibraryStatusBanner extends StatelessWidget {
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   textAlign: TextAlign.end,
-                  style: AppTheme.metadata.copyWith(
-                    color: AppTheme.secondaryText,
+                  style: context.palette.metadata.copyWith(
+                    color: context.palette.secondaryText,
                   ),
                 ),
               ),
@@ -193,8 +196,8 @@ class LibraryStatusBanner extends StatelessWidget {
                 icon: const Icon(Icons.close_rounded, size: 16),
                 tooltip: 'Stop scan',
                 visualDensity: VisualDensity.compact,
-                color: AppTheme.mutedText,
-                hoverColor: AppTheme.hover,
+                color: context.palette.mutedText,
+                hoverColor: context.palette.hover,
                 onPressed: () => repository.cancelScan(),
               ),
             ],
@@ -206,7 +209,7 @@ class LibraryStatusBanner extends StatelessWidget {
               child: LinearProgressIndicator(
                 value: progress,
                 minHeight: 4,
-                backgroundColor: AppTheme.border,
+                backgroundColor: context.palette.border,
                 valueColor: AlwaysStoppedAnimation<Color>(accent),
               ),
             ),
@@ -237,7 +240,7 @@ class LibraryStatusBanner extends StatelessWidget {
         vertical: 10,
       ),
       decoration: BoxDecoration(
-        color: AppTheme.raisedSurface,
+        color: context.palette.raisedSurface,
         borderRadius: BorderRadius.circular(AppRadii.artwork),
         border: Border.all(color: AppTheme.warning.withValues(alpha: 0.5)),
       ),
@@ -259,7 +262,7 @@ class LibraryStatusBanner extends StatelessWidget {
                     Flexible(
                       child: Text(
                         'Drive unavailable ($folderText)',
-                        style: AppTheme.rowPrimary.copyWith(
+                        style: context.palette.rowPrimary.copyWith(
                           color: AppTheme.warning,
                           fontWeight: FontWeight.w600,
                         ),
@@ -279,7 +282,7 @@ class LibraryStatusBanner extends StatelessWidget {
                       ),
                       child: Text(
                         'Items preserved',
-                        style: AppTheme.badge.copyWith(
+                        style: context.palette.badge.copyWith(
                           fontSize: AppType.caption,
                           color: AppTheme.warning,
                         ),
@@ -290,7 +293,7 @@ class LibraryStatusBanner extends StatelessWidget {
                 const SizedBox(height: 2),
                 Text(
                   'Your library entries are preserved and will automatically become playable when reconnected.',
-                  style: AppTheme.metadata,
+                  style: context.palette.metadata,
                 ),
               ],
             ),

@@ -67,10 +67,10 @@ class _PlaylistCreateDialogState extends State<PlaylistCreateDialog> {
   Widget build(BuildContext context) {
     final accent = Theme.of(context).colorScheme.primary;
     return Dialog(
-      backgroundColor: AppTheme.surface,
+      backgroundColor: context.palette.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppRadii.artwork),
-        side: const BorderSide(color: AppTheme.border),
+        side: BorderSide(color: context.palette.border),
       ),
       insetPadding: const EdgeInsets.symmetric(
         horizontal: AppSpace.lg,
@@ -84,25 +84,25 @@ class _PlaylistCreateDialogState extends State<PlaylistCreateDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text('Create playlist', style: AppTheme.albumTitle),
+              Text('Create playlist', style: context.palette.albumTitle),
               const SizedBox(height: 8),
               Text(
                 'Give your new playlist a descriptive name.',
-                style: AppTheme.rowSecondary,
+                style: context.palette.rowSecondary,
               ),
               const SizedBox(height: 20),
               TextField(
                 controller: _titleController,
                 enabled: !_isCreating,
                 autofocus: true,
-                style: AppTheme.rowPrimary,
+                style: context.palette.rowPrimary,
                 cursorColor: accent,
                 onSubmitted: (_) => _submit(),
                 decoration: InputDecoration(
                   hintText: 'e.g. Synthwave Favorites',
-                  hintStyle: AppTheme.metadata,
+                  hintStyle: context.palette.metadata,
                   filled: true,
-                  fillColor: AppTheme.raisedSurface,
+                  fillColor: context.palette.raisedSurface,
                   errorText: _error,
                   contentPadding: const EdgeInsets.symmetric(
                     horizontal: AppSpace.md,
@@ -110,7 +110,7 @@ class _PlaylistCreateDialogState extends State<PlaylistCreateDialog> {
                   ),
                   enabledBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(AppRadii.control),
-                    borderSide: const BorderSide(color: AppTheme.border),
+                    borderSide: BorderSide(color: context.palette.border),
                   ),
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(AppRadii.control),
@@ -118,12 +118,12 @@ class _PlaylistCreateDialogState extends State<PlaylistCreateDialog> {
                   ),
                   errorBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(AppRadii.control),
-                    borderSide: const BorderSide(color: AppTheme.danger),
+                    borderSide: BorderSide(color: context.palette.danger),
                   ),
                   focusedErrorBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(AppRadii.control),
-                    borderSide: const BorderSide(
-                      color: AppTheme.danger,
+                    borderSide: BorderSide(
+                      color: context.palette.danger,
                       width: 1.5,
                     ),
                   ),
@@ -138,7 +138,7 @@ class _PlaylistCreateDialogState extends State<PlaylistCreateDialog> {
                         ? null
                         : () => Navigator.of(context).pop(),
                     style: TextButton.styleFrom(
-                      foregroundColor: AppTheme.secondaryText,
+                      foregroundColor: context.palette.secondaryText,
                       padding: const EdgeInsets.symmetric(
                         horizontal: AppSpace.md,
                         vertical: AppSpace.sm,
@@ -151,7 +151,7 @@ class _PlaylistCreateDialogState extends State<PlaylistCreateDialog> {
                     onPressed: _isCreating ? null : _submit,
                     style: FilledButton.styleFrom(
                       backgroundColor: accent,
-                      foregroundColor: AppTheme.accentForeground,
+                      foregroundColor: context.palette.accentForeground,
                       padding: const EdgeInsets.symmetric(
                         horizontal: 20,
                         vertical: AppSpace.sm,
@@ -165,13 +165,13 @@ class _PlaylistCreateDialogState extends State<PlaylistCreateDialog> {
                       ),
                     ),
                     child: _isCreating
-                        ? const SizedBox(
+                        ? SizedBox(
                             width: 16,
                             height: 16,
                             child: CircularProgressIndicator(
                               strokeWidth: 2,
                               valueColor: AlwaysStoppedAnimation<Color>(
-                                AppTheme.background,
+                                context.palette.background,
                               ),
                             ),
                           )

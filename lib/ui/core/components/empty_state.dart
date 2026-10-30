@@ -45,12 +45,12 @@ class EmptyState extends StatelessWidget {
                 child: Icon(icon, size: 30, color: accent),
               ),
               const SizedBox(height: 24),
-              Text(title, style: AppTheme.albumTitle),
+              Text(title, style: context.palette.albumTitle),
               const SizedBox(height: 12),
               Text(
                 message,
-                style: AppTheme.rowSecondary.copyWith(
-                  color: AppTheme.secondaryText,
+                style: context.palette.rowSecondary.copyWith(
+                  color: context.palette.secondaryText,
                   height: 1.5,
                 ),
               ),
@@ -59,7 +59,7 @@ class EmptyState extends StatelessWidget {
                 FilledButton.icon(
                   style: FilledButton.styleFrom(
                     backgroundColor: accent,
-                    foregroundColor: AppTheme.accentForeground,
+                    foregroundColor: context.palette.accentForeground,
                     padding: const EdgeInsets.symmetric(
                       horizontal: AppSpace.lg,
                       vertical: 14,

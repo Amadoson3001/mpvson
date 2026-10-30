@@ -283,13 +283,13 @@ class _MusicViewState extends State<MusicView> {
     final items = _items ?? const <MediaItemRecord>[];
 
     return Material(
-      color: AppTheme.background,
+      color: context.palette.background,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           // Subtab Navigation Bar
           _buildSubtabHeader(),
-          const Divider(height: 1, color: AppTheme.border),
+          Divider(height: 1, color: context.palette.border),
           // Content stage
           Expanded(
             child: _isLoading && _items == null
@@ -342,7 +342,7 @@ class _MusicViewState extends State<MusicView> {
         _currentSubtab != MusicSubtab.albums &&
         _currentSubtab != MusicSubtab.artists;
     return Container(
-      color: AppTheme.surface,
+      color: context.palette.surface,
       padding: const EdgeInsets.symmetric(
         horizontal: AppSpace.lg,
         vertical: AppSpace.xs,
@@ -376,7 +376,7 @@ class _MusicViewState extends State<MusicView> {
               icon: Icon(
                 Icons.filter_list_rounded,
                 color: _currentSubtab == MusicSubtab.songs
-                    ? AppTheme.secondaryText
+                    ? context.palette.secondaryText
                     : Theme.of(context).colorScheme.primary,
               ),
               itemBuilder: (_) => const [
@@ -410,7 +410,7 @@ class _MusicViewState extends State<MusicView> {
       child: TextButton(
         onPressed: () => _changeSubtab(tab),
         style: TextButton.styleFrom(
-          foregroundColor: selected ? accent : AppTheme.secondaryText,
+          foregroundColor: selected ? accent : context.palette.secondaryText,
           backgroundColor: selected
               ? accent.withValues(alpha: 0.10)
               : Colors.transparent,
@@ -510,8 +510,8 @@ class _MusicViewState extends State<MusicView> {
       ),
       itemCount: songs.length + 1, // header row + songs
       separatorBuilder: (_, index) => index == 0
-          ? const Divider(height: 16, thickness: 1, color: AppTheme.border)
-          : const Divider(height: 1, color: AppTheme.surface),
+          ? Divider(height: 16, thickness: 1, color: context.palette.border)
+          : Divider(height: 1, color: context.palette.surface),
       itemBuilder: (context, index) {
         if (index == 0) {
           return _buildTableHeaderRow();
@@ -531,20 +531,20 @@ class _MusicViewState extends State<MusicView> {
       ),
       child: Row(
         children: [
-          const SizedBox(width: 36, child: Text('#', style: AppTheme.metadata)),
-          const Expanded(
+          SizedBox(width: 36, child: Text('#', style: context.palette.metadata)),
+          Expanded(
             flex: 4,
-            child: Text('Title', style: AppTheme.metadata),
+            child: Text('Title', style: context.palette.metadata),
           ),
-          const Expanded(
+          Expanded(
             flex: 3,
-            child: Text('Album', style: AppTheme.metadata),
+            child: Text('Album', style: context.palette.metadata),
           ),
-          const SizedBox(
+          SizedBox(
             width: 70,
             child: Text(
               'Duration',
-              style: AppTheme.metadata,
+              style: context.palette.metadata,
               textAlign: TextAlign.right,
             ),
           ),
@@ -581,7 +581,7 @@ class _MusicViewState extends State<MusicView> {
             vertical: AppSpace.xxs,
           ),
           decoration: BoxDecoration(
-            color: isSelected ? AppTheme.hover : Colors.transparent,
+            color: isSelected ? context.palette.hover : Colors.transparent,
             border: isSelected
                 ? Border(left: BorderSide(color: accent, width: 2))
                 : null,
@@ -600,7 +600,7 @@ class _MusicViewState extends State<MusicView> {
                       ? null
                       : () => _playSongCollection(collection, index),
                   borderRadius: BorderRadius.circular(AppRadii.control),
-                  hoverColor: AppTheme.hover,
+                  hoverColor: context.palette.hover,
                   child: Padding(
                     padding: const EdgeInsets.symmetric(vertical: 6),
                     child: Row(
@@ -630,12 +630,12 @@ class _MusicViewState extends State<MusicView> {
                                   Flexible(
                                     child: Text(
                                       song.title,
-                                      style: AppTheme.rowPrimary.copyWith(
+                                      style: context.palette.rowPrimary.copyWith(
                                         color: isUnavailable
-                                            ? AppTheme.mutedText
+                                            ? context.palette.mutedText
                                             : isCurrent
                                             ? accent
-                                            : AppTheme.primaryText,
+                                            : context.palette.primaryText,
                                         fontWeight: isCurrent
                                             ? FontWeight.w600
                                             : FontWeight.w500,
@@ -652,7 +652,7 @@ class _MusicViewState extends State<MusicView> {
                                         vertical: 1,
                                       ),
                                       decoration: BoxDecoration(
-                                        color: AppTheme.danger.withValues(
+                                        color: context.palette.danger.withValues(
                                           alpha: 0.2,
                                         ),
                                         borderRadius: BorderRadius.circular(
@@ -661,9 +661,9 @@ class _MusicViewState extends State<MusicView> {
                                       ),
                                       child: Text(
                                         'Missing',
-                                        style: AppTheme.badge.copyWith(
+                                        style: context.palette.badge.copyWith(
                                           fontSize: AppType.caption,
-                                          color: AppTheme.danger,
+                                          color: context.palette.danger,
                                         ),
                                       ),
                                     ),
@@ -673,7 +673,7 @@ class _MusicViewState extends State<MusicView> {
                               const SizedBox(height: 2),
                               Text(
                                 song.artist,
-                                style: AppTheme.rowSecondary,
+                                style: context.palette.rowSecondary,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                               ),
@@ -685,7 +685,7 @@ class _MusicViewState extends State<MusicView> {
                           flex: 3,
                           child: Text(
                             song.album,
-                            style: AppTheme.rowSecondary,
+                            style: context.palette.rowSecondary,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -695,7 +695,7 @@ class _MusicViewState extends State<MusicView> {
                           width: 70,
                           child: Text(
                             _formatDuration(song.metadata.duration),
-                            style: AppTheme.metadata.copyWith(
+                            style: context.palette.metadata.copyWith(
                               fontFeatures: const [
                                 FontFeature.tabularFigures(),
                               ],
@@ -717,7 +717,7 @@ class _MusicViewState extends State<MusicView> {
                         ? Icons.favorite_rounded
                         : Icons.favorite_border_rounded,
                     size: 18,
-                    color: song.isFavorite ? accent : AppTheme.mutedText,
+                    color: song.isFavorite ? accent : context.palette.mutedText,
                   ),
                   tooltip: song.isFavorite
                       ? 'Remove favorite'
@@ -739,16 +739,16 @@ class _MusicViewState extends State<MusicView> {
 
   Widget _buildItemActionMenu(MediaItemRecord song) {
     return PopupMenuButton<String>(
-      icon: const Icon(
+      icon: Icon(
         Icons.more_vert_rounded,
         size: 18,
-        color: AppTheme.mutedText,
+        color: context.palette.mutedText,
       ),
       tooltip: 'Actions',
-      color: AppTheme.surface,
+      color: context.palette.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppRadii.control),
-        side: const BorderSide(color: AppTheme.border),
+        side: BorderSide(color: context.palette.border),
       ),
       onSelected: (action) async {
         switch (action) {
@@ -806,8 +806,8 @@ class _MusicViewState extends State<MusicView> {
               children: [
                 Icon(Icons.play_arrow_rounded, size: 18, color: accent),
                 const SizedBox(width: 10),
-                const Expanded(
-                  child: Text('Play now', style: AppTheme.rowPrimary),
+                Expanded(
+                  child: Text('Play now', style: context.palette.rowPrimary),
                 ),
               ],
             ),
@@ -815,47 +815,47 @@ class _MusicViewState extends State<MusicView> {
           PopupMenuItem(
             value: 'play_next',
             enabled: song.isAvailable,
-            child: const Row(
+            child: Row(
               children: [
                 Icon(
                   Icons.playlist_play_rounded,
                   size: 18,
-                  color: AppTheme.secondaryText,
+                  color: context.palette.secondaryText,
                 ),
                 SizedBox(width: 10),
-                Expanded(child: Text('Play next', style: AppTheme.rowPrimary)),
+                Expanded(child: Text('Play next', style: context.palette.rowPrimary)),
               ],
             ),
           ),
           PopupMenuItem(
             value: 'add_queue',
             enabled: song.isAvailable,
-            child: const Row(
+            child: Row(
               children: [
                 Icon(
                   Icons.queue_music_rounded,
                   size: 18,
-                  color: AppTheme.secondaryText,
+                  color: context.palette.secondaryText,
                 ),
                 SizedBox(width: 10),
                 Expanded(
-                  child: Text('Add to queue', style: AppTheme.rowPrimary),
+                  child: Text('Add to queue', style: context.palette.rowPrimary),
                 ),
               ],
             ),
           ),
-          const PopupMenuItem(
+          PopupMenuItem(
             value: 'add_playlist',
             child: Row(
               children: [
                 Icon(
                   Icons.playlist_add_rounded,
                   size: 18,
-                  color: AppTheme.secondaryText,
+                  color: context.palette.secondaryText,
                 ),
                 SizedBox(width: 10),
                 Expanded(
-                  child: Text('Add to playlist', style: AppTheme.rowPrimary),
+                  child: Text('Add to playlist', style: context.palette.rowPrimary),
                 ),
               ],
             ),
@@ -875,7 +875,7 @@ class _MusicViewState extends State<MusicView> {
                 Expanded(
                   child: Text(
                     song.isFavorite ? 'Remove favorite' : 'Favorite',
-                    style: AppTheme.rowPrimary,
+                    style: context.palette.rowPrimary,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -884,18 +884,18 @@ class _MusicViewState extends State<MusicView> {
             ),
           ),
           const PopupMenuDivider(height: 1),
-          const PopupMenuItem(
+          PopupMenuItem(
             value: 'show_folder',
             child: Row(
               children: [
                 Icon(
                   Icons.folder_open_rounded,
                   size: 18,
-                  color: AppTheme.secondaryText,
+                  color: context.palette.secondaryText,
                 ),
                 SizedBox(width: 10),
                 Expanded(
-                  child: Text('Show in folder', style: AppTheme.rowPrimary),
+                  child: Text('Show in folder', style: context.palette.rowPrimary),
                 ),
               ],
             ),
@@ -1018,7 +1018,7 @@ class _MusicViewState extends State<MusicView> {
     );
 
     return Scaffold(
-      backgroundColor: AppTheme.background,
+      backgroundColor: context.palette.background,
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -1035,7 +1035,7 @@ class _MusicViewState extends State<MusicView> {
                 IconButton(
                   icon: const Icon(Icons.arrow_back_rounded),
                   tooltip: 'Back to albums',
-                  color: AppTheme.secondaryText,
+                  color: context.palette.secondaryText,
                   onPressed: () {
                     setState(() {
                       _selectedAlbum = null;
@@ -1046,14 +1046,14 @@ class _MusicViewState extends State<MusicView> {
                   },
                 ),
                 const SizedBox(width: 8),
-                Text('Albums', style: AppTheme.rowSecondary),
+                Text('Albums', style: context.palette.rowSecondary),
                 const SizedBox(width: 6),
-                const Text('›', style: AppTheme.metadata),
+                Text('›', style: context.palette.metadata),
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
                     albumName,
-                    style: AppTheme.rowPrimary.copyWith(
+                    style: context.palette.rowPrimary.copyWith(
                       fontWeight: FontWeight.w600,
                     ),
                     maxLines: 1,
@@ -1073,9 +1073,9 @@ class _MusicViewState extends State<MusicView> {
                   width: 160,
                   height: 160,
                   decoration: BoxDecoration(
-                    color: AppTheme.raisedSurface,
+                    color: context.palette.raisedSurface,
                     borderRadius: BorderRadius.circular(AppRadii.artwork),
-                    border: Border.all(color: AppTheme.border),
+                    border: Border.all(color: context.palette.border),
                   ),
                   clipBehavior: Clip.antiAlias,
                   child: LibraryArtwork(
@@ -1096,7 +1096,7 @@ class _MusicViewState extends State<MusicView> {
                     children: [
                       Text(
                         albumName,
-                        style: AppTheme.albumTitle,
+                        style: context.palette.albumTitle,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -1105,14 +1105,14 @@ class _MusicViewState extends State<MusicView> {
                         artist,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: AppTheme.sectionTitle.copyWith(
-                          color: AppTheme.secondaryText,
+                        style: context.palette.sectionTitle.copyWith(
+                          color: context.palette.secondaryText,
                         ),
                       ),
                       const SizedBox(height: 8),
                       Text(
                         '${sortedTracks.length} tracks • ${_formatDuration(totalDuration)}',
-                        style: AppTheme.metadata,
+                        style: context.palette.metadata,
                       ),
                       const SizedBox(height: 16),
                       Wrap(
@@ -1124,7 +1124,7 @@ class _MusicViewState extends State<MusicView> {
                               backgroundColor: Theme.of(
                                 context,
                               ).colorScheme.primary,
-                              foregroundColor: AppTheme.accentForeground,
+                              foregroundColor: context.palette.accentForeground,
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 20,
                                 vertical: AppSpace.sm,
@@ -1144,8 +1144,8 @@ class _MusicViewState extends State<MusicView> {
                           ),
                           OutlinedButton.icon(
                             style: OutlinedButton.styleFrom(
-                              foregroundColor: AppTheme.primaryText,
-                              side: const BorderSide(color: AppTheme.border),
+                              foregroundColor: context.palette.primaryText,
+                              side: BorderSide(color: context.palette.border),
                               padding: const EdgeInsets.symmetric(
                                 horizontal: AppSpace.md,
                                 vertical: AppSpace.sm,
@@ -1169,7 +1169,7 @@ class _MusicViewState extends State<MusicView> {
               ],
             ),
           ),
-          const Divider(height: 1, color: AppTheme.border),
+          Divider(height: 1, color: context.palette.border),
           // Tracklist
           Expanded(child: _buildSongTableView(sortedTracks)),
         ],
@@ -1241,7 +1241,7 @@ class _MusicViewState extends State<MusicView> {
     final songs = _artistSongs ?? const <MediaItemRecord>[];
 
     return Scaffold(
-      backgroundColor: AppTheme.background,
+      backgroundColor: context.palette.background,
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -1258,7 +1258,7 @@ class _MusicViewState extends State<MusicView> {
                 IconButton(
                   icon: const Icon(Icons.arrow_back_rounded),
                   tooltip: 'Back to artists',
-                  color: AppTheme.secondaryText,
+                  color: context.palette.secondaryText,
                   onPressed: () {
                     setState(() {
                       _selectedArtist = null;
@@ -1268,14 +1268,14 @@ class _MusicViewState extends State<MusicView> {
                   },
                 ),
                 const SizedBox(width: 8),
-                Text('Artists', style: AppTheme.rowSecondary),
+                Text('Artists', style: context.palette.rowSecondary),
                 const SizedBox(width: 6),
-                const Text('›', style: AppTheme.metadata),
+                Text('›', style: context.palette.metadata),
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
                     artistName,
-                    style: AppTheme.rowPrimary.copyWith(
+                    style: context.palette.rowPrimary.copyWith(
                       fontWeight: FontWeight.w600,
                     ),
                     maxLines: 1,
@@ -1311,14 +1311,14 @@ class _MusicViewState extends State<MusicView> {
                     children: [
                       Text(
                         artistName,
-                        style: AppTheme.pageTitle,
+                        style: context.palette.pageTitle,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
                       const SizedBox(height: 6),
                       Text(
                         '${songs.length} songs in library',
-                        style: AppTheme.metadata,
+                        style: context.palette.metadata,
                       ),
                       const SizedBox(height: 14),
                       Wrap(
@@ -1347,7 +1347,7 @@ class _MusicViewState extends State<MusicView> {
               ],
             ),
           ),
-          const Divider(height: 1, color: AppTheme.border),
+          Divider(height: 1, color: context.palette.border),
           Expanded(child: _buildSongTableView(songs)),
         ],
       ),
@@ -1412,8 +1412,8 @@ class _TrackIndexCell extends StatelessWidget {
     }
     return Text(
       '${index + 1}',
-      style: AppTheme.metadata.copyWith(
-        color: isCurrent ? accent : AppTheme.mutedText,
+      style: context.palette.metadata.copyWith(
+        color: isCurrent ? accent : context.palette.mutedText,
       ),
     );
   }

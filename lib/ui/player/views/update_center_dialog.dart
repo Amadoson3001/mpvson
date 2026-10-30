@@ -34,7 +34,7 @@ class UpdateCenterDialog extends StatelessWidget {
       return Dialog(
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppRadii.artwork),
-          side: const BorderSide(color: AppTheme.border),
+          side: BorderSide(color: context.palette.border),
         ),
         insetPadding: const EdgeInsets.symmetric(
           horizontal: AppSpace.xl,
@@ -181,7 +181,11 @@ class _ApplicationTrack extends StatelessWidget {
   Widget build(BuildContext context) {
     final accent = Theme.of(context).colorScheme.primary;
     final release = updates.release;
-    final (status, statusColor) = _applicationStatus(updates.status, accent);
+    final (status, statusColor) = _applicationStatus(
+      context,
+      updates.status,
+      accent,
+    );
     final action = switch (updates.status) {
       'available' => 'Download package',
       'ready' => 'Open package',
@@ -216,12 +220,12 @@ class _ApplicationTrack extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _applicationStatusContent(updates, release, accent),
+                    _applicationStatusContent(context, updates, release, accent),
                     if (updates.error != null && updates.status != 'error') ...[
                       const SizedBox(height: 8),
                       _TrackNotice(
                         icon: Icons.error_outline_rounded,
-                        color: AppTheme.danger,
+                        color: context.palette.danger,
                         text: updates.error!,
                       ),
                     ],
@@ -230,7 +234,7 @@ class _ApplicationTrack extends StatelessWidget {
                       SelectableText(
                         'SHA-256  ${release.sha256}',
                         style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                          color: AppTheme.muted,
+                          color: context.palette.muted,
                           fontFamily: 'monospace',
                         ),
                       ),
@@ -265,26 +269,30 @@ class _ApplicationTrack extends StatelessWidget {
     );
   }
 
-  static (String, Color) _applicationStatus(String value, Color accent) =>
-      switch (value) {
-        'checking' => ('Checking', AppTheme.warning),
-        'available' => ('Update available', accent),
-        'downloading' => ('Downloading', AppTheme.warning),
-        'ready' => ('Downloaded', AppTheme.success),
-        'upToDate' => ('Up to date', AppTheme.success),
-        'error' => ('Check failed', AppTheme.danger),
-        'unconfigured' => ('Not configured', AppTheme.muted),
-        _ => ('Not checked', AppTheme.muted),
-      };
+  static (String, Color) _applicationStatus(
+    BuildContext context,
+    String value,
+    Color accent,
+  ) => switch (value) {
+    'checking' => ('Checking', AppTheme.warning),
+    'available' => ('Update available', accent),
+    'downloading' => ('Downloading', AppTheme.warning),
+    'ready' => ('Downloaded', AppTheme.success),
+    'upToDate' => ('Up to date', AppTheme.success),
+    'error' => ('Check failed', context.palette.danger),
+    'unconfigured' => ('Not configured', context.palette.muted),
+    _ => ('Not checked', context.palette.muted),
+  };
 
   static Widget _applicationStatusContent(
+    BuildContext context,
     UpdateService updates,
     ReleaseInfo? release,
     Color accent,
   ) => switch (updates.status) {
-    'unconfigured' => const _TrackNotice(
+    'unconfigured' => _TrackNotice(
       icon: Icons.info_outline_rounded,
-      color: AppTheme.muted,
+      color: context.palette.muted,
       text: 'Update checks are not configured for this build.',
     ),
     'checking' => _TrackNotice(
@@ -312,12 +320,12 @@ class _ApplicationTrack extends StatelessWidget {
     ),
     'error' when updates.error != null => _TrackNotice(
       icon: Icons.error_outline_rounded,
-      color: AppTheme.danger,
+      color: context.palette.danger,
       text: updates.error!,
     ),
-    _ => const _TrackNotice(
+    _ => _TrackNotice(
       icon: Icons.system_update_alt_rounded,
-      color: AppTheme.secondaryText,
+      color: context.palette.secondaryText,
       text: 'Check for a newer Mpvson release.',
     ),
   };
@@ -345,7 +353,12 @@ class _EngineTrack extends StatelessWidget {
     final systemManaged =
         linux || !updates.selfManaged || updates.status == 'systemManaged';
     final release = updates.release;
-    final (status, color) = _statusLabel(updates.status, systemManaged, accent);
+    final (status, color) = _statusLabel(
+      context,
+      updates.status,
+      systemManaged,
+      accent,
+    );
     final hasPendingAction =
         updates.status == 'readyToRestart' ||
         updates.pendingVersion != null ||
@@ -402,7 +415,7 @@ class _EngineTrack extends StatelessWidget {
                         'Source: ${updates.sourceLabel}',
                         style: Theme.of(
                           context,
-                        ).textTheme.labelSmall?.copyWith(color: AppTheme.muted),
+                        ).textTheme.labelSmall?.copyWith(color: context.palette.muted),
                       ),
                       const SizedBox(height: 8),
                     ],
@@ -417,6 +430,7 @@ class _EngineTrack extends StatelessWidget {
                       const SizedBox(height: 12),
                     ],
                     _engineStatusContent(
+                      context,
                       updates,
                       release,
                       loadedVersion,
@@ -478,7 +492,7 @@ class _EngineTrack extends StatelessWidget {
               Text(
                 'Select $rollbackTarget for the next restart. The currently loaded engine ($loadedVersion) stays active until then.',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: AppTheme.secondaryText,
+                  color: context.palette.secondaryText,
                   height: 1.45,
                 ),
               ),
@@ -530,11 +544,12 @@ class _EngineTrack extends StatelessWidget {
   }
 
   static (String, Color) _statusLabel(
+    BuildContext context,
     String value,
     bool systemManaged,
     Color accent,
   ) {
-    if (systemManaged) return ('System managed', AppTheme.secondaryText);
+    if (systemManaged) return ('System managed', context.palette.secondaryText);
     return switch (value) {
       'checking' => ('Checking', AppTheme.warning),
       'savingChannel' => ('Saving choice', AppTheme.warning),
@@ -543,15 +558,16 @@ class _EngineTrack extends StatelessWidget {
       'staging' => ('Staging', AppTheme.warning),
       'readyToRestart' => ('Ready to restart', AppTheme.success),
       'upToDate' => ('Up to date', AppTheme.success),
-      'newerInstalled' => ('Installed is newer', AppTheme.secondaryText),
-      'stableUnavailable' => ('Stable package unavailable', AppTheme.muted),
-      'error' => ('Update failed', AppTheme.danger),
-      'unconfigured' => ('Not configured', AppTheme.muted),
-      _ => ('Not checked', AppTheme.muted),
+      'newerInstalled' => ('Installed is newer', context.palette.secondaryText),
+      'stableUnavailable' => ('Stable package unavailable', context.palette.muted),
+      'error' => ('Update failed', context.palette.danger),
+      'unconfigured' => ('Not configured', context.palette.muted),
+      _ => ('Not checked', context.palette.muted),
     };
   }
 
   static Widget _engineStatusContent(
+    BuildContext context,
     EngineUpdateService updates,
     EngineRelease? release,
     String loadedVersion,
@@ -562,7 +578,7 @@ class _EngineTrack extends StatelessWidget {
     if (systemManaged) {
       return _TrackNotice(
         icon: Icons.inventory_2_outlined,
-        color: AppTheme.secondaryText,
+        color: context.palette.secondaryText,
         text: linux
             ? 'On Linux, the system package manager owns libmpv. Update it through your distribution.'
             : 'The operating system manages updates for this playback engine.',
@@ -574,13 +590,13 @@ class _EngineTrack extends StatelessWidget {
     return switch (updates.status) {
       'unconfigured' when updates.configurationError != null => _TrackNotice(
         icon: Icons.error_outline_rounded,
-        color: AppTheme.danger,
+        color: context.palette.danger,
         text:
             'Engine update checks are disabled: ${updates.configurationError}',
       ),
-      'unconfigured' => const _TrackNotice(
+      'unconfigured' => _TrackNotice(
         icon: Icons.info_outline_rounded,
-        color: AppTheme.muted,
+        color: context.palette.muted,
         text: 'Engine update checks are not configured for this build.',
       ),
       'checking' => _TrackNotice(
@@ -595,7 +611,7 @@ class _EngineTrack extends StatelessWidget {
       ),
       'stableUnavailable' => _TrackNotice(
         icon: Icons.info_outline_rounded,
-        color: AppTheme.muted,
+        color: context.palette.muted,
         text: updates.stableReleaseVersion == null
             ? 'The latest mpv stable release does not publish a compatible Windows libmpv package. Mpvson will keep using the currently loaded engine.'
             : 'mpv ${updates.stableReleaseVersion} does not publish a compatible Windows libmpv package. Mpvson will keep using the currently loaded engine.',
@@ -607,7 +623,7 @@ class _EngineTrack extends StatelessWidget {
       ),
       'newerInstalled' => _TrackNotice(
         icon: Icons.arrow_upward_rounded,
-        color: AppTheme.secondaryText,
+        color: context.palette.secondaryText,
         text:
             'The loaded engine version $loadedVersion is newer than the latest version from this source (${release?.engineVersion ?? 'unknown'}). Mpvson will not downgrade it.',
       ),
@@ -626,13 +642,13 @@ class _EngineTrack extends StatelessWidget {
                 : release == null || release.engineVersion.trim().isEmpty
                 ? 'A playback engine update is available.'
                 : 'Engine version ${release.engineVersion} is available.',
-            style: const TextStyle(color: AppTheme.secondaryText, height: 1.45),
+            style: TextStyle(color: context.palette.secondaryText, height: 1.45),
           ),
           if (release != null && release.notes.trim().isNotEmpty) ...[
             const SizedBox(height: 7),
             Text(
               release.notes,
-              style: const TextStyle(color: AppTheme.muted, height: 1.45),
+              style: TextStyle(color: context.palette.muted, height: 1.45),
             ),
           ],
         ],
@@ -658,17 +674,17 @@ class _EngineTrack extends StatelessWidget {
       ),
       'error' when updates.error != null => _TrackNotice(
         icon: Icons.error_outline_rounded,
-        color: AppTheme.danger,
+        color: context.palette.danger,
         text: updates.error!,
       ),
-      'systemManaged' => const _TrackNotice(
+      'systemManaged' => _TrackNotice(
         icon: Icons.inventory_2_outlined,
-        color: AppTheme.secondaryText,
+        color: context.palette.secondaryText,
         text: 'The operating system manages updates for this playback engine.',
       ),
-      _ => const _TrackNotice(
+      _ => _TrackNotice(
         icon: Icons.memory_rounded,
-        color: AppTheme.secondaryText,
+        color: context.palette.secondaryText,
         text: 'Check for a playback engine update.',
       ),
     };
@@ -724,7 +740,7 @@ class _EngineChannelChooser extends StatelessWidget {
         style: Theme.of(context).textTheme.bodySmall?.copyWith(
           color: updates.channel == EngineUpdateChannel.development
               ? AppTheme.warning
-              : AppTheme.secondaryText,
+              : context.palette.secondaryText,
           height: 1.4,
         ),
       ),
@@ -801,7 +817,7 @@ class _AppReleaseDetails extends StatelessWidget {
         'Version ${release.version} is available',
         style: Theme.of(
           context,
-        ).textTheme.bodyMedium?.copyWith(color: AppTheme.secondaryText),
+        ).textTheme.bodyMedium?.copyWith(color: context.palette.secondaryText),
       ),
       if (release.notes.trim().isNotEmpty) ...[
         const SizedBox(height: 7),
@@ -811,9 +827,9 @@ class _AppReleaseDetails extends StatelessWidget {
         ),
       ],
       const SizedBox(height: 7),
-      const _TrackNotice(
+      _TrackNotice(
         icon: Icons.shield_outlined,
-        color: AppTheme.secondaryText,
+        color: context.palette.secondaryText,
         text: 'Mpvson checks the downloaded package against its SHA-256 hash.',
       ),
     ],
@@ -917,9 +933,9 @@ class _ActionProgress extends StatelessWidget {
     height: 16,
     child: reducedMotion
         ? const Icon(Icons.more_horiz_rounded, size: 16)
-        : const CircularProgressIndicator(
+        : CircularProgressIndicator(
             strokeWidth: 2,
-            color: AppTheme.accentForeground,
+            color: context.palette.accentForeground,
           ),
   );
 }

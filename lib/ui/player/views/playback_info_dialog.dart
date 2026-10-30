@@ -51,7 +51,7 @@ class _PlaybackInfoDialogState extends State<PlaybackInfoDialog> {
     return AlertDialog(
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppRadii.artwork),
-        side: const BorderSide(color: AppTheme.border),
+        side: BorderSide(color: context.palette.border),
       ),
       title: const Text('Playback information'),
       scrollable: true,

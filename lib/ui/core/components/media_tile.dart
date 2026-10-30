@@ -103,7 +103,7 @@ class _MediaTileState extends State<MediaTile> {
               Expanded(
                 child: Text(
                   widget.title,
-                  style: AppTheme.rowPrimary.copyWith(
+                  style: context.palette.rowPrimary.copyWith(
                     fontWeight: FontWeight.w600,
                   ),
                   maxLines: 1,
@@ -116,7 +116,7 @@ class _MediaTileState extends State<MediaTile> {
           const SizedBox(height: 2),
           Text(
             widget.subtitle,
-            style: AppTheme.rowSecondary,
+            style: context.palette.rowSecondary,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),

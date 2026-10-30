@@ -49,8 +49,8 @@ class PlaybackFeedback extends StatelessWidget {
                 constraints: const BoxConstraints(maxWidth: 240),
                 child: DecoratedBox(
                   decoration: BoxDecoration(
-                    color: AppTheme.surface.withValues(alpha: 0.96),
-                    border: Border.all(color: AppTheme.border),
+                    color: context.palette.surface.withValues(alpha: 0.96),
+                    border: Border.all(color: context.palette.border),
                     borderRadius: BorderRadius.circular(AppRadii.artwork),
                   ),
                   child: Padding(
@@ -72,7 +72,7 @@ class PlaybackFeedback extends StatelessWidget {
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: textTheme.bodyMedium?.copyWith(
-                                  color: AppTheme.text,
+                                  color: context.palette.text,
                                   fontSize: AppType.small,
                                   fontFeatures: const [
                                     FontFeature.tabularFigures(),
@@ -91,7 +91,7 @@ class PlaybackFeedback extends StatelessWidget {
                             child: LinearProgressIndicator(
                               value: railProgress,
                               minHeight: 2,
-                              backgroundColor: AppTheme.border,
+                              backgroundColor: context.palette.border,
                               color: accent,
                             ),
                           ),

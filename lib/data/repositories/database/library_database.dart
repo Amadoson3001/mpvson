@@ -779,6 +779,26 @@ void _databaseIsolateEntryPoint(_DbInitParams params) {
 }
 
 void _initializeSchema(Database db) {
+  var needsRebuild = false;
+  final ftsCheck = db.select(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'media_fts'",
+  );
+  if (ftsCheck.isNotEmpty) {
+    final ftsCols = db.select("PRAGMA table_info('media_fts')");
+    final hasFilename = ftsCols.any((c) => c['name'] == 'filename');
+    final hasAlbumArtist = ftsCols.any((c) => c['name'] == 'album_artist');
+    final hasPath = ftsCols.any((c) => c['name'] == 'path');
+    if (hasFilename || !hasAlbumArtist || !hasPath) {
+      db.execute('DROP TRIGGER IF EXISTS media_ai');
+      db.execute('DROP TRIGGER IF EXISTS media_ad');
+      db.execute('DROP TRIGGER IF EXISTS media_au');
+      db.execute('DROP TABLE IF EXISTS media_fts');
+      needsRebuild = true;
+    }
+  } else {
+    needsRebuild = true;
+  }
+
   db.execute('''
     CREATE TABLE IF NOT EXISTS folders (
       path TEXT PRIMARY KEY,
@@ -850,27 +870,29 @@ void _initializeSchema(Database db) {
     CREATE VIRTUAL TABLE IF NOT EXISTS media_fts USING fts5(
       title,
       artist,
+      album_artist,
       album,
-      filename,
+      path,
       content=media,
       content_rowid=rowid
     );
 
     CREATE TRIGGER IF NOT EXISTS media_ai AFTER INSERT ON media BEGIN
-      INSERT INTO media_fts(rowid, title, artist, album, filename)
-      VALUES (new.rowid, new.title, new.artist, new.album, new.path);
+      INSERT INTO media_fts(rowid, title, artist, album_artist, album, path)
+      VALUES (new.rowid, new.title, new.artist, new.album_artist, new.album, new.path);
     END;
 
     CREATE TRIGGER IF NOT EXISTS media_ad AFTER DELETE ON media BEGIN
-      INSERT INTO media_fts(media_fts, rowid, title, artist, album, filename)
-      VALUES('delete', old.rowid, old.title, old.artist, old.album, old.path);
+      INSERT INTO media_fts(media_fts, rowid, title, artist, album_artist, album, path)
+      VALUES('delete', old.rowid, old.title, old.artist, old.album_artist, old.album, old.path);
     END;
 
-    CREATE TRIGGER IF NOT EXISTS media_au AFTER UPDATE ON media BEGIN
-      INSERT INTO media_fts(media_fts, rowid, title, artist, album, filename)
-      VALUES('delete', old.rowid, old.title, old.artist, old.album, old.path);
-      INSERT INTO media_fts(rowid, title, artist, album, filename)
-      VALUES (new.rowid, new.title, new.artist, new.album, new.path);
+    DROP TRIGGER IF EXISTS media_au;
+    CREATE TRIGGER media_au AFTER UPDATE OF title, artist, album_artist, album, path ON media BEGIN
+      INSERT INTO media_fts(media_fts, rowid, title, artist, album_artist, album, path)
+      VALUES('delete', old.rowid, old.title, old.artist, old.album_artist, old.album, old.path);
+      INSERT INTO media_fts(rowid, title, artist, album_artist, album, path)
+      VALUES (new.rowid, new.title, new.artist, new.album_artist, new.album, new.path);
     END;
   ''');
   final columns = db.select('PRAGMA table_info(media)');
@@ -878,6 +900,13 @@ void _initializeSchema(Database db) {
     db.execute(
       'ALTER TABLE media ADD COLUMN is_in_library INTEGER NOT NULL DEFAULT 1',
     );
+  }
+  if (needsRebuild) {
+    final mediaCount =
+        db.select('SELECT count(*) AS c FROM media').first['c'] as int;
+    if (mediaCount > 0) {
+      db.execute("INSERT INTO media_fts(media_fts) VALUES('rebuild');");
+    }
   }
 }
 
@@ -1007,13 +1036,34 @@ Object? _dispatchAction(Database db, String action, Object? params) {
     case 'refreshFolderFileCount':
       final folderPath = params as String;
       final root = MediaEntry.canonicalSource(folderPath);
+      final rootSlash = root.replaceAll(r'\', '/');
+      final rootBackslash = root.replaceAll('/', r'\');
+      final prefixSlash =
+          rootSlash.endsWith('/') ? rootSlash : '$rootSlash/';
+      final prefixBackslash = rootBackslash.endsWith(r'\')
+          ? rootBackslash
+          : '$rootBackslash\\';
       final rows = db.select(
-        'SELECT path FROM media WHERE is_available = 1 AND is_in_library = 1',
+        '''
+        SELECT COUNT(*) AS count FROM media
+        WHERE is_available = 1 AND is_in_library = 1
+          AND (
+            canonical_source = ?
+            OR canonical_source = ?
+            OR substr(canonical_source, 1, ?) = ?
+            OR substr(canonical_source, 1, ?) = ?
+          )
+        ''',
+        [
+          rootSlash,
+          rootBackslash,
+          prefixSlash.length,
+          prefixSlash,
+          prefixBackslash.length,
+          prefixBackslash,
+        ],
       );
-      final count = rows.where((row) {
-        final path = MediaEntry.canonicalSource(row['path'] as String);
-        return p.equals(root, path) || p.isWithin(root, path);
-      }).length;
+      final count = rows.first['count'] as int;
       db.execute('UPDATE folders SET file_count = ? WHERE path = ?', [
         count,
         folderPath,
@@ -1795,6 +1845,17 @@ void _batchUpdateMetadata(Database db, List<Map<dynamic, dynamic>> updates) {
   }
 }
 
+String? _buildFts5Query(String query) {
+  final regex = RegExp(r'[^\p{L}\p{N}]+', unicode: true);
+  final tokens = query
+      .split(regex)
+      .map((t) => t.trim())
+      .where((t) => t.isNotEmpty)
+      .toList();
+  if (tokens.isEmpty) return null;
+  return tokens.map((t) => '"${t.replaceAll('"', '""')}"*').join(' ');
+}
+
 List<Map<String, Object?>> _queryMediaRows(
   Database db,
   Map<String, Object?> map,
@@ -1816,17 +1877,25 @@ List<Map<String, Object?>> _queryMediaRows(
   final args = <Object?>[];
   final query = rawSearchQuery?.trim();
   if (query != null && query.isNotEmpty) {
-    final lower = query.runes.any((character) => character > 127)
-        ? 'unicode_lower'
-        : 'lower';
-    sql.write('''
-      AND (instr($lower(coalesce(media.title, '')), $lower(?)) > 0
-        OR instr($lower(coalesce(media.artist, '')), $lower(?)) > 0
-        OR instr($lower(coalesce(media.album_artist, '')), $lower(?)) > 0
-        OR instr($lower(coalesce(media.album, '')), $lower(?)) > 0
-        OR instr($lower(media.path), $lower(?)) > 0)
-    ''');
-    args.addAll(List<String>.filled(5, query));
+    final ftsQuery = _buildFts5Query(query);
+    if (ftsQuery != null) {
+      sql.write(
+        ' AND media.rowid IN (SELECT rowid FROM media_fts WHERE media_fts MATCH ?)',
+      );
+      args.add(ftsQuery);
+    } else {
+      final lower = query.runes.any((character) => character > 127)
+          ? 'unicode_lower'
+          : 'lower';
+      sql.write('''
+        AND (instr($lower(coalesce(media.title, '')), $lower(?)) > 0
+          OR instr($lower(coalesce(media.artist, '')), $lower(?)) > 0
+          OR instr($lower(coalesce(media.album_artist, '')), $lower(?)) > 0
+          OR instr($lower(coalesce(media.album, '')), $lower(?)) > 0
+          OR instr($lower(media.path), $lower(?)) > 0)
+      ''');
+      args.addAll(List<String>.filled(5, query));
+    }
   }
 
   if (kind != null) {

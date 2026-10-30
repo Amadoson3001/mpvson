@@ -5,18 +5,18 @@ import 'package:flutter/material.dart';
 abstract final class AppColors {
   // Surfaces
   static const stage = Color(0xFF060606);
-  static const ground = Color(0xFF121110);
-  static const layer = Color(0xFF1A1917);
-  static const raised = Color(0xFF22201D);
-  static const hover = Color(0xFF2B2823);
-  static const line = Color(0xFF302C26);
-  static const lineStrong = Color(0xFF433D33);
+  static const ground = Color(0xFF09090B);
+  static const layer = Color(0xFF121215);
+  static const raised = Color(0xFF18181B);
+  static const hover = Color(0xFF222226);
+  static const line = Color(0xFF27272A);
+  static const lineStrong = Color(0xFF3F3F46);
 
   // Text
-  static const ink = Color(0xFFF3EFE6);
-  static const inkMuted = Color(0xFFB7B1A5);
-  static const inkDim = Color(0xFF8D877A);
-  static const inkFaint = Color(0xFF6B665D);
+  static const ink = Color(0xFFF4F4F5);
+  static const inkMuted = Color(0xFFA1A1AA);
+  static const inkDim = Color(0xFF71717A);
+  static const inkFaint = Color(0xFF52525B);
 
   // Accent and support
   static const lamp = Color(0xFFF1A64C);
@@ -80,5 +80,95 @@ class MediaAccentPalette extends ThemeExtension<MediaAccentPalette> {
       vibrant: Color.lerp(vibrant, other.vibrant, t) ?? vibrant,
       muted: Color.lerp(muted, other.muted, t) ?? muted,
     );
+  }
+}
+
+/// Curated dynamic accent presets for personalizing the interface.
+@immutable
+class AppAccentPreset {
+  const AppAccentPreset({
+    required this.id,
+    required this.label,
+    required this.description,
+    required this.color,
+    Color? lightColor,
+    this.icon = Icons.circle,
+  }) : lightColor = lightColor ?? color;
+
+  final String id;
+  final String label;
+  final String description;
+  final Color color;
+  final Color lightColor;
+  final IconData icon;
+
+  static const lamp = AppAccentPreset(
+    id: 'lamp',
+    label: 'Amber Lamp',
+    description: 'Warm projector-room glow',
+    color: Color(0xFFF1A64C),
+    lightColor: Color(0xFFD97706),
+    icon: Icons.lightbulb_outline_rounded,
+  );
+
+  static const jade = AppAccentPreset(
+    id: 'jade',
+    label: 'Jade Aurora',
+    description: 'Serene cinema emerald & mint',
+    color: Color(0xFF2DD4BF),
+    lightColor: Color(0xFF0D9488),
+    icon: Icons.eco_outlined,
+  );
+
+  static const sky = AppAccentPreset(
+    id: 'sky',
+    label: 'Electric Sky',
+    description: 'Crisp modern cobalt & sapphire',
+    color: Color(0xFF38BDF8),
+    lightColor: Color(0xFF0284C7),
+    icon: Icons.water_drop_outlined,
+  );
+
+  static const rose = AppAccentPreset(
+    id: 'rose',
+    label: 'Crimson Rose',
+    description: 'Classic theater velvet coral & ruby',
+    color: Color(0xFFF43F5E),
+    lightColor: Color(0xFFE11D48),
+    icon: Icons.local_fire_department_outlined,
+  );
+
+  static const amethyst = AppAccentPreset(
+    id: 'amethyst',
+    label: 'Amethyst Neon',
+    description: 'Futuristic synthwave violet',
+    color: Color(0xFFA855F7),
+    lightColor: Color(0xFF7E22CE),
+    icon: Icons.auto_awesome_outlined,
+  );
+
+  static const gold = AppAccentPreset(
+    id: 'gold',
+    label: 'Solar Gold',
+    description: 'Brilliant cinematic amber-gold',
+    color: Color(0xFFF59E0B),
+    lightColor: Color(0xFFB45309),
+    icon: Icons.wb_sunny_outlined,
+  );
+
+  static const List<AppAccentPreset> all = [
+    lamp,
+    jade,
+    sky,
+    rose,
+    amethyst,
+    gold,
+  ];
+
+  static AppAccentPreset fromId(String? id) {
+    for (final preset in all) {
+      if (preset.id == id) return preset;
+    }
+    return lamp;
   }
 }

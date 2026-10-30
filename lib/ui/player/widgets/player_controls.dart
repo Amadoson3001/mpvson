@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../../../domain/models/control_density.dart';
 import '../../../domain/models/media_thumbnail.dart';
+import '../../../domain/models/playback_chapter.dart';
 import '../../../ui/core/app_motion.dart';
 import '../../../ui/core/app_theme.dart';
 import '../../../ui/core/slider_overlay.dart';
@@ -78,7 +79,7 @@ class _PlayerControlsState extends State<PlayerControls> {
           final sizing = PlayerControlStyle.of(context);
           return DecoratedBox(
             key: const ValueKey('player-control-strip'),
-            decoration: _bottomGradient,
+            decoration: _bottomGradient(context),
             child: Padding(
               padding: EdgeInsets.fromLTRB(
                 dense ? 8 : (narrow ? 14 : 22),
@@ -179,14 +180,14 @@ class _PlayerControlsState extends State<PlayerControls> {
     );
   }
 
-  static final BoxDecoration _bottomGradient = BoxDecoration(
+  static BoxDecoration _bottomGradient(BuildContext context) => BoxDecoration(
     gradient: LinearGradient(
       begin: Alignment.topCenter,
       end: Alignment.bottomCenter,
       colors: [
-        AppTheme.background.withValues(alpha: 0),
-        AppTheme.background.withValues(alpha: 0.76),
-        AppTheme.background.withValues(alpha: 0.96),
+        context.palette.background.withValues(alpha: 0),
+        context.palette.background.withValues(alpha: 0.76),
+        context.palette.background.withValues(alpha: 0.96),
       ],
       stops: const [0, 0.34, 1],
     ),
@@ -207,7 +208,7 @@ class _ActionsFooter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => DecoratedBox(
-    decoration: _PlayerControlsState._bottomGradient,
+    decoration: _PlayerControlsState._bottomGradient(context),
     child: SizedBox(
       height: PlayerControlStyle.of(context).compact ? 44 : 60,
       child: Padding(
@@ -240,7 +241,7 @@ class _TimeReadout extends StatelessWidget {
         overflow: TextOverflow.ellipsis,
         textAlign: TextAlign.center,
         style: Theme.of(context).textTheme.labelSmall?.copyWith(
-          color: AppTheme.secondaryText,
+          color: context.palette.secondaryText,
           fontFeatures: const [FontFeature.tabularFigures()],
         ),
       ),
@@ -288,6 +289,9 @@ class SharedSeekBarState extends State<SharedSeekBar> {
     widget.controller.seekPreview.stateListenable.addListener(
       _handlePreviewStateChanged,
     );
+    widget.controller.chaptersListenable.addListener(
+      _handlePreviewStateChanged,
+    );
   }
 
   void _handlePreviewStateChanged() {
@@ -301,9 +305,15 @@ class SharedSeekBarState extends State<SharedSeekBar> {
       oldWidget.controller.seekPreview.stateListenable.removeListener(
         _handlePreviewStateChanged,
       );
+      oldWidget.controller.chaptersListenable.removeListener(
+        _handlePreviewStateChanged,
+      );
       final hoverPosition = _pointerInside ? _hoverPositionMs : null;
       oldWidget.controller.seekPreview.onPointerExit();
       widget.controller.seekPreview.stateListenable.addListener(
+        _handlePreviewStateChanged,
+      );
+      widget.controller.chaptersListenable.addListener(
         _handlePreviewStateChanged,
       );
       if (hoverPosition != null &&
@@ -330,6 +340,9 @@ class SharedSeekBarState extends State<SharedSeekBar> {
   void dispose() {
     _keyboardSeekTimer?.cancel();
     widget.controller.seekPreview.stateListenable.removeListener(
+      _handlePreviewStateChanged,
+    );
+    widget.controller.chaptersListenable.removeListener(
       _handlePreviewStateChanged,
     );
     widget.controller.seekPreview.onPointerExit();
@@ -379,6 +392,21 @@ class SharedSeekBarState extends State<SharedSeekBar> {
       _pointerInside = false;
       _hoverPositionMs = null;
     });
+  }
+
+  static String? _chapterTitleAt(
+    List<PlaybackChapter> chapters,
+    Duration time,
+  ) {
+    var activeIndex = -1;
+    for (var index = 0; index < chapters.length; index++) {
+      if (chapters[index].start > time) break;
+      activeIndex = index;
+    }
+    if (activeIndex < 0) return null;
+    final chapter = chapters[activeIndex];
+    final title = chapter.title.trim();
+    return title.isNotEmpty ? title : 'Chapter ${activeIndex + 1}';
   }
 
   double _trackXForValue(double value, double trackWidth, int durationMs) {
@@ -516,6 +544,18 @@ class SharedSeekBarState extends State<SharedSeekBar> {
             hasTimeline && (_pointerInside || _dragging || _keyboardSeeking);
         final thumbVisible =
             canSeek && (_pointerInside || _dragging || _focused);
+        final chapters = controller.chaptersListenable.value;
+        final chapterFractions = <double>[];
+        if (hasTimeline) {
+          for (final chapter in chapters) {
+            final startMs = chapter.start.inMilliseconds;
+            if (startMs <= 0 || startMs >= durationMs) continue;
+            chapterFractions.add(startMs / durationMs);
+          }
+        }
+        final previewChapterTitle = showPreview && chapters.isNotEmpty
+            ? _chapterTitleAt(chapters, previewTime)
+            : null;
 
         return Listener(
           onPointerDown: (_) => _pointerIsDown = true,
@@ -556,9 +596,9 @@ class SharedSeekBarState extends State<SharedSeekBar> {
                           overlayRadius: 14,
                         ),
                         activeTrackColor: Theme.of(context).colorScheme.primary,
-                        inactiveTrackColor: AppTheme.border,
-                        disabledActiveTrackColor: AppTheme.muted,
-                        disabledInactiveTrackColor: AppTheme.border,
+                        inactiveTrackColor: context.palette.border,
+                        disabledActiveTrackColor: context.palette.muted,
+                        disabledInactiveTrackColor: context.palette.border,
                         overlayColor: Theme.of(
                           context,
                         ).colorScheme.primary.withValues(alpha: 0.16),
@@ -587,6 +627,21 @@ class SharedSeekBarState extends State<SharedSeekBar> {
                       ),
                     ),
                   ),
+                  if (chapterFractions.isNotEmpty)
+                    Positioned.fill(
+                      child: IgnorePointer(
+                        child: CustomPaint(
+                          key: const ValueKey('seek-chapter-ticks'),
+                          painter: _ChapterTickPainter(
+                            fractions: chapterFractions,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withValues(alpha: 0.62),
+                            textDirection: Directionality.of(context),
+                          ),
+                        ),
+                      ),
+                    ),
                   Positioned(
                     key: const ValueKey('seek-preview'),
                     left: bubbleLeft,
@@ -634,6 +689,7 @@ class SharedSeekBarState extends State<SharedSeekBar> {
                                   controller: controller,
                                   previewState: controller.seekPreview.state,
                                   thumbnail: _entryThumbnail,
+                                  chapterTitle: previewChapterTitle,
                                 ),
                               )
                             : const SizedBox.shrink(),
@@ -680,6 +736,55 @@ class _UniformRoundedSliderTrackShape extends RoundedRectSliderTrackShape {
       isEnabled: isEnabled,
       additionalActiveTrackHeight: 0,
     );
+  }
+}
+
+/// Draws subtle chapter boundary marks over the seek track.
+class _ChapterTickPainter extends CustomPainter {
+  const _ChapterTickPainter({
+    required this.fractions,
+    required this.color,
+    required this.textDirection,
+  });
+
+  final List<double> fractions;
+  final Color color;
+  final TextDirection textDirection;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.width <= 0 || size.height <= 0) return;
+    const tickWidth = 2.0;
+    const tickHeight = 9.0;
+    final paint = Paint()..color = color;
+    final top = (size.height - tickHeight) / 2;
+    final rtl = textDirection == TextDirection.rtl;
+    for (final fraction in fractions) {
+      final clamped = fraction.clamp(0.0, 1.0).toDouble();
+      final centerX = (rtl ? 1 - clamped : clamped) * size.width;
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(centerX - tickWidth / 2, top, tickWidth, tickHeight),
+          const Radius.circular(1),
+        ),
+        paint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_ChapterTickPainter oldDelegate) =>
+      oldDelegate.color != color ||
+      oldDelegate.textDirection != textDirection ||
+      !_sameFractions(oldDelegate.fractions, fractions);
+
+  static bool _sameFractions(List<double> a, List<double> b) {
+    if (identical(a, b)) return true;
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 }
 
@@ -732,6 +837,7 @@ class _SeekPreview extends StatelessWidget {
     required this.controller,
     required this.previewState,
     required this.thumbnail,
+    this.chapterTitle,
   });
 
   final String label;
@@ -743,6 +849,7 @@ class _SeekPreview extends StatelessWidget {
   final PlayerController controller;
   final SeekPreviewState? previewState;
   final MediaThumbnail? thumbnail;
+  final String? chapterTitle;
 
   @override
   Widget build(BuildContext context) {
@@ -756,7 +863,7 @@ class _SeekPreview extends StatelessWidget {
     final entry = controller.current;
     final title = entry?.title ?? controller.currentMetadata.title;
 
-    final borderColor = AppTheme.border.withValues(alpha: 0.85);
+    final borderColor = context.palette.border.withValues(alpha: 0.85);
 
     final cardContent = isAudio
         ? _buildAudioContent(context, title, diffText, isAhead)
@@ -775,7 +882,7 @@ class _SeekPreview extends StatelessWidget {
           width: width,
           clipBehavior: Clip.antiAlias,
           decoration: BoxDecoration(
-            color: AppTheme.card,
+            color: context.palette.card,
             borderRadius: BorderRadius.circular(AppRadii.control),
             border: Border.all(color: borderColor),
             boxShadow: [
@@ -796,7 +903,7 @@ class _SeekPreview extends StatelessWidget {
             child: CustomPaint(
               size: const Size(10, 5),
               painter: _CaretPainter(
-                color: AppTheme.card,
+                color: context.palette.card,
                 borderColor: borderColor,
               ),
             ),
@@ -955,27 +1062,47 @@ class _SeekPreview extends StatelessWidget {
             horizontal: AppSpace.xs,
             vertical: 5,
           ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text(
-                label,
-                style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                  color: AppTheme.text,
-                  fontWeight: FontWeight.w600,
-                  fontFeatures: const [FontFeature.tabularFigures()],
-                ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    label,
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: context.palette.text,
+                      fontWeight: FontWeight.w600,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                  if (diffText.isNotEmpty)
+                    Text(
+                      diffText,
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: isAhead
+                            ? Theme.of(context).colorScheme.primary
+                            : context.palette.muted,
+                        fontSize: AppType.caption,
+                        fontWeight: FontWeight.w500,
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                ],
               ),
-              if (diffText.isNotEmpty)
-                Text(
-                  diffText,
-                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    color: isAhead
-                        ? Theme.of(context).colorScheme.primary
-                        : AppTheme.muted,
-                    fontSize: AppType.caption,
-                    fontWeight: FontWeight.w500,
-                    fontFeatures: const [FontFeature.tabularFigures()],
+              if (chapterTitle case final title? when title.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: context.palette.secondaryText,
+                      fontSize: AppType.caption,
+                      fontWeight: FontWeight.w500,
+                    ),
                   ),
                 ),
             ],
@@ -1000,9 +1127,9 @@ class _SeekPreview extends StatelessWidget {
             width: 32,
             height: 32,
             decoration: BoxDecoration(
-              color: AppTheme.surface,
+              color: context.palette.surface,
               borderRadius: BorderRadius.circular(AppRadii.control),
-              border: Border.all(color: AppTheme.border),
+              border: Border.all(color: context.palette.border),
             ),
             child: (bytes != null && bytes.isNotEmpty)
                 ? ClipRRect(
@@ -1035,8 +1162,8 @@ class _SeekPreview extends StatelessWidget {
                     title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: AppTheme.secondaryText,
+                    style: TextStyle(
+                      color: context.palette.secondaryText,
                       fontSize: AppType.caption,
                       fontWeight: FontWeight.w500,
                     ),
@@ -1047,7 +1174,7 @@ class _SeekPreview extends StatelessWidget {
                     Text(
                       label,
                       style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        color: AppTheme.text,
+                        color: context.palette.text,
                         fontWeight: FontWeight.w600,
                         fontFeatures: const [FontFeature.tabularFigures()],
                       ),
@@ -1058,7 +1185,7 @@ class _SeekPreview extends StatelessWidget {
                         style: Theme.of(context).textTheme.labelSmall?.copyWith(
                           color: isAhead
                               ? Theme.of(context).colorScheme.primary
-                              : AppTheme.muted,
+                              : context.palette.muted,
                           fontSize: AppType.caption,
                           fontWeight: FontWeight.w500,
                           fontFeatures: const [FontFeature.tabularFigures()],
@@ -1066,6 +1193,20 @@ class _SeekPreview extends StatelessWidget {
                       ),
                   ],
                 ),
+                if (chapterTitle case final chapter? when chapter.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 1),
+                    child: Text(
+                      chapter,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: context.palette.secondaryText,
+                        fontSize: AppType.caption,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -1080,18 +1221,18 @@ class _PreviewPlaceholderFrame extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => DecoratedBox(
-    decoration: const BoxDecoration(
+    decoration: BoxDecoration(
       gradient: LinearGradient(
         begin: Alignment.topCenter,
         end: Alignment.bottomCenter,
-        colors: [AppTheme.surface, AppTheme.card],
+        colors: [context.palette.surface, context.palette.card],
       ),
     ),
     child: Center(
       child: Icon(
         Icons.play_circle_fill_rounded,
         size: 26,
-        color: AppTheme.secondaryText.withValues(alpha: 0.35),
+        color: context.palette.secondaryText.withValues(alpha: 0.35),
       ),
     ),
   );
@@ -1102,11 +1243,11 @@ class _PreviewUnavailableFrame extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => DecoratedBox(
-    decoration: const BoxDecoration(
+    decoration: BoxDecoration(
       gradient: LinearGradient(
         begin: Alignment.topCenter,
         end: Alignment.bottomCenter,
-        colors: [AppTheme.surface, AppTheme.card],
+        colors: [context.palette.surface, context.palette.card],
       ),
     ),
     child: Center(
@@ -1116,13 +1257,13 @@ class _PreviewUnavailableFrame extends StatelessWidget {
           Icon(
             Icons.videocam_off_rounded,
             size: 20,
-            color: AppTheme.secondaryText.withValues(alpha: 0.5),
+            color: context.palette.secondaryText.withValues(alpha: 0.5),
           ),
           const SizedBox(height: 4),
           Text(
             'Preview unavailable',
             style: TextStyle(
-              color: AppTheme.secondaryText.withValues(alpha: 0.7),
+              color: context.palette.secondaryText.withValues(alpha: 0.7),
               fontSize: AppType.caption,
               fontWeight: FontWeight.w500,
             ),
@@ -1140,6 +1281,31 @@ class TransportButtons extends StatelessWidget {
     required this.controller,
     this.compact = false,
   });
+
+  /// Width of the control row, measured from the same extents the buttons are
+  /// built with so surrounding layout can reserve the right amount of space.
+  static double preferredWidth({required bool compact}) {
+    final extent = compact
+        ? PlayerControlStyle.compactControlExtent
+        : PlayerControlStyle.controlExtent;
+    final gap = compact ? 2.0 : 4.0;
+    return 4 * extent + 3 * gap;
+  }
+
+  /// Shift that puts the play/pause button on the row's center line.
+  ///
+  /// Three secondary buttons flank the play button, so the row's midpoint
+  /// falls between the play and next buttons. Nudging the row by half that
+  /// difference centers the play button — the anchor of the control band —
+  /// instead of the gap between two buttons.
+  static double playButtonCenterOffset({required bool compact}) {
+    final extent = compact
+        ? PlayerControlStyle.compactControlExtent
+        : PlayerControlStyle.controlExtent;
+    final gap = compact ? 2.0 : 4.0;
+    return preferredWidth(compact: compact) / 2 - (extent + gap + extent / 2);
+  }
+
   final PlayerController controller;
   final bool compact;
   @override
@@ -1376,8 +1542,8 @@ class _PlayPauseButtonState extends State<_PlayPauseButton>
               backgroundColor: WidgetStatePropertyAll(
                 Theme.of(context).colorScheme.primary,
               ),
-              foregroundColor: const WidgetStatePropertyAll(
-                AppTheme.accentForeground,
+              foregroundColor: WidgetStatePropertyAll(
+                context.palette.accentForeground,
               ),
               shape: const WidgetStatePropertyAll(CircleBorder()),
             ),
@@ -1393,14 +1559,14 @@ class _PlayPauseButtonState extends State<_PlayPauseButton>
                     return FadeTransition(opacity: animation, child: child);
                   },
                   child: widget.isBuffering
-                      ? const Center(
+                      ? Center(
                           key: ValueKey('playback-buffering'),
                           child: SizedBox(
                             width: 18,
                             height: 18,
                             child: CircularProgressIndicator(
                               strokeWidth: 2,
-                              color: AppTheme.accentForeground,
+                              color: context.palette.accentForeground,
                             ),
                           ),
                         )
@@ -1411,7 +1577,7 @@ class _PlayPauseButtonState extends State<_PlayPauseButton>
                             icon: AnimatedIcons.play_pause,
                             progress: _playPauseProgress,
                             size: iconSize,
-                            color: AppTheme.accentForeground,
+                            color: context.palette.accentForeground,
                           ),
                         ),
                 ),
@@ -1469,7 +1635,7 @@ class _RateMenu extends StatelessWidget {
             child: Text(
               speedText,
               style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                color: AppTheme.secondaryText,
+                color: context.palette.secondaryText,
                 fontWeight: FontWeight.w600,
               ),
             ),
@@ -1867,7 +2033,7 @@ class _VolumeDialogState extends State<_VolumeDialog> {
             Text(
               '${volume.round()}%',
               style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                color: AppTheme.secondaryText,
+                color: context.palette.secondaryText,
                 fontFeatures: const [FontFeature.tabularFigures()],
               ),
             ),

@@ -19,6 +19,7 @@ import '../../domain/models/media_kind.dart';
 import '../../domain/models/media_metadata.dart';
 import '../../domain/models/media_source.dart';
 import '../../domain/models/media_thumbnail.dart';
+import '../../domain/models/playback_chapter.dart';
 import '../../domain/models/playback_session.dart';
 import '../../domain/models/playback_settings.dart';
 import '../../domain/models/session_progress.dart';
@@ -636,6 +637,10 @@ class PlayerController extends ChangeNotifier {
   /// Seekability updates, delivered independently of queue changes.
   final ValueNotifier<bool> seekableListenable = ValueNotifier<bool>(false);
 
+  /// Chapter markers of the attached source; changes only when the list does.
+  final ValueNotifier<List<PlaybackChapter>> chaptersListenable =
+      ValueNotifier<List<PlaybackChapter>>(const <PlaybackChapter>[]);
+
   /// The queue contents and their structural revision.
   final ValueNotifier<QueueSnapshot> queueListenable =
       ValueNotifier<QueueSnapshot>(QueueSnapshot.empty);
@@ -745,6 +750,7 @@ class PlayerController extends ChangeNotifier {
   AudioTrack get currentAudioTrack => _playbackState.currentAudioTrack;
   SubtitleTrack get currentSubtitleTrack => _playbackState.currentSubtitleTrack;
   List<VideoTrack> get videoTracks => _playbackState.videoTracks;
+  List<PlaybackChapter> get chapters => chaptersListenable.value;
   MediaKind get mediaKind => _mediaKind;
   MediaKind get currentMediaKind => _mediaKind;
   bool get isAudio => _mediaKind == MediaKind.audio;
@@ -2412,6 +2418,7 @@ class PlayerController extends ChangeNotifier {
     durationListenable.dispose();
     bufferingListenable.dispose();
     seekableListenable.dispose();
+    chaptersListenable.dispose();
     queueListenable.dispose();
     transportListenable.dispose();
     _structureNotifier.dispose();
@@ -3118,7 +3125,14 @@ class PlayerController extends ChangeNotifier {
   }
 
   void _applySnapshot(PlaybackSnapshot snapshot, {bool notify = false}) {
+    final chaptersChanged = !listEquals(
+      _playbackState.chapters,
+      snapshot.chapters,
+    );
     _playbackState = snapshot;
+    if (chaptersChanged && !_notifierDisposed) {
+      chaptersListenable.value = snapshot.chapters;
+    }
     if (snapshot.error != null && snapshot.error!.isNotEmpty) {
       _error = snapshot.error;
     }

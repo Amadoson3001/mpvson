@@ -31,7 +31,7 @@ class MediaReady extends StatelessWidget {
         : 0.0;
 
     return ColoredBox(
-      color: AppTheme.background,
+      color: context.palette.background,
       child: LayoutBuilder(
         builder: (context, constraints) {
           final compact = constraints.maxWidth < 600;
@@ -151,7 +151,7 @@ class _ReadyContent extends StatelessWidget {
               Text(
                 'Continue at ${_formatTime(position)}',
                 style: textTheme.bodyMedium?.copyWith(
-                  color: AppTheme.secondaryText,
+                  color: context.palette.secondaryText,
                   fontWeight: FontWeight.w600,
                 ),
               ),
@@ -164,7 +164,7 @@ class _ReadyContent extends StatelessWidget {
               child: LinearProgressIndicator(
                 value: progress,
                 minHeight: 3,
-                backgroundColor: AppTheme.border,
+                backgroundColor: context.palette.border,
                 color: Theme.of(context).colorScheme.primary,
               ),
             ),
@@ -177,12 +177,12 @@ class _ReadyContent extends StatelessWidget {
             key: const ValueKey('resume-current'),
             onPressed: isOpening ? null : onPlay,
             icon: isOpening
-                ? const SizedBox(
+                ? SizedBox(
                     width: 17,
                     height: 17,
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
-                      color: AppTheme.accentForeground,
+                      color: context.palette.accentForeground,
                     ),
                   )
                 : const Icon(Icons.play_arrow_rounded),

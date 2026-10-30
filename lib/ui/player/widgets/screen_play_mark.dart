@@ -11,14 +11,24 @@ class ScreenPlayMark extends StatelessWidget {
   @override
   Widget build(BuildContext context) => CustomPaint(
     size: Size(width, height),
-    painter: _ScreenPlayPainter(accent: Theme.of(context).colorScheme.primary),
+    painter: _ScreenPlayPainter(
+      accent: Theme.of(context).colorScheme.primary,
+      surface: context.palette.surface,
+      border: context.palette.border,
+    ),
   );
 }
 
 class _ScreenPlayPainter extends CustomPainter {
-  const _ScreenPlayPainter({required this.accent});
+  const _ScreenPlayPainter({
+    required this.accent,
+    required this.surface,
+    required this.border,
+  });
 
   final Color accent;
+  final Color surface;
+  final Color border;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -32,11 +42,11 @@ class _ScreenPlayPainter extends CustomPainter {
       screen,
       const Radius.circular(AppRadii.artwork),
     );
-    canvas.drawRRect(panel, Paint()..color = AppTheme.surface);
+    canvas.drawRRect(panel, Paint()..color = surface);
     canvas.drawRRect(
       panel,
       Paint()
-        ..color = AppTheme.border
+        ..color = border
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.3,
     );
@@ -60,7 +70,7 @@ class _ScreenPlayPainter extends CustomPainter {
     canvas.drawPath(play, Paint()..color = accent);
 
     final standPaint = Paint()
-      ..color = AppTheme.border
+      ..color = border
       ..strokeWidth = 2
       ..strokeCap = StrokeCap.round;
     final standTop = screen.bottom + 5;
@@ -78,5 +88,7 @@ class _ScreenPlayPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _ScreenPlayPainter oldDelegate) =>
-      oldDelegate.accent != accent;
+      oldDelegate.accent != accent ||
+      oldDelegate.surface != surface ||
+      oldDelegate.border != border;
 }

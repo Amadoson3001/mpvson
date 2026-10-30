@@ -31,7 +31,7 @@ class HomeView extends StatelessWidget {
   @override
   Widget build(BuildContext context) => DecoratedBox(
     decoration: BoxDecoration(
-      color: AppTheme.background,
+      color: context.palette.background,
       border: isDragging
           ? Border.all(color: Theme.of(context).colorScheme.primary, width: 2)
           : null,
@@ -66,9 +66,9 @@ class HomeView extends StatelessWidget {
                       style: Theme.of(context).textTheme.titleLarge,
                     ),
                     const SizedBox(height: 8),
-                    const Text(
+                    Text(
                       'Choose a file, open a URL, or drop files here.',
-                      style: AppTheme.rowSecondary,
+                      style: context.palette.rowSecondary,
                     ),
                     const SizedBox(height: 16),
                     Wrap(
@@ -100,7 +100,7 @@ class HomeView extends StatelessWidget {
                           const SizedBox(width: 12),
                           Text(
                             '${recent.length} ${recent.length == 1 ? 'item' : 'items'}',
-                            style: AppTheme.metadata,
+                            style: context.palette.metadata,
                           ),
                         ],
                       ),
@@ -300,9 +300,9 @@ class _RecentTileState extends State<_RecentTile> {
             entry.title,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: AppTheme.rowPrimary.copyWith(
+            style: context.palette.rowPrimary.copyWith(
               fontWeight: FontWeight.w600,
-              color: _focused ? accent : AppTheme.primaryText,
+              color: _focused ? accent : context.palette.primaryText,
             ),
           ),
           const SizedBox(height: 4),
@@ -312,7 +312,7 @@ class _RecentTileState extends State<_RecentTile> {
                 : type,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: AppTheme.metadata.copyWith(
+            style: context.palette.metadata.copyWith(
               fontFeatures: const [FontFeature.tabularFigures()],
             ),
           ),

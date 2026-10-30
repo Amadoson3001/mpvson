@@ -3,7 +3,10 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../../core/app_theme.dart';
+import '../../core/components/seek_bar.dart';
+import '../../library/widgets/audio_volume_control.dart';
 import '../../player/widgets/player_control_style.dart';
+import '../../player/widgets/player_controls.dart';
 
 /// Sizing rules for the Now Playing stage.
 ///
@@ -36,7 +39,10 @@ class NowPlayingLayout {
   final String album;
 
   /// Width the column is allowed to occupy before the stage widens further.
-  static const double columnMaxWidth = 680;
+  ///
+  /// Wide enough that the timeline, the title and the control band all read as
+  /// one block, and narrow enough that the artwork stays the visual anchor.
+  static const double columnMaxWidth = 768;
 
   /// Spacer that balances the favorite button beside the title.
   static const double titleBalanceWidth = 48;
@@ -48,15 +54,50 @@ class NowPlayingLayout {
   static const double minArtworkSizeCompact = 80;
 
   /// Largest the artwork may grow, per stage width.
-  static const double maxArtworkSize = 340;
-  static const double maxArtworkSizeSpacious = 420;
-  static const double maxArtworkSizeNarrow = 240;
+  static const double maxArtworkSize = 372;
+  static const double maxArtworkSizeSpacious = 440;
+  static const double maxArtworkSizeNarrow = 300;
 
   /// Stage width below which the narrower artwork maximum applies.
-  static const double narrowBreakpoint = 800;
+  static const double narrowBreakpoint = 820;
+
+  /// Space kept between the transport row and the volume control.
+  static const double minControlGap = 16;
+
+  /// Width of the stage's content column at [viewportWidth].
+  ///
+  /// The stage centers this column, so anything sized to it — the timeline, the
+  /// top bar, the control band — shares the same center and edges.
+  static double columnWidth(double viewportWidth) =>
+      math.min(columnMaxWidth, viewportWidth - 2 * AppSpace.xl);
+
+  /// Whether the volume control can sit beside the transport on one row.
+  ///
+  /// The transport is centered in the column while the volume rides the
+  /// trailing edge, so the row only has room when the space left over after the
+  /// transport is at least the volume plus the timeline's inset. Narrower
+  /// stages drop the volume to its own row rather than crowding the transport.
+  static bool controlsShareRow({
+    required double viewportWidth,
+    required bool isCompactHeight,
+  }) {
+    final width = columnWidth(viewportWidth);
+    final gap =
+        (width - TransportButtons.preferredWidth(compact: isCompactHeight)) /
+            2 -
+        volumeControlWidth(compact: isCompactHeight) -
+        SeekBar.sideInset -
+        TransportButtons.playButtonCenterOffset(compact: isCompactHeight);
+    return gap >= minControlGap;
+  }
+
+  /// Width of the volume control in each presentation.
+  static double volumeControlWidth({required bool compact}) =>
+      AudioVolumeControl.preferredWidth(compact: compact, showPercent: true);
 
   /// Edge length for the artwork so the whole column fits the viewport.
   double artworkSize({
+    required BuildContext context,
     required double viewportWidth,
     required double viewportHeight,
     required double iconButtonExtent,
@@ -73,6 +114,7 @@ class NowPlayingLayout {
     final remainder =
         viewportHeight -
         contentHeight(
+          context: context,
           viewportWidth: viewportWidth,
           viewportHeight: viewportHeight,
           iconButtonExtent: iconButtonExtent,
@@ -84,6 +126,7 @@ class NowPlayingLayout {
 
   /// Height of the column with the artwork excluded.
   double contentHeight({
+    required BuildContext context,
     required double viewportWidth,
     double? viewportHeight,
     required double iconButtonExtent,
@@ -93,7 +136,7 @@ class NowPlayingLayout {
     final columnWidth =
         math.min(columnMaxWidth, viewportWidth) - 2 * AppSpace.xl;
     final titleHeight = _textHeight(
-      isCompactHeight ? AppTheme.albumTitle : AppTheme.pageTitle,
+      isCompactHeight ? context.palette.albumTitle : context.palette.pageTitle,
       title,
       textScaler,
       columnWidth - titleBalanceWidth - iconButtonExtent,
@@ -105,17 +148,19 @@ class NowPlayingLayout {
     final titleRowHeight = math.max(iconButtonExtent, titleHeight);
     return _fixedRowsHeight(
           iconButtonExtent,
+          viewportWidth: viewportWidth,
           isCompactHeight: isCompactHeight,
         ) +
         titleRowHeight +
-        _textHeight(_artistStyle, artist, textScaler, columnWidth) +
-        _textHeight(_albumStyle, album, textScaler, columnWidth);
+        _textHeight(artistStyle(context), artist, textScaler, columnWidth) +
+        _textHeight(albumStyle(context), album, textScaler, columnWidth);
   }
 
   /// Height of the rows that never change with the text: the scroll padding,
   /// the back/close row, the gaps, the timeline row and the transport row.
   static double _fixedRowsHeight(
     double iconButtonExtent, {
+    double? viewportWidth,
     bool isCompactHeight = false,
   }) {
     final verticalPadding = isCompactHeight ? 2 * AppSpace.sm : 2 * AppSpace.lg;
@@ -126,6 +171,25 @@ class NowPlayingLayout {
     final gapAboveTransport = isCompactHeight ? 16.0 : AppSpace.xl;
     final gapTimelineTransport = isCompactHeight ? 4.0 : AppSpace.sm;
 
+    // The control band is as tall as its tallest member: the transport row, or
+    // the volume control, whose mute button stays the same size in both
+    // presentations.
+    final controlRow = math.max(
+      isCompactHeight
+          ? PlayerControlStyle.compactControlExtent
+          : PlayerControlStyle.controlExtent,
+      AudioVolumeControl.extent,
+    );
+
+    // Narrow stages stack the volume under the transport, which adds a second
+    // control row to the column.
+    final stackedVolume =
+        viewportWidth != null &&
+        !controlsShareRow(
+          viewportWidth: viewportWidth,
+          isCompactHeight: isCompactHeight,
+        );
+
     return verticalPadding +
         iconButtonExtent +
         gapAboveArtwork +
@@ -135,21 +199,19 @@ class NowPlayingLayout {
         gapAboveTransport +
         gapTimelineTransport +
         PlayerControlStyle.seekExtent +
-        (isCompactHeight
-            ? PlayerControlStyle.compactControlExtent
-            : PlayerControlStyle.controlExtent);
+        controlRow +
+        (stackedVolume ? AudioVolumeControl.extent + AppSpace.sm : 0);
   }
 
-  /// Style of the artist line, mirroring the view's text row.
-  static final TextStyle _artistStyle = AppTheme.sectionTitle.copyWith(
-    color: AppTheme.secondaryText,
-    fontWeight: FontWeight.w500,
-  );
+  static TextStyle artistStyle(BuildContext context) =>
+      context.palette.sectionTitle.copyWith(
+        color: context.palette.secondaryText,
+        fontWeight: FontWeight.w500,
+      );
 
   /// Style of the album line, mirroring the view's text row.
-  static final TextStyle _albumStyle = AppTheme.rowSecondary.copyWith(
-    color: AppTheme.mutedText,
-  );
+  static TextStyle albumStyle(BuildContext context) =>
+      context.palette.rowSecondary.copyWith(color: context.palette.mutedText);
 
   /// Measures a text row exactly as the [Text] widget will lay it out, so the
   /// artwork sizing accounts for the real rows instead of an estimate.

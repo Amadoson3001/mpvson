@@ -3,6 +3,8 @@ import 'dart:convert';
 
 import 'package:media_kit/media_kit.dart';
 
+import '../../domain/models/playback_chapter.dart';
+
 /// What the native playback engine reports for a source.
 enum NativeMediaEventKind {
   /// libmpv started loading a source. The event carries the source it started.
@@ -16,24 +18,35 @@ enum NativeMediaEventKind {
 
   /// libmpv reported a change in seekability of the attached source.
   seekableChanged,
+
+  /// libmpv reported the chapter list of the attached source.
+  chaptersChanged,
 }
 
 /// A native engine notification about the source it has attached.
 class NativeMediaEvent {
   const NativeMediaEvent.started(this.source)
     : kind = NativeMediaEventKind.started,
-      seekable = true;
+      seekable = true,
+      chapters = const <PlaybackChapter>[];
   const NativeMediaEvent.loaded()
     : kind = NativeMediaEventKind.loaded,
       source = '',
-      seekable = true;
+      seekable = true,
+      chapters = const <PlaybackChapter>[];
   const NativeMediaEvent.ended()
     : kind = NativeMediaEventKind.ended,
       source = '',
-      seekable = true;
+      seekable = true,
+      chapters = const <PlaybackChapter>[];
   const NativeMediaEvent.seekable(this.seekable)
     : kind = NativeMediaEventKind.seekableChanged,
-      source = '';
+      source = '',
+      chapters = const <PlaybackChapter>[];
+  const NativeMediaEvent.chapters(this.chapters)
+    : kind = NativeMediaEventKind.chaptersChanged,
+      source = '',
+      seekable = true;
 
   final NativeMediaEventKind kind;
 
@@ -44,9 +57,13 @@ class NativeMediaEvent {
   /// Whether the attached source supports arbitrary seeking.
   final bool seekable;
 
+  /// Chapter markers reported for [NativeMediaEventKind.chaptersChanged].
+  final List<PlaybackChapter> chapters;
+
   @override
   String toString() =>
-      'NativeMediaEvent(${kind.name}, $source, seekable: $seekable)';
+      'NativeMediaEvent(${kind.name}, $source, seekable: $seekable, '
+      'chapters: ${chapters.length})';
 }
 
 /// Property names observed on the native player.
@@ -61,6 +78,7 @@ abstract final class NativePropertyNames {
   static const String eofReached = 'eof-reached';
   static const String idleActive = 'idle-active';
   static const String seekable = 'seekable';
+  static const String chapterList = 'chapter-list';
 
   /// Every property the adapter observes, in registration order.
   static const List<String> all = <String>[
@@ -70,6 +88,7 @@ abstract final class NativePropertyNames {
     eofReached,
     idleActive,
     seekable,
+    chapterList,
   ];
 }
 
@@ -101,9 +120,38 @@ NativeMediaEvent? interpretNativeProperty(String property, String value) {
       return _isYes(value) ? const NativeMediaEvent.ended() : null;
     case NativePropertyNames.seekable:
       return NativeMediaEvent.seekable(_isYes(value));
+    case NativePropertyNames.chapterList:
+      return NativeMediaEvent.chapters(parseChapterList(value));
     default:
       return null;
   }
+}
+
+/// Parses libmpv's `chapter-list` JSON into chapter markers ordered by time.
+List<PlaybackChapter> parseChapterList(String value) {
+  final Object? decoded;
+  try {
+    decoded = jsonDecode(value);
+  } on FormatException {
+    return const <PlaybackChapter>[];
+  }
+  if (decoded is! List) return const <PlaybackChapter>[];
+  final chapters = <PlaybackChapter>[];
+  for (final item in decoded) {
+    if (item is! Map) continue;
+    final seconds = item['time'];
+    if (seconds is! num || !seconds.isFinite || seconds < 0) continue;
+    final title = item['title']?.toString().trim() ?? '';
+    chapters.add(
+      PlaybackChapter(
+        title: title,
+        start: Duration(milliseconds: (seconds * 1000).round()),
+      ),
+    );
+  }
+  if (chapters.isEmpty) return const <PlaybackChapter>[];
+  chapters.sort((a, b) => a.start.compareTo(b.start));
+  return List<PlaybackChapter>.unmodifiable(chapters);
 }
 
 bool _isYes(String value) {
