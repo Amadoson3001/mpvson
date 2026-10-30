@@ -128,6 +128,7 @@ class HomeView extends StatelessWidget {
                       repository: repository,
                       onOpen: () => onOpenRecent(recent[index]),
                     ),
+                    addAutomaticKeepAlives: false,
                     childCount: recent.length,
                   ),
                 ),
@@ -255,6 +256,8 @@ class _RecentTileState extends State<_RecentTile> {
                           : Image.memory(
                               bytes,
                               fit: BoxFit.cover,
+                              filterQuality: FilterQuality.low,
+                              cacheWidth: 512,
                               gaplessPlayback: true,
                               errorBuilder: (_, _, _) => fallback(),
                             );

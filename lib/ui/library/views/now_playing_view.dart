@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
 import 'dart:typed_data';
-import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
 import '../../../data/repositories/media_library_repository.dart';
 import '../../../domain/models/library_models.dart';
@@ -38,13 +37,9 @@ class NowPlayingView extends StatefulWidget {
 }
 
 class _NowPlayingViewState extends State<NowPlayingView> {
-  static final ImageFilter _backgroundBlur = ImageFilter.blur(
-    sigmaX: 36,
-    sigmaY: 36,
-  );
-
   Uint8List? _cachedArtwork;
   String? _cachedArtworkPath;
+  String? _lastEntryTitle;
   MediaItemRecord? _currentMediaRecord;
   int _metadataGeneration = 0;
   int _artworkGeneration = 0;
@@ -87,7 +82,10 @@ class _NowPlayingViewState extends State<NowPlayingView> {
     final cur = widget.controller.current;
     if (cur?.path != _cachedArtworkPath) {
       _syncMetadata();
-    } else {
+      return;
+    }
+    if (cur?.title != _lastEntryTitle) {
+      _lastEntryTitle = cur?.title;
       if (mounted) setState(() {});
     }
   }
@@ -216,22 +214,30 @@ class _NowPlayingViewState extends State<NowPlayingView> {
               textScaler: MediaQuery.textScalerOf(context),
             );
 
+        final isCompactHeight = constraints.maxHeight < 640;
+        final verticalPadding = isCompactHeight ? AppSpace.sm : AppSpace.lg;
+        final gapAboveArtwork = isCompactHeight ? 8.0 : 12.0;
+        final gapBelowArtwork = isCompactHeight ? 14.0 : 28.0;
+        final gapBelowTitle = isCompactHeight ? 4.0 : 8.0;
+        final gapBelowArtist = isCompactHeight ? 2.0 : 4.0;
+        final gapAboveTransport = isCompactHeight ? 16.0 : AppSpace.xl;
+        final gapTimelineTransport = isCompactHeight ? 4.0 : AppSpace.sm;
+
         return Scaffold(
           backgroundColor: AppTheme.background,
           body: Stack(
             children: [
               if (_cachedArtwork != null)
                 Positioned.fill(
-                  // The backdrop never changes while a track plays; keeping it
-                  // in its own layer avoids re-filtering on transport updates.
+                  // The dark tint above this layer supplies the depth; skipping
+                  // a full-screen gaussian blur keeps integrated GPUs fluid.
                   child: RepaintBoundary(
-                    child: ImageFiltered(
-                      imageFilter: _backgroundBlur,
-                      child: Image.memory(
-                        _cachedArtwork!,
-                        fit: BoxFit.cover,
-                        filterQuality: FilterQuality.low,
-                      ),
+                    child: Image.memory(
+                      _cachedArtwork!,
+                      fit: BoxFit.cover,
+                      filterQuality: FilterQuality.low,
+                      cacheWidth: 512,
+                      gaplessPlayback: true,
                     ),
                   ),
                 ),
@@ -276,9 +282,9 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                   // Main content stage
                   Expanded(
                     child: SingleChildScrollView(
-                      padding: const EdgeInsets.symmetric(
+                      padding: EdgeInsets.symmetric(
                         horizontal: AppSpace.xl,
-                        vertical: AppSpace.lg,
+                        vertical: verticalPadding,
                       ),
                       child: Center(
                         child: ConstrainedBox(
@@ -286,11 +292,16 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                           // the column centers in the stage instead of leaving
                           // the slack at the bottom.
                           constraints: BoxConstraints(
-                            minHeight: constraints.maxHeight - 2 * AppSpace.lg,
+                            minHeight: math.max(
+                              0,
+                              constraints.maxHeight - 2 * verticalPadding,
+                            ),
                             maxWidth: NowPlayingLayout.columnMaxWidth,
                           ),
                           child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
+                            mainAxisAlignment: isCompactHeight
+                                ? MainAxisAlignment.start
+                                : MainAxisAlignment.center,
                             crossAxisAlignment: CrossAxisAlignment.center,
                             children: [
                               Row(
@@ -327,13 +338,13 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                                   ),
                                 ],
                               ),
-                              const SizedBox(height: 12),
+                              SizedBox(height: gapAboveArtwork),
                               // Large square artwork
                               AudioVolumeWheel(
                                 controller: widget.controller,
                                 child: _buildArtwork(context, artworkSize),
                               ),
-                              const SizedBox(height: 28),
+                              SizedBox(height: gapBelowArtwork),
                               // Title & Favorite row
                               Row(
                                 mainAxisAlignment: MainAxisAlignment.center,
@@ -346,7 +357,9 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                                       _currentMediaRecord?.title ??
                                           entry?.title ??
                                           'Nothing playing',
-                                      style: AppTheme.pageTitle,
+                                      style: isCompactHeight
+                                          ? AppTheme.albumTitle
+                                          : AppTheme.pageTitle,
                                       textAlign: TextAlign.center,
                                       maxLines: 2,
                                       overflow: TextOverflow.ellipsis,
@@ -376,7 +389,7 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                                   ),
                                 ],
                               ),
-                              const SizedBox(height: 8),
+                              SizedBox(height: gapBelowTitle),
                               // Artist
                               Text(
                                 _currentMediaRecord?.artist ??
@@ -389,7 +402,7 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                               ),
-                              const SizedBox(height: 4),
+                              SizedBox(height: gapBelowArtist),
                               // Album
                               Text(
                                 _currentMediaRecord?.album ?? '',
@@ -400,31 +413,39 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                               ),
-                              const SizedBox(height: AppSpace.xl),
+                              SizedBox(height: gapAboveTransport),
                               // Transport, timeline and volume, so this screen
                               // can drive playback on its own.
-                              PlayerControlStyle(
-                                compact: false,
-                                child: Column(
-                                  children: [
-                                    SeekBar(controller: widget.controller),
-                                    const SizedBox(height: AppSpace.sm),
-                                    Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.center,
-                                      children: [
-                                        TransportButtons(
-                                          controller: widget.controller,
-                                          compact: false,
-                                        ),
-                                        const SizedBox(width: AppSpace.lg),
-                                        AudioVolumeControl(
-                                          controller: widget.controller,
-                                          compact: false,
-                                        ),
-                                      ],
-                                    ),
-                                  ],
+                              AudioVolumeWheel(
+                                controller: widget.controller,
+                                child: PlayerControlStyle(
+                                  compact: isCompactHeight,
+                                  child: Column(
+                                    children: [
+                                      SeekBar(controller: widget.controller),
+                                      SizedBox(height: gapTimelineTransport),
+                                      Row(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        children: [
+                                          TransportButtons(
+                                            controller: widget.controller,
+                                            compact: isCompactHeight,
+                                          ),
+                                          SizedBox(
+                                            width: isCompactHeight
+                                                ? AppSpace.md
+                                                : AppSpace.lg,
+                                          ),
+                                          AudioVolumeControl(
+                                            controller: widget.controller,
+                                            compact: isCompactHeight,
+                                            showPercent: true,
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ),
                             ],
@@ -450,17 +471,10 @@ class _NowPlayingViewState extends State<NowPlayingView> {
         color: AppTheme.raisedSurface,
         borderRadius: BorderRadius.circular(AppRadii.artwork),
         border: Border.all(color: AppTheme.border, width: 1.5),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.35),
-            blurRadius: 24,
-            offset: const Offset(0, 12),
-          ),
-        ],
       ),
       clipBehavior: Clip.antiAlias,
       child: AnimatedSwitcher(
-        duration: AppMotion.duration(context, AppMotion.emphasized),
+        duration: AppMotion.duration(context, AppMotion.standard),
         switchInCurve: AppMotion.enter,
         switchOutCurve: AppMotion.exit,
         transitionBuilder: (child, animation) {
@@ -474,6 +488,9 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                 ? Image.memory(
                     _cachedArtwork!,
                     fit: BoxFit.cover,
+                    filterQuality: FilterQuality.low,
+                    cacheWidth: 512,
+                    gaplessPlayback: true,
                     errorBuilder: (_, _, _) => _buildFallbackArtwork(),
                   )
                 : _currentMediaRecord != null

@@ -644,6 +644,14 @@ class PlayerController extends ChangeNotifier {
   final ValueNotifier<TransportState> transportListenable =
       ValueNotifier<TransportState>(TransportState.idle);
 
+  /// Fires only when the player's structural presentation changes (current
+  /// entry, media kind, error, density, recent list). Volume/rate/transport
+  /// ticks stay on their dedicated listenables.
+  final _StructureNotifier _structureNotifier = _StructureNotifier();
+  String? _structureKey;
+
+  Listenable get structureListenable => _structureNotifier;
+
   final PlaybackPositionSmoother _positionSmoother = PlaybackPositionSmoother();
 
   /// Interpolated playback position for display, updated on a display cadence.
@@ -2406,6 +2414,7 @@ class PlayerController extends ChangeNotifier {
     seekableListenable.dispose();
     queueListenable.dispose();
     transportListenable.dispose();
+    _structureNotifier.dispose();
   }
 
   Future<void> _advance({required bool fromCompletion}) async {
@@ -3409,7 +3418,20 @@ class PlayerController extends ChangeNotifier {
     if (_notifierDisposed || _closingState != ControllerClosingState.running) {
       return;
     }
+    _publishStructureIfChanged();
     notifyListeners();
+  }
+
+  void _publishStructureIfChanged() {
+    final entry = current;
+    final firstRecent = recent.isEmpty ? null : recent.first.id;
+    final next =
+        '${entry?.id}|${entry?.path}|${entry?.title}|'
+        '$hasMedia|$isVideo|$isAudio|${_error ?? ''}|'
+        '${recent.length}|$firstRecent|${controlDensity.name}';
+    if (next == _structureKey) return;
+    _structureKey = next;
+    _structureNotifier.markChanged();
   }
 
   bool get _acceptsCommands =>
@@ -3491,4 +3513,8 @@ enum _PendingLoadOutcome {
 
   /// The snapshot does not describe the requested source yet.
   stillLoading,
+}
+
+class _StructureNotifier extends ChangeNotifier {
+  void markChanged() => notifyListeners();
 }

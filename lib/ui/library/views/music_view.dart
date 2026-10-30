@@ -503,6 +503,7 @@ class _MusicViewState extends State<MusicView> {
 
   Widget _buildSongTableView(List<MediaItemRecord> songs) {
     return ListView.separated(
+      addAutomaticKeepAlives: false,
       padding: const EdgeInsets.symmetric(
         horizontal: AppSpace.lg,
         vertical: AppSpace.md,
@@ -926,23 +927,36 @@ class _MusicViewState extends State<MusicView> {
             : a.$2.toLowerCase().compareTo(b.$2.toLowerCase());
       });
 
-    return GridView.builder(
-      padding: const EdgeInsets.all(AppSpace.lg),
-      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: 220,
-        mainAxisSpacing: 24,
-        crossAxisSpacing: 20,
-        childAspectRatio: 0.76,
-      ),
-      itemCount: albums.length,
-      itemBuilder: (context, index) {
-        final key = albums[index];
-        final albumName = key.$1;
-        final albumSongs = albumsMap[key]!;
-        final artist = key.$2;
-        final trackCount = albumSongs.length;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final availableWidth = (constraints.maxWidth - 2 * AppSpace.lg).clamp(
+          0.0,
+          double.infinity,
+        );
+        final columns = ((availableWidth + 20) / 220).ceil().clamp(2, 12);
+        final tileWidth = (availableWidth - (columns - 1) * 20) / columns;
+        final textHeight = MediaQuery.textScalerOf(context).scale(13) * 3.8;
 
-        return _buildAlbumCard(albumName, artist, trackCount, albumSongs);
+        return GridView.builder(
+          addAutomaticKeepAlives: false,
+          padding: const EdgeInsets.all(AppSpace.lg),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: columns,
+            mainAxisSpacing: 24,
+            crossAxisSpacing: 20,
+            mainAxisExtent: tileWidth + textHeight + 14,
+          ),
+          itemCount: albums.length,
+          itemBuilder: (context, index) {
+            final key = albums[index];
+            final albumName = key.$1;
+            final albumSongs = albumsMap[key]!;
+            final artist = key.$2;
+            final trackCount = albumSongs.length;
+
+            return _buildAlbumCard(albumName, artist, trackCount, albumSongs);
+          },
+        );
       },
     );
   }
@@ -1173,35 +1187,48 @@ class _MusicViewState extends State<MusicView> {
 
     final artists = artistsMap.keys.toList()..sort();
 
-    return GridView.builder(
-      padding: const EdgeInsets.all(AppSpace.lg),
-      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: 200,
-        mainAxisSpacing: 20,
-        crossAxisSpacing: 20,
-        childAspectRatio: 0.88,
-      ),
-      itemCount: artists.length,
-      itemBuilder: (context, index) {
-        final artistName = artists[index];
-        final artistSongs = artistsMap[artistName]!;
-        final albumCount = artistSongs.map((s) => s.album).toSet().length;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final availableWidth = (constraints.maxWidth - 2 * AppSpace.lg).clamp(
+          0.0,
+          double.infinity,
+        );
+        final columns = ((availableWidth + 20) / 200).ceil().clamp(2, 12);
+        final tileWidth = (availableWidth - (columns - 1) * 20) / columns;
+        final textHeight = MediaQuery.textScalerOf(context).scale(13) * 3.8;
 
-        return MediaTile(
-          artwork: LibraryArtwork(
-            path: artistSongs.first.metadata.artworkUri,
-            mediaPath: artistSongs.first.path,
-            repository: widget.repository,
-            icon: Icons.person_rounded,
+        return GridView.builder(
+          addAutomaticKeepAlives: false,
+          padding: const EdgeInsets.all(AppSpace.lg),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: columns,
+            mainAxisSpacing: 20,
+            crossAxisSpacing: 20,
+            mainAxisExtent: tileWidth + textHeight + 14,
           ),
-          title: artistName,
-          subtitle: '${artistSongs.length} songs, $albumCount albums',
-          onTap: () {
-            setState(() {
-              _selectedArtist = artistName;
-              _artistSongs = null;
-            });
-            _reload();
+          itemCount: artists.length,
+          itemBuilder: (context, index) {
+            final artistName = artists[index];
+            final artistSongs = artistsMap[artistName]!;
+            final albumCount = artistSongs.map((s) => s.album).toSet().length;
+
+            return MediaTile(
+              artwork: LibraryArtwork(
+                path: artistSongs.first.metadata.artworkUri,
+                mediaPath: artistSongs.first.path,
+                repository: widget.repository,
+                icon: Icons.person_rounded,
+              ),
+              title: artistName,
+              subtitle: '${artistSongs.length} songs, $albumCount albums',
+              onTap: () {
+                setState(() {
+                  _selectedArtist = artistName;
+                  _artistSongs = null;
+                });
+                _reload();
+              },
+            );
           },
         );
       },

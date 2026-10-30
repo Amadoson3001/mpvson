@@ -41,12 +41,16 @@ class NowPlayingLayout {
   /// Spacer that balances the favorite button beside the title.
   static const double titleBalanceWidth = 48;
 
-  /// Smallest the artwork may shrink before the stage scrolls instead.
-  static const double minArtworkSize = 180;
+  /// Smallest the artwork may shrink on spacious viewports before the stage scrolls.
+  static const double minArtworkSize = 140;
+
+  /// Smallest the artwork may shrink on compact viewports to keep controls visible.
+  static const double minArtworkSizeCompact = 80;
 
   /// Largest the artwork may grow, per stage width.
   static const double maxArtworkSize = 340;
-  static const double maxArtworkSizeNarrow = 260;
+  static const double maxArtworkSizeSpacious = 420;
+  static const double maxArtworkSizeNarrow = 240;
 
   /// Stage width below which the narrower artwork maximum applies.
   static const double narrowBreakpoint = 800;
@@ -58,28 +62,38 @@ class NowPlayingLayout {
     required double iconButtonExtent,
     required TextScaler textScaler,
   }) {
+    final isCompactHeight = viewportHeight < 640;
+    final minSize = isCompactHeight ? minArtworkSizeCompact : minArtworkSize;
     final maximum = viewportWidth < narrowBreakpoint
-        ? maxArtworkSizeNarrow
-        : maxArtworkSize;
-    return (viewportHeight -
-            contentHeight(
-              viewportWidth: viewportWidth,
-              iconButtonExtent: iconButtonExtent,
-              textScaler: textScaler,
-            ))
-        .clamp(minArtworkSize, maximum);
+        ? (isCompactHeight ? 200.0 : maxArtworkSizeNarrow)
+        : (viewportWidth >= 1200 && viewportHeight >= 850
+              ? maxArtworkSizeSpacious
+              : maxArtworkSize);
+
+    final remainder =
+        viewportHeight -
+        contentHeight(
+          viewportWidth: viewportWidth,
+          viewportHeight: viewportHeight,
+          iconButtonExtent: iconButtonExtent,
+          textScaler: textScaler,
+        );
+
+    return remainder.clamp(minSize, maximum);
   }
 
   /// Height of the column with the artwork excluded.
   double contentHeight({
     required double viewportWidth,
+    double? viewportHeight,
     required double iconButtonExtent,
     required TextScaler textScaler,
   }) {
+    final isCompactHeight = viewportHeight != null && viewportHeight < 640;
     final columnWidth =
         math.min(columnMaxWidth, viewportWidth) - 2 * AppSpace.xl;
     final titleHeight = _textHeight(
-      AppTheme.pageTitle,
+      isCompactHeight ? AppTheme.albumTitle : AppTheme.pageTitle,
       title,
       textScaler,
       columnWidth - titleBalanceWidth - iconButtonExtent,
@@ -89,7 +103,10 @@ class NowPlayingLayout {
     // the title itself when it wraps to two lines. The spacer beside it only
     // sets a width, so it never adds height.
     final titleRowHeight = math.max(iconButtonExtent, titleHeight);
-    return _fixedRowsHeight(iconButtonExtent) +
+    return _fixedRowsHeight(
+          iconButtonExtent,
+          isCompactHeight: isCompactHeight,
+        ) +
         titleRowHeight +
         _textHeight(_artistStyle, artist, textScaler, columnWidth) +
         _textHeight(_albumStyle, album, textScaler, columnWidth);
@@ -97,17 +114,30 @@ class NowPlayingLayout {
 
   /// Height of the rows that never change with the text: the scroll padding,
   /// the back/close row, the gaps, the timeline row and the transport row.
-  static double _fixedRowsHeight(double iconButtonExtent) {
-    return 2 * AppSpace.lg + // scroll view padding
-        iconButtonExtent + // back / close row
-        12 + // gap above the artwork
-        28 + // gap below the artwork
-        8 + // gap below the title row
-        4 + // gap below the artist
-        AppSpace.xl + // gap above the transport block
-        AppSpace.sm + // gap between the timeline and the transport row
-        PlayerControlStyle.seekExtent + // timeline row
-        PlayerControlStyle.controlExtent; // transport row
+  static double _fixedRowsHeight(
+    double iconButtonExtent, {
+    bool isCompactHeight = false,
+  }) {
+    final verticalPadding = isCompactHeight ? 2 * AppSpace.sm : 2 * AppSpace.lg;
+    final gapAboveArtwork = isCompactHeight ? 8.0 : 12.0;
+    final gapBelowArtwork = isCompactHeight ? 14.0 : 28.0;
+    final gapBelowTitle = isCompactHeight ? 4.0 : 8.0;
+    final gapBelowArtist = isCompactHeight ? 2.0 : 4.0;
+    final gapAboveTransport = isCompactHeight ? 16.0 : AppSpace.xl;
+    final gapTimelineTransport = isCompactHeight ? 4.0 : AppSpace.sm;
+
+    return verticalPadding +
+        iconButtonExtent +
+        gapAboveArtwork +
+        gapBelowArtwork +
+        gapBelowTitle +
+        gapBelowArtist +
+        gapAboveTransport +
+        gapTimelineTransport +
+        PlayerControlStyle.seekExtent +
+        (isCompactHeight
+            ? PlayerControlStyle.compactControlExtent
+            : PlayerControlStyle.controlExtent);
   }
 
   /// Style of the artist line, mirroring the view's text row.

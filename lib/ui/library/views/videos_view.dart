@@ -176,14 +176,17 @@ class _VideosViewState extends State<VideosView> {
 
   @override
   Widget build(BuildContext context) {
+    final hasVideos = (_videos ?? const <MediaItemRecord>[]).isNotEmpty;
     return Material(
       color: AppTheme.background,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Controls / View toggle bar
-          _buildToolbar(),
-          const Divider(height: 1, color: AppTheme.border),
+          // Controls / View toggle bar (only shown when videos exist)
+          if (hasVideos) ...[
+            _buildToolbar(),
+            const Divider(height: 1, color: AppTheme.border),
+          ],
           // Video Stage
           Expanded(
             child: _isLoading && _videos == null
@@ -195,7 +198,7 @@ class _VideosViewState extends State<VideosView> {
                       ),
                     ),
                   )
-                : (_videos ?? const <MediaItemRecord>[]).isEmpty
+                : !hasVideos
                 ? EmptyState(
                     title: 'No videos found',
                     message:
@@ -220,93 +223,92 @@ class _VideosViewState extends State<VideosView> {
 
   Widget _buildToolbar() {
     final accent = Theme.of(context).colorScheme.primary;
-    final hasVideos = _videos?.isNotEmpty ?? false;
+    final count = _videos?.length ?? 0;
     return Container(
       color: AppTheme.surface,
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpace.lg,
-        vertical: 10,
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: AppSpace.lg, vertical: 8),
       child: Row(
         children: [
-          Text('Videos', style: AppTheme.sectionTitle),
+          if (count > 0)
+            Text(
+              '$count ${count == 1 ? 'video' : 'videos'}',
+              style: AppTheme.metadata,
+            ),
           const Spacer(),
-          if (hasVideos) ...[
-            // Sort dropdown
-            Text('Sort by: ', style: AppTheme.metadata),
-            const SizedBox(width: 6),
-            DropdownButton<String>(
-              value: _sortBy,
-              underline: const SizedBox.shrink(),
-              dropdownColor: AppTheme.surface,
-              style: AppTheme.rowPrimary.copyWith(fontSize: AppType.small),
-              icon: const Icon(
-                Icons.arrow_drop_down,
-                color: AppTheme.secondaryText,
-                size: 18,
-              ),
-              items: const [
-                DropdownMenuItem(value: 'title', child: Text('Title')),
-                DropdownMenuItem(value: 'addedAt', child: Text('Date added')),
-                DropdownMenuItem(value: 'duration', child: Text('Duration')),
-                DropdownMenuItem(value: 'fileSize', child: Text('File size')),
-              ],
-              onChanged: (val) {
-                if (val != null) {
-                  setState(() => _sortBy = val);
-                  _reload();
-                }
-              },
+          // Sort dropdown
+          Text('Sort by: ', style: AppTheme.metadata),
+          const SizedBox(width: 6),
+          DropdownButton<String>(
+            value: _sortBy,
+            underline: const SizedBox.shrink(),
+            dropdownColor: AppTheme.surface,
+            style: AppTheme.rowPrimary.copyWith(fontSize: AppType.small),
+            icon: const Icon(
+              Icons.arrow_drop_down,
+              color: AppTheme.secondaryText,
+              size: 18,
             ),
-            IconButton(
-              icon: Icon(
-                _ascending
-                    ? Icons.arrow_upward_rounded
-                    : Icons.arrow_downward_rounded,
-                size: 16,
-                color: AppTheme.secondaryText,
-              ),
-              tooltip: _ascending ? 'Ascending' : 'Descending',
-              visualDensity: VisualDensity.compact,
-              onPressed: () {
-                setState(() => _ascending = !_ascending);
+            items: const [
+              DropdownMenuItem(value: 'title', child: Text('Title')),
+              DropdownMenuItem(value: 'addedAt', child: Text('Date added')),
+              DropdownMenuItem(value: 'duration', child: Text('Duration')),
+              DropdownMenuItem(value: 'fileSize', child: Text('File size')),
+            ],
+            onChanged: (val) {
+              if (val != null) {
+                setState(() => _sortBy = val);
                 _reload();
-              },
+              }
+            },
+          ),
+          IconButton(
+            icon: Icon(
+              _ascending
+                  ? Icons.arrow_upward_rounded
+                  : Icons.arrow_downward_rounded,
+              size: 16,
+              color: AppTheme.secondaryText,
             ),
-            const SizedBox(width: 12),
-            const VerticalDivider(
-              width: 1,
-              indent: 6,
-              endIndent: 6,
-              color: AppTheme.border,
+            tooltip: _ascending ? 'Ascending' : 'Descending',
+            visualDensity: VisualDensity.compact,
+            onPressed: () {
+              setState(() => _ascending = !_ascending);
+              _reload();
+            },
+          ),
+          const SizedBox(width: 12),
+          const VerticalDivider(
+            width: 1,
+            indent: 6,
+            endIndent: 6,
+            color: AppTheme.border,
+          ),
+          const SizedBox(width: 12),
+          // Grid / List toggle
+          IconButton(
+            icon: Icon(
+              Icons.grid_view_rounded,
+              size: 18,
+              color: _viewMode == VideoViewMode.grid
+                  ? accent
+                  : AppTheme.mutedText,
             ),
-            const SizedBox(width: 12),
-            // Grid / List toggle
-            IconButton(
-              icon: Icon(
-                Icons.grid_view_rounded,
-                size: 18,
-                color: _viewMode == VideoViewMode.grid
-                    ? accent
-                    : AppTheme.mutedText,
-              ),
-              tooltip: 'Grid view',
-              visualDensity: VisualDensity.compact,
-              onPressed: () => setState(() => _viewMode = VideoViewMode.grid),
+            tooltip: 'Grid view',
+            visualDensity: VisualDensity.compact,
+            onPressed: () => setState(() => _viewMode = VideoViewMode.grid),
+          ),
+          IconButton(
+            icon: Icon(
+              Icons.view_list_rounded,
+              size: 20,
+              color: _viewMode == VideoViewMode.list
+                  ? accent
+                  : AppTheme.mutedText,
             ),
-            IconButton(
-              icon: Icon(
-                Icons.view_list_rounded,
-                size: 20,
-                color: _viewMode == VideoViewMode.list
-                    ? accent
-                    : AppTheme.mutedText,
-              ),
-              tooltip: 'List view',
-              visualDensity: VisualDensity.compact,
-              onPressed: () => setState(() => _viewMode = VideoViewMode.list),
-            ),
-          ],
+            tooltip: 'List view',
+            visualDensity: VisualDensity.compact,
+            onPressed: () => setState(() => _viewMode = VideoViewMode.list),
+          ),
         ],
       ),
     );
@@ -324,6 +326,7 @@ class _VideosViewState extends State<VideosView> {
         final width =
             (constraints.maxWidth - 48 - (columns - 1) * 20) / columns;
         return GridView.builder(
+          addAutomaticKeepAlives: false,
           padding: const EdgeInsets.all(AppSpace.lg),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: columns,
@@ -383,9 +386,9 @@ class _VideosViewState extends State<VideosView> {
                   // Video Thumbnail Stage
                   RepaintBoundary(
                     child: AnimatedScale(
-                      scale: (AppMotion.reduce(context) || !showPlayOverlay)
+                      scale: (AppMotion.lowPower(context) || !showPlayOverlay)
                           ? 1.0
-                          : 1.025,
+                          : 1.02,
                       duration: AppMotion.duration(context, AppMotion.hover),
                       curve: AppMotion.enter,
                       child: ClipRRect(
@@ -558,6 +561,7 @@ class _VideosViewState extends State<VideosView> {
   Widget _buildVideoList(List<MediaItemRecord> videos) {
     final accent = Theme.of(context).colorScheme.primary;
     return ListView.separated(
+      addAutomaticKeepAlives: false,
       padding: const EdgeInsets.symmetric(
         horizontal: AppSpace.lg,
         vertical: AppSpace.md,
@@ -959,6 +963,9 @@ class _VideoPreviewState extends State<_VideoPreview> {
             : Image.memory(
                 bytes,
                 fit: BoxFit.cover,
+                filterQuality: FilterQuality.low,
+                cacheWidth: 512,
+                gaplessPlayback: true,
                 errorBuilder: (_, _, _) => fallback(),
               );
       },

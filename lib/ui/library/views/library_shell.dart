@@ -666,14 +666,7 @@ class _LibraryShellState extends State<LibraryShell>
               child: DecoratedBox(
                 decoration: const BoxDecoration(
                   color: AppTheme.background,
-                  boxShadow: [
-                    BoxShadow(
-                      color: Color(0x66000000),
-                      blurRadius: 36,
-                      spreadRadius: 2,
-                      offset: Offset(0, -6),
-                    ),
-                  ],
+                  border: Border(top: BorderSide(color: AppTheme.border)),
                 ),
                 child: NowPlayingView(
                   controller: widget.controller,
@@ -1115,11 +1108,12 @@ class _LibraryShellState extends State<LibraryShell>
                     children: [
                       TransportButtons(
                         controller: widget.controller,
-                        compact: false,
+                        compact: isCompact,
                       ),
                       AudioVolumeControl(
                         controller: widget.controller,
                         compact: true,
+                        showPercent: !isCompact,
                       ),
                       if (isCompact) ...[
                         IconButton(

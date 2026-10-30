@@ -317,19 +317,36 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                 const Divider(height: 1, color: AppTheme.border),
                 // Playlists Grid
                 Expanded(
-                  child: GridView.builder(
-                    padding: const EdgeInsets.all(AppSpace.lg),
-                    gridDelegate:
-                        const SliverGridDelegateWithMaxCrossAxisExtent(
-                          maxCrossAxisExtent: 240,
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final availableWidth =
+                          (constraints.maxWidth - 2 * AppSpace.lg).clamp(
+                            0.0,
+                            double.infinity,
+                          );
+                      final columns = ((availableWidth + 20) / 220)
+                          .ceil()
+                          .clamp(2, 12);
+                      final tileWidth =
+                          (availableWidth - (columns - 1) * 20) / columns;
+                      final textHeight =
+                          MediaQuery.textScalerOf(context).scale(13) * 3.8;
+
+                      return GridView.builder(
+                        addAutomaticKeepAlives: false,
+                        padding: const EdgeInsets.all(AppSpace.lg),
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: columns,
                           mainAxisSpacing: 20,
                           crossAxisSpacing: 20,
-                          childAspectRatio: 0.9,
+                          mainAxisExtent: tileWidth + textHeight + 14,
                         ),
-                    itemCount: playlists.length,
-                    itemBuilder: (context, index) {
-                      final pl = playlists[index];
-                      return _buildPlaylistCard(pl);
+                        itemCount: playlists.length,
+                        itemBuilder: (context, index) {
+                          final pl = playlists[index];
+                          return _buildPlaylistCard(pl);
+                        },
+                      );
                     },
                   ),
                 ),

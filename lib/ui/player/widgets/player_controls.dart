@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import '../../../domain/models/control_density.dart';
@@ -1596,6 +1597,22 @@ class _InlineVolumeControlState extends State<_InlineVolumeControl> {
     if (mounted) setState(() => _pendingVolume = null);
   }
 
+  void _handleWheel(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent) return;
+    if (event.scrollDelta.dy == 0 ||
+        event.scrollDelta.dy.abs() < event.scrollDelta.dx.abs()) {
+      return;
+    }
+    GestureBinding.instance.pointerSignalResolver.register(event, (_) {
+      final steps = (event.scrollDelta.dy / 20).truncate();
+      final stepCount = steps != 0 ? steps : event.scrollDelta.dy.sign.toInt();
+      final current = _pendingVolume ?? widget.controller.volume;
+      final target = (current - stepCount * 5).clamp(0.0, 100.0).toDouble();
+      _onChanged(target);
+      _onChangeEnd(target);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final volume = (_pendingVolume ?? widget.controller.volume)
@@ -1611,6 +1628,8 @@ class _InlineVolumeControlState extends State<_InlineVolumeControl> {
         ? Icons.volume_down_rounded
         : Icons.volume_up_rounded;
     return Listener(
+      behavior: HitTestBehavior.opaque,
+      onPointerSignal: _handleWheel,
       onPointerDown: (_) => _pointerIsDown = true,
       onPointerUp: (_) => _pointerIsDown = false,
       onPointerCancel: (_) {
@@ -1818,6 +1837,22 @@ class _VolumeDialogState extends State<_VolumeDialog> {
     if (mounted) setState(() => _pendingVolume = null);
   }
 
+  void _handleWheel(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent) return;
+    if (event.scrollDelta.dy == 0 ||
+        event.scrollDelta.dy.abs() < event.scrollDelta.dx.abs()) {
+      return;
+    }
+    GestureBinding.instance.pointerSignalResolver.register(event, (_) {
+      final steps = (event.scrollDelta.dy / 20).truncate();
+      final stepCount = steps != 0 ? steps : event.scrollDelta.dy.sign.toInt();
+      final current = _pendingVolume ?? widget.controller.volume;
+      final target = (current - stepCount * 5).clamp(0.0, 100.0).toDouble();
+      _onChanged(target);
+      _onChangeEnd(target);
+    });
+  }
+
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: widget.controller,
@@ -1841,6 +1876,8 @@ class _VolumeDialogState extends State<_VolumeDialog> {
         content: SizedBox(
           width: 310,
           child: Listener(
+            behavior: HitTestBehavior.opaque,
+            onPointerSignal: _handleWheel,
             onPointerDown: (_) => _pointerIsDown = true,
             onPointerUp: (_) => _pointerIsDown = false,
             onPointerCancel: (_) {

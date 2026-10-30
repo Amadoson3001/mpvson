@@ -6,8 +6,11 @@ import 'package:flutter/material.dart';
 import '../../core/app_theme.dart';
 import '../../player/player_controller.dart';
 
-/// Compact mute button and slider shared by Now Playing and the library mini player.
-class AudioVolumeControl extends StatelessWidget {
+/// Compact mute button and responsive slider shared by Now Playing and the library mini player.
+///
+/// Supports direct pointer wheel scrolling over the entire widget (slider, icon, label),
+/// debounced volume changes to prevent engine thrashing during drag, and tactile cursors.
+class AudioVolumeControl extends StatefulWidget {
   const AudioVolumeControl({
     super.key,
     required this.controller,
@@ -20,62 +23,165 @@ class AudioVolumeControl extends StatelessWidget {
   final bool showPercent;
 
   @override
+  State<AudioVolumeControl> createState() => _AudioVolumeControlState();
+}
+
+class _AudioVolumeControlState extends State<AudioVolumeControl> {
+  static const _volumeDebounce = Duration(milliseconds: 60);
+
+  double? _pendingVolume;
+  Timer? _commitTimer;
+  int _changeId = 0;
+  double _wheelRemainder = 0;
+  Timer? _wheelReset;
+
+  @override
+  void dispose() {
+    _commitTimer?.cancel();
+    _wheelReset?.cancel();
+    super.dispose();
+  }
+
+  void _onDragStart(double value) {
+    _commitTimer?.cancel();
+    _commitTimer = null;
+    _changeId++;
+    setState(() => _pendingVolume = value);
+  }
+
+  void _onDragChanged(double value) {
+    _changeId++;
+    final changeId = _changeId;
+    setState(() => _pendingVolume = value);
+    _commitTimer?.cancel();
+    _commitTimer = Timer(_volumeDebounce, () {
+      if (mounted && changeId == _changeId) {
+        unawaited(_applyVolume(value, changeId));
+      }
+    });
+  }
+
+  void _onDragEnd(double value) {
+    _commitTimer?.cancel();
+    _commitTimer = null;
+    _changeId++;
+    final changeId = _changeId;
+    setState(() => _pendingVolume = value);
+    unawaited(_applyVolume(value, changeId));
+  }
+
+  Future<void> _applyVolume(double value, int changeId) async {
+    await widget.controller.setVolume(value);
+    if (mounted && changeId == _changeId) {
+      setState(() => _pendingVolume = null);
+    }
+  }
+
+  void _toggleMute() {
+    _commitTimer?.cancel();
+    _commitTimer = null;
+    _changeId++;
+    setState(() => _pendingVolume = null);
+    unawaited(widget.controller.toggleMute());
+  }
+
+  void _handleWheel(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent) return;
+    if (event.scrollDelta.dy == 0 ||
+        event.scrollDelta.dy.abs() < event.scrollDelta.dx.abs()) {
+      return;
+    }
+    GestureBinding.instance.pointerSignalResolver.register(event, (_) {
+      final dy = event.scrollDelta.dy;
+      _wheelRemainder += dy;
+      _wheelReset?.cancel();
+      _wheelReset = Timer(
+        const Duration(milliseconds: 250),
+        () => _wheelRemainder = 0,
+      );
+      final steps = (_wheelRemainder / 20).truncate();
+      if (steps == 0) return;
+      _wheelRemainder -= steps * 20;
+      final current = _pendingVolume ?? widget.controller.volume;
+      final target = (current - steps * 5).clamp(0.0, 100.0).toDouble();
+      _onDragChanged(target);
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: controller,
+      animation: widget.controller,
       builder: (context, _) {
-        final volume = controller.volume.clamp(0.0, 100.0);
+        final volume = (_pendingVolume ?? widget.controller.volume).clamp(
+          0.0,
+          100.0,
+        );
         final icon = volume <= 0
             ? Icons.volume_off_rounded
             : volume < 50
             ? Icons.volume_down_rounded
             : Icons.volume_up_rounded;
-        return Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              icon: Icon(icon, size: compact ? 17 : 20),
-              tooltip: volume <= 0 ? 'Unmute' : 'Mute',
-              visualDensity: VisualDensity.compact,
-              color: AppTheme.secondaryText,
-              onPressed: () => unawaited(controller.toggleMute()),
-            ),
-            SizedBox(
-              width: compact ? 84 : 150,
-              child: SliderTheme(
-                data: SliderTheme.of(context).copyWith(
-                  trackHeight: 3,
-                  thumbShape: RoundSliderThumbShape(
-                    enabledThumbRadius: compact ? 4 : 5,
-                  ),
-                  overlayShape: RoundSliderOverlayShape(
-                    overlayRadius: compact ? 10 : 14,
-                  ),
-                  activeTrackColor: AppTheme.accent,
-                  inactiveTrackColor: AppTheme.border,
-                  thumbColor: AppTheme.accent,
-                  overlayColor: AppTheme.accent.withValues(alpha: 0.14),
-                ),
-                child: Slider(
-                  value: volume,
-                  min: 0,
-                  max: 100,
-                  onChanged: (value) => unawaited(controller.setVolume(value)),
-                ),
+
+        return Listener(
+          behavior: HitTestBehavior.opaque,
+          onPointerSignal: _handleWheel,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                icon: Icon(icon, size: widget.compact ? 17 : 20),
+                tooltip: volume <= 0 ? 'Unmute' : 'Mute (${volume.round()}%)',
+                visualDensity: VisualDensity.compact,
+                color: AppTheme.secondaryText,
+                onPressed: _toggleMute,
               ),
-            ),
-            if (showPercent)
               SizedBox(
-                width: 40,
-                child: Text(
-                  '${volume.round()}%',
-                  textAlign: TextAlign.right,
-                  style: AppTheme.metadata.copyWith(
-                    fontFeatures: const [FontFeature.tabularFigures()],
+                width: widget.compact ? 84 : 150,
+                child: MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  child: Tooltip(
+                    message: 'Volume ${volume.round()}% (scroll to adjust)',
+                    waitDuration: const Duration(milliseconds: 600),
+                    child: SliderTheme(
+                      data: SliderTheme.of(context).copyWith(
+                        trackHeight: 3,
+                        thumbShape: RoundSliderThumbShape(
+                          enabledThumbRadius: widget.compact ? 4 : 5,
+                        ),
+                        overlayShape: RoundSliderOverlayShape(
+                          overlayRadius: widget.compact ? 10 : 14,
+                        ),
+                        activeTrackColor: AppTheme.accent,
+                        inactiveTrackColor: AppTheme.border,
+                        thumbColor: AppTheme.accent,
+                        overlayColor: AppTheme.accent.withValues(alpha: 0.14),
+                      ),
+                      child: Slider(
+                        value: volume,
+                        min: 0,
+                        max: 100,
+                        onChangeStart: _onDragStart,
+                        onChanged: _onDragChanged,
+                        onChangeEnd: _onDragEnd,
+                      ),
+                    ),
                   ),
                 ),
               ),
-          ],
+              if (widget.showPercent)
+                SizedBox(
+                  width: 44,
+                  child: Text(
+                    '${volume.round()}%',
+                    textAlign: TextAlign.right,
+                    style: AppTheme.metadata.copyWith(
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ),
+            ],
+          ),
         );
       },
     );
@@ -109,13 +215,12 @@ class _AudioVolumeWheelState extends State<AudioVolumeWheel> {
 
   void _handleSignal(PointerSignalEvent event) {
     if (event is! PointerScrollEvent ||
-        !widget.controller.hasMedia ||
         event.scrollDelta.dy == 0 ||
         event.scrollDelta.dy.abs() < event.scrollDelta.dx.abs()) {
       return;
     }
     GestureBinding.instance.pointerSignalResolver.register(event, (_) {
-      _remainder += event.scrollDelta.dy.clamp(-20.0, 20.0);
+      _remainder += event.scrollDelta.dy;
       _reset?.cancel();
       _reset = Timer(const Duration(milliseconds: 250), () => _remainder = 0);
       final steps = (_remainder / 20).truncate();
@@ -126,6 +231,9 @@ class _AudioVolumeWheelState extends State<AudioVolumeWheel> {
   }
 
   @override
-  Widget build(BuildContext context) =>
-      Listener(onPointerSignal: _handleSignal, child: widget.child);
+  Widget build(BuildContext context) => Listener(
+    behavior: HitTestBehavior.translucent,
+    onPointerSignal: _handleSignal,
+    child: widget.child,
+  );
 }

@@ -318,6 +318,7 @@ class _PlayerScreenState extends State<PlayerScreen>
       _scheduleControlsHide();
     }
     _preparePausedVideo();
+    _syncVideoVisibilityForLibrary();
   }
 
   /// Restored videos open in the stage paused instead of showing a resume card.
@@ -337,6 +338,7 @@ class _PlayerScreenState extends State<PlayerScreen>
       _showLibrary = true;
       _showPlayerView = false;
     });
+    _syncVideoVisibilityForLibrary();
   }
 
   void _backToHome() {
@@ -351,6 +353,7 @@ class _PlayerScreenState extends State<PlayerScreen>
       _queueMounted = false;
       _backButtonFocused = false;
     });
+    _syncVideoVisibilityForLibrary();
     if (wasFullscreen) unawaited(_setFullscreen(false));
   }
 
@@ -360,6 +363,7 @@ class _PlayerScreenState extends State<PlayerScreen>
       _showPlayerView = true;
       _playerViewEntryId = widget.controller.current?.id;
     });
+    _syncVideoVisibilityForLibrary();
     _preparePausedVideo();
   }
 
@@ -580,7 +584,7 @@ class _PlayerScreenState extends State<PlayerScreen>
     );
     widget.controller.seekPreview.resume();
     widget.controller.setDisplayUpdatesSuspended(false);
-    _updateVideoOutputPolicy(visible: true);
+    _syncVideoVisibilityForLibrary();
     if (mounted) setState(() {});
   }
 
@@ -598,6 +602,18 @@ class _PlayerScreenState extends State<PlayerScreen>
     if (next != current) {
       widget.controller.applyVideoOutputPolicy(next);
     }
+  }
+
+  /// Video frames are not presented while the library covers the stage or
+  /// when the current source is audio. Audio keeps playing and the video
+  /// output resumes on return to the stage.
+  void _syncVideoVisibilityForLibrary() {
+    final visible =
+        !_isShowingLibrary &&
+        !_minimized &&
+        widget.controller.hasMedia &&
+        widget.controller.isVideo;
+    _updateVideoOutputPolicy(visible: visible);
   }
 
   void _updateViewportDimensions(
@@ -865,7 +881,7 @@ class _PlayerScreenState extends State<PlayerScreen>
                 onHover: _pointerActivity,
                 onExit: _pointerLeft,
                 child: AnimatedBuilder(
-                  animation: widget.controller,
+                  animation: widget.controller.structureListenable,
                   builder: (context, _) => Column(
                     children: [
                       Expanded(
@@ -885,63 +901,49 @@ class _PlayerScreenState extends State<PlayerScreen>
                                   children: [
                                     Expanded(child: _buildPlayerArea()),
                                     if (constraints.maxWidth >= 1100)
-                                      AnimatedContainer(
-                                        width: inlineQueue
+                                      SizedBox(
+                                        width: inlineQueue || queueMounted
                                             ? _wideQueuePanelWidth
                                             : 0,
-                                        decoration: const BoxDecoration(),
-                                        duration: AppMotion.duration(
-                                          context,
-                                          AppMotion.standard,
-                                        ),
-                                        curve: AppMotion.standardCurve,
-                                        clipBehavior: Clip.hardEdge,
-                                        onEnd: _handleQueueExitEnd,
                                         child: queueMounted || inlineQueue
                                             ? ClipRect(
-                                                child: OverflowBox(
-                                                  alignment:
-                                                      Alignment.centerRight,
-                                                  minWidth:
-                                                      _wideQueuePanelWidth,
-                                                  maxWidth:
-                                                      _wideQueuePanelWidth,
-                                                  child: TweenAnimationBuilder<double>(
-                                                    tween: Tween<double>(
-                                                      begin: 0,
-                                                      end: inlineQueue ? 1 : 0,
-                                                    ),
-                                                    duration:
-                                                        AppMotion.duration(
+                                                child: TweenAnimationBuilder<double>(
+                                                  tween: Tween<double>(
+                                                    begin: 0,
+                                                    end: inlineQueue ? 1 : 0,
+                                                  ),
+                                                  duration: AppMotion.duration(
+                                                    context,
+                                                    AppMotion.standard,
+                                                  ),
+                                                  curve: inlineQueue
+                                                      ? AppMotion.enter
+                                                      : AppMotion.exit,
+                                                  onEnd: _handleQueueExitEnd,
+                                                  builder:
+                                                      (
+                                                        context,
+                                                        progress,
+                                                        child,
+                                                      ) {
+                                                        if (AppMotion.reduce(
                                                           context,
-                                                          AppMotion.standard,
-                                                        ),
-                                                    curve:
-                                                        AppMotion.standardCurve,
-                                                    builder:
-                                                        (
-                                                          context,
-                                                          progress,
-                                                          child,
-                                                        ) {
-                                                          if (AppMotion.reduce(
-                                                            context,
-                                                          )) {
-                                                            return child!;
-                                                          }
-                                                          return Transform.translate(
-                                                            offset: Offset(
-                                                              (1 - progress) *
-                                                                  16,
-                                                              0,
-                                                            ),
-                                                            child: child,
-                                                          );
-                                                        },
-                                                    child: IgnorePointer(
-                                                      ignoring: !inlineQueue,
-                                                      child: ExcludeSemantics(
-                                                        excluding: !inlineQueue,
+                                                        )) {
+                                                          return child!;
+                                                        }
+                                                        return Transform.translate(
+                                                          offset: Offset(
+                                                            (1 - progress) * 24,
+                                                            0,
+                                                          ),
+                                                          child: child,
+                                                        );
+                                                      },
+                                                  child: IgnorePointer(
+                                                    ignoring: !inlineQueue,
+                                                    child: ExcludeSemantics(
+                                                      excluding: !inlineQueue,
+                                                      child: RepaintBoundary(
                                                         child: SizedBox(
                                                           width:
                                                               _wideQueuePanelWidth,
@@ -1218,20 +1220,11 @@ class _PlayerScreenState extends State<PlayerScreen>
                         curve: AppMotion.enter,
                         reverseCurve: AppMotion.exit,
                       );
-                      return FadeTransition(
-                        opacity: transition,
-                        child: ScaleTransition(
-                          scale: Tween<double>(
-                            begin: 0.985,
-                            end: 1,
-                          ).animate(transition),
-                          child: child,
-                        ),
-                      );
+                      return FadeTransition(opacity: transition, child: child);
                     },
                     child: KeyedSubtree(
                       key: ValueKey<String>('player-content-$contentState'),
-                      child: content,
+                      child: RepaintBoundary(child: content),
                     ),
                   ),
                 ),
@@ -1382,29 +1375,32 @@ class _PlayerScreenState extends State<PlayerScreen>
                       child: IgnorePointer(
                         ignoring: !_controlsVisible,
                         child: ToastRegion(
-                          child: PlayerControls(
-                            controller: widget.controller,
-                            onMenuVisibilityChanged: _handleMenuVisibility,
-                            onInteractionChanged: _handleControlInteraction,
-                            onVolumeChanged: _showVolumeFeedback,
-                            showPlaybackControls: widget.controller.hasMedia,
-                            actions: PlayerActions(
+                          child: AnimatedBuilder(
+                            animation: widget.controller,
+                            builder: (context, _) => PlayerControls(
                               controller: widget.controller,
-                              onOpenFiles: _openFiles,
-                              onOpenUrl: _openUrl,
-                              onOpenRecent: _playRecent,
-                              onToggleQueue: _toggleQueue,
-                              onSettings: _showSettings,
-                              onPlaybackInfo: _showPlaybackInfo,
-                              onOpenLibrary: widget.libraryRepository != null
-                                  ? _openLibrary
-                                  : null,
                               onMenuVisibilityChanged: _handleMenuVisibility,
-                              queueOpen: _queueOpen,
-                              isFullscreen: _isFullscreen,
-                              onFullscreen: widget.desktopWindow
-                                  ? _toggleFullscreen
-                                  : null,
+                              onInteractionChanged: _handleControlInteraction,
+                              onVolumeChanged: _showVolumeFeedback,
+                              showPlaybackControls: widget.controller.hasMedia,
+                              actions: PlayerActions(
+                                controller: widget.controller,
+                                onOpenFiles: _openFiles,
+                                onOpenUrl: _openUrl,
+                                onOpenRecent: _playRecent,
+                                onToggleQueue: _toggleQueue,
+                                onSettings: _showSettings,
+                                onPlaybackInfo: _showPlaybackInfo,
+                                onOpenLibrary: widget.libraryRepository != null
+                                    ? _openLibrary
+                                    : null,
+                                onMenuVisibilityChanged: _handleMenuVisibility,
+                                queueOpen: _queueOpen,
+                                isFullscreen: _isFullscreen,
+                                onFullscreen: widget.desktopWindow
+                                    ? _toggleFullscreen
+                                    : null,
+                              ),
                             ),
                           ),
                         ),

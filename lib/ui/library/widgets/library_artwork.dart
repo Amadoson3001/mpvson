@@ -98,6 +98,7 @@ class _LibraryArtworkState extends State<LibraryArtwork> {
             return Image.file(
               _file(path),
               fit: BoxFit.cover,
+              filterQuality: FilterQuality.low,
               cacheWidth: cacheWidth,
               errorBuilder: (_, _, _) => fallback(),
             );

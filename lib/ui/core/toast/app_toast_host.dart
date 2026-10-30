@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
@@ -244,7 +243,7 @@ class _ToastCardState extends State<_ToastCard> with TickerProviderStateMixin {
   Widget build(BuildContext context) {
     final request = widget.entry.request;
     final accent = _accentFor(request.tone);
-    final reduced = AppMotion.reduce(context);
+    final reduced = AppMotion.lowPower(context);
 
     final card = MouseRegion(
       onEnter: (_) => _setHovered(true),
@@ -255,100 +254,79 @@ class _ToastCardState extends State<_ToastCard> with TickerProviderStateMixin {
         label: request.message,
         child: Material(
           type: MaterialType.transparency,
-          // The shadow sits outside the clip so it is not cut away.
           child: Container(
             decoration: BoxDecoration(
+              color: AppTheme.card.withValues(alpha: 0.98),
               borderRadius: BorderRadius.circular(AppRadii.artwork + 2),
-              boxShadow: [
-                BoxShadow(
-                  color: AppTheme.stage.withValues(alpha: 0.45),
-                  blurRadius: 28,
-                  offset: const Offset(0, 12),
-                ),
-              ],
+              border: Border.all(
+                color: AppTheme.borderStrong.withValues(alpha: 0.75),
+              ),
             ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(AppRadii.artwork + 2),
-              child: BackdropFilter(
-                filter: ui.ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: AppTheme.card.withValues(alpha: 0.92),
-                    border: Border.all(
-                      color: AppTheme.borderStrong.withValues(alpha: 0.75),
-                    ),
+            clipBehavior: Clip.antiAlias,
+            child: Stack(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                    3,
+                    AppSpace.sm,
+                    AppSpace.xs,
+                    AppSpace.sm,
                   ),
-                  child: Stack(
+                  child: Row(
                     children: [
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(
-                          3,
-                          AppSpace.sm,
-                          AppSpace.xs,
-                          AppSpace.sm,
-                        ),
-                        child: Row(
-                          children: [
-                            _ToneRail(color: accent),
-                            const SizedBox(width: AppSpace.sm),
-                            Icon(
-                              _iconFor(request.tone),
-                              size: 17,
-                              color: accent,
-                            ),
-                            const SizedBox(width: AppSpace.sm),
-                            Flexible(
-                              child: Text(
-                                request.message,
-                                style: AppTheme.rowPrimary.copyWith(
-                                  fontSize: AppType.small,
-                                  height: 1.35,
-                                ),
-                                maxLines: 3,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                            if (request.actionLabel != null &&
-                                request.onAction != null) ...[
-                              const SizedBox(width: AppSpace.xxs),
-                              _ToastAction(
-                                label: request.actionLabel!,
-                                accent: accent,
-                                onPressed: () {
-                                  final action = request.onAction!;
-                                  _leave();
-                                  action();
-                                },
-                              ),
-                            ],
-                            _ToastClose(visible: _hovered, onPressed: _leave),
-                          ],
-                        ),
-                      ),
-                      ValueListenableBuilder<double>(
-                        valueListenable: _progress,
-                        builder: (context, value, _) => Positioned(
-                          left: 0,
-                          right: 0,
-                          bottom: 0,
-                          child: SizedBox(
-                            height: 2,
-                            child: Align(
-                              alignment: Alignment.centerLeft,
-                              child: FractionallySizedBox(
-                                widthFactor: (1 - value).clamp(0.0, 1.0),
-                                child: Container(
-                                  color: accent.withValues(alpha: 0.55),
-                                ),
-                              ),
-                            ),
+                      _ToneRail(color: accent),
+                      const SizedBox(width: AppSpace.sm),
+                      Icon(_iconFor(request.tone), size: 17, color: accent),
+                      const SizedBox(width: AppSpace.sm),
+                      Flexible(
+                        child: Text(
+                          request.message,
+                          style: AppTheme.rowPrimary.copyWith(
+                            fontSize: AppType.small,
+                            height: 1.35,
                           ),
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
+                      if (request.actionLabel != null &&
+                          request.onAction != null) ...[
+                        const SizedBox(width: AppSpace.xxs),
+                        _ToastAction(
+                          label: request.actionLabel!,
+                          accent: accent,
+                          onPressed: () {
+                            final action = request.onAction!;
+                            _leave();
+                            action();
+                          },
+                        ),
+                      ],
+                      _ToastClose(visible: _hovered, onPressed: _leave),
                     ],
                   ),
                 ),
-              ),
+                ValueListenableBuilder<double>(
+                  valueListenable: _progress,
+                  builder: (context, value, _) => Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    child: SizedBox(
+                      height: 2,
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: FractionallySizedBox(
+                          widthFactor: (1 - value).clamp(0.0, 1.0),
+                          child: Container(
+                            color: accent.withValues(alpha: 0.55),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ),

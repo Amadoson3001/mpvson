@@ -14,6 +14,7 @@ class MediaTile extends StatefulWidget {
     required this.onTap,
     this.trailing,
     this.overlay,
+    this.aspectRatio = 1.0,
   });
 
   final Widget artwork;
@@ -22,6 +23,7 @@ class MediaTile extends StatefulWidget {
   final VoidCallback onTap;
   final Widget? trailing;
   final Widget? overlay;
+  final double? aspectRatio;
 
   @override
   State<MediaTile> createState() => _MediaTileState();
@@ -33,8 +35,8 @@ class _MediaTileState extends State<MediaTile> {
 
   @override
   Widget build(BuildContext context) {
-    final reduced = AppMotion.reduce(context);
-    final scale = reduced ? 1.0 : (_pressed ? 0.97 : (_hovered ? 1.03 : 1.0));
+    final reduced = AppMotion.lowPower(context);
+    final scale = reduced ? 1.0 : (_pressed ? 0.98 : (_hovered ? 1.02 : 1.0));
     final duration = AppMotion.duration(
       context,
       _pressed ? AppMotion.press : AppMotion.hover,
@@ -58,17 +60,40 @@ class _MediaTileState extends State<MediaTile> {
                 scale: scale,
                 duration: duration,
                 curve: AppMotion.enter,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(AppRadii.artwork),
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      widget.artwork,
-                      if (widget.overlay != null)
-                        Positioned(right: 8, bottom: 8, child: widget.overlay!),
-                    ],
-                  ),
-                ),
+                child: widget.aspectRatio != null
+                    ? AspectRatio(
+                        aspectRatio: widget.aspectRatio!,
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(AppRadii.artwork),
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              widget.artwork,
+                              if (widget.overlay != null)
+                                Positioned(
+                                  right: 8,
+                                  bottom: 8,
+                                  child: widget.overlay!,
+                                ),
+                            ],
+                          ),
+                        ),
+                      )
+                    : ClipRRect(
+                        borderRadius: BorderRadius.circular(AppRadii.artwork),
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            widget.artwork,
+                            if (widget.overlay != null)
+                              Positioned(
+                                right: 8,
+                                bottom: 8,
+                                child: widget.overlay!,
+                              ),
+                          ],
+                        ),
+                      ),
               ),
             ),
           ),
