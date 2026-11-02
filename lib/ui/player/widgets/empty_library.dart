@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../domain/models/media_entry.dart';
+import '../../../utils/format.dart';
 import '../../core/app_motion.dart';
 import '../../core/app_theme.dart';
 import 'screen_play_mark.dart';
@@ -246,7 +247,10 @@ class _RecentSection extends StatelessWidget {
         const SizedBox(height: 10),
         for (var index = 0; index < entries.length; index++) ...[
           if (index > 0)
-            Divider(height: 1, color: context.palette.border.withValues(alpha: 0.7)),
+            Divider(
+              height: 1,
+              color: context.palette.border.withValues(alpha: 0.7),
+            ),
           _RecentEntry(
             key: ValueKey(entries[index].id),
             entry: entries[index],
@@ -283,10 +287,10 @@ class _RecentEntryState extends State<_RecentEntry> {
         : 0.0;
     final hasResume = entry.position > Duration.zero;
     final detail = hasResume
-        ? 'Resume at ${_formatTime(entry.position)}'
+        ? 'Resume at ${formatTime(entry.position)}'
         : 'Played ${_dateLabel(entry.lastPlayed)}';
     final label = hasResume
-        ? 'Play ${entry.title}, resume at ${_formatTime(entry.position)}'
+        ? 'Play ${entry.title}, resume at ${formatTime(entry.position)}'
         : 'Play ${entry.title}, last played ${_dateLabel(entry.lastPlayed)}';
 
     final row = Material(
@@ -379,13 +383,6 @@ class _RecentEntryState extends State<_RecentEntry> {
     );
   }
 
-  static String _formatTime(Duration value) {
-    final hours = value.inHours;
-    final minutes = value.inMinutes.remainder(60).toString().padLeft(2, '0');
-    final seconds = value.inSeconds.remainder(60).toString().padLeft(2, '0');
-    return hours > 0 ? '$hours:$minutes:$seconds' : '$minutes:$seconds';
-  }
-
   static String _dateLabel(DateTime value) {
     const months = [
       'Jan',
@@ -428,9 +425,9 @@ class _ErrorMessage extends StatelessWidget {
         Expanded(
           child: Text(
             message,
-            style: Theme.of(
-              context,
-            ).textTheme.bodySmall?.copyWith(color: context.palette.secondaryText),
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: context.palette.secondaryText,
+            ),
           ),
         ),
       ],

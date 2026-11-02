@@ -4,6 +4,7 @@ import '../../../data/repositories/media_library_repository.dart';
 import '../../../domain/models/media_catalog.dart';
 import '../../../domain/models/media_entry.dart';
 import '../../../domain/models/media_thumbnail.dart';
+import '../../../utils/format.dart';
 import '../../core/app_theme.dart';
 import '../../player/player_controller.dart';
 import '../widgets/library_artwork.dart';
@@ -195,16 +196,6 @@ class _RecentTileState extends State<_RecentTile> {
     super.dispose();
   }
 
-  String _time(Duration value) {
-    final hours = value.inHours;
-    final minutes = value.inMinutes
-        .remainder(60)
-        .toString()
-        .padLeft(hours > 0 ? 2 : 1, '0');
-    final seconds = value.inSeconds.remainder(60).toString().padLeft(2, '0');
-    return hours > 0 ? '$hours:$minutes:$seconds' : '$minutes:$seconds';
-  }
-
   @override
   Widget build(BuildContext context) {
     final entry = widget.entry;
@@ -308,7 +299,7 @@ class _RecentTileState extends State<_RecentTile> {
           const SizedBox(height: 4),
           Text(
             hasProgress
-                ? '$type  •  ${_time(entry.position)} / ${_time(entry.duration)}'
+                ? '$type  •  ${formatTime(entry.position, compactMinutes: true)} / ${formatTime(entry.duration, compactMinutes: true)}'
                 : type,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,

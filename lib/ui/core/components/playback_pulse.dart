@@ -34,12 +34,21 @@ class _PlaybackPulseScopeState extends State<PlaybackPulseScope>
   );
 
   bool _isAdvancing = false;
+  bool _didInitialSync = false;
 
   @override
   void initState() {
     super.initState();
     widget.controller.addListener(_syncPulseState);
-    _syncPulseState();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_didInitialSync) {
+      _didInitialSync = true;
+      _syncPulseState();
+    }
   }
 
   @override
@@ -109,6 +118,7 @@ class PlayingEqualizerGlyph extends StatelessWidget {
     this.size = 16,
     this.color,
     this.isPlaying = true,
+    this.semanticLabel,
   });
 
   final int index;
@@ -116,12 +126,19 @@ class PlayingEqualizerGlyph extends StatelessWidget {
   final Color? color;
   final bool isPlaying;
 
+  /// Description announced by screen readers. Without one the glyph is
+  /// treated as decorative, which is right for rows that already announce
+  /// their playback state.
+  final String? semanticLabel;
+
   @override
   Widget build(BuildContext context) {
     final effectiveColor = color ?? Theme.of(context).colorScheme.primary;
 
+    final Widget glyph;
+    final label = semanticLabel;
     if (!isPlaying || AppMotion.reduce(context)) {
-      return RepaintBoundary(
+      glyph = RepaintBoundary(
         child: CustomPaint(
           size: Size(size, size),
           painter: _EqualizerPainter(
@@ -132,19 +149,26 @@ class PlayingEqualizerGlyph extends StatelessWidget {
           ),
         ),
       );
-    }
-
-    final pulse = PlaybackPulse.valueOf(context, phaseIndex: index);
-    return RepaintBoundary(
-      child: CustomPaint(
-        size: Size(size, size),
-        painter: _EqualizerPainter(
-          color: effectiveColor,
-          progress: pulse,
-          index: index,
-          staticRest: false,
+    } else {
+      final pulse = PlaybackPulse.valueOf(context, phaseIndex: index);
+      glyph = RepaintBoundary(
+        child: CustomPaint(
+          size: Size(size, size),
+          painter: _EqualizerPainter(
+            color: effectiveColor,
+            progress: pulse,
+            index: index,
+            staticRest: false,
+          ),
         ),
-      ),
+      );
+    }
+    if (label == null) return ExcludeSemantics(child: glyph);
+    return Semantics(
+      label: label,
+      container: true,
+      excludeSemantics: true,
+      child: glyph,
     );
   }
 }

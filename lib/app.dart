@@ -107,11 +107,13 @@ class MpvsonApp extends StatelessWidget {
   static Widget _nativeVideo(
     BuildContext context,
     PlayerController controller,
-  ) => Video(
-    controller: controller.videoController,
-    fit: BoxFit.contain,
-    controls: null,
-    pauseUponEnteringBackgroundMode: false,
+  ) => RepaintBoundary(
+    child: Video(
+      controller: controller.videoController,
+      fit: BoxFit.contain,
+      controls: null,
+      pauseUponEnteringBackgroundMode: false,
+    ),
   );
 }
 

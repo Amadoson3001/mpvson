@@ -14,7 +14,10 @@ class PlayerControlStyle extends InheritedWidget {
   /// sizes its artwork around them — measures the same numbers instead of
   /// repeating them and drifting apart.
   static const double controlExtent = 44;
-  static const double compactControlExtent = 32;
+
+  /// Compact buttons keep their small glyphs but still reserve a 44px touch
+  /// target; anything below that is hard to hit on touch pads and tablets.
+  static const double compactControlExtent = 44;
   static const double seekExtent = 32;
   static const double compactSeekExtent = 24;
 

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../domain/models/media_catalog.dart';
 import '../../../domain/models/media_entry.dart';
+import '../../../utils/format.dart';
 import '../../core/app_motion.dart';
 import '../../core/app_theme.dart';
 import '../player_controller.dart';
@@ -161,7 +162,7 @@ class PlayerActions extends StatelessWidget {
                         MediaCatalog.kindFromExtension(entry.path) !=
                             MediaKind.audio)
                       Text(
-                        'Resume at ${_formatTime(entry.position)}',
+                        'Resume at ${formatTime(entry.position)}',
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                   ],
@@ -205,14 +206,6 @@ class PlayerActions extends StatelessWidget {
       case 'mini-player':
         onToggleMiniPlayer?.call();
     }
-  }
-
-  static String _formatTime(Duration value) {
-    final minutes = value.inMinutes.remainder(60).toString().padLeft(2, '0');
-    final seconds = value.inSeconds.remainder(60).toString().padLeft(2, '0');
-    return value.inHours > 0
-        ? '${value.inHours}:$minutes:$seconds'
-        : '$minutes:$seconds';
   }
 }
 

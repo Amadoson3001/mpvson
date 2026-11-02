@@ -115,9 +115,12 @@ set(MPVSON_ENGINE_CACHED_DLL
   "${MPVSON_ENGINE_CACHE_DIR}/${MPVSON_ENGINE_VERSION}/${MPVSON_ENGINE_MEMBER}")
 
 # A pre-verified module can be supplied instead of downloading, which keeps
-# offline builds and CI caches working.
+# offline builds and CI caches working. Setting MPVSON_ALLOW_CUSTOM_ENGINE=ON
+# allows tailored builds (e.g. shinchiro / zhongfly) or stripped binaries.
 set(MPVSON_ENGINE_DLL "" CACHE FILEPATH
   "Pre-verified ${MPVSON_ENGINE_MEMBER} to bundle. Empty selects the pinned package record.")
+option(MPVSON_ALLOW_CUSTOM_ENGINE
+  "Allow pre-verified tailored or stripped libmpv modules without exact provenance hash match." OFF)
 
 function(mpvson_engine_fail reason)
   message(FATAL_ERROR
@@ -136,10 +139,11 @@ if(MPVSON_ENGINE_DLL)
     mpvson_engine_fail("MPVSON_ENGINE_DLL points at '${MPVSON_ENGINE_DLL}', which does not exist.")
   endif()
   file(SHA256 "${MPVSON_ENGINE_DLL}" MPVSON_ENGINE_MODULE_SHA)
-  if(NOT MPVSON_ENGINE_MODULE_SHA STREQUAL MPVSON_ENGINE_MEMBER_SHA)
+  if(NOT MPVSON_ALLOW_CUSTOM_ENGINE AND NOT MPVSON_ENGINE_MODULE_SHA STREQUAL MPVSON_ENGINE_MEMBER_SHA)
     mpvson_engine_fail(
       "MPVSON_ENGINE_DLL '${MPVSON_ENGINE_DLL}' has SHA-256 "
-      "${MPVSON_ENGINE_MODULE_SHA} instead of the pinned ${MPVSON_ENGINE_MEMBER_SHA}.")
+      "${MPVSON_ENGINE_MODULE_SHA} instead of the pinned ${MPVSON_ENGINE_MEMBER_SHA}. "
+      "Pass -DMPVSON_ALLOW_CUSTOM_ENGINE=ON to allow tailored or stripped engine builds.")
   endif()
   set(MPVSON_ENGINE_MODULE "${MPVSON_ENGINE_DLL}")
   message(STATUS "Mpvson engine: using pre-verified ${MPVSON_ENGINE_MODULE}")

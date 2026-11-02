@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../../data/repositories/media_library_repository.dart';
 import '../../../domain/models/library_models.dart';
 import '../../core/app_theme.dart';
+import '../../core/components/app_dialog.dart';
 
 /// Modal dialog to create a new playlist.
 class PlaylistCreateDialog extends StatefulWidget {
@@ -13,7 +14,7 @@ class PlaylistCreateDialog extends StatefulWidget {
     BuildContext context,
     MediaLibraryRepository repository,
   ) {
-    return showDialog<PlaylistRecord>(
+    return AppDialog.show<PlaylistRecord>(
       context: context,
       barrierColor: Colors.black54,
       builder: (_) => PlaylistCreateDialog(repository: repository),
@@ -66,123 +67,102 @@ class _PlaylistCreateDialogState extends State<PlaylistCreateDialog> {
   @override
   Widget build(BuildContext context) {
     final accent = Theme.of(context).colorScheme.primary;
-    return Dialog(
-      backgroundColor: context.palette.surface,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(AppRadii.artwork),
-        side: BorderSide(color: context.palette.border),
-      ),
-      insetPadding: const EdgeInsets.symmetric(
-        horizontal: AppSpace.lg,
-        vertical: AppSpace.xl,
-      ),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 420),
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(AppSpace.lg),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text('Create playlist', style: context.palette.albumTitle),
-              const SizedBox(height: 8),
-              Text(
-                'Give your new playlist a descriptive name.',
-                style: context.palette.rowSecondary,
+    return AppDialog(
+      maxWidth: 420,
+      title: Text('Create playlist', style: context.palette.albumTitle),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'Give your new playlist a descriptive name.',
+            style: context.palette.rowSecondary,
+          ),
+          const SizedBox(height: 20),
+          TextField(
+            controller: _titleController,
+            enabled: !_isCreating,
+            autofocus: true,
+            style: context.palette.rowPrimary,
+            cursorColor: accent,
+            onSubmitted: (_) => _submit(),
+            decoration: InputDecoration(
+              hintText: 'e.g. Synthwave Favorites',
+              hintStyle: context.palette.metadata,
+              filled: true,
+              fillColor: context.palette.raisedSurface,
+              errorText: _error,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: AppSpace.md,
+                vertical: 14,
               ),
-              const SizedBox(height: 20),
-              TextField(
-                controller: _titleController,
-                enabled: !_isCreating,
-                autofocus: true,
-                style: context.palette.rowPrimary,
-                cursorColor: accent,
-                onSubmitted: (_) => _submit(),
-                decoration: InputDecoration(
-                  hintText: 'e.g. Synthwave Favorites',
-                  hintStyle: context.palette.metadata,
-                  filled: true,
-                  fillColor: context.palette.raisedSurface,
-                  errorText: _error,
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: AppSpace.md,
-                    vertical: 14,
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(AppRadii.control),
-                    borderSide: BorderSide(color: context.palette.border),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(AppRadii.control),
-                    borderSide: BorderSide(color: accent, width: 1.5),
-                  ),
-                  errorBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(AppRadii.control),
-                    borderSide: BorderSide(color: context.palette.danger),
-                  ),
-                  focusedErrorBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(AppRadii.control),
-                    borderSide: BorderSide(
-                      color: context.palette.danger,
-                      width: 1.5,
-                    ),
-                  ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(AppRadii.artwork),
+                borderSide: BorderSide(color: context.palette.border),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(AppRadii.artwork),
+                borderSide: BorderSide(color: accent, width: 1.5),
+              ),
+              errorBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(AppRadii.artwork),
+                borderSide: BorderSide(color: context.palette.danger),
+              ),
+              focusedErrorBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(AppRadii.artwork),
+                borderSide: BorderSide(
+                  color: context.palette.danger,
+                  width: 1.5,
                 ),
               ),
-              const SizedBox(height: 24),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TextButton(
-                    onPressed: _isCreating
-                        ? null
-                        : () => Navigator.of(context).pop(),
-                    style: TextButton.styleFrom(
-                      foregroundColor: context.palette.secondaryText,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: AppSpace.md,
-                        vertical: AppSpace.sm,
-                      ),
-                    ),
-                    child: const Text('Cancel'),
-                  ),
-                  const SizedBox(width: 8),
-                  FilledButton(
-                    onPressed: _isCreating ? null : _submit,
-                    style: FilledButton.styleFrom(
-                      backgroundColor: accent,
-                      foregroundColor: context.palette.accentForeground,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 20,
-                        vertical: AppSpace.sm,
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(AppRadii.control),
-                      ),
-                      textStyle: const TextStyle(
-                        fontSize: AppType.small,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    child: _isCreating
-                        ? SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              valueColor: AlwaysStoppedAnimation<Color>(
-                                context.palette.background,
-                              ),
-                            ),
-                          )
-                        : const Text('Create'),
-                  ),
-                ],
-              ),
-            ],
+            ),
           ),
-        ),
+        ],
       ),
+      actions: [
+        TextButton(
+          onPressed: _isCreating ? null : () => Navigator.of(context).pop(),
+          style: TextButton.styleFrom(
+            foregroundColor: context.palette.secondaryText,
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpace.md,
+              vertical: AppSpace.sm,
+            ),
+          ),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _isCreating ? null : _submit,
+          style: FilledButton.styleFrom(
+            backgroundColor: accent,
+            foregroundColor: context.palette.accentForeground,
+            padding: const EdgeInsets.symmetric(
+              horizontal: 20,
+              vertical: AppSpace.sm,
+            ),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AppRadii.control),
+            ),
+            textStyle: const TextStyle(
+              fontFamily: AppType.family,
+              fontSize: AppType.small,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          child: _isCreating
+              ? SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                      context.palette.background,
+                    ),
+                  ),
+                )
+              : const Text('Create'),
+        ),
+      ],
     );
   }
 }

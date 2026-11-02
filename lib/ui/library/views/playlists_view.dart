@@ -2,9 +2,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../../data/repositories/media_library_repository.dart';
 import '../../../domain/models/library_models.dart';
+import '../../../utils/format.dart';
 import '../../player/player_controller.dart';
 import '../../core/app_theme.dart';
 import '../../core/toast/app_toast.dart';
+import '../../core/components/app_dialog.dart';
 import '../../core/components/media_tile.dart';
 import '../../core/components/media_row.dart';
 import '../widgets/library_artwork.dart';
@@ -128,12 +130,6 @@ class _PlaylistsViewState extends State<PlaylistsView> {
     }
   }
 
-  String _formatDuration(Duration d) {
-    final minutes = d.inMinutes;
-    final seconds = d.inSeconds % 60;
-    return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
-  }
-
   Future<void> _createPlaylist() async {
     final playlist = await PlaylistCreateDialog.show(
       context,
@@ -149,15 +145,11 @@ class _PlaylistsViewState extends State<PlaylistsView> {
   }
 
   Future<void> _deletePlaylist(PlaylistRecord pl) async {
-    final confirmed = await showDialog<bool>(
+    final confirmed = await AppDialog.show<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: context.palette.surface,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppRadii.artwork),
-          side: BorderSide(color: context.palette.border),
-        ),
-        title: Text('Delete playlist', style: context.palette.sectionTitle),
+      builder: (ctx) => AppDialog(
+        maxWidth: 420,
+        title: const Text('Delete playlist'),
         content: Text(
           'Are you sure you want to delete "${pl.title}"? The media files themselves will remain in your library.',
           style: context.palette.rowSecondary,
@@ -165,13 +157,12 @@ class _PlaylistsViewState extends State<PlaylistsView> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
-            child: Text(
-              'Cancel',
-              style: TextStyle(color: context.palette.secondaryText),
-            ),
+            child: const Text('Cancel'),
           ),
           FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: context.palette.danger),
+            style: FilledButton.styleFrom(
+              backgroundColor: context.palette.danger,
+            ),
             onPressed: () => Navigator.of(ctx).pop(true),
             child: const Text('Delete'),
           ),
@@ -485,7 +476,7 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        '${entries.length} items • ${_formatDuration(totalDuration)}',
+                        '${entries.length} items • ${formatDuration(totalDuration)}',
                         style: context.palette.metadata,
                       ),
                       const SizedBox(height: 16),
@@ -660,7 +651,7 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
                                     Text(
-                                      _formatDuration(duration),
+                                      formatDuration(duration),
                                       style: context.palette.metadata,
                                     ),
                                     const SizedBox(width: 8),
@@ -731,9 +722,9 @@ class _RenamePlaylistDialogState extends State<_RenamePlaylistDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
-    backgroundColor: context.palette.surface,
-    title: Text('Rename playlist', style: context.palette.sectionTitle),
+  Widget build(BuildContext context) => AppDialog(
+    maxWidth: 420,
+    title: const Text('Rename playlist'),
     content: TextField(
       controller: _controller,
       autofocus: true,

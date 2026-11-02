@@ -81,7 +81,7 @@
     }
   ],
   "bundledCompanions": {
-    "note": "These are unchanged and still come from media_kit_libs_windows_video. They serve the video renderer's ANGLE path, not the engine.",
+    "note": "These are unchanged and still come from media_kit_libs_windows_video. They serve the video renderer's ANGLE path, not the engine. vk_swiftshader.dll is a Vulkan CPU rasterizer fallback not required for Direct3D 11 (d3d11) on Windows 10/11 and is excluded from the installer to save ~4.6 MB.",
     "files": [
       "d3dcompiler_47.dll",
       "libEGL.dll",
@@ -95,7 +95,8 @@
   "upstreamFacts": [
     "mpv publishes Windows libmpv modules only under the rolling git-release tag. Its stable release assets (v0.41.0) contain mpv.exe and the player's own DLLs for the MinGW and MSVC builds, and no libmpv-2.dll.",
     "The upstream git-release libmpv asset is a development build of the master branch (v0.41.0-1206-gfffe7a23a, built 2026-10-18). mpv labels these builds untested and not official releases.",
-    "This record therefore pins the current upstream libmpv line rather than a stable-tag libmpv build, because no stable-tag libmpv build exists. Building libmpv from the v0.41.0 tag with a pinned toolchain would replace this pin; it needs an MSYS2/MinGW-w64 engine build job that this repository does not have yet."
+    "This record therefore pins the current upstream libmpv line rather than a stable-tag libmpv build, because no stable-tag libmpv build exists. Building libmpv from the v0.41.0 tag with a pinned toolchain would replace this pin; it needs an MSYS2/MinGW-w64 engine build job that this repository does not have yet.",
+    "Tailored desktop libmpv builds (e.g. from zhongfly or shinchiro configured without esoteric scripting tools like VapourSynth/MuJS) range between 28 MB and 40 MB while maintaining full codec support (AV1, HEVC, VP9, H.264) and DXVA2/D3D11VA hardware acceleration, saving >110 MB. They can be supplied via MPVSON_ENGINE_DLL with -DMPVSON_ALLOW_CUSTOM_ENGINE=ON, and stripped using llvm-strip --strip-all."
   ],
   "maintenance": {
     "refresh": "dart run tool/engine_provenance.dart refresh --accept <version> rewrites this file from the upstream release metadata and recomputes every digest. Review the diff before committing.",

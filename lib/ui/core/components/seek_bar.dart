@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../utils/format.dart';
 import '../../player/player_controller.dart';
 import '../../player/widgets/player_controls.dart';
 import '../../player/widgets/player_control_style.dart';
@@ -21,12 +22,6 @@ class SeekBar extends StatefulWidget {
 
 class _SeekBarState extends State<SeekBar> {
   Duration? _preview;
-  String _time(Duration d) {
-    final h = d.inHours;
-    final m = d.inMinutes.remainder(60).toString().padLeft(h > 0 ? 2 : 1, '0');
-    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
-    return h > 0 ? '$h:$m:$s' : '$m:$s';
-  }
 
   @override
   Widget build(BuildContext context) => RepaintBoundary(
@@ -41,7 +36,10 @@ class _SeekBarState extends State<SeekBar> {
         children: [
           SizedBox(width: SeekBar.sideInset),
           Text(
-            _time(_preview ?? widget.controller.displayPosition),
+            formatTime(
+              _preview ?? widget.controller.displayPosition,
+              compactMinutes: true,
+            ),
             style: Theme.of(context).textTheme.labelSmall?.copyWith(
               fontFeatures: const [FontFeature.tabularFigures()],
             ),
@@ -61,7 +59,7 @@ class _SeekBarState extends State<SeekBar> {
           ),
           const SizedBox(width: 8),
           Text(
-            _time(widget.controller.duration),
+            formatTime(widget.controller.duration, compactMinutes: true),
             style: Theme.of(context).textTheme.labelSmall?.copyWith(
               fontFeatures: const [FontFeature.tabularFigures()],
             ),

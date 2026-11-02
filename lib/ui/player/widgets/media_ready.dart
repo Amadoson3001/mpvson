@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../domain/models/media_entry.dart';
+import '../../../utils/format.dart';
 import '../../core/app_motion.dart';
 import '../../core/app_theme.dart';
 import 'screen_play_mark.dart';
@@ -149,7 +150,7 @@ class _ReadyContent extends StatelessWidget {
               const Icon(Icons.play_arrow_rounded, size: 17),
               const SizedBox(width: 5),
               Text(
-                'Continue at ${_formatTime(position)}',
+                'Continue at ${formatTime(position)}',
                 style: textTheme.bodyMedium?.copyWith(
                   color: context.palette.secondaryText,
                   fontWeight: FontWeight.w600,
@@ -197,12 +198,5 @@ class _ReadyContent extends StatelessWidget {
         ),
       ],
     );
-  }
-
-  static String _formatTime(Duration value) {
-    final hours = value.inHours;
-    final minutes = value.inMinutes.remainder(60).toString().padLeft(2, '0');
-    final seconds = value.inSeconds.remainder(60).toString().padLeft(2, '0');
-    return hours > 0 ? '$hours:$minutes:$seconds' : '$minutes:$seconds';
   }
 }

@@ -18,6 +18,7 @@ class MediaAccentScope extends StatefulWidget {
   final Widget child;
   final MediaEntry? entryOverride;
   final bool? enabled;
+
   /// Clamps extracted artwork color to enforce saturation >= 0.65 and balanced lightness
   /// (0.45 - 0.55 in light mode, 0.60 - 0.70 in dark mode) so artwork accents remain
   /// vibrant and high-contrast across all surfaces.
@@ -82,7 +83,8 @@ class _MediaAccentScopeState extends State<MediaAccentScope> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final enabled = widget.enabled ??
+    final enabled =
+        widget.enabled ??
         (AppPreferencesScope.of(context)?.dynamicArtworkColor ?? true);
     _dynamicArtworkEnabled = enabled;
     if (!_isDynamicEnabled) {
@@ -186,7 +188,10 @@ class _MediaAccentScopeState extends State<MediaAccentScope> {
             final hslOrig = HSLColor.fromColor(original);
             final clampedSat = hslOrig.saturation.clamp(0.65, 1.0);
             final clampedLight = hslOrig.lightness.clamp(0.48, 0.68);
-            dominant = hslOrig.withSaturation(clampedSat).withLightness(clampedLight).toColor();
+            dominant = hslOrig
+                .withSaturation(clampedSat)
+                .withLightness(clampedLight)
+                .toColor();
 
             // Extract vibrant tone from second prominent cluster if available
             if (sorted.length > 1) {
@@ -236,7 +241,6 @@ class _MediaAccentScopeState extends State<MediaAccentScope> {
     }
   }
 
-
   @override
   Widget build(BuildContext context) {
     if (!_isDynamicEnabled || _color == null) {
@@ -245,12 +249,18 @@ class _MediaAccentScopeState extends State<MediaAccentScope> {
 
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final color = MediaAccentScope.clampAccentForVibrancy(_color!, theme.brightness);
-    final onAccent = isDark ? const Color(0xFF09090B) : Colors.white;
+    final color = MediaAccentScope.clampAccentForVibrancy(
+      _color!,
+      theme.brightness,
+    );
+    final onAccent = isDark ? AppColors.ground : Colors.white;
     final palette = _palette != null
         ? MediaAccentPalette(
             dominant: color,
-            vibrant: MediaAccentScope.clampAccentForVibrancy(_palette!.vibrant, theme.brightness),
+            vibrant: MediaAccentScope.clampAccentForVibrancy(
+              _palette!.vibrant,
+              theme.brightness,
+            ),
             muted: _palette!.muted,
           )
         : MediaAccentPalette(dominant: color);
@@ -317,9 +327,7 @@ class _MediaAccentScopeState extends State<MediaAccentScope> {
             ),
           ),
         ),
-        badgeTheme: theme.badgeTheme.copyWith(
-          textColor: color,
-        ),
+        badgeTheme: theme.badgeTheme.copyWith(textColor: color),
         segmentedButtonTheme: SegmentedButtonThemeData(
           style: ButtonStyle(
             backgroundColor: WidgetStateProperty.resolveWith((states) {

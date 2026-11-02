@@ -44,7 +44,10 @@ class LibraryStatusBanner extends StatelessWidget {
                 AppSpace.md,
                 0,
               ),
-              child: Text('Opening library...', style: context.palette.metadata),
+              child: Text(
+                'Opening library...',
+                style: context.palette.metadata,
+              ),
             ),
           );
         } else if (status.phase == ScanPhase.error) {
@@ -103,7 +106,9 @@ class LibraryStatusBanner extends StatelessWidget {
       decoration: BoxDecoration(
         color: context.palette.surface,
         borderRadius: BorderRadius.circular(AppRadii.artwork),
-        border: Border.all(color: context.palette.danger.withValues(alpha: 0.5)),
+        border: Border.all(
+          color: context.palette.danger.withValues(alpha: 0.5),
+        ),
       ),
       child: Row(
         children: [

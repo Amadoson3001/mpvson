@@ -1,12 +1,14 @@
 import 'dart:async';
-import 'dart:io';
 import 'package:flutter/material.dart';
 import '../../../data/repositories/media_library_repository.dart';
 import '../../../domain/models/library_models.dart';
 import '../../../domain/models/media_entry.dart';
+import '../../../utils/file_utils.dart';
+import '../../../utils/format.dart';
 import '../../player/player_controller.dart';
 import '../../core/app_theme.dart';
 import '../../core/toast/app_toast.dart';
+import '../../core/components/app_popup_menu_item.dart';
 import '../../core/components/media_tile.dart';
 import '../../core/components/media_row.dart';
 import '../../core/components/media_accent_scope.dart';
@@ -199,24 +201,12 @@ class _MusicViewState extends State<MusicView> {
     }
   }
 
-  String _formatDuration(Duration d) {
-    final minutes = d.inMinutes;
-    final seconds = d.inSeconds % 60;
-    return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
-  }
-
   void _showInFolder(String path) {
     if (widget.onShowInFolder != null) {
       widget.onShowInFolder!(path);
       return;
     }
-    try {
-      if (Platform.isWindows) {
-        Process.run('explorer.exe', ['/select,', path.replaceAll('/', '\\')]);
-      } else if (Platform.isLinux) {
-        Process.run('xdg-open', [File(path).parent.path]);
-      }
-    } catch (_) {}
+    showInFolder(path);
   }
 
   Future<void> _playSongCollection(
@@ -417,6 +407,7 @@ class _MusicViewState extends State<MusicView> {
           minimumSize: const Size(0, 34),
           padding: const EdgeInsets.symmetric(horizontal: AppSpace.sm),
           textStyle: TextStyle(
+            fontFamily: AppType.family,
             fontSize: AppType.small,
             fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
           ),
@@ -531,7 +522,10 @@ class _MusicViewState extends State<MusicView> {
       ),
       child: Row(
         children: [
-          SizedBox(width: 36, child: Text('#', style: context.palette.metadata)),
+          SizedBox(
+            width: 36,
+            child: Text('#', style: context.palette.metadata),
+          ),
           Expanded(
             flex: 4,
             child: Text('Title', style: context.palette.metadata),
@@ -630,16 +624,17 @@ class _MusicViewState extends State<MusicView> {
                                   Flexible(
                                     child: Text(
                                       song.title,
-                                      style: context.palette.rowPrimary.copyWith(
-                                        color: isUnavailable
-                                            ? context.palette.mutedText
-                                            : isCurrent
-                                            ? accent
-                                            : context.palette.primaryText,
-                                        fontWeight: isCurrent
-                                            ? FontWeight.w600
-                                            : FontWeight.w500,
-                                      ),
+                                      style: context.palette.rowPrimary
+                                          .copyWith(
+                                            color: isUnavailable
+                                                ? context.palette.mutedText
+                                                : isCurrent
+                                                ? accent
+                                                : context.palette.primaryText,
+                                            fontWeight: isCurrent
+                                                ? FontWeight.w600
+                                                : FontWeight.w500,
+                                          ),
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
                                     ),
@@ -652,9 +647,8 @@ class _MusicViewState extends State<MusicView> {
                                         vertical: 1,
                                       ),
                                       decoration: BoxDecoration(
-                                        color: context.palette.danger.withValues(
-                                          alpha: 0.2,
-                                        ),
+                                        color: context.palette.danger
+                                            .withValues(alpha: 0.2),
                                         borderRadius: BorderRadius.circular(
                                           AppRadii.control,
                                         ),
@@ -694,7 +688,7 @@ class _MusicViewState extends State<MusicView> {
                         SizedBox(
                           width: 70,
                           child: Text(
-                            _formatDuration(song.metadata.duration),
+                            formatDuration(song.metadata.duration),
                             style: context.palette.metadata.copyWith(
                               fontFeatures: const [
                                 FontFeature.tabularFigures(),
@@ -799,106 +793,43 @@ class _MusicViewState extends State<MusicView> {
       itemBuilder: (context) {
         final accent = Theme.of(context).colorScheme.primary;
         return [
-          PopupMenuItem(
+          AppPopupMenuItem<String>(
             value: 'play_now',
             enabled: song.isAvailable,
-            child: Row(
-              children: [
-                Icon(Icons.play_arrow_rounded, size: 18, color: accent),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text('Play now', style: context.palette.rowPrimary),
-                ),
-              ],
-            ),
+            icon: Icons.play_arrow_rounded,
+            iconColor: accent,
+            text: 'Play now',
           ),
-          PopupMenuItem(
+          AppPopupMenuItem<String>(
             value: 'play_next',
             enabled: song.isAvailable,
-            child: Row(
-              children: [
-                Icon(
-                  Icons.playlist_play_rounded,
-                  size: 18,
-                  color: context.palette.secondaryText,
-                ),
-                SizedBox(width: 10),
-                Expanded(child: Text('Play next', style: context.palette.rowPrimary)),
-              ],
-            ),
+            icon: Icons.playlist_play_rounded,
+            text: 'Play next',
           ),
-          PopupMenuItem(
+          AppPopupMenuItem<String>(
             value: 'add_queue',
             enabled: song.isAvailable,
-            child: Row(
-              children: [
-                Icon(
-                  Icons.queue_music_rounded,
-                  size: 18,
-                  color: context.palette.secondaryText,
-                ),
-                SizedBox(width: 10),
-                Expanded(
-                  child: Text('Add to queue', style: context.palette.rowPrimary),
-                ),
-              ],
-            ),
+            icon: Icons.queue_music_rounded,
+            text: 'Add to queue',
           ),
-          PopupMenuItem(
+          AppPopupMenuItem<String>(
             value: 'add_playlist',
-            child: Row(
-              children: [
-                Icon(
-                  Icons.playlist_add_rounded,
-                  size: 18,
-                  color: context.palette.secondaryText,
-                ),
-                SizedBox(width: 10),
-                Expanded(
-                  child: Text('Add to playlist', style: context.palette.rowPrimary),
-                ),
-              ],
-            ),
+            icon: Icons.playlist_add_rounded,
+            text: 'Add to playlist',
           ),
-          PopupMenuItem(
+          AppPopupMenuItem<String>(
             value: 'toggle_favorite',
-            child: Row(
-              children: [
-                Icon(
-                  song.isFavorite
-                      ? Icons.favorite_border_rounded
-                      : Icons.favorite_rounded,
-                  size: 18,
-                  color: accent,
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    song.isFavorite ? 'Remove favorite' : 'Favorite',
-                    style: context.palette.rowPrimary,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
+            icon: song.isFavorite
+                ? Icons.favorite_border_rounded
+                : Icons.favorite_rounded,
+            iconColor: accent,
+            text: song.isFavorite ? 'Remove favorite' : 'Favorite',
           ),
           const PopupMenuDivider(height: 1),
-          PopupMenuItem(
+          AppPopupMenuItem<String>(
             value: 'show_folder',
-            child: Row(
-              children: [
-                Icon(
-                  Icons.folder_open_rounded,
-                  size: 18,
-                  color: context.palette.secondaryText,
-                ),
-                SizedBox(width: 10),
-                Expanded(
-                  child: Text('Show in folder', style: context.palette.rowPrimary),
-                ),
-              ],
-            ),
+            icon: Icons.folder_open_rounded,
+            text: 'Show in folder',
           ),
         ];
       },
@@ -1111,7 +1042,7 @@ class _MusicViewState extends State<MusicView> {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        '${sortedTracks.length} tracks • ${_formatDuration(totalDuration)}',
+                        '${sortedTracks.length} tracks • ${formatDuration(totalDuration)}',
                         style: context.palette.metadata,
                       ),
                       const SizedBox(height: 16),
@@ -1408,7 +1339,12 @@ class _TrackIndexCell extends StatelessWidget {
       );
     }
     if (isCurrent && isPlaying) {
-      return PlayingEqualizerGlyph(index: index, size: 14, color: accent);
+      return PlayingEqualizerGlyph(
+        index: index,
+        size: 14,
+        color: accent,
+        semanticLabel: 'Playing',
+      );
     }
     return Text(
       '${index + 1}',

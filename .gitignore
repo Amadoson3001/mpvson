@@ -173,6 +173,7 @@ Desktop.ini
 # project. Keep a published contributor guide in README/CONTRIBUTING instead.
 AGENTS.md
 CLAUDE.md
+.agents/
 .opencode/
 .claude/
 .cursor/

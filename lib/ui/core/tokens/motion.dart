@@ -1,7 +1,7 @@
-import 'dart:io';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+
+import 'motion_stub.dart' if (dart.library.io) 'motion_io.dart';
 
 /// Shared timing and reduced-motion behavior for the desktop interface.
 abstract final class AppMotion {
@@ -40,11 +40,7 @@ abstract final class AppMotion {
 
   static bool _detectConstrainedHardware() {
     if (kIsWeb) return false;
-    try {
-      return Platform.numberOfProcessors <= 4;
-    } on Object {
-      return false;
-    }
+    return detectConstrainedHardware();
   }
 
   static bool reduce(BuildContext context) =>

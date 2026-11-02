@@ -26,7 +26,7 @@ class EmptyState extends StatelessWidget {
       child: SingleChildScrollView(
         padding: const EdgeInsets.symmetric(
           horizontal: AppSpace.xl,
-          vertical: 48,
+          vertical: AppSpace.xxl,
         ),
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 460),
@@ -44,9 +44,9 @@ class EmptyState extends StatelessWidget {
                 ),
                 child: Icon(icon, size: 30, color: accent),
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: AppSpace.lg),
               Text(title, style: context.palette.albumTitle),
-              const SizedBox(height: 12),
+              const SizedBox(height: AppSpace.sm),
               Text(
                 message,
                 style: context.palette.rowSecondary.copyWith(
@@ -55,19 +55,20 @@ class EmptyState extends StatelessWidget {
                 ),
               ),
               if (onAction != null && actionLabel != null) ...[
-                const SizedBox(height: 28),
+                const SizedBox(height: AppSpace.xl),
                 FilledButton.icon(
                   style: FilledButton.styleFrom(
                     backgroundColor: accent,
                     foregroundColor: context.palette.accentForeground,
                     padding: const EdgeInsets.symmetric(
                       horizontal: AppSpace.lg,
-                      vertical: 14,
+                      vertical: AppSpace.inputH,
                     ),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(AppRadii.control),
                     ),
                     textStyle: const TextStyle(
+                      fontFamily: AppType.family,
                       fontSize: AppType.small,
                       fontWeight: FontWeight.w600,
                     ),

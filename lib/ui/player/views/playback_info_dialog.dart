@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../data/services/playback_statistics.dart';
 import '../../core/app_theme.dart';
+import '../../core/components/app_dialog.dart';
 
 /// Refresh is explicit so inspecting playback never starts a polling workload.
 class PlaybackInfoDialog extends StatefulWidget {
@@ -48,56 +49,50 @@ class _PlaybackInfoDialogState extends State<PlaybackInfoDialog> {
   @override
   Widget build(BuildContext context) {
     final accent = Theme.of(context).colorScheme.primary;
-    return AlertDialog(
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(AppRadii.artwork),
-        side: BorderSide(color: context.palette.border),
-      ),
-      title: const Text('Playback information'),
+    return AppDialog(
+      maxWidth: 528,
       scrollable: true,
-      content: SizedBox(
-        width: 480,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const Text(
-              'Check the active decoder and dropped frames when playback stutters. Refresh to take another sample.',
+      title: const Text('Playback information'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            'Check the active decoder and dropped frames when playback stutters. Refresh to take another sample.',
+          ),
+          const SizedBox(height: AppSpace.md),
+          if (_busy)
+            LinearProgressIndicator(
+              color: accent,
+              borderRadius: BorderRadius.circular(AppRadii.control),
             ),
-            const SizedBox(height: 16),
-            if (_busy)
-              LinearProgressIndicator(
-                color: accent,
-                borderRadius: BorderRadius.circular(AppRadii.control),
+          if (_error != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: AppSpace.sm),
+              child: Text(
+                _error!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
               ),
-            if (_error != null)
+            ),
+          if (_statistics case final statistics?)
+            for (final entry in statistics.values.entries)
               Padding(
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                child: Text(
-                  _error!,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                padding: const EdgeInsets.symmetric(vertical: AppSpace.xs),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(child: Text(entry.key)),
+                    const SizedBox(width: AppSpace.md),
+                    Expanded(
+                      child: SelectableText(
+                        entry.value,
+                        textAlign: TextAlign.end,
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            if (_statistics case final statistics?)
-              for (final entry in statistics.values.entries)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(child: Text(entry.key)),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: SelectableText(
-                          entry.value,
-                          textAlign: TextAlign.end,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-          ],
-        ),
+        ],
       ),
       actions: [
         TextButton(

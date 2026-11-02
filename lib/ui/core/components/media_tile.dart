@@ -42,28 +42,52 @@ class _MediaTileState extends State<MediaTile> {
       _pressed ? AppMotion.press : AppMotion.hover,
     );
 
-    return InkWell(
-      onTap: widget.onTap,
-      onHover: (hovering) {
-        if (_hovered != hovering) setState(() => _hovered = hovering);
-      },
-      onHighlightChanged: (highlighted) {
-        if (_pressed != highlighted) setState(() => _pressed = highlighted);
-      },
-      borderRadius: BorderRadius.circular(AppRadii.artwork),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: RepaintBoundary(
-              child: AnimatedScale(
-                scale: scale,
-                duration: duration,
-                curve: AppMotion.enter,
-                child: widget.aspectRatio != null
-                    ? AspectRatio(
-                        aspectRatio: widget.aspectRatio!,
-                        child: ClipRRect(
+    return Semantics(
+      button: true,
+      container: true,
+      label: widget.subtitle.isEmpty
+          ? widget.title
+          : '${widget.title}, ${widget.subtitle}',
+      child: InkWell(
+        onTap: widget.onTap,
+        onHover: (hovering) {
+          if (_hovered != hovering) setState(() => _hovered = hovering);
+        },
+        onHighlightChanged: (highlighted) {
+          if (_pressed != highlighted) setState(() => _pressed = highlighted);
+        },
+        borderRadius: BorderRadius.circular(AppRadii.artwork),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: RepaintBoundary(
+                child: AnimatedScale(
+                  scale: scale,
+                  duration: duration,
+                  curve: AppMotion.enter,
+                  child: widget.aspectRatio != null
+                      ? AspectRatio(
+                          aspectRatio: widget.aspectRatio!,
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(
+                              AppRadii.artwork,
+                            ),
+                            child: Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                widget.artwork,
+                                if (widget.overlay != null)
+                                  Positioned(
+                                    right: AppSpace.xs,
+                                    bottom: AppSpace.xs,
+                                    child: widget.overlay!,
+                                  ),
+                              ],
+                            ),
+                          ),
+                        )
+                      : ClipRRect(
                           borderRadius: BorderRadius.circular(AppRadii.artwork),
                           child: Stack(
                             fit: StackFit.expand,
@@ -71,56 +95,45 @@ class _MediaTileState extends State<MediaTile> {
                               widget.artwork,
                               if (widget.overlay != null)
                                 Positioned(
-                                  right: 8,
-                                  bottom: 8,
+                                  right: AppSpace.xs,
+                                  bottom: AppSpace.xs,
                                   child: widget.overlay!,
                                 ),
                             ],
                           ),
                         ),
-                      )
-                    : ClipRRect(
-                        borderRadius: BorderRadius.circular(AppRadii.artwork),
-                        child: Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            widget.artwork,
-                            if (widget.overlay != null)
-                              Positioned(
-                                right: 8,
-                                bottom: 8,
-                                child: widget.overlay!,
-                              ),
-                          ],
-                        ),
-                      ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  widget.title,
-                  style: context.palette.rowPrimary.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
                 ),
               ),
-              ?widget.trailing,
-            ],
-          ),
-          const SizedBox(height: 2),
-          Text(
-            widget.subtitle,
-            style: context.palette.rowSecondary,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ],
+            ),
+            const SizedBox(height: AppSpace.xs),
+            Row(
+              children: [
+                Expanded(
+                  child: ExcludeSemantics(
+                    child: Text(
+                      widget.title,
+                      style: context.palette.rowPrimary.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ),
+                ?widget.trailing,
+              ],
+            ),
+            const SizedBox(height: AppSpace.micro),
+            ExcludeSemantics(
+              child: Text(
+                widget.subtitle,
+                style: context.palette.rowSecondary,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

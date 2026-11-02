@@ -220,7 +220,12 @@ class _ApplicationTrack extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _applicationStatusContent(context, updates, release, accent),
+                    _applicationStatusContent(
+                      context,
+                      updates,
+                      release,
+                      accent,
+                    ),
                     if (updates.error != null && updates.status != 'error') ...[
                       const SizedBox(height: 8),
                       _TrackNotice(
@@ -413,9 +418,9 @@ class _EngineTrack extends StatelessWidget {
                     if (updates.sourceLabel.trim().isNotEmpty) ...[
                       Text(
                         'Source: ${updates.sourceLabel}',
-                        style: Theme.of(
-                          context,
-                        ).textTheme.labelSmall?.copyWith(color: context.palette.muted),
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          color: context.palette.muted,
+                        ),
                       ),
                       const SizedBox(height: 8),
                     ],
@@ -559,7 +564,10 @@ class _EngineTrack extends StatelessWidget {
       'readyToRestart' => ('Ready to restart', AppTheme.success),
       'upToDate' => ('Up to date', AppTheme.success),
       'newerInstalled' => ('Installed is newer', context.palette.secondaryText),
-      'stableUnavailable' => ('Stable package unavailable', context.palette.muted),
+      'stableUnavailable' => (
+        'Stable package unavailable',
+        context.palette.muted,
+      ),
       'error' => ('Update failed', context.palette.danger),
       'unconfigured' => ('Not configured', context.palette.muted),
       _ => ('Not checked', context.palette.muted),
@@ -642,7 +650,10 @@ class _EngineTrack extends StatelessWidget {
                 : release == null || release.engineVersion.trim().isEmpty
                 ? 'A playback engine update is available.'
                 : 'Engine version ${release.engineVersion} is available.',
-            style: TextStyle(color: context.palette.secondaryText, height: 1.45),
+            style: TextStyle(
+              color: context.palette.secondaryText,
+              height: 1.45,
+            ),
           ),
           if (release != null && release.notes.trim().isNotEmpty) ...[
             const SizedBox(height: 7),

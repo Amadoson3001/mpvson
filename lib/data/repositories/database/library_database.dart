@@ -251,6 +251,26 @@ class LibraryDatabase {
     return res as String;
   }
 
+  /// Releases SQLite unmapped memory back to the operating system immediately.
+  Future<void> shrinkMemory() async {
+    if (_isClosed) return;
+    try {
+      await executeRaw('PRAGMA shrink_memory;');
+    } on Object {
+      // Ignored if database is closing or busy.
+    }
+  }
+
+  /// Optimizes the database indices and query planner statistics via PRAGMA optimize.
+  Future<void> optimize() async {
+    if (_isClosed) return;
+    try {
+      await _send<dynamic>('optimize');
+    } on Object {
+      // Ignored if database is closing or busy.
+    }
+  }
+
   /// Executes raw SQL without returning rows.
   Future<void> executeRaw(
     String sql, [
@@ -751,10 +771,32 @@ void _databaseIsolateEntryPoint(_DbInitParams params) {
 
   final database = db;
 
+  Timer? idleOptimizeTimer;
+  void scheduleIdleOptimization() {
+    idleOptimizeTimer?.cancel();
+    idleOptimizeTimer = Timer(const Duration(seconds: 30), () {
+      try {
+        database.execute('PRAGMA optimize;');
+      } catch (_) {}
+    });
+  }
+
+  // Periodic optimization for long-lived database connections.
+  final periodicOptimizeTimer = Timer.periodic(const Duration(hours: 1), (_) {
+    try {
+      database.execute('PRAGMA optimize;');
+    } catch (_) {}
+  });
+
   commandPort.listen((dynamic message) {
     if (message is! _DbRequest) return;
 
     if (message.action == 'close') {
+      idleOptimizeTimer?.cancel();
+      periodicOptimizeTimer.cancel();
+      try {
+        database.execute('PRAGMA optimize;');
+      } catch (_) {}
       try {
         database.close();
       } catch (_) {}
@@ -766,6 +808,7 @@ void _databaseIsolateEntryPoint(_DbInitParams params) {
     try {
       final result = _dispatchAction(database, message.action, message.params);
       message.replyPort.send(_DbResponse(id: message.id, result: result));
+      scheduleIdleOptimization();
     } catch (e, st) {
       message.replyPort.send(
         _DbResponse(
@@ -847,6 +890,10 @@ void _initializeSchema(Database db) {
     CREATE INDEX IF NOT EXISTS idx_media_added_at ON media(added_at);
     CREATE INDEX IF NOT EXISTS idx_media_title ON media(title COLLATE NOCASE);
     CREATE INDEX IF NOT EXISTS idx_media_last_played ON media(last_played_at);
+    CREATE INDEX IF NOT EXISTS idx_media_kind_added_at ON media(kind, added_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_media_library_kind_added_at ON media(is_in_library, kind, added_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_media_album_track ON media(album, track_number);
+    CREATE INDEX IF NOT EXISTS idx_media_album_disc_track ON media(album, disc_number, track_number);
 
     CREATE TABLE IF NOT EXISTS playlists (
       id TEXT PRIMARY KEY,
@@ -912,6 +959,10 @@ void _initializeSchema(Database db) {
 
 Object? _dispatchAction(Database db, String action, Object? params) {
   switch (action) {
+    case 'optimize':
+      db.execute('PRAGMA optimize;');
+      return null;
+
     case 'getJournalMode':
       final row = db.select('PRAGMA journal_mode;');
       return row.first.values.first as String;
@@ -1038,8 +1089,7 @@ Object? _dispatchAction(Database db, String action, Object? params) {
       final root = MediaEntry.canonicalSource(folderPath);
       final rootSlash = root.replaceAll(r'\', '/');
       final rootBackslash = root.replaceAll('/', r'\');
-      final prefixSlash =
-          rootSlash.endsWith('/') ? rootSlash : '$rootSlash/';
+      final prefixSlash = rootSlash.endsWith('/') ? rootSlash : '$rootSlash/';
       final prefixBackslash = rootBackslash.endsWith(r'\')
           ? rootBackslash
           : '$rootBackslash\\';

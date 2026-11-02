@@ -42,38 +42,45 @@ class _AppToastHostState extends State<AppToastHost> {
         listenable: _controller,
         builder: (context, _) {
           final entries = _controller.entries;
-          return Stack(
-            children: [
-              Positioned.fill(child: widget.child),
-              if (entries.isNotEmpty)
-                ListenableBuilder(
-                  listenable: _layout,
-                  builder: (context, _) {
-                    final media = MediaQuery.of(context);
-                    final geometry = resolveToastGeometry(
-                      screen: media.size,
-                      safe: media.viewPadding,
-                      regions: _layout.rects,
-                    );
-                    return Positioned(
-                      left: geometry.insets.left,
-                      top: geometry.insets.top,
-                      right: geometry.insets.right,
-                      bottom: geometry.insets.bottom,
-                      child: Align(
-                        alignment: geometry.alignment,
-                        child: _ToastStack(
-                          entries: entries,
-                          controller: _controller,
-                          maxWidth: geometry.maxWidth,
-                          slideUp: geometry.alignment.y > 0,
-                          alignEnd: geometry.alignment.x > 0,
+          // The toast layer mounts above the Navigator's Overlay, so widgets
+          // rendered inside a toast (tooltips, menus) find no Overlay ancestor.
+          // This one backs them. It is window-sized and never fades or
+          // unmounts with a card, so portal children cannot be orphaned
+          // mid-animation (flutter/flutter#190357).
+          return Overlay.wrap(
+            child: Stack(
+              children: [
+                Positioned.fill(child: widget.child),
+                if (entries.isNotEmpty)
+                  ListenableBuilder(
+                    listenable: _layout,
+                    builder: (context, _) {
+                      final media = MediaQuery.of(context);
+                      final geometry = resolveToastGeometry(
+                        screen: media.size,
+                        safe: media.viewPadding,
+                        regions: _layout.rects,
+                      );
+                      return Positioned(
+                        left: geometry.insets.left,
+                        top: geometry.insets.top,
+                        right: geometry.insets.right,
+                        bottom: geometry.insets.bottom,
+                        child: Align(
+                          alignment: geometry.alignment,
+                          child: _ToastStack(
+                            entries: entries,
+                            controller: _controller,
+                            maxWidth: geometry.maxWidth,
+                            slideUp: geometry.alignment.y > 0,
+                            alignEnd: geometry.alignment.x > 0,
+                          ),
                         ),
-                      ),
-                    );
-                  },
-                ),
-            ],
+                      );
+                    },
+                  ),
+              ],
+            ),
           );
         },
       ),
@@ -410,6 +417,7 @@ class _ToastAction extends StatelessWidget {
         borderRadius: BorderRadius.circular(AppRadii.control),
       ),
       textStyle: const TextStyle(
+        fontFamily: AppType.family,
         fontSize: AppType.caption,
         fontWeight: FontWeight.w600,
         letterSpacing: 0.2,
@@ -426,20 +434,21 @@ class _ToastClose extends StatelessWidget {
   final VoidCallback onPressed;
 
   @override
-  Widget build(BuildContext context) => Semantics(
-    button: true,
-    label: 'Dismiss',
-    child: InkWell(
-      onTap: onPressed,
-      borderRadius: BorderRadius.circular(AppRadii.control),
-      child: Padding(
-        padding: const EdgeInsets.all(AppSpace.xs),
-        child: Icon(
-          Icons.close_rounded,
-          size: 15,
-          color: visible ? context.palette.text : context.palette.faint,
-        ),
-      ),
+  Widget build(BuildContext context) => IconButton(
+    onPressed: onPressed,
+    tooltip: 'Dismiss',
+    style: IconButton.styleFrom(
+      minimumSize: const Size.square(44),
+      maximumSize: const Size.square(44),
+      padding: EdgeInsets.zero,
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      hoverColor: Colors.transparent,
+      highlightColor: Colors.transparent,
+    ),
+    icon: Icon(
+      Icons.close_rounded,
+      size: 15,
+      color: visible ? context.palette.text : context.palette.faint,
     ),
   );
 }

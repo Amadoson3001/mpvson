@@ -471,11 +471,9 @@ class EngineInstallationRepository {
 
     final pending = state.pending;
     if (pending != null) {
-      final verified = await _usableRecord(
-        pending,
-        isCompatible,
-        alreadyValidated: true,
-      );
+      // The one boot attempt a pending package gets is the only load-time
+      // point where its library is fully digest-verified.
+      final verified = await _usableRecord(pending, isCompatible);
       if (verified != null) {
         final token = _generateAttemptToken();
         final leaseHandle = await _acquireBootLeaseHandle();
@@ -1480,9 +1478,11 @@ class EngineInstallationRepository {
   Future<EngineSelectionState> _sanitizeState(
     EngineSelectionState state,
   ) async {
-    final active = await _validatedRecord(state.active);
-    final previous = await _validatedRecord(state.previous);
-    final pending = await _validatedRecord(state.pending);
+    // Size-based validation keeps every loadSelection off the hot boot path;
+    // full digest verification happens in _validatedRecord callers that opt in.
+    final active = await _validatedRecord(state.active, fullHash: false);
+    final previous = await _validatedRecord(state.previous, fullHash: false);
+    final pending = await _validatedRecord(state.pending, fullHash: false);
     final inProgress =
         state.pendingBootInProgress &&
         (pending != null || state.pendingBundled);
@@ -1516,8 +1516,9 @@ class EngineInstallationRepository {
   }
 
   Future<EngineInstallRecord?> _validatedRecord(
-    EngineInstallRecord? record,
-  ) async {
+    EngineInstallRecord? record, {
+    bool fullHash = true,
+  }) async {
     if (record == null) return null;
     final root = p.normalize(
       p.absolute((await _resolveEnginesDirectory()).path),
@@ -1546,6 +1547,7 @@ class EngineInstallationRepository {
     if (!await _verifyStagedDependencies(
       candidateDir,
       librarySha256: record.sha256,
+      fullHash: fullHash,
     )) {
       return null;
     }
@@ -1562,6 +1564,7 @@ class EngineInstallationRepository {
   Future<bool> _verifyStagedDependencies(
     Directory directory, {
     required String librarySha256,
+    bool fullHash = true,
   }) async {
     final markerFile = File(
       p.join(directory.path, engineOwnershipMarkerFileName),
@@ -1596,6 +1599,11 @@ class EngineInstallationRepository {
         if (stat.size != dependency.size) {
           return false;
         }
+        // Hashing the 150+ MB library takes seconds, so routine loads only
+        // re-check the size inventory recorded at install time; a size change
+        // or missing file still fails here. Digest verification is reserved
+        // for pending boot attempts and rejection fallbacks.
+        if (!fullHash) continue;
         final actualSha256 = await crypto.sha256
             .bind(File(targetPath).openRead())
             .single;

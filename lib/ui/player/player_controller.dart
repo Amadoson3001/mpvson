@@ -1702,16 +1702,18 @@ class PlayerController extends ChangeNotifier {
     _notifyIfOpen();
   }
 
-  /// Uses Flutter's ReorderableListView destination-index semantics.
+  /// Moves a queue entry to [newIndex], the destination Flutter's
+  /// `ReorderableListView.onReorderItem` reports: it is already expressed in the
+  /// list that remains after the dragged entry is lifted out, so callers must
+  /// not adjust it again.
   Future<void> reorder(int oldIndex, int newIndex) async {
     if (!_acceptsCommands ||
         oldIndex < 0 ||
         oldIndex >= _queue.length ||
         newIndex < 0 ||
-        newIndex > _queue.length) {
+        newIndex >= _queue.length) {
       return;
     }
-    if (newIndex > oldIndex) newIndex--;
     if (oldIndex == newIndex) return;
     _undo = null;
     final currentId = current?.id;
@@ -2882,7 +2884,12 @@ class PlayerController extends ChangeNotifier {
         previous.subtitleTracks != subtitleTracks ||
         previous.currentAudioTrack != currentAudioTrack ||
         previous.currentSubtitleTrack != currentSubtitleTrack;
-    if (changed) _notifyIfOpen();
+    if (changed) {
+      // Views read the transport glyph from [transportListenable], so a loading
+      // snapshot that changes transport state has to publish it as well.
+      _publishTransport();
+      _notifyIfOpen();
+    }
   }
 
   bool _isCurrentOpen(_PendingOpen pending) =>

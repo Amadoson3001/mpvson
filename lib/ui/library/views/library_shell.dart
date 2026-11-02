@@ -88,6 +88,9 @@ class _LibraryShellState extends State<LibraryShell>
   String _searchQuery = '';
   bool _isOnDemandQueueOpen = false;
 
+  /// Transport row (60) + seek strip (24) + the bar's 1px top border.
+  static const double _miniBarHeight = 85;
+
   late final AnimationController _nowPlayingMorphController =
       AnimationController(
         vsync: this,
@@ -294,8 +297,9 @@ class _LibraryShellState extends State<LibraryShell>
       builder: (context, constraints) {
         final width = constraints.maxWidth;
         final isDesktopWide = width >= 1180;
-        final isDesktopMedium = width >= 960 && width < 1180;
-        final isCompact = width < 960;
+        final isDesktopMedium =
+            width >= AppLayout.mediumBreakpoint && width < 1180;
+        final isCompact = width < AppLayout.mediumBreakpoint;
 
         return Focus(
           canRequestFocus: false,
@@ -343,7 +347,7 @@ class _LibraryShellState extends State<LibraryShell>
                               if (isDesktopWide) ...[
                                 ToastRegion(
                                   child: SizedBox(
-                                    width: 208,
+                                    width: AppLayout.sidebarExpanded,
                                     child: _buildSideNav(isCollapsed: false),
                                   ),
                                 ),
@@ -354,7 +358,7 @@ class _LibraryShellState extends State<LibraryShell>
                               ] else if (isDesktopMedium) ...[
                                 ToastRegion(
                                   child: SizedBox(
-                                    width: 64,
+                                    width: AppLayout.sidebarCollapsed,
                                     child: _buildSideNav(isCollapsed: true),
                                   ),
                                 ),
@@ -375,11 +379,12 @@ class _LibraryShellState extends State<LibraryShell>
                                         LibrarySection.settings)
                                       AnimatedBuilder(
                                         animation: widget.controller,
-                                        builder: (context, _) => _buildHeaderBar(
-                                          isCompact,
-                                          !isCompact,
-                                          showBackLabel: width >= 600,
-                                        ),
+                                        builder: (context, _) =>
+                                            _buildHeaderBar(
+                                              isCompact,
+                                              !isCompact,
+                                              showBackLabel: width >= 600,
+                                            ),
                                       ),
                                     // Status Banners (Scanning indicator, Unavailable drive warning)
                                     LibraryStatusBanner(
@@ -401,7 +406,7 @@ class _LibraryShellState extends State<LibraryShell>
                                 ),
                                 ToastRegion(
                                   child: SizedBox(
-                                    width: 280,
+                                    width: AppLayout.queuePanelWidth,
                                     child: QueuePanel(
                                       controller: widget.controller,
                                       onQueueFocus: (_) {},
@@ -439,7 +444,7 @@ class _LibraryShellState extends State<LibraryShell>
     final accent = Theme.of(context).colorScheme.primary;
     final queueOpen = _isQueueOpen;
     return Container(
-      height: 56,
+      height: AppLayout.headerHeight,
       padding: const EdgeInsets.symmetric(horizontal: AppSpace.md),
       // Matches the stage behind it so the header and the content read as one
       // continuous surface instead of two blocks split by a rule.
@@ -668,7 +673,9 @@ class _LibraryShellState extends State<LibraryShell>
               child: DecoratedBox(
                 decoration: BoxDecoration(
                   color: context.palette.background,
-                  border: Border(top: BorderSide(color: context.palette.border)),
+                  border: Border(
+                    top: BorderSide(color: context.palette.border),
+                  ),
                 ),
                 child: NowPlayingView(
                   controller: widget.controller,
@@ -822,8 +829,7 @@ class _LibraryShellState extends State<LibraryShell>
               Expanded(
                 child: Text(
                   label,
-                  style: TextStyle(
-                    fontSize: AppType.small,
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
                     fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
                     color: isSelected ? accent : context.palette.secondaryText,
                   ),
@@ -856,10 +862,9 @@ class _LibraryShellState extends State<LibraryShell>
                   Expanded(
                     child: Text(
                       'Mpvson',
-                      style: TextStyle(
-                        color: context.palette.primaryText,
-                        fontSize: AppType.title,
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
                         fontWeight: FontWeight.w700,
+                        color: context.palette.primaryText,
                       ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -924,7 +929,7 @@ class _LibraryShellState extends State<LibraryShell>
         ),
         title: Text(
           label,
-          style: TextStyle(
+          style: context.palette.rowPrimary.copyWith(
             color: isSelected ? accent : context.palette.secondaryText,
             fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
           ),
@@ -994,7 +999,7 @@ class _LibraryShellState extends State<LibraryShell>
         final reduced = AppMotion.reduce(context);
         if (reduced) {
           return RepaintBoundary(
-            child: SizedBox(height: 84, child: barContent),
+            child: SizedBox(height: _miniBarHeight, child: barContent),
           );
         }
 
@@ -1007,7 +1012,7 @@ class _LibraryShellState extends State<LibraryShell>
               child: Opacity(
                 opacity: visibility.clamp(0.0, 1.0),
                 child: RepaintBoundary(
-                  child: SizedBox(height: 84, child: barContent),
+                  child: SizedBox(height: _miniBarHeight, child: barContent),
                 ),
               ),
             ),
@@ -1039,104 +1044,108 @@ class _LibraryShellState extends State<LibraryShell>
               height: 60,
               padding: const EdgeInsets.symmetric(horizontal: AppSpace.md),
               child: Row(
-              children: [
-                Expanded(
-                  child: InkWell(
-                    onTap:
-                        widget.controller.isVideo &&
-                            widget.onBackToPlayer != null
-                        ? widget.onBackToPlayer
-                        : _openNowPlaying,
-                    borderRadius: BorderRadius.circular(AppRadii.control),
-                    hoverColor: context.palette.hover,
-                    child: Row(
-                      children: [
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(AppRadii.artwork),
-                          child: SizedBox(
-                            width: 40,
-                            height: 40,
-                            child: Stack(
-                              fit: StackFit.expand,
-                              children: [
-                                LibraryArtwork(
-                                  mediaPath: current.path,
-                                  repository: widget.repository,
-                                  iconSize: 20,
-                                ),
-                                if (widget.controller.isPlaying && !isVideo)
-                                  Positioned(
-                                    right: 2,
-                                    bottom: 2,
-                                    child: Container(
-                                      padding: const EdgeInsets.all(2),
-                                      decoration: BoxDecoration(
-                                        color: Colors.black.withValues(
-                                          alpha: 0.75,
+                children: [
+                  Expanded(
+                    child: InkWell(
+                      onTap:
+                          widget.controller.isVideo &&
+                              widget.onBackToPlayer != null
+                          ? widget.onBackToPlayer
+                          : _openNowPlaying,
+                      borderRadius: BorderRadius.circular(AppRadii.control),
+                      hoverColor: context.palette.hover,
+                      child: Row(
+                        children: [
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(
+                              AppRadii.artwork,
+                            ),
+                            child: SizedBox(
+                              width: 40,
+                              height: 40,
+                              child: Stack(
+                                fit: StackFit.expand,
+                                children: [
+                                  LibraryArtwork(
+                                    mediaPath: current.path,
+                                    repository: widget.repository,
+                                    iconSize: 20,
+                                  ),
+                                  if (widget.controller.isPlaying && !isVideo)
+                                    Positioned(
+                                      right: 2,
+                                      bottom: 2,
+                                      child: Container(
+                                        padding: const EdgeInsets.all(2),
+                                        decoration: BoxDecoration(
+                                          color: Colors.black.withValues(
+                                            alpha: 0.75,
+                                          ),
+                                          borderRadius: BorderRadius.circular(
+                                            4,
+                                          ),
                                         ),
-                                        borderRadius: BorderRadius.circular(4),
-                                      ),
-                                      child: const PlayingEqualizerGlyph(
-                                        isPlaying: true,
-                                        size: 10,
+                                        child: const PlayingEqualizerGlyph(
+                                          isPlaying: true,
+                                          size: 10,
+                                        ),
                                       ),
                                     ),
-                                  ),
-                              ],
+                                ],
+                              ),
                             ),
                           ),
-                        ),
-                        const SizedBox(width: 12),
-                        // Title and subtitle both come from the library
-                        // record when it exists, so the bar and the Now
-                        // Playing screen never disagree about a track.
-                        Expanded(
-                          child: _MiniPlayerSubtitle(
-                            key: ValueKey(current.path),
-                            repository: widget.repository,
-                            path: current.path,
-                            fallbackTitle: title,
-                            isVideo: isVideo,
+                          const SizedBox(width: 12),
+                          // Title and subtitle both come from the library
+                          // record when it exists, so the bar and the Now
+                          // Playing screen never disagree about a track.
+                          Expanded(
+                            child: _MiniPlayerSubtitle(
+                              key: ValueKey(current.path),
+                              repository: widget.repository,
+                              path: current.path,
+                              fallbackTitle: title,
+                              isVideo: isVideo,
+                            ),
                           ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Opacity(
+                    opacity: controlsOpacity,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        TransportButtons(
+                          controller: widget.controller,
+                          compact: isCompact,
                         ),
+                        AudioVolumeControl(
+                          controller: widget.controller,
+                          compact: true,
+                          showPercent: !isCompact,
+                        ),
+                        if (isCompact) ...[
+                          IconButton(
+                            icon: Icon(
+                              Icons.queue_music_rounded,
+                              size: 20,
+                              color: context.palette.secondaryText,
+                            ),
+                            tooltip: 'Queue',
+                            onPressed: _showCompactQueue,
+                          ),
+                        ],
                       ],
                     ),
                   ),
-                ),
-                const SizedBox(width: 12),
-                Opacity(
-                  opacity: controlsOpacity,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      TransportButtons(
-                        controller: widget.controller,
-                        compact: isCompact,
-                      ),
-                      AudioVolumeControl(
-                        controller: widget.controller,
-                        compact: true,
-                        showPercent: !isCompact,
-                      ),
-                      if (isCompact) ...[
-                        IconButton(
-                          icon: Icon(
-                            Icons.queue_music_rounded,
-                            size: 20,
-                            color: context.palette.secondaryText,
-                          ),
-                          tooltip: 'Queue',
-                          onPressed: _showCompactQueue,
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
-        ),
-        SizedBox(height: 24, child: SeekBar(controller: widget.controller)),
+          SizedBox(height: 24, child: SeekBar(controller: widget.controller)),
         ],
       ),
     );

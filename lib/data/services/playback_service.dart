@@ -344,7 +344,9 @@ class MediaKitPlaybackService
   _PendingPlaybackSettings? _activePlaybackSettings;
   Future<void>? _playbackSettingsDrain;
   final Map<String, String> _confirmedPlaybackProperties = <String, String>{};
+  PlaybackSettings _appliedPlaybackSettings = PlaybackSettings.defaults;
   bool? _appliedBufferingPolicyNetwork;
+  bool? _appliedBufferingPolicyLowSpec;
   final PlaybackSourceIdentity _identity = PlaybackSourceIdentity();
   StreamSubscription<NativeMediaEvent>? _nativeSubscription;
   Future<void>? _prepareFuture;
@@ -360,6 +362,11 @@ class MediaKitPlaybackService
   bool? _lastAppliedVisibility;
   bool _pendingForceResize = false;
 
+  static String _resolveHwdec(bool preferHardwareDecoding) {
+    if (!preferHardwareDecoding) return 'no';
+    return Platform.isWindows ? 'auto-safe' : 'auto';
+  }
+
   @override
   Player get player => _player;
 
@@ -372,7 +379,7 @@ class MediaKitPlaybackService
     final controller = VideoController(
       _player,
       configuration: VideoControllerConfiguration(
-        hwdec: _preferHardwareDecoding ? 'auto' : 'no',
+        hwdec: _resolveHwdec(_preferHardwareDecoding),
       ),
     );
     _videoController = controller;
@@ -551,10 +558,18 @@ class MediaKitPlaybackService
     }
   }
 
-  Future<void> _applyBufferingPolicy({required bool isNetwork}) async {
+  Future<void> _applyBufferingPolicy({
+    required bool isNetwork,
+    bool force = false,
+  }) async {
     // The engine keeps these options across sources, so repeating the same
     // native writes before every local-file open only delays playback.
-    if (_appliedBufferingPolicyNetwork == isNetwork) return;
+    final lowSpec = _appliedPlaybackSettings.isLowSpecOrRamPreserved;
+    if (!force &&
+        _appliedBufferingPolicyNetwork == isNetwork &&
+        (!isNetwork || _appliedBufferingPolicyLowSpec == lowSpec)) {
+      return;
+    }
     final nativePlayer = _player.platform;
     if (nativePlayer is! NativePlayer) return;
     try {
@@ -589,8 +604,16 @@ class MediaKitPlaybackService
             )
             .timeout(const Duration(seconds: 1));
       } else {
-        // HTTP(S) and network paths: retain disk-backed caching and 32 MiB
-        // buffer limits, with 20 seconds of forward caching.
+        // HTTP(S) and network paths: retain disk-backed caching.
+        // For low-spec profiles or when RAM preservation is enabled, cap network
+        // demuxer-max-bytes to 24 * 1024 * 1024 (24 MB) and set demuxer-max-back-bytes to 4 * 1024 * 1024.
+        final demuxerMaxBytes = lowSpec
+            ? (24 * 1024 * 1024).toString()
+            : (32 * 1024 * 1024).toString();
+        final demuxerMaxBackBytes = lowSpec
+            ? (4 * 1024 * 1024).toString()
+            : (32 * 1024 * 1024).toString();
+
         await nativePlayer
             .setProperty('cache', 'yes', waitForInitialization: false)
             .timeout(const Duration(seconds: 1));
@@ -610,19 +633,20 @@ class MediaKitPlaybackService
         await nativePlayer
             .setProperty(
               'demuxer-max-bytes',
-              (32 * 1024 * 1024).toString(),
+              demuxerMaxBytes,
               waitForInitialization: false,
             )
             .timeout(const Duration(seconds: 1));
         await nativePlayer
             .setProperty(
               'demuxer-max-back-bytes',
-              (32 * 1024 * 1024).toString(),
+              demuxerMaxBackBytes,
               waitForInitialization: false,
             )
             .timeout(const Duration(seconds: 1));
       }
       _appliedBufferingPolicyNetwork = isNetwork;
+      _appliedBufferingPolicyLowSpec = lowSpec;
     } on Object catch (error) {
       _diagnostics?.record('playback.buffering_policy', error: error);
     }
@@ -812,7 +836,13 @@ class MediaKitPlaybackService
   Future<PlaybackSettingsApplyResult> _applyPlaybackSettings(
     PlaybackSettings settings,
   ) async {
+    final previousLowSpec = _appliedPlaybackSettings.isLowSpecOrRamPreserved;
+    _appliedPlaybackSettings = settings;
     _preferHardwareDecoding = settings.preferHardwareDecoding;
+    if (_appliedBufferingPolicyNetwork == true &&
+        previousLowSpec != settings.isLowSpecOrRamPreserved) {
+      unawaited(_applyBufferingPolicy(isNetwork: true, force: true));
+    }
     final controller = _videoController;
     if (controller != null) {
       try {
@@ -861,7 +891,7 @@ class MediaKitPlaybackService
       },
     };
     final properties = <String, String>{
-      'hwdec': settings.preferHardwareDecoding ? 'auto' : 'no',
+      'hwdec': _resolveHwdec(settings.preferHardwareDecoding),
       ...preset,
       'brightness': settings.brightness.toString(),
       'contrast': settings.contrast.toString(),

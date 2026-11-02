@@ -1,14 +1,16 @@
 import 'dart:async';
-import 'dart:io';
 import 'package:flutter/material.dart';
 import '../../../data/repositories/media_library_repository.dart';
 import '../../../domain/models/library_models.dart';
 import '../../../domain/models/media_entry.dart';
 import '../../../domain/models/media_thumbnail.dart';
+import '../../../utils/file_utils.dart';
+import '../../../utils/format.dart';
 import '../../player/player_controller.dart';
 import '../../core/app_motion.dart';
 import '../../core/app_theme.dart';
 import '../../core/toast/app_toast.dart';
+import '../../core/components/app_popup_menu_item.dart';
 import '../../core/components/media_row.dart';
 import '../../core/components/empty_state.dart';
 import '../widgets/add_to_playlist_dialog.dart';
@@ -128,40 +130,12 @@ class _VideosViewState extends State<VideosView> {
     }
   }
 
-  static String _formatDuration(Duration d) {
-    final hours = d.inHours;
-    final minutes = d.inMinutes % 60;
-    final seconds = d.inSeconds % 60;
-    if (hours > 0) {
-      return '$hours:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
-    }
-    return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
-  }
-
-  static String _formatFileSize(int bytes) {
-    if (bytes <= 0) return '0 B';
-    const suffixes = ['B', 'KB', 'MB', 'GB', 'TB'];
-    var i = 0;
-    double size = bytes.toDouble();
-    while (size >= 1024 && i < suffixes.length - 1) {
-      size /= 1024;
-      i++;
-    }
-    return '${size.toStringAsFixed(1)} ${suffixes[i]}';
-  }
-
   void _showInFolder(String path) {
     if (widget.onShowInFolder != null) {
       widget.onShowInFolder!(path);
       return;
     }
-    try {
-      if (Platform.isWindows) {
-        Process.run('explorer.exe', ['/select,', path.replaceAll('/', '\\')]);
-      } else if (Platform.isLinux) {
-        Process.run('xdg-open', [File(path).parent.path]);
-      }
-    } catch (_) {}
+    showInFolder(path);
   }
 
   Future<void> _playVideo(MediaItemRecord video) async {
@@ -248,10 +222,34 @@ class _VideosViewState extends State<VideosView> {
               size: 18,
             ),
             items: const [
-              DropdownMenuItem(value: 'title', child: Text('Title')),
-              DropdownMenuItem(value: 'addedAt', child: Text('Date added')),
-              DropdownMenuItem(value: 'duration', child: Text('Duration')),
-              DropdownMenuItem(value: 'fileSize', child: Text('File size')),
+              DropdownMenuItem(
+                value: 'title',
+                child: Text(
+                  'Title',
+                  style: TextStyle(fontFamily: AppType.family),
+                ),
+              ),
+              DropdownMenuItem(
+                value: 'addedAt',
+                child: Text(
+                  'Date added',
+                  style: TextStyle(fontFamily: AppType.family),
+                ),
+              ),
+              DropdownMenuItem(
+                value: 'duration',
+                child: Text(
+                  'Duration',
+                  style: TextStyle(fontFamily: AppType.family),
+                ),
+              ),
+              DropdownMenuItem(
+                value: 'fileSize',
+                child: Text(
+                  'File size',
+                  style: TextStyle(fontFamily: AppType.family),
+                ),
+              ),
             ],
             onChanged: (val) {
               if (val != null) {
@@ -318,10 +316,10 @@ class _VideosViewState extends State<VideosView> {
   Widget _buildVideoGrid(List<MediaItemRecord> videos) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final columns = ((constraints.maxWidth - 48 + 20) / 280).ceil().clamp(
-          1,
-          12,
-        );
+        final columns =
+            ((constraints.maxWidth - 48 + 20) / AppLayout.videoGridMinWidth)
+                .ceil()
+                .clamp(1, 12);
         final width =
             (constraints.maxWidth - 48 - (columns - 1) * 20) / columns;
         return GridView.builder(
@@ -439,7 +437,10 @@ class _VideosViewState extends State<VideosView> {
                 children: [
                   SizedBox(
                     width: 48,
-                    child: Text('${videoIndex + 1}', style: context.palette.metadata),
+                    child: Text(
+                      '${videoIndex + 1}',
+                      style: context.palette.metadata,
+                    ),
                   ),
                   Expanded(
                     flex: 5,
@@ -465,7 +466,9 @@ class _VideosViewState extends State<VideosView> {
                               vertical: 1,
                             ),
                             decoration: BoxDecoration(
-                              color: context.palette.danger.withValues(alpha: 0.2),
+                              color: context.palette.danger.withValues(
+                                alpha: 0.2,
+                              ),
                               borderRadius: BorderRadius.circular(
                                 AppRadii.control,
                               ),
@@ -485,14 +488,14 @@ class _VideosViewState extends State<VideosView> {
                   Expanded(
                     flex: 2,
                     child: Text(
-                      _formatFileSize(video.fileSize),
+                      formatFileSize(video.fileSize),
                       style: context.palette.rowSecondary,
                     ),
                   ),
                   SizedBox(
                     width: 90,
                     child: Text(
-                      _formatDuration(video.metadata.duration),
+                      formatDuration(video.metadata.duration),
                       style: context.palette.metadata,
                       textAlign: TextAlign.right,
                     ),
@@ -505,7 +508,9 @@ class _VideosViewState extends State<VideosView> {
                             ? Icons.favorite_rounded
                             : Icons.favorite_border_rounded,
                         size: 18,
-                        color: video.isFavorite ? accent : context.palette.mutedText,
+                        color: video.isFavorite
+                            ? accent
+                            : context.palette.mutedText,
                       ),
                       tooltip: video.isFavorite
                           ? 'Remove favorite'
@@ -584,106 +589,43 @@ class _VideosViewState extends State<VideosView> {
       itemBuilder: (context) {
         final accent = Theme.of(context).colorScheme.primary;
         return [
-          PopupMenuItem(
+          AppPopupMenuItem<String>(
             value: 'play_now',
             enabled: video.isAvailable,
-            child: Row(
-              children: [
-                Icon(Icons.play_arrow_rounded, size: 18, color: accent),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text('Play now', style: context.palette.rowPrimary),
-                ),
-              ],
-            ),
+            icon: Icons.play_arrow_rounded,
+            iconColor: accent,
+            text: 'Play now',
           ),
-          PopupMenuItem(
+          AppPopupMenuItem<String>(
             value: 'play_next',
             enabled: video.isAvailable,
-            child: Row(
-              children: [
-                Icon(
-                  Icons.playlist_play_rounded,
-                  size: 18,
-                  color: context.palette.secondaryText,
-                ),
-                SizedBox(width: 10),
-                Expanded(child: Text('Play next', style: context.palette.rowPrimary)),
-              ],
-            ),
+            icon: Icons.playlist_play_rounded,
+            text: 'Play next',
           ),
-          PopupMenuItem(
+          AppPopupMenuItem<String>(
             value: 'add_queue',
             enabled: video.isAvailable,
-            child: Row(
-              children: [
-                Icon(
-                  Icons.queue_music_rounded,
-                  size: 18,
-                  color: context.palette.secondaryText,
-                ),
-                SizedBox(width: 10),
-                Expanded(
-                  child: Text('Add to queue', style: context.palette.rowPrimary),
-                ),
-              ],
-            ),
+            icon: Icons.queue_music_rounded,
+            text: 'Add to queue',
           ),
-          PopupMenuItem(
+          AppPopupMenuItem<String>(
             value: 'add_playlist',
-            child: Row(
-              children: [
-                Icon(
-                  Icons.playlist_add_rounded,
-                  size: 18,
-                  color: context.palette.secondaryText,
-                ),
-                SizedBox(width: 10),
-                Expanded(
-                  child: Text('Add to playlist', style: context.palette.rowPrimary),
-                ),
-              ],
-            ),
+            icon: Icons.playlist_add_rounded,
+            text: 'Add to playlist',
           ),
-          PopupMenuItem(
+          AppPopupMenuItem<String>(
             value: 'toggle_favorite',
-            child: Row(
-              children: [
-                Icon(
-                  video.isFavorite
-                      ? Icons.favorite_border_rounded
-                      : Icons.favorite_rounded,
-                  size: 18,
-                  color: accent,
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    video.isFavorite ? 'Remove favorite' : 'Favorite',
-                    style: context.palette.rowPrimary,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
+            icon: video.isFavorite
+                ? Icons.favorite_border_rounded
+                : Icons.favorite_rounded,
+            iconColor: accent,
+            text: video.isFavorite ? 'Remove favorite' : 'Favorite',
           ),
           const PopupMenuDivider(height: 1),
-          PopupMenuItem(
+          AppPopupMenuItem<String>(
             value: 'show_folder',
-            child: Row(
-              children: [
-                Icon(
-                  Icons.folder_open_rounded,
-                  size: 18,
-                  color: context.palette.secondaryText,
-                ),
-                SizedBox(width: 10),
-                Expanded(
-                  child: Text('Show in folder', style: context.palette.rowPrimary),
-                ),
-              ],
-            ),
+            icon: Icons.folder_open_rounded,
+            text: 'Show in folder',
           ),
         ];
       },
@@ -815,192 +757,203 @@ class _VideoGridCardState extends State<_VideoGridCard> {
           final showPlayOverlay =
               !isUnavailable &&
               (_isHovered || widget.isSelected || rowFocus.hasFocus);
-          return InkWell(
-            canRequestFocus: false,
-            onTap: () {
-              rowFocus.requestFocus();
-              widget.onSelect();
-            },
-            onDoubleTap: widget.onPlay,
-            borderRadius: BorderRadius.circular(AppRadii.artwork),
-            child: Container(
-              decoration: BoxDecoration(
-                color: widget.isSelected
-                    ? context.palette.hover
-                    : context.palette.background,
-                borderRadius: BorderRadius.circular(AppRadii.artwork),
-              ),
-              clipBehavior: Clip.antiAlias,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  // Video Thumbnail Stage
-                  RepaintBoundary(
-                    child: AnimatedScale(
-                      scale: (AppMotion.lowPower(context) || !showPlayOverlay)
-                          ? 1.0
-                          : 1.02,
-                      duration: AppMotion.duration(context, AppMotion.hover),
-                      curve: AppMotion.enter,
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(AppRadii.artwork),
-                        child: AspectRatio(
-                          aspectRatio: 16 / 9,
-                          child: Stack(
-                            fit: StackFit.expand,
-                            children: [
-                              _VideoPreview(
-                                video: video,
-                                controller: widget.controller,
-                              ),
-                              if (widget.controller.recent.any(
-                                (entry) =>
-                                    entry.path == video.path &&
-                                    entry.position > Duration.zero &&
-                                    entry.duration > Duration.zero,
-                              ))
-                                Positioned(
-                                  left: 0,
-                                  right: 0,
-                                  bottom: 0,
-                                  child: Builder(
-                                    builder: (context) {
-                                      final entry = widget.controller.recent
-                                          .firstWhere(
-                                            (entry) => entry.path == video.path,
-                                          );
-                                      return LinearProgressIndicator(
-                                        minHeight: 2,
-                                        value:
-                                            (entry.position.inMilliseconds /
-                                                    entry
-                                                        .duration
-                                                        .inMilliseconds)
-                                                .clamp(0.0, 1.0),
-                                        color: accent,
-                                        backgroundColor: Colors.transparent,
-                                      );
-                                    },
-                                  ),
+          final semanticsLabel = [
+            video.title,
+            formatFileSize(video.fileSize),
+            if (video.metadata.duration > Duration.zero)
+              formatDuration(video.metadata.duration),
+            if (isUnavailable) 'File missing',
+          ].join(', ');
+          return Semantics(
+            button: true,
+            container: true,
+            label: semanticsLabel,
+            child: InkWell(
+              canRequestFocus: false,
+              onTap: () {
+                rowFocus.requestFocus();
+                widget.onSelect();
+              },
+              onDoubleTap: widget.onPlay,
+              borderRadius: BorderRadius.circular(AppRadii.artwork),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: widget.isSelected
+                      ? context.palette.hover
+                      : context.palette.background,
+                  borderRadius: BorderRadius.circular(AppRadii.artwork),
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // Video Thumbnail Stage
+                    RepaintBoundary(
+                      child: AnimatedScale(
+                        scale: (AppMotion.lowPower(context) || !showPlayOverlay)
+                            ? 1.0
+                            : 1.02,
+                        duration: AppMotion.duration(context, AppMotion.hover),
+                        curve: AppMotion.enter,
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(AppRadii.artwork),
+                          child: AspectRatio(
+                            aspectRatio: 16 / 9,
+                            child: Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                _VideoPreview(
+                                  video: video,
+                                  controller: widget.controller,
                                 ),
-                              // Duration badge
-                              if (video.metadata.duration > Duration.zero)
-                                Positioned(
-                                  right: 8,
-                                  bottom: 8,
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 6,
-                                      vertical: 2,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: Colors.black.withValues(
-                                        alpha: 0.75,
-                                      ),
-                                      borderRadius: BorderRadius.circular(
-                                        AppRadii.control,
-                                      ),
-                                    ),
-                                    child: Text(
-                                      _VideosViewState._formatDuration(
-                                        video.metadata.duration,
-                                      ),
-                                      style: context.palette.badge.copyWith(
-                                        fontSize: AppType.caption,
-                                      ),
+                                if (widget.controller.recent.any(
+                                  (entry) =>
+                                      entry.path == video.path &&
+                                      entry.position > Duration.zero &&
+                                      entry.duration > Duration.zero,
+                                ))
+                                  Positioned(
+                                    left: 0,
+                                    right: 0,
+                                    bottom: 0,
+                                    child: Builder(
+                                      builder: (context) {
+                                        final entry = widget.controller.recent
+                                            .firstWhere(
+                                              (entry) =>
+                                                  entry.path == video.path,
+                                            );
+                                        return LinearProgressIndicator(
+                                          minHeight: 2,
+                                          value:
+                                              (entry.position.inMilliseconds /
+                                                      entry
+                                                          .duration
+                                                          .inMilliseconds)
+                                                  .clamp(0.0, 1.0),
+                                          color: accent,
+                                          backgroundColor: Colors.transparent,
+                                        );
+                                      },
                                     ),
                                   ),
-                                ),
-                              // Missing file indicator badge
-                              if (isUnavailable)
-                                Positioned(
-                                  left: 8,
-                                  top: 8,
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 6,
-                                      vertical: 2,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: context.palette.danger.withValues(
-                                        alpha: 0.85,
+                                // Duration badge
+                                if (video.metadata.duration > Duration.zero)
+                                  Positioned(
+                                    right: 8,
+                                    bottom: 8,
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 6,
+                                        vertical: 2,
                                       ),
-                                      borderRadius: BorderRadius.circular(
-                                        AppRadii.control,
+                                      decoration: BoxDecoration(
+                                        color: Colors.black.withValues(
+                                          alpha: 0.75,
+                                        ),
+                                        borderRadius: BorderRadius.circular(
+                                          AppRadii.control,
+                                        ),
                                       ),
-                                    ),
-                                    child: Text(
-                                      'File missing',
-                                      style: context.palette.badge.copyWith(
-                                        fontSize: AppType.caption,
-                                        color: Colors.white,
+                                      child: Text(
+                                        formatDuration(video.metadata.duration),
+                                        style: context.palette.badge.copyWith(
+                                          fontSize: AppType.caption,
+                                        ),
                                       ),
                                     ),
                                   ),
-                                ),
-                              // Subtle play button overlay on hover or focus
-                              if (showPlayOverlay)
-                                Center(
-                                  child: IconButton.filled(
-                                    onPressed: widget.onPlay,
-                                    tooltip: 'Play video',
-                                    style: IconButton.styleFrom(
-                                      backgroundColor: Colors.black.withValues(
-                                        alpha: 0.65,
+                                // Missing file indicator badge
+                                if (isUnavailable)
+                                  Positioned(
+                                    left: 8,
+                                    top: 8,
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 6,
+                                        vertical: 2,
                                       ),
-                                      foregroundColor: accent,
-                                      minimumSize: const Size(40, 40),
-                                    ),
-                                    icon: const Icon(
-                                      Icons.play_arrow_rounded,
-                                      size: 22,
+                                      decoration: BoxDecoration(
+                                        color: context.palette.danger
+                                            .withValues(alpha: 0.85),
+                                        borderRadius: BorderRadius.circular(
+                                          AppRadii.control,
+                                        ),
+                                      ),
+                                      child: Text(
+                                        'File missing',
+                                        style: context.palette.badge.copyWith(
+                                          fontSize: AppType.caption,
+                                          color: Colors.white,
+                                        ),
+                                      ),
                                     ),
                                   ),
-                                ),
-                            ],
+                                // Subtle play button overlay on hover or focus
+                                if (showPlayOverlay)
+                                  Center(
+                                    child: IconButton.filled(
+                                      onPressed: widget.onPlay,
+                                      tooltip: 'Play video',
+                                      style: IconButton.styleFrom(
+                                        backgroundColor: Colors.black
+                                            .withValues(alpha: 0.65),
+                                        foregroundColor: accent,
+                                        minimumSize: const Size(40, 40),
+                                      ),
+                                      icon: const Icon(
+                                        Icons.play_arrow_rounded,
+                                        size: 22,
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
-                  // Card Bottom Details
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(
-                      AppSpace.sm,
-                      10,
-                      AppSpace.xs,
-                      10,
-                    ),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                video.title,
-                                style: context.palette.rowPrimary.copyWith(
-                                  color: isUnavailable
-                                      ? context.palette.mutedText
-                                      : context.palette.primaryText,
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
+                    // Card Bottom Details
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(
+                        AppSpace.sm,
+                        10,
+                        AppSpace.xs,
+                        10,
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: ExcludeSemantics(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    video.title,
+                                    style: context.palette.rowPrimary.copyWith(
+                                      color: isUnavailable
+                                          ? context.palette.mutedText
+                                          : context.palette.primaryText,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  const SizedBox(height: AppSpace.micro),
+                                  Text(
+                                    formatFileSize(video.fileSize),
+                                    style: context.palette.metadata,
+                                  ),
+                                ],
                               ),
-                              const SizedBox(height: 2),
-                              Text(
-                                _VideosViewState._formatFileSize(video.fileSize),
-                                style: context.palette.metadata,
-                              ),
-                            ],
+                            ),
                           ),
-                        ),
-                        widget.actionMenu,
-                      ],
+                          widget.actionMenu,
+                        ],
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           );

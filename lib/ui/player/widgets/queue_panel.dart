@@ -1,13 +1,21 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart' show CustomSemanticsAction;
+import 'package:flutter/services.dart';
 
 import '../../../domain/models/media_entry.dart';
 import '../../../domain/models/media_thumbnail.dart';
+import '../../../utils/format.dart';
 import '../../core/app_motion.dart';
 import '../../core/app_theme.dart';
+import '../../core/components/app_dialog.dart';
 import '../../core/toast/app_toast.dart';
 import '../../core/components/playback_pulse.dart';
 import '../player_controller.dart';
+
+/// How long a row spends collapsing before the queue drops it.
+const Duration _queueRemovalDuration = Duration(milliseconds: 150);
 
 class QueuePanel extends StatefulWidget {
   const QueuePanel({
@@ -30,6 +38,10 @@ class QueuePanel extends StatefulWidget {
 class _QueuePanelState extends State<QueuePanel> {
   final _searchController = TextEditingController();
   final _isScrollingNotifier = ValueNotifier<bool>(false);
+
+  /// Rows currently collapsing out, keyed by entry id so a queue that changes
+  /// mid-animation can never remove the wrong item.
+  final _removingIds = <String>{};
   Timer? _scrollDebounceTimer;
   String _query = '';
 
@@ -162,103 +174,12 @@ class _QueuePanelState extends State<QueuePanel> {
                         child: _QueueScrollScope(
                           isScrolling: _isScrollingNotifier,
                           child: visible.isEmpty
-                              ? AnimatedSize(
-                                  duration: AppMotion.duration(
-                                    context,
-                                    AppMotion.quick,
-                                  ),
-                                  curve: AppMotion.standardCurve,
-                                  alignment: Alignment.topCenter,
-                                  child: AnimatedSwitcher(
-                                    duration: AppMotion.duration(
-                                      context,
-                                      AppMotion.quick,
-                                    ),
-                                    child: _QueueEmpty(
-                                      key: ValueKey<String>(
-                                        '${queue.isNotEmpty}:${_query.isNotEmpty}',
-                                      ),
-                                      hasQueue: queue.isNotEmpty,
-                                      onClearSearch: _query.isNotEmpty
-                                          ? _clearSearch
-                                          : null,
-                                    ),
-                                  ),
-                                )
-                              : _query.isNotEmpty
-                              ? ListView.builder(
-                                  key: const PageStorageKey<String>(
-                                    'queue-list-filtered',
-                                  ),
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: 3,
-                                  ),
-                                  itemCount: visible.length,
-                                  itemBuilder: (context, visibleIndex) {
-                                    final (index, entry) =
-                                        visible[visibleIndex];
-                                    return _QueueEntry(
-                                      key: ValueKey('queue-${entry.id}'),
-                                      controller: widget.controller,
-                                      entry: entry,
-                                      index: index,
-                                      queueLength: queue.length,
-                                      isCurrent: index == snapshot.currentIndex,
-                                      isPlaying: transport.isPlaying,
-                                      canReorder: false,
-                                      onFocusChanged: (focused) =>
-                                          widget.onQueueFocus(
-                                            focused ? entry.id : null,
-                                          ),
-                                      onPlay: () =>
-                                          widget.controller.playIndex(index),
-                                      onRemove: () => _remove(index),
-                                    );
-                                  },
-                                )
-                              : ReorderableListView.builder(
-                                  key: const PageStorageKey<String>(
-                                    'queue-list',
-                                  ),
-                                  buildDefaultDragHandles: false,
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: 3,
-                                  ),
-                                  itemCount: visible.length,
-                                  onReorderItem: (oldIndex, newIndex) {
-                                    // PlayerController follows the previous callback's destination convention.
-                                    final controllerNewIndex =
-                                        newIndex > oldIndex
-                                        ? newIndex + 1
-                                        : newIndex;
-                                    unawaited(
-                                      widget.controller.reorder(
-                                        oldIndex,
-                                        controllerNewIndex,
-                                      ),
-                                    );
-                                  },
-                                  itemBuilder: (context, visibleIndex) {
-                                    final (index, entry) =
-                                        visible[visibleIndex];
-                                    return _QueueEntry(
-                                      key: ValueKey('queue-${entry.id}'),
-                                      controller: widget.controller,
-                                      entry: entry,
-                                      index: index,
-                                      queueLength: queue.length,
-                                      isCurrent: index == snapshot.currentIndex,
-                                      isPlaying: transport.isPlaying,
-                                      canReorder: true,
-                                      onFocusChanged: (focused) =>
-                                          widget.onQueueFocus(
-                                            focused ? entry.id : null,
-                                          ),
-                                      onPlay: () =>
-                                          widget.controller.playIndex(index),
-                                      onRemove: () => _remove(index),
-                                    );
-                                  },
+                              ? _buildEmpty(context, queue.isNotEmpty)
+                              : _buildList(
+                                  context,
+                                  snapshot,
+                                  visible,
+                                  transport,
                                 ),
                         ),
                       ),
@@ -286,11 +207,115 @@ class _QueuePanelState extends State<QueuePanel> {
     setState(() => _query = '');
   }
 
+  Widget _buildEmpty(BuildContext context, bool hasQueue) => AnimatedSize(
+    duration: AppMotion.duration(context, AppMotion.quick),
+    curve: AppMotion.standardCurve,
+    alignment: Alignment.topCenter,
+    child: _QueueEmpty(
+      hasQueue: hasQueue,
+      onClearSearch: _query.isNotEmpty ? _clearSearch : null,
+    ),
+  );
+
+  Widget _buildList(
+    BuildContext context,
+    QueueSnapshot snapshot,
+    List<(int, MediaEntry)> visible,
+    TransportState transport,
+  ) {
+    // Reordering a filtered view would move rows the user cannot see, so search
+    // drops the drag handles and keeps the true queue indices for playback.
+    final reorderable = _query.isEmpty;
+
+    Widget item(BuildContext context, int visibleIndex) => _buildEntry(
+      snapshot: snapshot,
+      visible: visible,
+      visibleIndex: visibleIndex,
+      transport: transport,
+      canReorder: reorderable,
+    );
+
+    // One list widget for both modes: swapping list keys per keystroke would
+    // rebuild every row and drop the scroll position.
+    return ReorderableListView.builder(
+      key: const PageStorageKey<String>('queue-list'),
+      buildDefaultDragHandles: false,
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      itemCount: visible.length,
+      proxyDecorator: _buildDragProxy,
+      onReorderItem: (oldIndex, newIndex) =>
+          unawaited(widget.controller.reorder(oldIndex, newIndex)),
+      itemBuilder: item,
+    );
+  }
+
+  Widget _buildEntry({
+    required QueueSnapshot snapshot,
+    required List<(int, MediaEntry)> visible,
+    required int visibleIndex,
+    required TransportState transport,
+    required bool canReorder,
+  }) {
+    final (index, entry) = visible[visibleIndex];
+    return _QueueRemovalCollapse(
+      key: ValueKey('queue-${entry.id}'),
+      removing: _removingIds.contains(entry.id),
+      child: _QueueEntry(
+        controller: widget.controller,
+        entry: entry,
+        index: index,
+        queueLength: snapshot.entries.length,
+        isCurrent: index == snapshot.currentIndex,
+        isPlaying: transport.isPlaying,
+        canReorder: canReorder,
+        onFocusChanged: (focused) =>
+            widget.onQueueFocus(focused ? entry.id : null),
+        onPlay: () => unawaited(widget.controller.playIndex(index)),
+        onRemove: () => unawaited(_remove(index)),
+      ),
+    );
+  }
+
+  /// Lifts the dragged row off the list instead of sliding it around flat.
+  Widget _buildDragProxy(
+    Widget child,
+    int index,
+    Animation<double> animation,
+  ) => AnimatedBuilder(
+    animation: animation,
+    builder: (context, _) => Material(
+      color: context.palette.raisedSurface,
+      borderRadius: BorderRadius.circular(AppRadii.control),
+      clipBehavior: Clip.antiAlias,
+      elevation: 10 * Curves.easeOut.transform(animation.value),
+      child: child,
+    ),
+  );
+
+  /// Collapses the row first so the entries below travel into place instead of
+  /// jumping, then removes whatever still carries that id.
   Future<void> _remove(int index) async {
+    final entries = widget.controller.queueSnapshot.entries;
+    if (index < 0 || index >= entries.length) return;
+    final id = entries[index].id;
+    if (!_removingIds.add(id)) return;
+    widget.onQueueFocus(null);
+    setState(() {});
+
+    final collapse = AppMotion.reduce(context)
+        ? Duration.zero
+        : _queueRemovalDuration;
+    await Future<void>.delayed(collapse);
+    if (!mounted) return;
+    setState(() => _removingIds.remove(id));
+
+    final target = widget.controller.queueSnapshot.entries.indexWhere(
+      (entry) => entry.id == id,
+    );
+    if (target < 0) return;
     try {
-      await widget.controller.removeAt(index);
+      await widget.controller.removeAt(target);
       if (!mounted) return;
-      widget.onQueueFocus(null);
       AppToast.show(
         context,
         'Removed from queue',
@@ -312,7 +337,8 @@ class _QueuePanelState extends State<QueuePanel> {
     if (widget.controller.queue.isEmpty) return;
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (context) => AppDialog(
+        maxWidth: 420,
         title: const Text('Clear the queue?'),
         content: const Text(
           'This only clears the playlist. Your video files stay on disk.',
@@ -351,7 +377,7 @@ class _QueueCount extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Semantics(
-    label: '$count ${count == 1 ? 'video' : 'videos'} in queue',
+    label: '$count ${count == 1 ? 'item' : 'items'} in queue',
     container: true,
     excludeSemantics: true,
     child: AnimatedSize(
@@ -366,21 +392,19 @@ class _QueueCount extends StatelessWidget {
         decoration: BoxDecoration(
           color: context.palette.card,
           borderRadius: BorderRadius.circular(AppRadii.control),
-          border: Border.all(color: context.palette.border.withValues(alpha: 0.72)),
+          border: Border.all(
+            color: context.palette.border.withValues(alpha: 0.72),
+          ),
         ),
-        child: AnimatedSwitcher(
-          duration: AppMotion.duration(context, AppMotion.quick),
-          child: Text(
-            '$count',
-            key: ValueKey<int>(count),
-            textAlign: TextAlign.center,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.labelMedium?.copyWith(
-              color: Theme.of(context).colorScheme.primary,
-              fontWeight: FontWeight.w700,
-              fontFeatures: const [FontFeature.tabularFigures()],
-            ),
+        child: Text(
+          '$count',
+          textAlign: TextAlign.center,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: Theme.of(context).textTheme.labelMedium?.copyWith(
+            color: Theme.of(context).colorScheme.primary,
+            fontWeight: FontWeight.w700,
+            fontFeatures: const [FontFeature.tabularFigures()],
           ),
         ),
       ),
@@ -388,22 +412,110 @@ class _QueueCount extends StatelessWidget {
   );
 }
 
-class _QueueScrollScope extends InheritedNotifier<ValueNotifier<bool>> {
+/// Publishes the queue's scroll state without making every row a dependent.
+///
+/// Rows read this through [InheritedWidget.dependOnInheritedWidgetOfExactType]
+/// but only the ones that actually deferred a thumbnail subscribe to the
+/// notifier, so a scroll gesture no longer rebuilds the whole visible list.
+class _QueueScrollScope extends InheritedWidget {
   const _QueueScrollScope({
-    required ValueNotifier<bool> isScrolling,
+    required this.isScrolling,
     required super.child,
-  }) : super(notifier: isScrolling);
+  });
 
-  static bool isScrolling(BuildContext context) {
-    final scope = context
-        .dependOnInheritedWidgetOfExactType<_QueueScrollScope>();
-    return scope?.notifier?.value ?? false;
+  final ValueListenable<bool> isScrolling;
+
+  static ValueListenable<bool>? of(BuildContext context) => context
+      .dependOnInheritedWidgetOfExactType<_QueueScrollScope>()
+      ?.isScrolling;
+
+  @override
+  bool updateShouldNotify(covariant _QueueScrollScope oldWidget) =>
+      oldWidget.isScrolling != isScrolling;
+}
+
+/// Collapses a row out of the list before the queue drops it, so the rows below
+/// travel up into place instead of teleporting.
+class _QueueRemovalCollapse extends StatefulWidget {
+  const _QueueRemovalCollapse({
+    super.key,
+    required this.removing,
+    required this.child,
+  });
+
+  final bool removing;
+  final Widget child;
+
+  @override
+  State<_QueueRemovalCollapse> createState() => _QueueRemovalCollapseState();
+}
+
+class _QueueRemovalCollapseState extends State<_QueueRemovalCollapse>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(vsync: this);
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _controller.duration = AppMotion.reduce(context)
+        ? Duration.zero
+        : _queueRemovalDuration;
+    if (widget.removing && _controller.isDismissed) _controller.forward();
+  }
+
+  @override
+  void didUpdateWidget(covariant _QueueRemovalCollapse oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.removing == oldWidget.removing) return;
+    if (widget.removing) {
+      _controller.forward();
+    } else {
+      // An undo or a queue rewrite can put the row back mid-collapse.
+      _controller.reverse();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!widget.removing && _controller.isDismissed) return widget.child;
+
+    return AnimatedBuilder(
+      animation: _controller,
+      child: widget.child,
+      builder: (context, child) {
+        final progress = AppMotion.exit.transform(_controller.value);
+        if (progress == 0) {
+          return IgnorePointer(
+            ignoring: widget.removing,
+            child: child,
+          );
+        }
+        return IgnorePointer(
+          ignoring: widget.removing,
+          child: Transform.translate(
+            offset: Offset(progress * 20, 0),
+            child: ClipRect(
+              child: Align(
+                alignment: Alignment.topCenter,
+                heightFactor: (1 - progress).clamp(0.0, 1.0),
+                child: child,
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 }
 
 class _QueueEntry extends StatefulWidget {
   const _QueueEntry({
-    super.key,
     required this.controller,
     required this.entry,
     required this.index,
@@ -439,6 +551,8 @@ class _QueueEntryState extends State<_QueueEntry> with WidgetsBindingObserver {
   bool _isDeferred = false;
   bool _hovered = false;
   bool _focused = false;
+  ValueListenable<bool>? _scrollScope;
+  bool _scrollSubscribed = false;
 
   @override
   void initState() {
@@ -451,6 +565,7 @@ class _QueueEntryState extends State<_QueueEntry> with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       if (_lastResolvedThumbnail == null && mounted) {
         _isDeferred = false;
+        _unsubscribeScroll();
         _requestThumbnail();
         setState(() {});
       }
@@ -460,13 +575,13 @@ class _QueueEntryState extends State<_QueueEntry> with WidgetsBindingObserver {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (_thumbnailFuture == null) {
-      _initThumbnail();
-    } else if (_isDeferred && !_QueueScrollScope.isScrolling(context)) {
-      _isDeferred = false;
-      _requestThumbnail();
-      setState(() {});
+    final scope = _QueueScrollScope.of(context);
+    if (!identical(scope, _scrollScope)) {
+      _unsubscribeScroll();
+      _scrollScope = scope;
+      if (_isDeferred) _subscribeScroll();
     }
+    if (_thumbnailFuture == null) _initThumbnail();
   }
 
   @override
@@ -478,6 +593,8 @@ class _QueueEntryState extends State<_QueueEntry> with WidgetsBindingObserver {
       _thumbnailHandle?.release();
       _thumbnailHandle = null;
       _thumbnailFuture = null;
+      _isDeferred = false;
+      _unsubscribeScroll();
       _lastResolvedThumbnail = widget.controller.peekThumbnail(widget.entry);
       _initThumbnail();
     }
@@ -486,24 +603,51 @@ class _QueueEntryState extends State<_QueueEntry> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _unsubscribeScroll();
     _thumbnailRequestGeneration++;
     _thumbnailHandle?.release();
     _thumbnailHandle = null;
     super.dispose();
   }
 
+  void _subscribeScroll() {
+    final scope = _scrollScope;
+    if (scope == null || _scrollSubscribed) return;
+    scope.addListener(_handleScrollSettled);
+    _scrollSubscribed = true;
+  }
+
+  void _unsubscribeScroll() {
+    if (!_scrollSubscribed) return;
+    _scrollScope?.removeListener(_handleScrollSettled);
+    _scrollSubscribed = false;
+  }
+
+  void _handleScrollSettled() {
+    if (!_isDeferred || (_scrollScope?.value ?? false)) return;
+    _isDeferred = false;
+    _unsubscribeScroll();
+    // Resuming after a scroll is housekeeping, not the work the user is
+    // looking at, so it must not outrank the rows being revealed now.
+    _requestThumbnail(priority: ThumbnailPriority.normal);
+    if (mounted) setState(() {});
+  }
+
   void _initThumbnail() {
     _lastResolvedThumbnail = widget.controller.peekThumbnail(widget.entry);
-    if (_QueueScrollScope.isScrolling(context)) {
+    if (_scrollScope?.value ?? false) {
       _isDeferred = true;
       _thumbnailFuture = null;
+      _subscribeScroll();
     } else {
       _isDeferred = false;
       _requestThumbnail();
     }
   }
 
-  void _requestThumbnail() {
+  void _requestThumbnail({
+    ThumbnailPriority priority = ThumbnailPriority.high,
+  }) {
     _thumbnailHandle?.release();
     final generation = ++_thumbnailRequestGeneration;
     final entry = widget.entry;
@@ -511,11 +655,12 @@ class _QueueEntryState extends State<_QueueEntry> with WidgetsBindingObserver {
     _lastResolvedThumbnail ??= controller.peekThumbnail(entry);
     final handle = widget.controller.requestThumbnail(
       entry,
-      priority: ThumbnailPriority.high,
+      priority: priority,
     );
     _thumbnailHandle = handle;
     final future =
-        (handle?.thumbnail ?? _loadFallbackThumbnail(entry, controller))
+        (handle?.thumbnail ??
+                _loadFallbackThumbnail(entry, controller, priority))
             .catchError((_) => null);
     _thumbnailFuture = future.then((thumb) {
       if (!mounted ||
@@ -532,12 +677,10 @@ class _QueueEntryState extends State<_QueueEntry> with WidgetsBindingObserver {
   Future<MediaThumbnail?> _loadFallbackThumbnail(
     MediaEntry entry,
     PlayerController controller,
+    ThumbnailPriority priority,
   ) async {
     try {
-      return await controller.loadThumbnail(
-        entry,
-        priority: ThumbnailPriority.high,
-      );
+      return await controller.loadThumbnail(entry, priority: priority);
     } on Object {
       return null;
     }
@@ -546,6 +689,8 @@ class _QueueEntryState extends State<_QueueEntry> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     final entry = widget.entry;
+    final palette = context.palette;
+    final accent = Theme.of(context).colorScheme.primary;
     final duration = entry.duration > Duration.zero
         ? entry.duration
         : Duration.zero;
@@ -554,25 +699,53 @@ class _QueueEntryState extends State<_QueueEntry> with WidgetsBindingObserver {
         '${entry.title}, track ${widget.index + 1} of ${widget.queueLength}'
         '${widget.isCurrent && widget.isPlaying ? ', currently playing' : ''}'
         '${widget.isCurrent && !widget.isPlaying ? ', current item' : ''}'
-        '${duration > Duration.zero ? ', ${_formatTime(duration)}' : ''}';
+        '${duration > Duration.zero ? ', ${formatTime(duration)}' : ''}';
+
+    final reorderActions = <CustomSemanticsAction, VoidCallback>{
+      if (widget.canReorder && widget.index > 0)
+        const CustomSemanticsAction(label: 'Move up'): _moveUp,
+      if (widget.canReorder && widget.index < widget.queueLength - 1)
+        const CustomSemanticsAction(label: 'Move down'): _moveDown,
+    };
 
     return Focus(
       onFocusChange: (focused) {
         if (_focused != focused) setState(() => _focused = focused);
         widget.onFocusChanged(focused);
       },
-      child: Material(
-        color: Colors.transparent,
+      child: CallbackShortcuts(
+        // Scoped to this row's focus so the shortcut cannot reach another row,
+        // and kept in the tree in both modes so the subtree shape stays stable
+        // while the search field is being typed into.
+        bindings: widget.canReorder
+            ? <ShortcutActivator, VoidCallback>{
+                const SingleActivator(LogicalKeyboardKey.arrowUp, alt: true):
+                    _moveUp,
+                const SingleActivator(LogicalKeyboardKey.arrowDown, alt: true):
+                    _moveDown,
+              }
+            : const <ShortcutActivator, VoidCallback>{},
         child: Semantics(
           selected: widget.isCurrent,
           label: semanticsLabel,
           container: true,
+          customSemanticsActions: reorderActions.isEmpty
+              ? null
+              : reorderActions,
           child: LayoutBuilder(
             builder: (context, constraints) {
               final thumbnailWidth = constraints.maxWidth < 332 ? 96.0 : 112.0;
               final thumbnailHeight = thumbnailWidth * 9 / 16;
-              final dragHandleVisible =
-                  widget.canReorder && (_hovered || _focused);
+              final active = _hovered || _focused;
+              final background = widget.isCurrent
+                  ? Color.alphaBlend(
+                      accent.withValues(alpha: 0.1),
+                      palette.surface,
+                    )
+                  : active
+                  ? palette.hover
+                  : Colors.transparent;
+              final motion = AppMotion.duration(context, AppMotion.hover);
 
               return MouseRegion(
                 onEnter: (_) {
@@ -581,144 +754,38 @@ class _QueueEntryState extends State<_QueueEntry> with WidgetsBindingObserver {
                 onExit: (_) {
                   if (_hovered) setState(() => _hovered = false);
                 },
-                child: AnimatedContainer(
-                  constraints: BoxConstraints(minHeight: thumbnailHeight + 16),
-                  duration: AppMotion.duration(context, AppMotion.quick),
-                  curve: AppMotion.standardCurve,
-                  padding: const EdgeInsets.fromLTRB(
-                    AppSpace.xs,
-                    AppSpace.xs,
-                    AppSpace.xxs,
-                    AppSpace.xs,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpace.xxs,
+                    vertical: 1,
                   ),
-                  decoration: BoxDecoration(
-                    color: widget.isCurrent
-                        ? Theme.of(
-                            context,
-                          ).colorScheme.primary.withValues(alpha: 0.022)
-                        : Colors.transparent,
-                    border: Border(
-                      bottom: BorderSide(
-                        color: context.palette.border.withValues(alpha: 0.52),
-                      ),
+                  child: AnimatedContainer(
+                    duration: motion,
+                    curve: AppMotion.standardCurve,
+                    constraints: BoxConstraints(
+                      minHeight: thumbnailHeight + AppSpace.xs,
                     ),
-                  ),
-                  child: Stack(
-                    children: [
-                      InkWell(
-                        onTap: widget.onPlay,
-                        child: Row(
-                          children: [
-                            _QueueThumbnail(
-                              entry: entry,
-                              future: _thumbnailFuture,
-                              provisional: _lastResolvedThumbnail,
-                              width: thumbnailWidth,
-                              height: thumbnailHeight,
-                              selected: widget.isCurrent,
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    entry.title,
-                                    key: ValueKey('queue-title-${entry.id}'),
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .titleSmall
-                                        ?.copyWith(
-                                          color: widget.isCurrent
-                                              ? context.palette.text
-                                              : context.palette.secondaryText,
-                                          fontSize: AppType.body,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                  ),
-                                  const SizedBox(height: 3),
-                                  Tooltip(
-                                    message: entry.path,
-                                    child: Text(
-                                      entry.path,
-                                      key: ValueKey('queue-path-${entry.id}'),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .labelSmall
-                                          ?.copyWith(
-                                            color: context.palette.muted,
-                                            fontSize: AppType.caption,
-                                          ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            if (widget.isCurrent && widget.isPlaying)
-                              Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 6,
-                                ),
-                                child: PlayingEqualizerGlyph(
-                                  index: widget.index,
-                                  size: 14,
-                                ),
-                              ),
-                            IconButton(
-                              tooltip: 'Remove ${entry.title} from queue',
-                              onPressed: widget.onRemove,
-                              style: IconButton.styleFrom(
-                                foregroundColor: context.palette.muted,
-                                minimumSize: const Size(44, 44),
-                                padding: EdgeInsets.zero,
-                              ),
-                              icon: const Icon(Icons.close_rounded, size: 17),
-                            ),
-                          ],
-                        ),
-                      ),
-                      if (widget.canReorder)
-                        Positioned(
-                          left: 0,
-                          top: 0,
-                          bottom: 0,
-                          child: Tooltip(
-                            message: 'Drag to reorder',
-                            child: Semantics(
-                              button: true,
-                              label: 'Drag to reorder',
-                              child: MouseRegion(
-                                cursor: SystemMouseCursors.grab,
-                                child: ReorderableDragStartListener(
-                                  key: ValueKey('queue-drag-${entry.id}'),
-                                  index: widget.index,
-                                  enabled: true,
-                                  child: SizedBox(
-                                    width: 22,
-                                    height: 44,
-                                    child: ColoredBox(
-                                      color: Colors.transparent,
-                                      child: Center(
-                                        child: AnimatedOpacity(
-                                          opacity: dragHandleVisible ? 1 : 0,
-                                          duration: AppMotion.duration(
-                                            context,
-                                            AppMotion.quick,
-                                          ),
-                                          curve: AppMotion.standardCurve,
-                                          child: Icon(
-                                            Icons.drag_indicator_rounded,
-                                            size: 17,
-                                            color: context.palette.secondaryText,
-                                          ),
-                                        ),
-                                      ),
+                    decoration: BoxDecoration(
+                      color: background,
+                      borderRadius: BorderRadius.circular(AppRadii.control),
+                    ),
+                    child: Stack(
+                      children: [
+                        Positioned.fill(
+                          child: IgnorePointer(
+                            child: Align(
+                              alignment: Alignment.centerLeft,
+                              child: AnimatedOpacity(
+                                opacity: widget.isCurrent ? 1 : 0,
+                                duration: motion,
+                                curve: AppMotion.standardCurve,
+                                child: Container(
+                                  width: 3,
+                                  height: thumbnailHeight,
+                                  decoration: BoxDecoration(
+                                    color: accent,
+                                    borderRadius: BorderRadius.circular(
+                                      AppRadii.pill,
                                     ),
                                   ),
                                 ),
@@ -726,7 +793,87 @@ class _QueueEntryState extends State<_QueueEntry> with WidgetsBindingObserver {
                             ),
                           ),
                         ),
-                    ],
+                        Material(
+                          color: Colors.transparent,
+                          child: InkWell(
+                            onTap: widget.onPlay,
+                            borderRadius: BorderRadius.circular(
+                              AppRadii.control,
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.all(AppSpace.xxs),
+                              child: Row(
+                                children: [
+                                  _buildDragHandle(context, active, motion),
+                                  _QueueThumbnail(
+                                    entry: entry,
+                                    future: _thumbnailFuture,
+                                    provisional: _lastResolvedThumbnail,
+                                    width: thumbnailWidth,
+                                    height: thumbnailHeight,
+                                    selected: widget.isCurrent,
+                                    playing:
+                                        widget.isCurrent && widget.isPlaying,
+                                    pulseIndex: widget.index,
+                                  ),
+                                  const SizedBox(width: AppSpace.sm - 2),
+                                  Expanded(
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          entry.title,
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .titleSmall
+                                              ?.copyWith(
+                                                color: widget.isCurrent
+                                                    ? palette.text
+                                                    : palette.secondaryText,
+                                                fontSize: AppType.body,
+                                                fontWeight: widget.isCurrent
+                                                    ? FontWeight.w700
+                                                    : FontWeight.w600,
+                                              ),
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Tooltip(
+                                          message: entry.path,
+                                          child: Text(
+                                            entry.path,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .labelSmall
+                                                ?.copyWith(
+                                                  color: palette.muted,
+                                                  fontSize: AppType.caption,
+                                                ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  _buildRemoveButton(
+                                    context,
+                                    active,
+                                    motion,
+                                    entry,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               );
@@ -737,11 +884,96 @@ class _QueueEntryState extends State<_QueueEntry> with WidgetsBindingObserver {
     );
   }
 
-  static String _formatTime(Duration value) {
-    final hours = value.inHours;
-    final minutes = value.inMinutes.remainder(60).toString().padLeft(2, '0');
-    final seconds = value.inSeconds.remainder(60).toString().padLeft(2, '0');
-    return hours > 0 ? '$hours:$minutes:$seconds' : '$minutes:$seconds';
+  /// [PlayerController.reorder] takes final positions, so a one-step nudge is
+  /// just the neighbouring index; the downward-drag convention of
+  /// [ReorderableListView] deliberately does not apply.
+  void _moveUp() {
+    if (!widget.canReorder || widget.index <= 0) return;
+    unawaited(widget.controller.reorder(widget.index, widget.index - 1));
+  }
+
+  void _moveDown() {
+    if (!widget.canReorder || widget.index >= widget.queueLength - 1) return;
+    unawaited(widget.controller.reorder(widget.index, widget.index + 1));
+  }
+
+  /// The grip lives in the row flow, not on top of the artwork, and search
+  /// results keep the slot empty so rows never shift when the user types.
+  Widget _buildDragHandle(BuildContext context, bool active, Duration motion) {
+    const width = 18.0;
+    if (!widget.canReorder) return const SizedBox(width: width);
+
+    return Tooltip(
+      message: 'Drag to reorder (Alt+↑/↓)',
+      child: ExcludeSemantics(
+        child: MouseRegion(
+          cursor: SystemMouseCursors.grab,
+          child: ReorderableDragStartListener(
+            index: widget.index,
+            enabled: true,
+            child: SizedBox(
+              width: width,
+              height: 40,
+              child: Center(
+                child: AnimatedOpacity(
+                  opacity: active ? 1 : 0,
+                  duration: motion,
+                  curve: AppMotion.standardCurve,
+                  child: Icon(
+                    Icons.drag_indicator_rounded,
+                    size: 15,
+                    color: context.palette.muted,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Row actions stay out of the way until the pointer or the keyboard asks for
+  /// them, which keeps a long queue readable.
+  Widget _buildRemoveButton(
+    BuildContext context,
+    bool active,
+    Duration motion,
+    MediaEntry entry,
+  ) {
+    final palette = context.palette;
+    bool engaged(Set<WidgetState> states) =>
+        states.contains(WidgetState.hovered) ||
+        states.contains(WidgetState.pressed) ||
+        states.contains(WidgetState.focused);
+
+    return IgnorePointer(
+      ignoring: !active,
+      child: AnimatedOpacity(
+        opacity: active ? 1 : 0,
+        duration: motion,
+        curve: AppMotion.standardCurve,
+        child: IconButton(
+          tooltip: 'Remove ${entry.title} from queue',
+          onPressed: widget.onRemove,
+          style: IconButton.styleFrom(
+            minimumSize: const Size(30, 30),
+            padding: EdgeInsets.zero,
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ).copyWith(
+            foregroundColor: WidgetStateProperty.resolveWith(
+              (states) => engaged(states) ? palette.danger : palette.muted,
+            ),
+            overlayColor: WidgetStateProperty.resolveWith(
+              (states) => engaged(states)
+                  ? palette.danger.withValues(alpha: 0.12)
+                  : Colors.transparent,
+            ),
+          ),
+          icon: const Icon(Icons.close_rounded, size: 16),
+        ),
+      ),
+    );
   }
 }
 
@@ -753,6 +985,8 @@ class _QueueThumbnail extends StatelessWidget {
     required this.width,
     required this.height,
     required this.selected,
+    required this.playing,
+    required this.pulseIndex,
   });
 
   final MediaEntry entry;
@@ -761,110 +995,131 @@ class _QueueThumbnail extends StatelessWidget {
   final double width;
   final double height;
   final bool selected;
+  final bool playing;
+  final int pulseIndex;
 
   @override
-  Widget build(BuildContext context) => FutureBuilder<MediaThumbnail?>(
-    key: ValueKey<String>(
-      'queue-thumbnail-validation-${entry.id}-${entry.path}',
-    ),
-    future: future,
-    builder: (context, snapshot) {
-      final thumbnail = snapshot.connectionState == ConnectionState.done
-          ? snapshot.data
-          : provisional;
-      final duration = entry.duration > Duration.zero
-          ? entry.duration
-          : (thumbnail?.duration ?? Duration.zero);
-      final imageIsAvailable = thumbnail != null && thumbnail.bytes.isNotEmpty;
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final accent = Theme.of(context).colorScheme.primary;
 
-      final ratio =
-          MediaQuery.maybeDevicePixelRatioOf(context) ??
-          View.of(context).devicePixelRatio;
-      final targetWidth = (width * ratio).round().clamp(1, 320);
-      final targetHeight = (height * ratio).round().clamp(1, 320);
+    return FutureBuilder<MediaThumbnail?>(
+      future: future,
+      builder: (context, snapshot) {
+        final thumbnail = snapshot.connectionState == ConnectionState.done
+            ? snapshot.data
+            : provisional;
+        final duration = entry.duration > Duration.zero
+            ? entry.duration
+            : (thumbnail?.duration ?? Duration.zero);
+        final imageIsAvailable = thumbnail != null && thumbnail.bytes.isNotEmpty;
 
-      return AnimatedContainer(
-        key: ValueKey('queue-thumbnail-${entry.id}'),
-        width: width,
-        height: height,
-        duration: AppMotion.duration(context, AppMotion.quick),
-        curve: AppMotion.standardCurve,
-        decoration: BoxDecoration(
-          color: context.palette.card,
-          borderRadius: BorderRadius.circular(AppRadii.control),
-          border: Border.all(
-            color: selected
-                ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.88)
-                : context.palette.border.withValues(alpha: 0.72),
-            width: selected ? 2 : 1,
+        final ratio =
+            MediaQuery.maybeDevicePixelRatioOf(context) ??
+            View.of(context).devicePixelRatio;
+        final targetWidth = (width * ratio).round().clamp(1, 320);
+        final targetHeight = (height * ratio).round().clamp(1, 320);
+
+        return AnimatedContainer(
+          width: width,
+          height: height,
+          duration: AppMotion.duration(context, AppMotion.hover),
+          curve: AppMotion.standardCurve,
+          decoration: BoxDecoration(
+            color: palette.card,
+            borderRadius: BorderRadius.circular(AppRadii.control),
+            // Constant width so selecting a row cannot nudge the artwork by a
+            // pixel; only the colour travels.
+            border: Border.all(
+              color: selected
+                  ? accent.withValues(alpha: 0.75)
+                  : palette.border.withValues(alpha: 0.5),
+            ),
           ),
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(AppRadii.control),
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              AnimatedSwitcher(
-                duration: AppMotion.duration(context, AppMotion.quick),
-                switchInCurve: AppMotion.enter,
-                switchOutCurve: AppMotion.exit,
-                transitionBuilder: (child, animation) =>
-                    FadeTransition(opacity: animation, child: child),
-                child: imageIsAvailable
-                    ? SizedBox.expand(
-                        key: ValueKey<String>(
-                          'queue-image-${entry.id}-${entry.path}',
-                        ),
-                        child: Image(
-                          image: ResizeImage(
-                            MemoryImage(thumbnail.bytes),
-                            width: targetWidth,
-                            height: targetHeight,
-                            // The decode box is 16:9, but the artwork may not
-                            // be. Fit preserves its aspect ratio before
-                            // BoxFit.cover crops it into the frame.
-                            policy: ResizeImagePolicy.fit,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(AppRadii.control - 1),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                AnimatedSwitcher(
+                  duration: AppMotion.duration(context, AppMotion.quick),
+                  switchInCurve: AppMotion.enter,
+                  switchOutCurve: AppMotion.exit,
+                  transitionBuilder: (child, animation) =>
+                      FadeTransition(opacity: animation, child: child),
+                  child: imageIsAvailable
+                      ? SizedBox.expand(
+                          key: ValueKey<String>(
+                            'queue-image-${entry.id}-${entry.path}',
                           ),
-                          fit: BoxFit.cover,
-                          gaplessPlayback: true,
-                          errorBuilder: (context, error, stackTrace) =>
-                              _placeholder(context, 'error'),
+                          child: Image(
+                            image: ResizeImage(
+                              MemoryImage(thumbnail.bytes),
+                              width: targetWidth,
+                              height: targetHeight,
+                              // The decode box is 16:9, but the artwork may not
+                              // be. Fit preserves its aspect ratio before
+                              // BoxFit.cover crops it into the frame.
+                              policy: ResizeImagePolicy.fit,
+                            ),
+                            fit: BoxFit.cover,
+                            gaplessPlayback: true,
+                            errorBuilder: (context, error, stackTrace) =>
+                                _placeholder(context, 'error'),
+                          ),
+                        )
+                      : _placeholder(
+                          context,
+                          snapshot.hasError ? 'error' : 'empty',
                         ),
-                      )
-                    : _placeholder(context, snapshot.hasError ? 'error' : 'empty'),
-              ),
-              if (duration > Duration.zero)
-                Positioned(
-                  right: 5,
-                  bottom: 5,
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: AppColors.stage.withValues(alpha: 0.85),
-                      borderRadius: BorderRadius.circular(AppRadii.control),
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 5,
-                        vertical: 2,
-                      ),
-                      child: Text(
-                        _QueueEntryState._formatTime(duration),
-                        key: ValueKey('queue-duration-${entry.id}'),
-                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                          color: context.palette.text,
-                          fontSize: AppType.caption,
-                          fontWeight: FontWeight.w600,
-                          fontFeatures: const [FontFeature.tabularFigures()],
-                        ),
-                      ),
-                    ),
+                ),
+                if (playing || duration > Duration.zero)
+                  Positioned(
+                    right: 4,
+                    bottom: 4,
+                    child: _badge(context, duration),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// One fixed-size corner badge: the live equalizer while the row plays, the
+  /// runtime otherwise. Swapping contents rather than adding a glyph keeps the
+  /// row from relayouting every time playback starts or stops.
+  Widget _badge(BuildContext context, Duration duration) => DecoratedBox(
+    decoration: BoxDecoration(
+      color: AppColors.stage.withValues(alpha: 0.8),
+      borderRadius: BorderRadius.circular(AppRadii.control - 2),
+    ),
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 5),
+      child: SizedBox(
+        height: 18,
+        child: Center(
+          child: playing
+              ? PlayingEqualizerGlyph(
+                  index: pulseIndex,
+                  size: 12,
+                  color: AppColors.onStage,
+                  semanticLabel: 'Now playing',
+                )
+              : Text(
+                  formatTime(duration),
+                  maxLines: 1,
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: AppColors.onStage,
+                    fontSize: AppType.caption,
+                    fontWeight: FontWeight.w600,
+                    fontFeatures: const [FontFeature.tabularFigures()],
                   ),
                 ),
-            ],
-          ),
         ),
-      );
-    },
+      ),
+    ),
   );
 
   Widget _placeholder(BuildContext context, String state) => ColoredBox(
@@ -881,7 +1136,7 @@ class _QueueThumbnail extends StatelessWidget {
 }
 
 class _QueueEmpty extends StatelessWidget {
-  const _QueueEmpty({super.key, required this.hasQueue, this.onClearSearch});
+  const _QueueEmpty({required this.hasQueue, this.onClearSearch});
 
   final bool hasQueue;
   final VoidCallback? onClearSearch;
@@ -902,9 +1157,9 @@ class _QueueEmpty extends StatelessWidget {
           Text(
             hasQueue ? 'No matches' : 'Queue is empty',
             textAlign: TextAlign.center,
-            style: Theme.of(
-              context,
-            ).textTheme.bodyMedium?.copyWith(color: context.palette.secondaryText),
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: context.palette.secondaryText,
+            ),
           ),
           if (hasQueue && onClearSearch != null) ...[
             const SizedBox(height: 4),

@@ -15,19 +15,43 @@ abstract final class AppColors {
   // Text
   static const ink = Color(0xFFF4F4F5);
   static const inkMuted = Color(0xFFA1A1AA);
-  static const inkDim = Color(0xFF71717A);
+  static const inkDim = Color(0xFF8A8A94);
   static const inkFaint = Color(0xFF52525B);
 
   // Accent and support
   static const lamp = Color(0xFFF1A64C);
+  static const lampLight = Color(0xFFB45309);
+  static const defaultAccent = lampLight;
   static const jade = Color(0xFF7FC3A3);
   static const sky = Color(0xFF82B4D4);
   static const gold = Color(0xFFDDB264);
   static const rose = Color(0xFFD98B80);
 
-  // Media overlays
+  // Status tones deepened to read as text and icons on light surfaces.
+  static const jadeLight = Color(0xFF187552);
+  static const skyLight = Color(0xFF1F6A94);
+  static const goldLight = Color(0xFF8A5A00);
+  static const roseLight = Color(0xFFB4372B);
+
+  // Light theme surfaces
+  static const lightGround = Color(0xFFF8FAFC);
+  static const lightSidebar = Color(0xFFF1F5F9);
+  static const lightCard = Color(0xFFFFFFFF);
+  static const lightHover = Color(0xFFE2E8F0);
+  static const lightLine = Color(0xFFE2E8F0);
+  static const lightLineStrong = Color(0xFFCBD5E1);
+
+  // Light theme text
+  static const lightInk = Color(0xFF0F172A);
+  static const lightInkMuted = Color(0xFF475569);
+  static const lightInkDim = Color(0xFF5D6B80);
+
+  // Media overlays and scrollbar / shadows
   static const onStage = Color(0xFFF7F4EC);
   static const scrim = Color(0xCC000000);
+  static const lightScrollbarThumb = Color(0xFF8C93A0);
+  static const lightScrim = Color(0x66000000);
+  static const shadow14 = Color(0x14000000);
 }
 
 /// The current media's accent; defaults to the projector-lamp color.
@@ -107,7 +131,7 @@ class AppAccentPreset {
     label: 'Amber Lamp',
     description: 'Warm projector-room glow',
     color: Color(0xFFF1A64C),
-    lightColor: Color(0xFFD97706),
+    lightColor: AppColors.lampLight,
     icon: Icons.lightbulb_outline_rounded,
   );
 
@@ -116,7 +140,7 @@ class AppAccentPreset {
     label: 'Jade Aurora',
     description: 'Serene cinema emerald & mint',
     color: Color(0xFF2DD4BF),
-    lightColor: Color(0xFF0D9488),
+    lightColor: Color(0xFF0F766E),
     icon: Icons.eco_outlined,
   );
 
@@ -125,7 +149,7 @@ class AppAccentPreset {
     label: 'Electric Sky',
     description: 'Crisp modern cobalt & sapphire',
     color: Color(0xFF38BDF8),
-    lightColor: Color(0xFF0284C7),
+    lightColor: Color(0xFF0369A1),
     icon: Icons.water_drop_outlined,
   );
 
@@ -134,7 +158,7 @@ class AppAccentPreset {
     label: 'Crimson Rose',
     description: 'Classic theater velvet coral & ruby',
     color: Color(0xFFF43F5E),
-    lightColor: Color(0xFFE11D48),
+    lightColor: Color(0xFFBE123C),
     icon: Icons.local_fire_department_outlined,
   );
 
@@ -142,7 +166,7 @@ class AppAccentPreset {
     id: 'amethyst',
     label: 'Amethyst Neon',
     description: 'Futuristic synthwave violet',
-    color: Color(0xFFA855F7),
+    color: Color(0xFFB366F9),
     lightColor: Color(0xFF7E22CE),
     icon: Icons.auto_awesome_outlined,
   );
@@ -152,7 +176,7 @@ class AppAccentPreset {
     label: 'Solar Gold',
     description: 'Brilliant cinematic amber-gold',
     color: Color(0xFFF59E0B),
-    lightColor: Color(0xFFB45309),
+    lightColor: Color(0xFF946200),
     icon: Icons.wb_sunny_outlined,
   );
 

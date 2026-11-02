@@ -113,7 +113,10 @@ class MediaLibraryRepositoryImpl extends MediaLibraryRepository {
           if (_isDisposed) return;
           _scanStatus = status;
           notifyListeners();
-          if (status.phase == ScanPhase.idle) unawaited(_refreshFolders());
+          if (status.phase == ScanPhase.idle) {
+            unawaited(_refreshFolders());
+            unawaited(optimize());
+          }
         });
       }
 
@@ -384,6 +387,22 @@ class MediaLibraryRepositoryImpl extends MediaLibraryRepository {
   @override
   Future<void> cancelScan() async {
     _scanner?.cancelScan();
+  }
+
+  @override
+  Future<void> shrinkMemory() async {
+    final db = _database;
+    if (db != null && !db.isClosed) {
+      await db.shrinkMemory();
+    }
+  }
+
+  @override
+  Future<void> optimize() async {
+    final db = _database;
+    if (db != null && !db.isClosed) {
+      await db.optimize();
+    }
   }
 
   @override

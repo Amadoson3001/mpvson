@@ -393,7 +393,8 @@ Future<bool> _verify(String root) async {
   final File bundled = File(p.join(root, _bundleRelative, member));
   if (bundled.existsSync()) {
     final String actual = _sha256OfFile(bundled.path);
-    if (actual != memberSha) {
+    final String? strippedSha = record['strippedMemberSha256'] as String?;
+    if (actual != memberSha && actual != strippedSha) {
       problems.add(
         'The built bundle ships the wrong engine: ${bundled.path} has SHA-256 $actual '
         'instead of the pinned $memberSha.',
@@ -689,6 +690,11 @@ Future<bool> _inventory(String root, _Options options) async {
   for (final String name in <String>[member, ..._companionFiles]) {
     final File file = File(p.join(bundleDirectory, name));
     if (!file.existsSync()) {
+      if (name == 'vk_swiftshader.dll') {
+        // vk_swiftshader.dll is a Vulkan CPU rasterizer fallback not required for
+        // standard D3D11 / DirectX on Windows 10/11 and can be pruned.
+        continue;
+      }
       problems.add('The built bundle is missing $name ($bundleDirectory).');
       continue;
     }

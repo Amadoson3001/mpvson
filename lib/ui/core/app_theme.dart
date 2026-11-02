@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'tokens/colors.dart';
+import 'tokens/opacity.dart';
 import 'tokens/radii.dart';
 import 'tokens/space.dart';
 import 'tokens/type.dart';
 export 'tokens/colors.dart';
+export 'tokens/layout.dart';
+export 'tokens/opacity.dart';
 export 'tokens/radii.dart';
 export 'tokens/space.dart';
 export 'tokens/type.dart';
@@ -19,6 +22,9 @@ export 'tokens/type.dart';
 /// Every chrome color is now resolved from the active [ColorScheme] through
 /// [AppPalette], so the whole interface follows the selected theme.
 abstract final class AppTheme {
+  /// Bottom inset for floating SnackBars above player controls.
+  static const double _snackBarBottomInset = 128;
+
   /// Backdrop behind the projected image. Always dark: in a cinema the screen
   /// is the only thing that should be bright.
   static const Color stage = AppColors.stage;
@@ -38,7 +44,7 @@ abstract final class AppTheme {
   }) {
     return brightness == Brightness.dark
         ? darkTheme(accent: accent ?? AppColors.lamp, oledBlack: oledBlack)
-        : lightTheme(accent: accent ?? const Color(0xFFD97706));
+        : lightTheme(accent: accent ?? AppColors.lampLight);
   }
 
   static ThemeData get dark => darkTheme();
@@ -60,7 +66,7 @@ abstract final class AppTheme {
     const text = AppColors.ink;
     const secondaryText = AppColors.inkMuted;
     const muted = AppColors.inkDim;
-    const accentForeground = Color(0xFF09090B);
+    const accentForeground = AppColors.ground;
     const danger = AppColors.rose;
 
     final bg = oledBlack ? Colors.black : background;
@@ -93,8 +99,12 @@ abstract final class AppTheme {
 
     final darkPalette = MediaAccentPalette(
       dominant: accent,
-      vibrant: HSLColor.fromColor(accent).withHue((HSLColor.fromColor(accent).hue + 25) % 360).toColor(),
-      muted: HSLColor.fromColor(accent).withSaturation(0.25).withLightness(0.18).toColor(),
+      vibrant: HSLColor.fromColor(
+        accent,
+      ).withHue((HSLColor.fromColor(accent).hue + 25) % 360).toColor(),
+      muted: HSLColor.fromColor(
+        accent,
+      ).withSaturation(0.25).withLightness(0.18).toColor(),
     );
 
     return ThemeData(
@@ -112,10 +122,7 @@ abstract final class AppTheme {
       cardColor: crd,
       dividerColor: bdr,
       dividerTheme: DividerThemeData(color: bdr, thickness: 1),
-      badgeTheme: BadgeThemeData(
-        backgroundColor: hvr,
-        textColor: accent,
-      ),
+      badgeTheme: BadgeThemeData(backgroundColor: hvr, textColor: accent),
       splashColor: accent.withValues(alpha: 0.10),
       highlightColor: accent.withValues(alpha: 0.06),
       focusColor: accent.withValues(alpha: 0.16),
@@ -135,21 +142,21 @@ abstract final class AppTheme {
           color: text,
           fontSize: AppType.display,
           fontWeight: FontWeight.w600,
-          letterSpacing: -1.2,
+          letterSpacing: AppLetterSpacing.tightest,
           height: 1.15,
         ),
         headlineMedium: TextStyle(
           color: text,
           fontSize: AppType.title,
           fontWeight: FontWeight.w600,
-          letterSpacing: -0.6,
+          letterSpacing: AppLetterSpacing.headline,
           height: 1.2,
         ),
         titleLarge: TextStyle(
           color: text,
           fontSize: AppType.title,
           fontWeight: FontWeight.w600,
-          letterSpacing: -0.4,
+          letterSpacing: AppLetterSpacing.title,
         ),
         titleMedium: TextStyle(
           color: text,
@@ -196,6 +203,41 @@ abstract final class AppTheme {
         ),
         trackOutlineColor: WidgetStatePropertyAll(bdr),
       ),
+      chipTheme: ChipThemeData(
+        backgroundColor: crd,
+        selectedColor: accent.withValues(alpha: 0.16),
+        disabledColor: crd.withValues(alpha: 0.4),
+        labelStyle: const TextStyle(
+          color: text,
+          fontSize: AppType.small,
+          fontFamily: 'Onest',
+          fontWeight: FontWeight.w500,
+        ),
+        secondaryLabelStyle: TextStyle(
+          color: accent,
+          fontSize: AppType.small,
+          fontFamily: 'Onest',
+          fontWeight: FontWeight.w700,
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadii.control),
+          side: BorderSide(color: bdrStrong),
+        ),
+        side: WidgetStateBorderSide.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) {
+            return BorderSide(color: accent, width: 1.2);
+          }
+          if (states.contains(WidgetState.focused)) {
+            return BorderSide(color: accent, width: 1.5);
+          }
+          return BorderSide(color: bdr);
+        }),
+        checkmarkColor: accent,
+        iconTheme: const IconThemeData(color: secondaryText, size: 16),
+        elevation: 0,
+        pressElevation: 0,
+      ),
       iconButtonTheme: IconButtonThemeData(
         style: ButtonStyle(
           minimumSize: const WidgetStatePropertyAll(Size(44, 44)),
@@ -235,16 +277,20 @@ abstract final class AppTheme {
           borderRadius: BorderRadius.circular(AppRadii.control),
           border: Border.all(color: bdrStrong),
         ),
-        textStyle: const TextStyle(color: text, fontSize: AppType.caption),
+        textStyle: const TextStyle(
+          color: text,
+          fontSize: AppType.caption,
+          fontFamily: 'Onest',
+        ),
         waitDuration: const Duration(milliseconds: 450),
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: bg,
-        hintStyle: const TextStyle(color: muted),
+        hintStyle: const TextStyle(color: muted, fontFamily: 'Onest'),
         contentPadding: const EdgeInsets.symmetric(
-          horizontal: 14,
-          vertical: AppSpace.sm,
+          horizontal: AppSpace.inputH,
+          vertical: AppSpace.inputV,
         ),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(AppRadii.artwork),
@@ -296,7 +342,7 @@ abstract final class AppTheme {
           AppSpace.lg,
           0,
           AppSpace.lg,
-          128,
+          _snackBarBottomInset,
         ),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppRadii.artwork),
@@ -374,18 +420,16 @@ abstract final class AppTheme {
     );
   }
 
-  static ThemeData lightTheme({
-    Color accent = const Color(0xFFD97706),
-  }) {
-    const bg = Color(0xFFF8FAFC);
-    const sidebar = Color(0xFFF1F5F9);
-    const card = Color(0xFFFFFFFF);
-    const hover = Color(0xFFE2E8F0);
-    const border = Color(0xFFE2E8F0);
-    const borderStrong = Color(0xFFCBD5E1);
-    const text = Color(0xFF0F172A);
-    const secTxt = Color(0xFF64748B);
-    const mtd = Color(0xFF94A3B8);
+  static ThemeData lightTheme({Color accent = AppColors.lampLight}) {
+    const bg = AppColors.lightGround;
+    const sidebar = AppColors.lightSidebar;
+    const card = AppColors.lightCard;
+    const hover = AppColors.lightHover;
+    const border = AppColors.lightLine;
+    const borderStrong = AppColors.lightLineStrong;
+    const text = AppColors.lightInk;
+    const secTxt = AppColors.lightInkMuted;
+    const mtd = AppColors.lightInkDim;
     const onAccent = Colors.white;
 
     final colorScheme = ColorScheme.light(
@@ -406,13 +450,17 @@ abstract final class AppTheme {
       onSurfaceVariant: secTxt,
       error: AppColors.rose,
       onError: onAccent,
-      scrim: const Color(0x66000000),
+      scrim: AppColors.lightScrim,
     );
 
     final lightPalette = MediaAccentPalette(
       dominant: accent,
-      vibrant: HSLColor.fromColor(accent).withHue((HSLColor.fromColor(accent).hue + 25) % 360).toColor(),
-      muted: HSLColor.fromColor(accent).withSaturation(0.2).withLightness(0.88).toColor(),
+      vibrant: HSLColor.fromColor(
+        accent,
+      ).withHue((HSLColor.fromColor(accent).hue + 25) % 360).toColor(),
+      muted: HSLColor.fromColor(
+        accent,
+      ).withSaturation(0.2).withLightness(0.88).toColor(),
     );
 
     return ThemeData(
@@ -430,10 +478,7 @@ abstract final class AppTheme {
       cardColor: card,
       dividerColor: border,
       dividerTheme: const DividerThemeData(color: border, thickness: 1),
-      badgeTheme: BadgeThemeData(
-        backgroundColor: hover,
-        textColor: accent,
-      ),
+      badgeTheme: BadgeThemeData(backgroundColor: hover, textColor: accent),
       splashColor: accent.withValues(alpha: 0.10),
       highlightColor: accent.withValues(alpha: 0.06),
       focusColor: accent.withValues(alpha: 0.16),
@@ -442,7 +487,7 @@ abstract final class AppTheme {
           (states) =>
               states.contains(WidgetState.hovered) ||
                   states.contains(WidgetState.dragged)
-              ? const Color(0xFF8C93A0)
+              ? AppColors.lightScrollbarThumb
               : borderStrong,
         ),
         thickness: const WidgetStatePropertyAll(6),
@@ -453,21 +498,21 @@ abstract final class AppTheme {
           color: text,
           fontSize: AppType.display,
           fontWeight: FontWeight.w600,
-          letterSpacing: -1.2,
+          letterSpacing: AppLetterSpacing.tightest,
           height: 1.15,
         ),
         headlineMedium: TextStyle(
           color: text,
           fontSize: AppType.title,
           fontWeight: FontWeight.w600,
-          letterSpacing: -0.6,
+          letterSpacing: AppLetterSpacing.headline,
           height: 1.2,
         ),
         titleLarge: TextStyle(
           color: text,
           fontSize: AppType.title,
           fontWeight: FontWeight.w600,
-          letterSpacing: -0.4,
+          letterSpacing: AppLetterSpacing.title,
         ),
         titleMedium: TextStyle(
           color: text,
@@ -505,14 +550,47 @@ abstract final class AppTheme {
       iconTheme: const IconThemeData(color: secTxt, size: 20),
       switchTheme: SwitchThemeData(
         thumbColor: WidgetStateProperty.resolveWith(
-          (states) => states.contains(WidgetState.selected)
-              ? onAccent
-              : secTxt,
+          (states) => states.contains(WidgetState.selected) ? onAccent : secTxt,
         ),
         trackColor: WidgetStateProperty.resolveWith(
           (states) => states.contains(WidgetState.selected) ? accent : hover,
         ),
         trackOutlineColor: const WidgetStatePropertyAll(border),
+      ),
+      chipTheme: ChipThemeData(
+        backgroundColor: card,
+        selectedColor: accent.withValues(alpha: 0.14),
+        disabledColor: card.withValues(alpha: 0.4),
+        labelStyle: const TextStyle(
+          color: text,
+          fontSize: AppType.small,
+          fontFamily: 'Onest',
+          fontWeight: FontWeight.w500,
+        ),
+        secondaryLabelStyle: TextStyle(
+          color: accent,
+          fontSize: AppType.small,
+          fontFamily: 'Onest',
+          fontWeight: FontWeight.w700,
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadii.control),
+          side: const BorderSide(color: borderStrong),
+        ),
+        side: WidgetStateBorderSide.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) {
+            return BorderSide(color: accent, width: 1.2);
+          }
+          if (states.contains(WidgetState.focused)) {
+            return BorderSide(color: accent, width: 1.5);
+          }
+          return const BorderSide(color: border);
+        }),
+        checkmarkColor: accent,
+        iconTheme: const IconThemeData(color: secTxt, size: 16),
+        elevation: 0,
+        pressElevation: 0,
       ),
       iconButtonTheme: IconButtonThemeData(
         style: ButtonStyle(
@@ -554,22 +632,26 @@ abstract final class AppTheme {
           border: Border.all(color: borderStrong),
           boxShadow: const [
             BoxShadow(
-              color: Color(0x14000000),
+              color: AppColors.shadow14,
               blurRadius: 8,
               offset: Offset(0, 3),
             ),
           ],
         ),
-        textStyle: const TextStyle(color: text, fontSize: AppType.caption),
+        textStyle: const TextStyle(
+          color: text,
+          fontSize: AppType.caption,
+          fontFamily: 'Onest',
+        ),
         waitDuration: const Duration(milliseconds: 450),
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: card,
-        hintStyle: const TextStyle(color: mtd),
+        hintStyle: const TextStyle(color: mtd, fontFamily: 'Onest'),
         contentPadding: const EdgeInsets.symmetric(
-          horizontal: 14,
-          vertical: AppSpace.sm,
+          horizontal: AppSpace.inputH,
+          vertical: AppSpace.inputV,
         ),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(AppRadii.artwork),
@@ -621,7 +703,7 @@ abstract final class AppTheme {
           AppSpace.lg,
           0,
           AppSpace.lg,
-          128,
+          _snackBarBottomInset,
         ),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppRadii.artwork),
@@ -730,7 +812,7 @@ class AppPalette {
   Color get secondaryText => scheme.onSurfaceVariant;
   Color get muted => secondaryText;
   Color get mutedText => secondaryText;
-  Color get faint => secondaryText.withValues(alpha: 0.7);
+  Color get faint => secondaryText.withValues(alpha: AppOpacity.faint);
 
   // --- Accent ---------------------------------------------------------------
   Color get accent => scheme.primary;
@@ -742,7 +824,7 @@ class AppPalette {
     color: text,
     fontSize: AppType.display,
     fontWeight: FontWeight.w600,
-    letterSpacing: -0.5,
+    letterSpacing: AppLetterSpacing.tighter,
     height: 1.2,
   );
 
@@ -750,7 +832,7 @@ class AppPalette {
     color: text,
     fontSize: AppType.title,
     fontWeight: FontWeight.w600,
-    letterSpacing: -0.3,
+    letterSpacing: AppLetterSpacing.subtitle,
     height: 1.25,
   );
 
@@ -758,7 +840,7 @@ class AppPalette {
     color: text,
     fontSize: AppType.body,
     fontWeight: FontWeight.w600,
-    letterSpacing: -0.2,
+    letterSpacing: AppLetterSpacing.tight,
     height: 1.3,
   );
 
@@ -787,7 +869,7 @@ class AppPalette {
     color: text,
     fontSize: AppType.caption,
     fontWeight: FontWeight.w600,
-    letterSpacing: 0.2,
+    letterSpacing: AppLetterSpacing.wide,
   );
 }
 

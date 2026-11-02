@@ -59,6 +59,12 @@ abstract class MediaLibraryRepository extends ChangeNotifier {
   Future<void> rescanAll();
   Future<void> cancelScan();
 
+  /// Releases SQLite unmapped memory back to the operating system immediately.
+  Future<void> shrinkMemory() async {}
+
+  /// Runs PRAGMA optimize on the database to maintain query planner statistics.
+  Future<void> optimize() async {}
+
   @override
   Future<void> dispose();
 }

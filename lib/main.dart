@@ -29,6 +29,7 @@ import 'domain/models/open_request.dart';
 import 'domain/updates/bundled_engine.dart';
 import 'domain/updates/engine_selection.dart';
 import 'ui/core/app_theme.dart';
+import 'ui/core/components/app_dialog.dart';
 import 'ui/player/player_controller.dart';
 import 'ui/player/views/open_preference_dialog.dart';
 
@@ -112,6 +113,7 @@ Future<Never> _recoverEngineProcess(
 Future<void> main(List<String> arguments) async {
   WidgetsFlutterBinding.ensureInitialized();
   PaintingBinding.instance.imageCache.maximumSizeBytes = 8 * 1024 * 1024;
+  PaintingBinding.instance.imageCache.maximumSize = 100;
 
   final versionFuture = () async {
     try {
@@ -530,35 +532,31 @@ class _SessionSaveErrorDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      backgroundColor: context.palette.card,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(8),
-        side: BorderSide(color: context.palette.border),
-      ),
-      title: Text(
-        'Could not save playback session',
-        style: TextStyle(color: context.palette.primaryText, fontSize: 18),
-      ),
-      content: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 480),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Mpvson was unable to save your current session state. You can retry saving, close without saving your progress, or cancel to keep the player open.',
-              style: TextStyle(color: context.palette.secondaryText, fontSize: 14),
+    return AppDialog(
+      maxWidth: 528,
+      title: const Text('Could not save playback session'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Mpvson was unable to save your current session state. You can retry saving, close without saving your progress, or cancel to keep the player open.',
+            style: TextStyle(
+              color: context.palette.secondaryText,
+              fontSize: AppType.small,
             ),
-            if (error.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              Text(
-                error,
-                style: TextStyle(color: context.palette.mutedText, fontSize: 12),
+          ),
+          if (error.isNotEmpty) ...[
+            const SizedBox(height: AppSpace.sm),
+            Text(
+              error,
+              style: TextStyle(
+                color: context.palette.mutedText,
+                fontSize: AppType.caption,
               ),
-            ],
+            ),
           ],
-        ),
+        ],
       ),
       actions: [
         TextButton(

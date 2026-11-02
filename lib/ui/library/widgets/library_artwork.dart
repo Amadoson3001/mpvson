@@ -14,6 +14,7 @@ class LibraryArtwork extends StatefulWidget {
     this.repository,
     this.icon = Icons.album_rounded,
     this.iconSize = 48,
+    this.semanticLabel,
   });
 
   final String? path;
@@ -21,6 +22,12 @@ class LibraryArtwork extends StatefulWidget {
   final MediaLibraryRepository? repository;
   final IconData icon;
   final double iconSize;
+
+  /// Description announced by screen readers.
+  ///
+  /// When omitted the artwork is treated as decorative, which is the right
+  /// default for tiles that already announce their own title.
+  final String? semanticLabel;
 
   @override
   State<LibraryArtwork> createState() => _LibraryArtworkState();
@@ -78,7 +85,7 @@ class _LibraryArtworkState extends State<LibraryArtwork> {
         ),
       ),
     );
-    return FutureBuilder<String?>(
+    final artwork = FutureBuilder<String?>(
       future: _artwork,
       builder: (context, snapshot) {
         final path = snapshot.data;
@@ -105,6 +112,14 @@ class _LibraryArtworkState extends State<LibraryArtwork> {
           },
         );
       },
+    );
+    final label = widget.semanticLabel;
+    if (label == null) return ExcludeSemantics(child: artwork);
+    return Semantics(
+      image: true,
+      label: label,
+      excludeSemantics: true,
+      child: artwork,
     );
   }
 }

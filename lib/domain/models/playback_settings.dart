@@ -18,6 +18,7 @@ class PlaybackSettings {
   const PlaybackSettings({
     this.qualityPreset = PlaybackQualityPreset.balanced,
     this.preferHardwareDecoding = true,
+    this.ramPreservation = false,
     this.brightness = 0,
     this.contrast = 0,
     this.saturation = 0,
@@ -30,6 +31,7 @@ class PlaybackSettings {
 
   final PlaybackQualityPreset qualityPreset;
   final bool preferHardwareDecoding;
+  final bool ramPreservation;
   final double brightness;
   final double contrast;
   final double saturation;
@@ -37,9 +39,14 @@ class PlaybackSettings {
   final double audioDelaySeconds;
   final double subtitleDelaySeconds;
 
+  /// Whether a low-spec profile is active or RAM preservation is enabled.
+  bool get isLowSpecOrRamPreserved =>
+      qualityPreset == PlaybackQualityPreset.performance || ramPreservation;
+
   PlaybackSettings copyWith({
     PlaybackQualityPreset? qualityPreset,
     bool? preferHardwareDecoding,
+    bool? ramPreservation,
     double? brightness,
     double? contrast,
     double? saturation,
@@ -50,6 +57,7 @@ class PlaybackSettings {
     qualityPreset: qualityPreset ?? this.qualityPreset,
     preferHardwareDecoding:
         preferHardwareDecoding ?? this.preferHardwareDecoding,
+    ramPreservation: ramPreservation ?? this.ramPreservation,
     brightness: brightness ?? this.brightness,
     contrast: contrast ?? this.contrast,
     saturation: saturation ?? this.saturation,
@@ -62,6 +70,7 @@ class PlaybackSettings {
   PlaybackSettings normalized() => PlaybackSettings.bounded(
     qualityPreset: qualityPreset,
     preferHardwareDecoding: preferHardwareDecoding,
+    ramPreservation: ramPreservation,
     brightness: brightness,
     contrast: contrast,
     saturation: saturation,
@@ -73,6 +82,7 @@ class PlaybackSettings {
   factory PlaybackSettings.bounded({
     PlaybackQualityPreset qualityPreset = PlaybackQualityPreset.balanced,
     bool preferHardwareDecoding = true,
+    bool ramPreservation = false,
     double brightness = 0,
     double contrast = 0,
     double saturation = 0,
@@ -82,6 +92,7 @@ class PlaybackSettings {
   }) => PlaybackSettings(
     qualityPreset: qualityPreset,
     preferHardwareDecoding: preferHardwareDecoding,
+    ramPreservation: ramPreservation,
     brightness: _bounded(brightness, min: -100, max: 100),
     contrast: _bounded(contrast, min: -100, max: 100),
     saturation: _bounded(saturation, min: -100, max: 100),
@@ -101,6 +112,7 @@ class PlaybackSettings {
     return PlaybackSettings.bounded(
       qualityPreset: preset,
       preferHardwareDecoding: json['preferHardwareDecoding'] != false,
+      ramPreservation: json['ramPreservation'] == true,
       brightness: _readNumber(json['brightness']),
       contrast: _readNumber(json['contrast']),
       saturation: _readNumber(json['saturation']),
@@ -115,6 +127,7 @@ class PlaybackSettings {
     return <String, Object?>{
       'qualityPreset': safe.qualityPreset.name,
       'preferHardwareDecoding': safe.preferHardwareDecoding,
+      'ramPreservation': safe.ramPreservation,
       'brightness': safe.brightness,
       'contrast': safe.contrast,
       'saturation': safe.saturation,
@@ -141,6 +154,7 @@ class PlaybackSettings {
       other is PlaybackSettings &&
       other.qualityPreset == qualityPreset &&
       other.preferHardwareDecoding == preferHardwareDecoding &&
+      other.ramPreservation == ramPreservation &&
       other.brightness == brightness &&
       other.contrast == contrast &&
       other.saturation == saturation &&
@@ -152,6 +166,7 @@ class PlaybackSettings {
   int get hashCode => Object.hash(
     qualityPreset,
     preferHardwareDecoding,
+    ramPreservation,
     brightness,
     contrast,
     saturation,

@@ -985,12 +985,20 @@ class SeekPreviewService {
     this.diagnostics,
     this._monotonicNow,
     PreviewTimerFactory? timerFactory,
+    Duration? idleWorkerTimeout,
   }) : _backendFactory =
            backendFactory ?? (() => _defaultBackendFactory(diagnostics)),
        _cache = cache ?? SeekPreviewLRUCache(),
-       _timerFactory = timerFactory ?? _defaultTimerFactory {
+       _timerFactory = timerFactory ?? _defaultTimerFactory,
+       _idleWorkerTimeout = idleWorkerTimeout ?? defaultIdleWorkerTimeout {
     _clock.start();
   }
+
+  static const Duration defaultIdleWorkerTimeout = Duration(seconds: 30);
+  final Duration _idleWorkerTimeout;
+
+  /// Whether a preview backend player is currently allocated in memory.
+  bool get hasActiveWorker => _backend != null;
 
   static SeekPreviewBackend _defaultBackendFactory(
     DiagnosticSink? diagnostics,
@@ -1262,6 +1270,7 @@ class SeekPreviewService {
     if (_disposed) return;
     _idleWorkerReleaseTimer?.cancel();
     _pointerExitGraceTimer?.cancel();
+    _scheduleIdleWorkerRelease();
 
     if (!_interactionActive) {
       _interactionActive = true;
@@ -1757,9 +1766,13 @@ class SeekPreviewService {
       );
     }
 
+    _scheduleIdleWorkerRelease();
+  }
+
+  void _scheduleIdleWorkerRelease() {
     _idleWorkerReleaseTimer?.cancel();
-    _idleWorkerReleaseTimer = _timerFactory(const Duration(seconds: 15), () {
-      _releaseWorker();
+    _idleWorkerReleaseTimer = _timerFactory(_idleWorkerTimeout, () {
+      _releaseWorker(force: true);
     });
   }
 
@@ -1797,11 +1810,12 @@ class SeekPreviewService {
     );
   }
 
-  Future<void> _releaseWorker() async {
+  Future<void> _releaseWorker({bool force = false}) async {
     if (_disposed) return;
     if (_backend == null) return;
     await _enqueueBackendOperation(() async {
-      if (_interactionActive) return;
+      if (_interactionActive && !force) return;
+      if (force) _interactionActive = false;
       final backend = _backend;
       _backend = null;
       _backendSource = null;
@@ -1824,6 +1838,7 @@ class SeekPreviewService {
     if (_disposed) return;
     _cancelActiveRequest();
     _pointerExitGraceTimer?.cancel();
+    _idleWorkerReleaseTimer?.cancel();
     _isSuspended = true;
     if (_latestTarget != null) {
       _pendingTarget = _latestTarget;
@@ -1831,6 +1846,7 @@ class SeekPreviewService {
     _refineTimer?.cancel();
     _throttleTimer?.cancel();
     _pauseOrStopWorker(stopRemote: _isCurrentSourceRemote);
+    unawaited(_releaseWorker(force: true));
   }
 
   /// Resumes preview work after minimize/unpause.
