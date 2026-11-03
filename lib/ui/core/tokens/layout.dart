@@ -10,4 +10,7 @@ abstract final class AppLayout {
   static const double miniPlayerWidth = 600.0;
   static const double miniPlayerHeight = 338.0;
   static const double videoGridMinWidth = 280.0;
+  static const double dockedMiniVideoWidth = 88.0;
+  static const double dockedMiniVideoHeight = 50.0;
+  static const double dockedMiniVideoRadius = 6.0;
 }

@@ -24,6 +24,7 @@ import '../../domain/models/playback_session.dart';
 import '../../domain/models/playback_settings.dart';
 import '../../domain/models/session_progress.dart';
 import '../../domain/models/video_output_policy.dart';
+import '../../utils/memory_trimmer.dart';
 
 import 'playback_position_smoother.dart';
 
@@ -778,8 +779,11 @@ class PlayerController extends ChangeNotifier {
   /// Thumbnail extraction and caching service, if configured.
   ThumbnailService? get thumbnails => _thumbnails;
 
-  /// Trims disposable thumbnail cache and requests safe decoder cleanup.
-  void trimMemory() => _thumbnails?.trimMemory();
+  /// Trims disposable thumbnail cache and releases inactive working set.
+  void trimMemory() {
+    _thumbnails?.trimMemory();
+    MemoryTrimmer.trimWorkingSet();
+  }
 
   /// Loads artwork independently of the active playback engine and position.
   Future<MediaThumbnail?> loadThumbnail(
@@ -1842,10 +1846,12 @@ class PlayerController extends ChangeNotifier {
       sourceLoaded: false,
     );
     final stopping = _playback.stop();
+    _seekPreview.setSource(null);
     _publishTransport();
     _notifyIfOpen();
     _scheduleSave();
     await stopping;
+    trimMemory();
   }
 
   /// Stops playback and dismisses the now-playing item.
@@ -3224,6 +3230,84 @@ class PlayerController extends ChangeNotifier {
       _recent.removeRange(_maximumRecentEntries, _recent.length);
     }
     _unmodifiableRecent = List<MediaEntry>.unmodifiable(_recent);
+  }
+
+  /// Removes an entry from recent history by [entry].
+  ///
+  /// Returns the index and the removed entry if found, or null otherwise.
+  (int, MediaEntry)? removeRecent(MediaEntry entry) {
+    if (!_acceptsCommands) return null;
+    final canonical = MediaEntry.canonicalSource(entry.path);
+    final index = _recent.indexWhere(
+      (item) =>
+          item.id == entry.id ||
+          item.path == entry.path ||
+          item.id == canonical ||
+          MediaEntry.canonicalSource(item.path) == canonical,
+    );
+    if (index < 0) return null;
+    final removed = _recent.removeAt(index);
+    _unmodifiableRecent = List<MediaEntry>.unmodifiable(_recent);
+    _scheduleSave();
+    notifyListeners();
+    return (index, removed);
+  }
+
+  /// Removes an entry from recent history by its [id] or canonical path.
+  (int, MediaEntry)? removeRecentById(String id) {
+    if (!_acceptsCommands) return null;
+    final canonical = MediaEntry.canonicalSource(id);
+    final index = _recent.indexWhere(
+      (item) =>
+          item.id == id ||
+          item.path == id ||
+          item.id == canonical ||
+          MediaEntry.canonicalSource(item.path) == canonical,
+    );
+    if (index < 0) return null;
+    final removed = _recent.removeAt(index);
+    _unmodifiableRecent = List<MediaEntry>.unmodifiable(_recent);
+    _scheduleSave();
+    notifyListeners();
+    return (index, removed);
+  }
+
+  /// Restores a previously removed recent entry at [index].
+  void restoreRecent(int index, MediaEntry entry) {
+    if (!_acceptsCommands) return;
+    final targetIndex = index.clamp(0, _recent.length);
+    _recent.removeWhere(
+      (item) => item.id == entry.id || item.path == entry.path,
+    );
+    _recent.insert(targetIndex, entry);
+    if (_recent.length > _maximumRecentEntries) {
+      _recent.removeRange(_maximumRecentEntries, _recent.length);
+    }
+    _unmodifiableRecent = List<MediaEntry>.unmodifiable(_recent);
+    _scheduleSave();
+    notifyListeners();
+  }
+
+  /// Clears all entries from the recently played history.
+  List<MediaEntry> clearRecent() {
+    if (!_acceptsCommands || _recent.isEmpty) return const <MediaEntry>[];
+    final cleared = List<MediaEntry>.of(_recent);
+    _recent.clear();
+    _unmodifiableRecent = const <MediaEntry>[];
+    _scheduleSave();
+    notifyListeners();
+    return cleared;
+  }
+
+  /// Restores a list of previously cleared recent entries.
+  void restoreRecentList(List<MediaEntry> entries) {
+    if (!_acceptsCommands || entries.isEmpty) return;
+    _recent
+      ..clear()
+      ..addAll(_canonicalizeRecent(entries));
+    _unmodifiableRecent = List<MediaEntry>.unmodifiable(_recent);
+    _scheduleSave();
+    notifyListeners();
   }
 
   List<MediaEntry> _canonicalizeRecent(List<MediaEntry> entries) {

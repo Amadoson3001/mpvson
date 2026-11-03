@@ -72,6 +72,8 @@ void ANGLESurfaceManager::MakeCurrent(bool value) {
 }
 
 void ANGLESurfaceManager::SwapBuffers() {
+  // |Read| copies the shared texture from another D3D11 device context. Wait
+  // for the ANGLE draw to complete so the copy cannot observe a partial frame.
   glFinish();
 }
 

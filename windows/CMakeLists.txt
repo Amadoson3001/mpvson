@@ -156,6 +156,14 @@ else()
     endif()
   endif()
   if(NOT EXISTS "${MPVSON_ENGINE_ARTIFACT}")
+    set(_MPVSON_FALLBACK_ARCHIVE "${CMAKE_CURRENT_SOURCE_DIR}/../build-release/windows/x64/engine/${MPVSON_ENGINE_ARTIFACT_NAME}")
+    if(EXISTS "${_MPVSON_FALLBACK_ARCHIVE}")
+      file(MAKE_DIRECTORY "${MPVSON_ENGINE_CACHE_DIR}")
+      file(COPY "${_MPVSON_FALLBACK_ARCHIVE}" DESTINATION "${MPVSON_ENGINE_CACHE_DIR}")
+      message(STATUS "Mpvson engine: restored cached archive from ${_MPVSON_FALLBACK_ARCHIVE}")
+    endif()
+  endif()
+  if(NOT EXISTS "${MPVSON_ENGINE_ARTIFACT}")
     message(STATUS
       "Mpvson engine: downloading ${MPVSON_ENGINE_ARTIFACT_NAME} "
       "(${MPVSON_ENGINE_VERSION})")
@@ -282,3 +290,15 @@ install(DIRECTORY "${PROJECT_BUILD_DIR}/${FLUTTER_ASSET_DIR_NAME}"
 install(FILES "${AOT_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"
   CONFIGURATIONS Profile;Release
   COMPONENT Runtime)
+
+# Strip symbols from bundled DLLs (e.g. libmpv-2.dll) to accelerate launch and minimize bundle size.
+find_program(LLVM_STRIP_TOOL NAMES llvm-strip strip PATHS "C:/Program Files/LLVM/bin")
+if(LLVM_STRIP_TOOL)
+  install(CODE "
+    file(GLOB _bundled_dlls \"\${CMAKE_INSTALL_PREFIX}/*.dll\")
+    foreach(_dll IN LISTS _bundled_dlls)
+      execute_process(COMMAND \"${LLVM_STRIP_TOOL}\" --strip-all \"\${_dll}\")
+    endforeach()
+  " CONFIGURATIONS Profile;Release COMPONENT Runtime)
+endif()
+

@@ -6,6 +6,8 @@ import '../../../domain/models/media_entry.dart';
 import '../../../domain/models/media_thumbnail.dart';
 import '../../../utils/format.dart';
 import '../../core/app_theme.dart';
+import '../../core/components/app_popup_menu_item.dart';
+import '../../core/toast/app_toast.dart';
 import '../../player/player_controller.dart';
 import '../widgets/library_artwork.dart';
 
@@ -18,6 +20,8 @@ class HomeView extends StatelessWidget {
     required this.onOpenFiles,
     required this.onOpenUrl,
     required this.onOpenRecent,
+    this.onRemoveRecent,
+    this.onClearRecent,
     this.isDragging = false,
   });
 
@@ -27,6 +31,8 @@ class HomeView extends StatelessWidget {
   final VoidCallback onOpenFiles;
   final VoidCallback onOpenUrl;
   final ValueChanged<MediaEntry> onOpenRecent;
+  final ValueChanged<MediaEntry>? onRemoveRecent;
+  final VoidCallback? onClearRecent;
   final bool isDragging;
 
   @override
@@ -103,6 +109,30 @@ class HomeView extends StatelessWidget {
                             '${recent.length} ${recent.length == 1 ? 'item' : 'items'}',
                             style: context.palette.metadata,
                           ),
+                          const Spacer(),
+                          TextButton.icon(
+                            onPressed:
+                                onClearRecent ??
+                                () {
+                                  final cleared = controller.clearRecent();
+                                  if (cleared.isNotEmpty && context.mounted) {
+                                    AppToast.show(
+                                      context,
+                                      'Recently played cleared',
+                                      actionLabel: 'Undo',
+                                      onAction: () =>
+                                          controller.restoreRecentList(cleared),
+                                    );
+                                  }
+                                },
+                            icon: const Icon(Icons.clear_all_rounded, size: 16),
+                            label: const Text('Clear all'),
+                            style: TextButton.styleFrom(
+                              foregroundColor: context.palette.mutedText,
+                              visualDensity: VisualDensity.compact,
+                              textStyle: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ),
                         ],
                       ),
                       const SizedBox(height: 20),
@@ -119,7 +149,7 @@ class HomeView extends StatelessWidget {
                     crossAxisCount: columns,
                     crossAxisSpacing: gap,
                     mainAxisSpacing: 24,
-                    mainAxisExtent: tileWidth * 9 / 16 + textHeight + 18,
+                    mainAxisExtent: tileWidth * 9 / 16 + textHeight + 20,
                   ),
                   delegate: SliverChildBuilderDelegate(
                     (context, index) => _RecentTile(
@@ -128,6 +158,24 @@ class HomeView extends StatelessWidget {
                       controller: controller,
                       repository: repository,
                       onOpen: () => onOpenRecent(recent[index]),
+                      onRemove: onRemoveRecent != null
+                          ? () => onRemoveRecent!(recent[index])
+                          : () {
+                              final restored = controller.removeRecent(
+                                recent[index],
+                              );
+                              if (restored != null && context.mounted) {
+                                AppToast.show(
+                                  context,
+                                  'Removed from recently played',
+                                  actionLabel: 'Undo',
+                                  onAction: () => controller.restoreRecent(
+                                    restored.$1,
+                                    restored.$2,
+                                  ),
+                                );
+                              }
+                            },
                     ),
                     addAutomaticKeepAlives: false,
                     childCount: recent.length,
@@ -148,11 +196,13 @@ class _RecentTile extends StatefulWidget {
     required this.controller,
     required this.repository,
     required this.onOpen,
+    this.onRemove,
   });
   final MediaEntry entry;
   final PlayerController controller;
   final MediaLibraryRepository repository;
   final VoidCallback onOpen;
+  final VoidCallback? onRemove;
 
   @override
   State<_RecentTile> createState() => _RecentTileState();
@@ -196,6 +246,50 @@ class _RecentTileState extends State<_RecentTile> {
     super.dispose();
   }
 
+  Future<void> _showContextMenu(BuildContext context, Offset position) async {
+    final entry = widget.entry;
+    final hasProgress =
+        entry.duration > Duration.zero && entry.position > Duration.zero;
+    final accent = Theme.of(context).colorScheme.primary;
+    final selected = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        position.dx,
+        position.dy,
+        position.dx + 1,
+        position.dy + 1,
+      ),
+      color: context.palette.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppRadii.control),
+        side: BorderSide(color: context.palette.border),
+      ),
+      items: [
+        AppPopupMenuItem<String>(
+          value: 'play',
+          icon: Icons.play_arrow_rounded,
+          iconColor: accent,
+          text: hasProgress ? 'Resume' : 'Play',
+        ),
+        if (widget.onRemove != null) ...[
+          const PopupMenuDivider(height: 1),
+          AppPopupMenuItem<String>(
+            value: 'remove',
+            icon: Icons.delete_outline_rounded,
+            iconColor: context.palette.danger,
+            text: 'Remove from recently played',
+          ),
+        ],
+      ],
+    );
+    if (!mounted || selected == null) return;
+    if (selected == 'play') {
+      widget.onOpen();
+    } else if (selected == 'remove') {
+      widget.onRemove?.call();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final entry = widget.entry;
@@ -219,6 +313,8 @@ class _RecentTileState extends State<_RecentTile> {
     final accent = Theme.of(context).colorScheme.primary;
     return InkWell(
       onTap: widget.onOpen,
+      onSecondaryTapDown: (details) =>
+          _showContextMenu(context, details.globalPosition),
       onHover: (value) => setState(() => _hovered = value),
       onFocusChange: (value) => setState(() => _focused = value),
       borderRadius: BorderRadius.circular(AppRadii.artwork),
@@ -265,6 +361,38 @@ class _RecentTileState extends State<_RecentTile> {
                         ),
                       ),
                     ),
+                  if (widget.onRemove != null && (_hovered || _focused))
+                    Positioned(
+                      top: 8,
+                      right: 8,
+                      child: Material(
+                        color: Colors.transparent,
+                        child: Tooltip(
+                          message: 'Remove from recently played',
+                          child: InkResponse(
+                            onTap: widget.onRemove,
+                            radius: 16,
+                            child: Container(
+                              width: 28,
+                              height: 28,
+                              decoration: BoxDecoration(
+                                color: Colors.black.withValues(alpha: 0.7),
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: Colors.white.withValues(alpha: 0.25),
+                                  width: 1,
+                                ),
+                              ),
+                              child: const Icon(
+                                Icons.close_rounded,
+                                size: 16,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
                   if (hasProgress)
                     Positioned(
                       left: 0,
@@ -287,25 +415,78 @@ class _RecentTileState extends State<_RecentTile> {
             ),
           ),
           const SizedBox(height: 10),
-          Text(
-            entry.title,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: context.palette.rowPrimary.copyWith(
-              fontWeight: FontWeight.w600,
-              color: _focused ? accent : context.palette.primaryText,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            hasProgress
-                ? '$type  •  ${formatTime(entry.position, compactMinutes: true)} / ${formatTime(entry.duration, compactMinutes: true)}'
-                : type,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: context.palette.metadata.copyWith(
-              fontFeatures: const [FontFeature.tabularFigures()],
-            ),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      entry.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: context.palette.rowPrimary.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: _focused ? accent : context.palette.primaryText,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      hasProgress
+                          ? '$type  •  ${formatTime(entry.position, compactMinutes: true)} / ${formatTime(entry.duration, compactMinutes: true)}'
+                          : type,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: context.palette.metadata.copyWith(
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (widget.onRemove != null)
+                SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: PopupMenuButton<String>(
+                    icon: Icon(
+                      Icons.more_vert_rounded,
+                      size: 18,
+                      color: context.palette.mutedText,
+                    ),
+                    tooltip: 'Actions',
+                    padding: EdgeInsets.zero,
+                    color: context.palette.surface,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(AppRadii.control),
+                      side: BorderSide(color: context.palette.border),
+                    ),
+                    onSelected: (action) {
+                      if (action == 'play') {
+                        widget.onOpen();
+                      } else if (action == 'remove') {
+                        widget.onRemove?.call();
+                      }
+                    },
+                    itemBuilder: (context) => [
+                      AppPopupMenuItem<String>(
+                        value: 'play',
+                        icon: Icons.play_arrow_rounded,
+                        iconColor: accent,
+                        text: hasProgress ? 'Resume' : 'Play',
+                      ),
+                      const PopupMenuDivider(height: 1),
+                      AppPopupMenuItem<String>(
+                        value: 'remove',
+                        icon: Icons.delete_outline_rounded,
+                        iconColor: context.palette.danger,
+                        text: 'Remove from recently played',
+                      ),
+                    ],
+                  ),
+                ),
+            ],
           ),
         ],
       ),

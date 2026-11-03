@@ -277,7 +277,7 @@ class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
               muted: true,
               osc: false,
               libass: false,
-              bufferSize: 8 * 1024 * 1024,
+              bufferSize: 2 * 1024 * 1024,
             ),
           );
     _player = player;
@@ -295,14 +295,14 @@ class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
         'sid': 'no',
         'sub-auto': 'no',
         'audio-file-auto': 'no',
-        'cache': 'yes',
+        'cache': 'no',
         'cache-on-disk': 'no',
-        'cache-secs': '1',
-        'demuxer-readahead-secs': '1',
-        'demuxer-max-bytes': '8388608',
-        'demuxer-max-back-bytes': '2097152',
+        'cache-secs': '0',
+        'demuxer-readahead-secs': '0',
+        'demuxer-max-bytes': '2097152',
+        'demuxer-max-back-bytes': '1048576',
         'hls-bitrate': 'min',
-        'hwdec': 'auto-copy',
+        'hwdec': 'auto-safe',
         'vf': 'scale=w=320:h=320:force_original_aspect_ratio=decrease',
       };
       for (final entry in properties.entries) {
@@ -327,7 +327,7 @@ class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
               width: 320,
               height: 320,
               enableHardwareAcceleration: true,
-              hwdec: 'auto-copy',
+              hwdec: 'auto-safe',
             ),
           );
 
@@ -994,7 +994,7 @@ class SeekPreviewService {
     _clock.start();
   }
 
-  static const Duration defaultIdleWorkerTimeout = Duration(seconds: 30);
+  static const Duration defaultIdleWorkerTimeout = Duration(seconds: 4);
   final Duration _idleWorkerTimeout;
 
   /// Whether a preview backend player is currently allocated in memory.

@@ -1058,18 +1058,28 @@ class _LibraryShellState extends State<LibraryShell>
                         children: [
                           ClipRRect(
                             borderRadius: BorderRadius.circular(
-                              AppRadii.artwork,
+                              isVideo
+                                  ? AppLayout.dockedMiniVideoRadius
+                                  : AppRadii.artwork,
                             ),
                             child: SizedBox(
-                              width: 40,
-                              height: 40,
+                              width: isVideo
+                                  ? AppLayout.dockedMiniVideoWidth
+                                  : 40,
+                              height: isVideo
+                                  ? AppLayout.dockedMiniVideoHeight
+                                  : 40,
                               child: Stack(
                                 fit: StackFit.expand,
                                 children: [
+                                  if (isVideo)
+                                    ColoredBox(
+                                      color: Colors.black.withValues(alpha: 0.45),
+                                    ),
                                   LibraryArtwork(
                                     mediaPath: current.path,
                                     repository: widget.repository,
-                                    iconSize: 20,
+                                    iconSize: isVideo ? 26 : 20,
                                   ),
                                   if (widget.controller.isPlaying && !isVideo)
                                     Positioned(

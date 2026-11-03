@@ -166,6 +166,40 @@ class PlayerMediaCoordinator {
   Future<void> playRecent(MediaEntry entry) =>
       openPaths([entry.path], playNow: true);
 
+  Future<void> removeRecent(MediaEntry entry) async {
+    final ctx = context;
+    try {
+      final restored = controller.removeRecent(entry);
+      if (restored != null && ctx.mounted) {
+        AppToast.show(
+          ctx,
+          'Removed from recently played',
+          actionLabel: 'Undo',
+          onAction: () => controller.restoreRecent(restored.$1, restored.$2),
+        );
+      }
+    } catch (_) {
+      showMessage('Could not remove this item from recently played.');
+    }
+  }
+
+  Future<void> clearRecent() async {
+    final ctx = context;
+    try {
+      final cleared = controller.clearRecent();
+      if (cleared.isNotEmpty && ctx.mounted) {
+        AppToast.show(
+          ctx,
+          'Recently played cleared',
+          actionLabel: 'Undo',
+          onAction: () => controller.restoreRecentList(cleared),
+        );
+      }
+    } catch (_) {
+      showMessage('Could not clear recently played.');
+    }
+  }
+
   Future<String?> pickSubtitle() => withControlsVisible(() async {
     if (subtitlePicker != null) return subtitlePicker!();
     const subtitleTypes = XTypeGroup(

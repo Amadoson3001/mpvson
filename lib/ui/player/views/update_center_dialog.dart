@@ -371,7 +371,7 @@ class _EngineTrack extends StatelessWidget {
     final rollbackPending = updates.pendingRollback;
     final canScheduleRollback =
         updates.canRollback && !busy && !hasPendingAction;
-    final rollbackVersion = updates.rollbackVersion?.trim();
+    final rollbackVersion = updates.rollbackVersion?.replaceAll(RegExp(r'-dev[-+.0-9a-zA-Z]*'), '').trim();
     final rollbackTarget = updates.rollbackTargetIsBundled
         ? rollbackVersion == null || rollbackVersion.isEmpty
               ? 'the bundled engine'
@@ -638,22 +638,27 @@ class _EngineTrack extends StatelessWidget {
       'available' => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            updates.usesOfficialMpvSource
-                ? updates.channel == EngineUpdateChannel.stable
-                      ? release == null || release.engineVersion.trim().isEmpty
-                            ? 'An upstream mpv stable engine release is available.'
-                            : 'Upstream mpv stable engine version ${release.engineVersion} is available.'
-                      : release == null || release.engineVersion.trim().isEmpty
-                      ? 'An upstream mpv development build is available.'
-                      : 'Upstream mpv development build ${release.engineVersion} is available.'
-                : release == null || release.engineVersion.trim().isEmpty
-                ? 'A playback engine update is available.'
-                : 'Engine version ${release.engineVersion} is available.',
-            style: TextStyle(
-              color: context.palette.secondaryText,
-              height: 1.45,
-            ),
+          Builder(
+            builder: (context) {
+              final rawVersion = release?.engineVersion;
+              final cleanVersion = rawVersion
+                  ?.replaceAll(RegExp(r'-dev[-+.0-9a-zA-Z]*'), '')
+                  .trim();
+              final versionSuffix = cleanVersion == null || cleanVersion.isEmpty
+                  ? ''
+                  : ' version $cleanVersion';
+              return Text(
+                updates.usesOfficialMpvSource
+                    ? updates.channel == EngineUpdateChannel.stable
+                        ? 'An upstream mpv stable engine release$versionSuffix is available.'
+                        : 'An upstream mpv engine release$versionSuffix is available.'
+                    : 'A playback engine update$versionSuffix is available.',
+                style: TextStyle(
+                  color: context.palette.secondaryText,
+                  height: 1.45,
+                ),
+              );
+            },
           ),
           if (release != null && release.notes.trim().isNotEmpty) ...[
             const SizedBox(height: 7),

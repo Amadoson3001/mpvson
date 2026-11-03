@@ -8,6 +8,7 @@ import '../../../domain/models/media_entry.dart';
 import '../../../domain/models/player_hotkeys.dart';
 import '../../core/app_motion.dart';
 import '../../core/app_theme.dart';
+import '../../core/toast/app_toast.dart';
 import '../../core/toast/toast_layout.dart';
 import '../player_controller.dart';
 import '../widgets/empty_library.dart';
@@ -19,6 +20,7 @@ import '../widgets/player_controls.dart';
 import 'player_drag_drop.dart';
 import 'player_top_bar.dart';
 import '../../../../data/repositories/app_preferences_repository.dart';
+import 'mini_player_overlay.dart';
 import 'settings/floating_video_settings.dart';
 
 typedef PlayerVideoBuilder =
@@ -71,6 +73,9 @@ class PlayerStage extends StatelessWidget {
     required this.onAdjustVolume,
     required this.onUpdateViewportDimensions,
     this.videoSettingsOpen = false,
+    this.miniProgress = 0.0,
+    this.onExpandFromMini,
+    this.onDismissMini,
     this.onCloseVideoSettings,
     this.onOpenFullSettings,
     this.appPreferences,
@@ -97,6 +102,9 @@ class PlayerStage extends StatelessWidget {
   final bool hasLibraryRepository;
   final PlayerHotkeys hotkeys;
   final bool videoSettingsOpen;
+  final double miniProgress;
+  final VoidCallback? onExpandFromMini;
+  final VoidCallback? onDismissMini;
   final VoidCallback? onCloseVideoSettings;
   final VoidCallback? onOpenFullSettings;
   final AppPreferencesRepository? appPreferences;
@@ -147,6 +155,18 @@ class PlayerStage extends StatelessWidget {
           onOpenFiles: onOpenFiles,
           onOpenUrl: onOpenUrl,
           onOpenRecent: onOpenRecent,
+          onRemoveRecent: (MediaEntry entry) {
+            final restored = controller.removeRecent(entry);
+            if (restored != null && context.mounted) {
+              AppToast.show(
+                context,
+                'Removed from recently played',
+                actionLabel: 'Undo',
+                onAction: () =>
+                    controller.restoreRecent(restored.$1, restored.$2),
+              );
+            }
+          },
           isDragging: draggingFiles,
           onOpenLibrary: onOpenLibrary,
         ),
@@ -179,14 +199,19 @@ class PlayerStage extends StatelessWidget {
         color: AppTheme.stage,
         child: LayoutBuilder(
           builder: (context, constraints) {
-            onUpdateViewportDimensions(context, constraints);
+            if (miniProgress <= 0.001) {
+              onUpdateViewportDimensions(context, constraints);
+            }
             return RepaintBoundary(child: videoBuilder(context, controller));
           },
         ),
       );
     }
 
-    return Stack(
+    final fullControlsOpacity = (1.0 - miniProgress * 3.5).clamp(0.0, 1.0);
+    final showFullControls = fullControlsOpacity > 0.01;
+
+    final stageBody = Stack(
       fit: StackFit.expand,
       children: [
         PlayerContextMenu(
@@ -218,6 +243,10 @@ class PlayerStage extends StatelessWidget {
                 behavior: HitTestBehavior.opaque,
                 onTap: controller.hasMedia
                     ? () {
+                        if (miniProgress > 0.8 && onExpandFromMini != null) {
+                          onExpandFromMini!();
+                          return;
+                        }
                         if (videoSettingsOpen && onCloseVideoSettings != null) {
                           onCloseVideoSettings!();
                           return;
@@ -252,7 +281,10 @@ class PlayerStage extends StatelessWidget {
             ),
           ),
         ),
-        if (controller.hasMedia && controller.isVideo && current != null)
+        if (showFullControls &&
+            controller.hasMedia &&
+            controller.isVideo &&
+            current != null)
           PlayerTopBar(
             currentTitle: current.title,
             controlsVisible: controlsVisible,
@@ -266,94 +298,97 @@ class PlayerStage extends StatelessWidget {
             onExitMiniPlayer: onExitMiniPlayer,
             onFocusChange: onTopBarFocusChange,
           ),
-        Positioned.fill(
-          child: IgnorePointer(
-            child: Align(
-              alignment: feedbackCentered
-                  ? Alignment.center
-                  : Alignment.topCenter,
-              child: Padding(
-                padding: const EdgeInsets.all(AppSpace.lg),
-                child: AnimatedSwitcher(
-                  duration: AppMotion.duration(context, AppMotion.quick),
-                  child: feedbackLabel == null
-                      ? const SizedBox.shrink()
-                      : PlaybackFeedback(
-                          key: const ValueKey('playback-feedback'),
-                          icon: feedbackIcon,
-                          label: feedbackLabel!,
-                          progress: feedbackProgress,
-                        ),
+        if (showFullControls)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: Align(
+                alignment: feedbackCentered
+                    ? Alignment.center
+                    : Alignment.topCenter,
+                child: Padding(
+                  padding: const EdgeInsets.all(AppSpace.lg),
+                  child: AnimatedSwitcher(
+                    duration: AppMotion.duration(context, AppMotion.quick),
+                    child: feedbackLabel == null
+                        ? const SizedBox.shrink()
+                        : PlaybackFeedback(
+                            key: const ValueKey('playback-feedback'),
+                            icon: feedbackIcon,
+                            label: feedbackLabel!,
+                            progress: feedbackProgress,
+                          ),
+                  ),
                 ),
               ),
             ),
           ),
-        ),
-        if (draggingFiles && current != null)
+        if (draggingFiles && current != null && showFullControls)
           PlayerDragOverlay(hasMedia: controller.hasMedia),
-        Positioned(
-          left: 0,
-          right: 0,
-          bottom: 0,
-          child: FocusScope(
-            node: controlsFocusScope,
-            child: MouseRegion(
-              onEnter: onControlsPointerEnter,
-              onExit: onControlsPointerExit,
-              opaque: controlsVisible,
-              hitTestBehavior: controlsVisible
-                  ? HitTestBehavior.opaque
-                  : HitTestBehavior.deferToChild,
-              child: AnimatedOpacity(
-                key: const ValueKey('player-controls-visibility'),
-                duration: AppMotion.duration(context, AppMotion.quick),
-                opacity: controlsVisible ? 1 : 0,
-                child: AnimatedSlide(
-                  offset: !AppMotion.reduce(context) && !controlsVisible
-                      ? const Offset(0, 0.1)
-                      : Offset.zero,
+        if (showFullControls)
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: FocusScope(
+              node: controlsFocusScope,
+              child: MouseRegion(
+                onEnter: onControlsPointerEnter,
+                onExit: onControlsPointerExit,
+                opaque: controlsVisible,
+                hitTestBehavior: controlsVisible
+                    ? HitTestBehavior.opaque
+                    : HitTestBehavior.deferToChild,
+                child: AnimatedOpacity(
+                  key: const ValueKey('player-controls-visibility'),
                   duration: AppMotion.duration(context, AppMotion.quick),
-                  curve: AppMotion.standardCurve,
-                  child: IgnorePointer(
-                    ignoring: !controlsVisible,
-                    child: ToastRegion(
-                      child: AnimatedBuilder(
-                        animation: controller,
-                        builder: (context, _) => PlayerControls(
-                          controller: controller,
-                          onMenuVisibilityChanged: onMenuVisibilityChanged,
-                          onInteractionChanged: onControlInteractionChanged,
-                          onVolumeChanged: onVolumeChanged,
-                          showPlaybackControls: controller.hasMedia,
-                          actions: isMiniPlayer
-                              ? null
-                              : PlayerActions(
-                                  controller: controller,
-                                  onOpenFiles: onOpenFiles,
-                                  onOpenUrl: onOpenUrl,
-                                  onOpenRecent: onOpenRecent,
-                                  onToggleQueue: onToggleQueue,
-                                  onSettings: onSettings,
-                                  onPlaybackInfo: onPlaybackInfo,
-                                  onOpenLibrary: onOpenLibrary,
-                                  onMenuVisibilityChanged:
-                                      onMenuVisibilityChanged,
-                                  queueOpen: queueOpen,
-                                  isFullscreen: isFullscreen,
-                                  onFullscreen: desktopWindow
-                                      ? onFullscreen
-                                      : null,
-                                  onToggleMiniPlayer: nativeWindow
-                                      ? onToggleMiniPlayer
-                                      : null,
-                                  isMiniPlayer: isMiniPlayer,
-                                  miniPlayerShortcut: hotkeys
-                                      .bindingFor(PlayerAction.miniPlayer)
-                                      .label,
-                                  playbackInfoShortcut: hotkeys
-                                      .bindingFor(PlayerAction.playbackInfo)
-                                      .label,
-                                ),
+                  opacity: controlsVisible ? fullControlsOpacity : 0,
+                  child: AnimatedSlide(
+                    offset: !AppMotion.reduce(context) && !controlsVisible
+                        ? const Offset(0, 0.1)
+                        : Offset.zero,
+                    duration: AppMotion.duration(context, AppMotion.quick),
+                    curve: AppMotion.standardCurve,
+                    child: IgnorePointer(
+                      ignoring: !controlsVisible || fullControlsOpacity < 0.8,
+                      child: ToastRegion(
+                        child: AnimatedBuilder(
+                          animation: controller,
+                          builder: (context, _) => PlayerControls(
+                            controller: controller,
+                            onMenuVisibilityChanged: onMenuVisibilityChanged,
+                            onInteractionChanged: onControlInteractionChanged,
+                            onVolumeChanged: onVolumeChanged,
+                            showPlaybackControls: controller.hasMedia,
+                            actions: isMiniPlayer
+                                ? null
+                                : PlayerActions(
+                                    controller: controller,
+                                    onOpenFiles: onOpenFiles,
+                                    onOpenUrl: onOpenUrl,
+                                    onOpenRecent: onOpenRecent,
+                                    onToggleQueue: onToggleQueue,
+                                    onSettings: onSettings,
+                                    onPlaybackInfo: onPlaybackInfo,
+                                    onOpenLibrary: onOpenLibrary,
+                                    onMenuVisibilityChanged:
+                                        onMenuVisibilityChanged,
+                                    queueOpen: queueOpen,
+                                    isFullscreen: isFullscreen,
+                                    onFullscreen: desktopWindow
+                                        ? onFullscreen
+                                        : null,
+                                    onToggleMiniPlayer: nativeWindow
+                                        ? onToggleMiniPlayer
+                                        : null,
+                                    isMiniPlayer: isMiniPlayer,
+                                    miniPlayerShortcut: hotkeys
+                                        .bindingFor(PlayerAction.miniPlayer)
+                                        .label,
+                                    playbackInfoShortcut: hotkeys
+                                        .bindingFor(PlayerAction.playbackInfo)
+                                        .label,
+                                  ),
+                          ),
                         ),
                       ),
                     ),
@@ -362,8 +397,10 @@ class PlayerStage extends StatelessWidget {
               ),
             ),
           ),
-        ),
-        if (videoSettingsOpen && controller.hasMedia && controller.isVideo)
+        if (showFullControls &&
+            videoSettingsOpen &&
+            controller.hasMedia &&
+            controller.isVideo)
           Positioned.fill(
             child: FloatingVideoSettings(
               key: const ValueKey('floating-video-settings'),
@@ -374,7 +411,47 @@ class PlayerStage extends StatelessWidget {
               onOpenFullSettings: onOpenFullSettings,
             ),
           ),
+        if (miniProgress > 0.35 && controller.hasMedia && controller.isVideo)
+          Positioned.fill(
+            child: Opacity(
+              opacity: ((miniProgress - 0.35) * 1.54).clamp(0.0, 1.0),
+              child: MiniPlayerOverlay(
+                controller: controller,
+                onExpand: onExpandFromMini ?? () {},
+                onDismiss: onDismissMini ?? () {},
+              ),
+            ),
+          ),
       ],
     );
+
+    if (miniProgress > 0.01) {
+      final borderRadius = BorderRadius.circular(
+        AppLayout.dockedMiniVideoRadius * miniProgress,
+      );
+      return DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: borderRadius,
+          border: Border.all(
+            color: context.palette.border.withValues(
+              alpha: miniProgress.clamp(0.0, 1.0),
+            ),
+            width: 1,
+          ),
+          boxShadow: miniProgress > 0.1 && miniProgress < 0.95
+              ? [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.45 * miniProgress),
+                    blurRadius: 16 * miniProgress,
+                    offset: Offset(0, 4 * miniProgress),
+                  ),
+                ]
+              : null,
+        ),
+        child: ClipRRect(borderRadius: borderRadius, child: stageBody),
+      );
+    }
+
+    return stageBody;
   }
 }

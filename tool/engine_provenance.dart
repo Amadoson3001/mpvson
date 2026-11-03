@@ -393,7 +393,9 @@ Future<bool> _verify(String root) async {
   final File bundled = File(p.join(root, _bundleRelative, member));
   if (bundled.existsSync()) {
     final String actual = _sha256OfFile(bundled.path);
-    final String? strippedSha = record['strippedMemberSha256'] as String?;
+    final String? strippedSha = (record['strippedMemberSha256'] ??
+            (record['artifact'] as Map<String, Object?>?)?['strippedMemberSha256'])
+        as String?;
     if (actual != memberSha && actual != strippedSha) {
       problems.add(
         'The built bundle ships the wrong engine: ${bundled.path} has SHA-256 $actual '

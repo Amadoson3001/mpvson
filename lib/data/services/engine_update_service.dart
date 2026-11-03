@@ -396,6 +396,23 @@ class EngineUpdateService extends ChangeNotifier {
           _stableReleaseVersion = stableRelease.version;
           final package = stableRelease.engineRelease;
           if (package == null) {
+            try {
+              final currentParsed =
+                  app_version.SemanticVersion.parse(_currentVersion);
+              final stableParsed =
+                  app_version.SemanticVersion.parse(stableRelease.version);
+              if (currentParsed.major == stableParsed.major &&
+                  currentParsed.minor == stableParsed.minor &&
+                  currentParsed.patch == stableParsed.patch) {
+                _setState(
+                  status: 'upToDate',
+                  progress: 0,
+                  error: null,
+                  clearRelease: true,
+                );
+                return;
+              }
+            } catch (_) {}
             _setState(
               status: 'stableUnavailable',
               progress: 0,

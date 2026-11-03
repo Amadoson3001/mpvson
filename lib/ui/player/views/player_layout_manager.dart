@@ -36,6 +36,7 @@ class PlayerLayoutManager with WindowListener, ChangeNotifier {
     this.onMiniPlayerChanged,
     this.playerFocus,
     this.libraryRepository,
+    this.isInAppMiniPlayerActive,
   });
 
   PlayerController controller;
@@ -52,6 +53,7 @@ class PlayerLayoutManager with WindowListener, ChangeNotifier {
   final void Function(bool isMiniPlayer)? onMiniPlayerChanged;
   FocusNode? playerFocus;
   final MediaLibraryRepository? libraryRepository;
+  bool Function()? isInAppMiniPlayerActive;
 
   bool _isFullscreen = false;
   bool _miniPlayer = false;
@@ -238,8 +240,10 @@ class PlayerLayoutManager with WindowListener, ChangeNotifier {
   }
 
   void syncVideoVisibilityForLibrary() {
+    final miniActive = isInAppMiniPlayerActive?.call() ?? true;
+    final inLibraryWithMini = isShowingLibrary() && miniActive;
     final visible =
-        !isShowingLibrary() &&
+        (!isShowingLibrary() || inLibraryWithMini) &&
         !_minimized &&
         controller.hasMedia &&
         controller.isVideo;

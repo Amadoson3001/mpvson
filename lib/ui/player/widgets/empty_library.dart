@@ -4,6 +4,7 @@ import '../../../domain/models/media_entry.dart';
 import '../../../utils/format.dart';
 import '../../core/app_motion.dart';
 import '../../core/app_theme.dart';
+import '../../core/components/app_popup_menu_item.dart';
 import 'screen_play_mark.dart';
 
 class EmptyLibrary extends StatelessWidget {
@@ -13,6 +14,7 @@ class EmptyLibrary extends StatelessWidget {
     required this.onOpenFiles,
     required this.onOpenUrl,
     required this.onOpenRecent,
+    this.onRemoveRecent,
     this.error,
     this.isDragging = false,
     this.onOpenLibrary,
@@ -22,6 +24,7 @@ class EmptyLibrary extends StatelessWidget {
   final VoidCallback onOpenFiles;
   final VoidCallback onOpenUrl;
   final ValueChanged<MediaEntry> onOpenRecent;
+  final ValueChanged<MediaEntry>? onRemoveRecent;
   final String? error;
   final bool isDragging;
   final VoidCallback? onOpenLibrary;
@@ -73,6 +76,7 @@ class EmptyLibrary extends StatelessWidget {
                             _RecentSection(
                               entries: recent.take(4).toList(growable: false),
                               onOpenRecent: onOpenRecent,
+                              onRemoveRecent: onRemoveRecent,
                             ),
                           ],
                         ],
@@ -225,10 +229,15 @@ class _HeroCopy extends StatelessWidget {
 }
 
 class _RecentSection extends StatelessWidget {
-  const _RecentSection({required this.entries, required this.onOpenRecent});
+  const _RecentSection({
+    required this.entries,
+    required this.onOpenRecent,
+    this.onRemoveRecent,
+  });
 
   final List<MediaEntry> entries;
   final ValueChanged<MediaEntry> onOpenRecent;
+  final ValueChanged<MediaEntry>? onRemoveRecent;
 
   @override
   Widget build(BuildContext context) {
@@ -255,6 +264,9 @@ class _RecentSection extends StatelessWidget {
             key: ValueKey(entries[index].id),
             entry: entries[index],
             onTap: () => onOpenRecent(entries[index]),
+            onRemove: onRemoveRecent != null
+                ? () => onRemoveRecent!(entries[index])
+                : null,
           ),
         ],
       ],
@@ -263,10 +275,16 @@ class _RecentSection extends StatelessWidget {
 }
 
 class _RecentEntry extends StatefulWidget {
-  const _RecentEntry({super.key, required this.entry, required this.onTap});
+  const _RecentEntry({
+    super.key,
+    required this.entry,
+    required this.onTap,
+    this.onRemove,
+  });
 
   final MediaEntry entry;
   final VoidCallback onTap;
+  final VoidCallback? onRemove;
 
   @override
   State<_RecentEntry> createState() => _RecentEntryState();
@@ -275,6 +293,47 @@ class _RecentEntry extends StatefulWidget {
 class _RecentEntryState extends State<_RecentEntry> {
   bool _hasFocus = false;
   bool _isHovered = false;
+
+  Future<void> _showContextMenu(BuildContext context, Offset position) async {
+    final entry = widget.entry;
+    final selected = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        position.dx,
+        position.dy,
+        position.dx + 1,
+        position.dy + 1,
+      ),
+      color: context.palette.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppRadii.control),
+        side: BorderSide(color: context.palette.border),
+      ),
+      items: [
+        AppPopupMenuItem<String>(
+          value: 'play',
+          icon: Icons.play_arrow_rounded,
+          iconColor: Theme.of(context).colorScheme.primary,
+          text: entry.position > Duration.zero ? 'Resume' : 'Play',
+        ),
+        if (widget.onRemove != null) ...[
+          const PopupMenuDivider(height: 1),
+          AppPopupMenuItem<String>(
+            value: 'remove',
+            icon: Icons.delete_outline_rounded,
+            iconColor: context.palette.danger,
+            text: 'Remove from recently played',
+          ),
+        ],
+      ],
+    );
+    if (!mounted || selected == null) return;
+    if (selected == 'play') {
+      widget.onTap();
+    } else if (selected == 'remove') {
+      widget.onRemove?.call();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -297,6 +356,8 @@ class _RecentEntryState extends State<_RecentEntry> {
       color: Colors.transparent,
       child: InkWell(
         onTap: widget.onTap,
+        onSecondaryTapDown: (details) =>
+            _showContextMenu(context, details.globalPosition),
         onFocusChange: (value) {
           if (_hasFocus != value) setState(() => _hasFocus = value);
         },
@@ -361,7 +422,24 @@ class _RecentEntryState extends State<_RecentEntry> {
                 ),
               ),
               const SizedBox(width: 8),
-              const Icon(Icons.chevron_right_rounded, size: 19),
+              if (widget.onRemove != null && (_isHovered || _hasFocus))
+                Tooltip(
+                  message: 'Remove from recently played',
+                  child: IconButton(
+                    icon: const Icon(Icons.close_rounded, size: 16),
+                    onPressed: widget.onRemove,
+                    style: IconButton.styleFrom(
+                      foregroundColor: context.palette.secondaryText,
+                      hoverColor: context.palette.danger.withValues(
+                        alpha: 0.12,
+                      ),
+                      minimumSize: const Size(28, 28),
+                      padding: EdgeInsets.zero,
+                    ),
+                  ),
+                )
+              else
+                const Icon(Icons.chevron_right_rounded, size: 19),
             ],
           ),
         ),

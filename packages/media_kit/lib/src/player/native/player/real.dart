@@ -2416,10 +2416,11 @@ class NativePlayer extends PlatformPlayer {
         // https://github.com/mpv-player/mpv/commit/703f1588803eaa428e09c0e5547b26c0fff476a7
         // https://github.com/mpv-android/mpv-android/commit/9e5c3d8a630290fc41edb8b03aeafa3bc4c45955
         'scale': 'bilinear',
+        'cscale': 'bilinear',
         'dscale': 'bilinear',
         'dither': 'no',
         'cache': 'yes',
-        'cache-on-disk': 'yes',
+        'cache-on-disk': 'no',
         'hr-seek': 'yes',
         'hr-seek-framedrop': 'no',
         'correct-downscaling': 'no',

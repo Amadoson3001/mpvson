@@ -244,6 +244,7 @@ class MediaKitPlaybackService
              configuration: const PlayerConfiguration(
                title: 'Mpvson',
                libass: true,
+               bufferSize: 16 * 1024 * 1024,
              ),
            ),
        _nativeEvents = nativeEvents,
@@ -357,10 +358,14 @@ class MediaKitPlaybackService
   bool _engineVersionLoaded = false;
   VideoOutputPolicy _videoOutputPolicy = const VideoOutputPolicy();
   Timer? _resizeDebounceTimer;
+  Timer? _hiddenVideoSuspendTimer;
+  bool _videoTrackSuspended = false;
   int? _lastAppliedWidth;
   int? _lastAppliedHeight;
   bool? _lastAppliedVisibility;
   bool _pendingForceResize = false;
+
+  static const Duration _hiddenVideoSuspendDelay = Duration(seconds: 4);
 
   static String _resolveHwdec(bool preferHardwareDecoding) {
     if (!preferHardwareDecoding) return 'no';
@@ -393,6 +398,7 @@ class MediaKitPlaybackService
     unawaited(
       controller.setRenderVisibility(visible).catchError((Object _) {}),
     );
+    _syncVideoDecoding(visible);
     _lastAppliedWidth = null;
     _lastAppliedHeight = null;
     _scheduleResize(force: true);
@@ -420,7 +426,51 @@ class MediaKitPlaybackService
       _lastAppliedVisibility = policy.visible;
       unawaited(controller.setRenderVisibility(policy.visible));
     }
+    _syncVideoDecoding(policy.visible);
     _scheduleResize();
+  }
+
+  /// Stops decoding the video track while its output is hidden.
+  ///
+  /// The texture keeps its last frame and the track list is unchanged, so
+  /// restoring the track only resumes rendering; no layout or texture swap
+  /// happens. A grace period avoids churn during quick library/minimize hops.
+  void _syncVideoDecoding(bool visible) {
+    if (_disposed) return;
+    if (visible) {
+      _hiddenVideoSuspendTimer?.cancel();
+      _hiddenVideoSuspendTimer = null;
+      if (_videoTrackSuspended) {
+        _videoTrackSuspended = false;
+        unawaited(_setVideoTrackEnabled(true));
+      }
+      return;
+    }
+    if (_videoTrackSuspended || _hiddenVideoSuspendTimer != null) return;
+    _hiddenVideoSuspendTimer = Timer(_hiddenVideoSuspendDelay, () {
+      _hiddenVideoSuspendTimer = null;
+      if (_disposed || _videoOutputPolicy.visible) return;
+      _videoTrackSuspended = true;
+      unawaited(_setVideoTrackEnabled(false));
+    });
+  }
+
+  Future<void> _setVideoTrackEnabled(bool enabled) async {
+    final native = _player.platform;
+    if (native is! NativePlayer) return;
+    try {
+      await native.setProperty(
+        'vid',
+        enabled ? 'auto' : 'no',
+        waitForInitialization: false,
+      );
+      _diagnostics?.record(
+        'playback.video_track',
+        message: enabled ? 'resumed' : 'suspended',
+      );
+    } on Object catch (error) {
+      _diagnostics?.record('playback.video_track', error: error);
+    }
   }
 
   void _scheduleResize({bool force = false}) {
@@ -549,7 +599,10 @@ class MediaKitPlaybackService
                   .timeout(const Duration(seconds: 3)))
               .trim();
       if (version.isNotEmpty && !_disposed) {
-        _engineVersion = 'libmpv $version';
+        final cleanVersion = version
+            .replaceAll(RegExp(r'-dev[-+.0-9a-zA-Z]*'), '')
+            .trim();
+        _engineVersion = 'libmpv $cleanVersion';
         _diagnostics?.record('engine.version', message: _engineVersion);
       }
     } on Object {
@@ -684,6 +737,7 @@ class MediaKitPlaybackService
     }
     _scheduleResize(force: true);
     await _applyBufferingPolicy(isNetwork: MediaEntry.isNetworkUrl(path));
+    _syncVideoDecoding(_videoOutputPolicy.visible);
     await _player.open(Media(path), play: play);
     if (!_identity.observationActive && !_disposed) {
       _emit(_stamped(_state.copyWith(isBuffering: _player.state.buffering)));
@@ -692,6 +746,8 @@ class MediaKitPlaybackService
 
   @override
   Future<void> stop() async {
+    _hiddenVideoSuspendTimer?.cancel();
+    _hiddenVideoSuspendTimer = null;
     final boundary = _identity.beginStop();
     _diagnostics?.record('playback.stop', message: 'boundary $boundary');
     _emit(
@@ -879,13 +935,13 @@ class MediaKitPlaybackService
       },
       PlaybackQualityPreset.balanced => const <String, String>{
         'scale': 'lanczos',
-        'cscale': 'lanczos',
+        'cscale': 'bilinear',
         'dscale': 'hermite',
         'deband': 'no',
       },
       PlaybackQualityPreset.quality => const <String, String>{
         'scale': 'ewa_lanczossharp',
-        'cscale': 'ewa_lanczossharp',
+        'cscale': 'bilinear',
         'dscale': 'mitchell',
         'deband': 'yes',
       },
@@ -976,6 +1032,8 @@ class MediaKitPlaybackService
     }
     _resizeDebounceTimer?.cancel();
     _resizeDebounceTimer = null;
+    _hiddenVideoSuspendTimer?.cancel();
+    _hiddenVideoSuspendTimer = null;
     for (final subscription in _subscriptions) {
       try {
         await subscription.cancel();

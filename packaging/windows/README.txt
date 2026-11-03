@@ -28,5 +28,5 @@ caches native bindings. A queued engine change can be discarded before
 restarting. The app-package manifest may remain unconfigured even while the
 default engine source is available.
 
-Bundled playback engine: libmpv mpv v0.41.0-dev-gfffe7a23a, pinned in
+Bundled playback engine: libmpv mpv v0.41.0, pinned in
 engine-provenance.json and verified by SHA-256 before it is bundled.

@@ -1,6 +1,7 @@
 {
   "schemaVersion": 1,
   "purpose": "Pinned provenance for the libmpv engine bundled with the Windows build. The Windows CMake configure step reads this file, downloads or reuses the exact artifact, verifies every digest, and bundles the verified libmpv-2.dll instead of the 2023 build shipped by media_kit_libs_windows_video.",
+  "strippedMemberSha256": "f478b210b57a2d8590325c7a717d3fbe14ccbe7fe7495871b3df22c816075c07",
   "engine": {
     "module": "libmpv-2.dll",
     "version": "v0.41.0-dev-g488fec078",
@@ -30,6 +31,7 @@
     "licenseMember": "LICENSE.GPL",
     "memberSize": 157952512,
     "memberSha256": "8507d205957df1fd3535c9e23864d8e23c28ed57e17004f08696c40ef21f8943",
+    "strippedMemberSha256": "f478b210b57a2d8590325c7a717d3fbe14ccbe7fe7495871b3df22c816075c07",
     "licenseSize": 17984,
     "licenseSha256": "edaef632cbb643e4e7a221717a6c441a4c1a7c918e6e4d56debc3d8739b233f6"
   },

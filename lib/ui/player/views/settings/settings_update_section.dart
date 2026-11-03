@@ -161,7 +161,7 @@ class AboutSettingsSection extends StatelessWidget {
         engineUpdates.usesOfficialMpvSource
             ? engineUpdates.channel == EngineUpdateChannel.stable
                   ? 'Stable engine update available'
-                  : 'mpv development build available'
+                  : 'Engine update available'
             : 'Engine update available',
       'stableUnavailable' => 'Stable engine build unavailable',
       'newerInstalled' => 'Installed engine is newer',

@@ -20,7 +20,7 @@ final class MpvGithubRelease {
   );
 
   static const String stableSourceLabel = 'Official mpv stable releases';
-  static const String sourceLabel = 'Official mpv development builds';
+  static const String sourceLabel = 'Official mpv engine releases';
   static const String _expectedHtmlUrl =
       'https://github.com/mpv-player/mpv/releases/tag/git-release';
   static const String _stableReleasePagePrefix =

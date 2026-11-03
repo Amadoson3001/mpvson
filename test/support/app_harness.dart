@@ -42,8 +42,10 @@ class FakePlaybackService implements PlaybackService {
   @override
   String get engineVersion => 'test-engine';
 
+  VideoOutputPolicy _videoOutputPolicy = const VideoOutputPolicy();
+
   @override
-  VideoOutputPolicy get videoOutputPolicy => const VideoOutputPolicy();
+  VideoOutputPolicy get videoOutputPolicy => _videoOutputPolicy;
 
   void emit(PlaybackSnapshot next) {
     _state = next;
@@ -51,7 +53,9 @@ class FakePlaybackService implements PlaybackService {
   }
 
   @override
-  void applyVideoOutputPolicy(VideoOutputPolicy policy) {}
+  void applyVideoOutputPolicy(VideoOutputPolicy policy) {
+    _videoOutputPolicy = policy;
+  }
   @override
   Future<void> prepare() async {}
   @override
