@@ -9,6 +9,7 @@ project(runner LANGUAGES CXX)
 add_executable(${BINARY_NAME} WIN32
   "engine_bridge.cpp"
   "flutter_window.cpp"
+  "gpu_info.cpp"
   "main.cpp"
   "power_management.cpp"
   "single_instance.cpp"
@@ -38,6 +39,8 @@ target_compile_definitions(${BINARY_NAME} PRIVATE "NOMINMAX")
 # dependencies here.
 target_link_libraries(${BINARY_NAME} PRIVATE flutter flutter_wrapper_app)
 target_link_libraries(${BINARY_NAME} PRIVATE "dwmapi.lib")
+target_link_libraries(${BINARY_NAME} PRIVATE "d3d11.lib")
+target_link_libraries(${BINARY_NAME} PRIVATE "dxgi.lib")
 target_link_libraries(${BINARY_NAME} PRIVATE "windowsapp.lib")
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 

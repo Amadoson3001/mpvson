@@ -80,6 +80,9 @@ class VideoOutput {
 
   void SetVisibility(bool visible);
 
+  // Flushes and releases video-device memory on the render worker.
+  void TrimMemory();
+
  private:
   void NotifyRender();
 

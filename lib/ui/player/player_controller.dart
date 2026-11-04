@@ -13,6 +13,7 @@ import '../../data/services/playback_service.dart';
 import '../../data/services/seek_preview_service.dart';
 import '../../data/services/thumbnail_service.dart';
 import '../../domain/models/control_density.dart';
+import '../../domain/models/graphics_settings.dart';
 import '../../domain/models/media_catalog.dart';
 import '../../domain/models/media_entry.dart';
 import '../../domain/models/media_kind.dart';
@@ -496,6 +497,7 @@ class PlayerController extends ChangeNotifier {
   static const Duration _loadTimeout = Duration(seconds: 45);
 
   late final PlaybackService _playback;
+  bool _trimOnMinimize = GraphicsSettings.defaults.trimOnMinimize;
   late final SessionRepository _sessions;
   late final ThumbnailService? _thumbnails;
   late final SeekPreviewService _seekPreview;
@@ -687,6 +689,19 @@ class PlayerController extends ChangeNotifier {
     _playback.applyVideoOutputPolicy(policy);
   }
 
+  bool get trimOnMinimize => _trimOnMinimize;
+
+  void applyGraphicsSettings(GraphicsSettings settings) {
+    final normalized = settings.normalized();
+    _trimOnMinimize = normalized.trimOnMinimize;
+    final playback = _playback;
+    if (playback is GraphicsSettingsCapability) {
+      (playback as GraphicsSettingsCapability).applyGraphicsSettings(
+        normalized,
+      );
+    }
+  }
+
   /// Read-only queue view, rebuilt only when its structure changes.
   List<MediaEntry> _snapshotQueue = <MediaEntry>[];
   List<MediaEntry> _unmodifiableQueue = const <MediaEntry>[];
@@ -780,9 +795,15 @@ class PlayerController extends ChangeNotifier {
   ThumbnailService? get thumbnails => _thumbnails;
 
   /// Trims disposable thumbnail cache and releases inactive working set.
-  void trimMemory() {
+  void trimMemory({bool includeVideo = false}) {
     _thumbnails?.trimMemory();
     MemoryTrimmer.trimWorkingSet();
+    if (includeVideo) {
+      final playback = _playback;
+      if (playback is VideoMemoryCapability) {
+        unawaited((playback as VideoMemoryCapability).trimVideoMemory());
+      }
+    }
   }
 
   /// Loads artwork independently of the active playback engine and position.

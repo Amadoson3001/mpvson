@@ -47,6 +47,15 @@ void VideoOutputManager::SetVisibility(int64_t handle, bool visible) {
   });
 }
 
+void VideoOutputManager::TrimMemory() {
+  manager_pool_->Post([this]() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (auto& entry : video_outputs_) {
+      entry.second->TrimMemory();
+    }
+  });
+}
+
 void VideoOutputManager::Dispose(int64_t handle) {
   manager_pool_->Post([=]() {
     std::lock_guard<std::mutex> lock(mutex_);

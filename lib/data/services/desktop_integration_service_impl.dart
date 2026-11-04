@@ -237,6 +237,17 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
   }
 
   @override
+  Future<bool?> isOnAcPower() async {
+    try {
+      return await powerChannel.invokeMethod<bool>('isOnAcPower');
+    } on MissingPluginException {
+      return null;
+    } on PlatformException {
+      return null;
+    }
+  }
+
+  @override
   Future<void> openDefaultAppsSettings() async {
     try {
       final result = await mediaControlsChannel.invokeMethod<bool>(

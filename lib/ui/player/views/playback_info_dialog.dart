@@ -1,10 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../../data/services/playback_statistics.dart';
 import '../../core/app_theme.dart';
 import '../../core/components/app_dialog.dart';
 
-/// Refresh is explicit so inspecting playback never starts a polling workload.
+/// Refreshes once per second so GPU and frame-drop counters stay current
+/// without polling while the dialog is closed.
 class PlaybackInfoDialog extends StatefulWidget {
   const PlaybackInfoDialog({super.key, required this.readStatistics});
 
@@ -17,32 +20,53 @@ class PlaybackInfoDialog extends StatefulWidget {
 class _PlaybackInfoDialogState extends State<PlaybackInfoDialog> {
   PlaybackStatistics? _statistics;
   bool _busy = false;
+  bool _inFlight = false;
   String? _error;
+  Timer? _pollTimer;
 
   @override
   void initState() {
     super.initState();
     _refresh();
+    _pollTimer = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => _refresh(silent: true),
+    );
   }
 
-  Future<void> _refresh() async {
-    if (_busy) return;
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
+  @override
+  void dispose() {
+    _pollTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _refresh({bool silent = false}) async {
+    if (_inFlight) return;
+    _inFlight = true;
+    if (!silent) {
+      setState(() {
+        _busy = true;
+        _error = null;
+      });
+    }
     try {
       final statistics = await widget.readStatistics();
-      if (mounted) setState(() => _statistics = statistics);
-    } on Object {
       if (mounted) {
+        setState(() {
+          _statistics = statistics;
+          _error = null;
+        });
+      }
+    } on Object {
+      if (mounted && !silent) {
         setState(
           () => _error =
               'Playback information could not be read. Try refreshing after opening a video.',
         );
       }
     } finally {
-      if (mounted) setState(() => _busy = false);
+      _inFlight = false;
+      if (mounted && !silent) setState(() => _busy = false);
     }
   }
 
@@ -58,7 +82,7 @@ class _PlaybackInfoDialogState extends State<PlaybackInfoDialog> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           const Text(
-            'Check the active decoder and dropped frames when playback stutters. Refresh to take another sample.',
+            'Check the active decoder, GPU memory, and dropped frames when playback stutters. Samples refresh once per second while this window is open.',
           ),
           const SizedBox(height: AppSpace.md),
           if (_busy)
@@ -102,7 +126,7 @@ class _PlaybackInfoDialogState extends State<PlaybackInfoDialog> {
               borderRadius: BorderRadius.circular(AppRadii.control),
             ),
           ),
-          onPressed: _busy ? null : _refresh,
+          onPressed: _busy ? null : () => _refresh(),
           child: const Text('Refresh'),
         ),
         TextButton(

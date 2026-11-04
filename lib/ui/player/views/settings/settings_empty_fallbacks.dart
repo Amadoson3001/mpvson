@@ -37,6 +37,8 @@ class EmptyDesktopIntegrationService extends DesktopIntegrationService {
     required bool isVideoPlaying,
   }) async {}
   @override
+  Future<bool?> isOnAcPower() async => null;
+  @override
   Future<void> openDefaultAppsSettings() async {}
 }
 

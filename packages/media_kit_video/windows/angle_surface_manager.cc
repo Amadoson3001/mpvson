@@ -7,6 +7,8 @@
 // LICENSE file.
 #include "angle_surface_manager.h"
 
+#include <dxgi1_3.h>
+
 #include <iostream>
 
 #pragma comment(lib, "dxgi.lib")
@@ -59,6 +61,21 @@ void ANGLESurfaceManager::Read() {
   if (d3d_11_device_context_ != nullptr) {
     d3d_11_device_context_->CopyResource(d3d_11_texture_2D_.Get(),
                                          internal_d3d_11_texture_2D_.Get());
+    d3d_11_device_context_->Flush();
+  }
+}
+
+void ANGLESurfaceManager::Trim() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (d3d_11_device_ != nullptr) {
+    Microsoft::WRL::ComPtr<IDXGIDevice3> dxgi_device;
+    if (SUCCEEDED(d3d_11_device_->QueryInterface(
+            IID_PPV_ARGS(dxgi_device.GetAddressOf()))) &&
+        dxgi_device) {
+      dxgi_device->Trim();
+    }
+  }
+  if (d3d_11_device_context_ != nullptr) {
     d3d_11_device_context_->Flush();
   }
 }

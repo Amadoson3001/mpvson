@@ -18,6 +18,7 @@ import 'data/services/desktop_integration_service.dart';
 import 'data/services/desktop_integration_service_impl.dart';
 import 'data/services/diagnostic_log.dart';
 import 'data/services/engine_update_service.dart';
+import 'data/services/gpu_info_service.dart';
 import 'data/services/media_probe_service.dart';
 import 'data/services/media_probe_service_impl.dart';
 import 'data/services/library_playback_tracker.dart';
@@ -25,6 +26,7 @@ import 'data/services/open_request_coordinator.dart';
 import 'data/services/playback_service.dart';
 import 'data/services/thumbnail_service.dart';
 import 'data/services/update_service.dart';
+import 'domain/models/graphics_settings.dart';
 import 'domain/models/open_request.dart';
 import 'domain/updates/bundled_engine.dart';
 import 'domain/updates/engine_selection.dart';
@@ -234,6 +236,8 @@ Future<void> main(List<String> arguments) async {
 
   final appPreferences = AppPreferencesRepository();
   await appPreferences.load();
+  final graphicsSettings = appPreferences.graphicsSettings;
+  readyController.applyGraphicsSettings(graphicsSettings);
 
   final mediaProbeService = MediaProbeServiceImpl();
   final supportDir = await getApplicationSupportDirectory();
@@ -296,6 +300,18 @@ Future<void> main(List<String> arguments) async {
     mediaProbeService: mediaProbeService,
     libraryRepository: libraryRepository,
   );
+  if (graphicsSettings.preferredGpu == GpuPreferenceMode.automatic) {
+    unawaited(
+      desktopIntegration.isOnAcPower().then((onAcPower) {
+        diagnostics.record(
+          'gpu.preference',
+          message: graphicsSettings
+              .resolvePreferredGpu(onAcPower: onAcPower)
+              .name,
+        );
+      }),
+    );
+  }
   unawaited(
     _initializeBackgroundService('desktop integration', () async {
       await desktopIntegration.initialize();
@@ -333,6 +349,9 @@ Future<void> main(List<String> arguments) async {
   );
   await windowManager.show();
   await windowManager.focus();
+
+  // The adapter probe creates a D3D11 device; keep it off the startup path.
+  unawaited(GpuInfoService().recordSnapshot(diagnostics));
 
   // Engine staging confirmation, native event observation, and update initialization
   // run concurrently without delaying the initial UI frame.

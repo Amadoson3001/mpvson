@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
+import '../../domain/models/graphics_settings.dart';
 import '../../domain/models/media_catalog.dart';
 import '../../domain/models/media_entry.dart';
 import '../../domain/models/media_kind.dart';
@@ -211,6 +213,16 @@ abstract interface class PlaybackSettingsCapability {
   );
 }
 
+/// Runtime graphics controls that require native playback support.
+abstract interface class GraphicsSettingsCapability {
+  void applyGraphicsSettings(GraphicsSettings settings);
+}
+
+/// Best-effort release of video-output device memory.
+abstract interface class VideoMemoryCapability {
+  Future<void> trimVideoMemory();
+}
+
 /// Reports which requested mpv properties matched after the write completed.
 class PlaybackSettingsApplyResult {
   const PlaybackSettingsApplyResult({
@@ -232,7 +244,11 @@ class PlaybackSettingsApplyResult {
 
 /// Production implementation backed by media_kit and its bundled libmpv.
 class MediaKitPlaybackService
-    implements PlaybackService, PlaybackSettingsCapability {
+    implements
+        PlaybackService,
+        PlaybackSettingsCapability,
+        GraphicsSettingsCapability,
+        VideoMemoryCapability {
   MediaKitPlaybackService({
     Player? player,
     VideoController? videoController,
@@ -335,6 +351,8 @@ class MediaKitPlaybackService
   DiagnosticSink? _diagnostics;
   VideoController? _videoController;
   bool _preferHardwareDecoding = true;
+  VideoMemoryMode _videoMemoryMode = VideoMemoryMode.zeroCopy;
+  bool _limitDemuxerCache = GraphicsSettings.defaults.limitDemuxerCache;
   final StreamController<PlaybackSnapshot> _stateController =
       StreamController<PlaybackSnapshot>.broadcast(sync: true);
   late final SnapshotEmitter<PlaybackSnapshot> _emitter =
@@ -348,6 +366,7 @@ class MediaKitPlaybackService
   PlaybackSettings _appliedPlaybackSettings = PlaybackSettings.defaults;
   bool? _appliedBufferingPolicyNetwork;
   bool? _appliedBufferingPolicyLowSpec;
+  bool? _appliedBufferingPolicyLimitCache;
   final PlaybackSourceIdentity _identity = PlaybackSourceIdentity();
   StreamSubscription<NativeMediaEvent>? _nativeSubscription;
   Future<void>? _prepareFuture;
@@ -366,10 +385,53 @@ class MediaKitPlaybackService
   bool _pendingForceResize = false;
 
   static const Duration _hiddenVideoSuspendDelay = Duration(seconds: 4);
+  static const MethodChannel _videoChannel = MethodChannel(
+    'com.alexmercerind/media_kit_video',
+  );
 
-  static String _resolveHwdec(bool preferHardwareDecoding) {
-    if (!preferHardwareDecoding) return 'no';
-    return Platform.isWindows ? 'auto-safe' : 'auto';
+  String _resolveHwdec(bool preferHardwareDecoding) => resolveHwdec(
+    preferHardwareDecoding: preferHardwareDecoding,
+    mode: _videoMemoryMode,
+    isWindows: Platform.isWindows,
+  );
+
+  @override
+  void applyGraphicsSettings(GraphicsSettings settings) {
+    final normalized = settings.normalized();
+    final modeChanged = _videoMemoryMode != normalized.videoMemoryMode;
+    final limitChanged = _limitDemuxerCache != normalized.limitDemuxerCache;
+    _videoMemoryMode = normalized.videoMemoryMode;
+    _limitDemuxerCache = normalized.limitDemuxerCache;
+
+    if (modeChanged) {
+      _confirmedPlaybackProperties.remove('hwdec');
+      if (_videoController != null) unawaited(_pushRuntimeHwdec());
+    }
+    final isNetwork = _appliedBufferingPolicyNetwork;
+    if (limitChanged && isNetwork != null) {
+      unawaited(_applyBufferingPolicy(isNetwork: isNetwork, force: true));
+    }
+  }
+
+  Future<void> _pushRuntimeHwdec() async {
+    final native = _player.platform;
+    if (native is! NativePlayer) return;
+    final value = _resolveHwdec(_preferHardwareDecoding);
+    try {
+      await native
+          .setProperty('hwdec', value, waitForInitialization: false)
+          .timeout(const Duration(seconds: 2));
+      final actual = await native
+          .getProperty('hwdec', waitForInitialization: false)
+          .timeout(const Duration(seconds: 2));
+      if (_propertyMatches(actual, value)) {
+        _confirmedPlaybackProperties['hwdec'] = value;
+      } else {
+        _confirmedPlaybackProperties.remove('hwdec');
+      }
+    } on Object {
+      _confirmedPlaybackProperties.remove('hwdec');
+    }
   }
 
   @override
@@ -428,6 +490,17 @@ class MediaKitPlaybackService
     }
     _syncVideoDecoding(policy.visible);
     _scheduleResize();
+  }
+
+  @override
+  Future<void> trimVideoMemory() async {
+    try {
+      await _videoChannel.invokeMethod<void>('VideoOutputManager.TrimMemory');
+    } on MissingPluginException {
+      // The channel is Windows-only; the working-set trim still applies.
+    } on PlatformException {
+      // Best-effort: never block minimize or restore.
+    }
   }
 
   /// Stops decoding the video track while its output is hidden.
@@ -620,15 +693,16 @@ class MediaKitPlaybackService
     final lowSpec = _appliedPlaybackSettings.isLowSpecOrRamPreserved;
     if (!force &&
         _appliedBufferingPolicyNetwork == isNetwork &&
-        (!isNetwork || _appliedBufferingPolicyLowSpec == lowSpec)) {
+        _appliedBufferingPolicyLowSpec == lowSpec &&
+        _appliedBufferingPolicyLimitCache == _limitDemuxerCache) {
       return;
     }
     final nativePlayer = _player.platform;
     if (nativePlayer is! NativePlayer) return;
     try {
       if (!isNetwork) {
-        // Ordinary local files: disable network-style caching, use 1s read-ahead,
-        // and cap forward/backward buffers at 8/2 MiB.
+        // Ordinary local files: disable network-style caching and use 1s
+        // read-ahead. Byte caps come from the graphics settings.
         await nativePlayer
             .setProperty('cache', 'no', waitForInitialization: false)
             .timeout(const Duration(seconds: 1));
@@ -642,31 +716,8 @@ class MediaKitPlaybackService
               waitForInitialization: false,
             )
             .timeout(const Duration(seconds: 1));
-        await nativePlayer
-            .setProperty(
-              'demuxer-max-bytes',
-              (8 * 1024 * 1024).toString(),
-              waitForInitialization: false,
-            )
-            .timeout(const Duration(seconds: 1));
-        await nativePlayer
-            .setProperty(
-              'demuxer-max-back-bytes',
-              (2 * 1024 * 1024).toString(),
-              waitForInitialization: false,
-            )
-            .timeout(const Duration(seconds: 1));
       } else {
         // HTTP(S) and network paths: retain disk-backed caching.
-        // For low-spec profiles or when RAM preservation is enabled, cap network
-        // demuxer-max-bytes to 24 * 1024 * 1024 (24 MB) and set demuxer-max-back-bytes to 4 * 1024 * 1024.
-        final demuxerMaxBytes = lowSpec
-            ? (24 * 1024 * 1024).toString()
-            : (32 * 1024 * 1024).toString();
-        final demuxerMaxBackBytes = lowSpec
-            ? (4 * 1024 * 1024).toString()
-            : (32 * 1024 * 1024).toString();
-
         await nativePlayer
             .setProperty('cache', 'yes', waitForInitialization: false)
             .timeout(const Duration(seconds: 1));
@@ -683,23 +734,30 @@ class MediaKitPlaybackService
               waitForInitialization: false,
             )
             .timeout(const Duration(seconds: 1));
-        await nativePlayer
-            .setProperty(
-              'demuxer-max-bytes',
-              demuxerMaxBytes,
-              waitForInitialization: false,
-            )
-            .timeout(const Duration(seconds: 1));
-        await nativePlayer
-            .setProperty(
-              'demuxer-max-back-bytes',
-              demuxerMaxBackBytes,
-              waitForInitialization: false,
-            )
-            .timeout(const Duration(seconds: 1));
       }
+
+      final limits = demuxerCacheLimits(
+        limit: _limitDemuxerCache,
+        lowSpec: lowSpec,
+      );
+      await nativePlayer
+          .setProperty(
+            'demuxer-max-bytes',
+            limits.forwardBytes.toString(),
+            waitForInitialization: false,
+          )
+          .timeout(const Duration(seconds: 1));
+      await nativePlayer
+          .setProperty(
+            'demuxer-max-back-bytes',
+            limits.backBytes.toString(),
+            waitForInitialization: false,
+          )
+          .timeout(const Duration(seconds: 1));
+
       _appliedBufferingPolicyNetwork = isNetwork;
       _appliedBufferingPolicyLowSpec = lowSpec;
+      _appliedBufferingPolicyLimitCache = _limitDemuxerCache;
     } on Object catch (error) {
       _diagnostics?.record('playback.buffering_policy', error: error);
     }
@@ -895,9 +953,10 @@ class MediaKitPlaybackService
     final previousLowSpec = _appliedPlaybackSettings.isLowSpecOrRamPreserved;
     _appliedPlaybackSettings = settings;
     _preferHardwareDecoding = settings.preferHardwareDecoding;
-    if (_appliedBufferingPolicyNetwork == true &&
+    final appliedNetwork = _appliedBufferingPolicyNetwork;
+    if (appliedNetwork != null &&
         previousLowSpec != settings.isLowSpecOrRamPreserved) {
-      unawaited(_applyBufferingPolicy(isNetwork: true, force: true));
+      unawaited(_applyBufferingPolicy(isNetwork: appliedNetwork, force: true));
     }
     final controller = _videoController;
     if (controller != null) {

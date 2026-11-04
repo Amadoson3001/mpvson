@@ -245,7 +245,7 @@ void main() {
     );
   });
 
-  group('2.3 Network demuxer cache caps for low-spec and RAM preservation', () {
+  group('2.3 Demuxer cache caps for normal, low-spec and RAM preservation', () {
     test('isLowSpecOrRamPreserved property logic', () {
       expect(
         const PlaybackSettings(
@@ -270,7 +270,7 @@ void main() {
     });
 
     test(
-      'Network demuxer caps apply 24MB/4MB on low-spec and RAM preservation',
+      'Demuxer caps apply 128/48MB normally and 48/16MB in eco mode',
       () async {
         final dll = File(
           'build/windows/x64/runner/Release/libmpv-2.dll',
@@ -292,7 +292,7 @@ void main() {
           await native.setProperty('ao', 'null');
           await service.prepare();
 
-          // 1. Balanced profile, no ramPreservation -> 32MB / 32MB
+          // 1. Balanced profile, no ramPreservation -> 128MB / 48MB
           await service.applyPlaybackSettings(
             const PlaybackSettings(
               qualityPreset: PlaybackQualityPreset.balanced,
@@ -303,14 +303,14 @@ void main() {
 
           expect(
             await native.getProperty('demuxer-max-bytes'),
-            (32 * 1024 * 1024).toString(),
+            (128 * 1024 * 1024).toString(),
           );
           expect(
             await native.getProperty('demuxer-max-back-bytes'),
-            (32 * 1024 * 1024).toString(),
+            (48 * 1024 * 1024).toString(),
           );
 
-          // 2. RAM preservation enabled -> 24MB / 4MB
+          // 2. RAM preservation enabled -> 48MB / 16MB
           await service.applyPlaybackSettings(
             const PlaybackSettings(
               qualityPreset: PlaybackQualityPreset.balanced,
@@ -320,14 +320,14 @@ void main() {
 
           expect(
             await native.getProperty('demuxer-max-bytes'),
-            (24 * 1024 * 1024).toString(),
+            (48 * 1024 * 1024).toString(),
           );
           expect(
             await native.getProperty('demuxer-max-back-bytes'),
-            (4 * 1024 * 1024).toString(),
+            (16 * 1024 * 1024).toString(),
           );
 
-          // 3. Performance profile (low-spec) without ramPreservation -> 24MB / 4MB
+          // 3. Performance profile (low-spec) without ramPreservation -> 48MB / 16MB
           await service.applyPlaybackSettings(
             const PlaybackSettings(
               qualityPreset: PlaybackQualityPreset.performance,
@@ -337,11 +337,11 @@ void main() {
 
           expect(
             await native.getProperty('demuxer-max-bytes'),
-            (24 * 1024 * 1024).toString(),
+            (48 * 1024 * 1024).toString(),
           );
           expect(
             await native.getProperty('demuxer-max-back-bytes'),
-            (4 * 1024 * 1024).toString(),
+            (16 * 1024 * 1024).toString(),
           );
         } finally {
           await service.dispose();

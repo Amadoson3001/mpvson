@@ -7,6 +7,7 @@ import '../../../data/repositories/app_preferences_repository.dart';
 import '../../../data/repositories/media_library_repository.dart';
 import '../../../data/services/desktop_integration_service.dart';
 import '../../../data/services/engine_update_service.dart';
+import '../../../data/services/gpu_info_service.dart';
 import '../../../data/services/open_request_coordinator.dart';
 import '../../../data/services/playback_statistics.dart';
 import '../../../data/services/update_service.dart';
@@ -295,11 +296,13 @@ class PlayerMediaCoordinator {
 
   Future<void> showPlaybackInfo() async {
     onCloseContextMenu();
+    final gpuInfo = GpuInfoService();
     await withControlsVisible(
       () => showDialog<void>(
         context: context,
         builder: (_) => PlaybackInfoDialog(
-          readStatistics: () => readNativePlaybackStatistics(controller.player),
+          readStatistics: () =>
+              readNativePlaybackStatistics(controller.player, gpuInfo: gpuInfo),
         ),
       ),
     );

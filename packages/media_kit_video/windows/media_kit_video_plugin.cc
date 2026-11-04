@@ -209,6 +209,10 @@ void MediaKitVideoPlugin::HandleMethodCall(
     auto handle_value = static_cast<int64_t>(std::stoll(handle.c_str()));
     video_output_manager_->SetVisibility(handle_value, visible);
     result->Success(flutter::EncodableValue(std::monostate{}));
+  } else if (method_call.method_name().compare(
+                 "VideoOutputManager.TrimMemory") == 0) {
+    video_output_manager_->TrimMemory();
+    result->Success(flutter::EncodableValue(std::monostate{}));
   } else if (method_call.method_name().compare("Utils.EnterNativeFullscreen") ==
              0) {
     auto window =

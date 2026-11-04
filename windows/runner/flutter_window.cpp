@@ -44,6 +44,9 @@ bool FlutterWindow::OnCreate() {
   power_management_ = std::make_unique<PowerManagement>();
   power_management_->Initialize(messenger);
 
+  gpu_info_ = std::make_unique<GpuInfo>();
+  gpu_info_->Initialize(messenger);
+
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
@@ -79,6 +82,10 @@ void FlutterWindow::OnDestroy() {
   if (power_management_) {
     power_management_->CleanUp();
     power_management_ = nullptr;
+  }
+  if (gpu_info_) {
+    gpu_info_->CleanUp();
+    gpu_info_ = nullptr;
   }
   if (flutter_controller_) {
     flutter_controller_ = nullptr;

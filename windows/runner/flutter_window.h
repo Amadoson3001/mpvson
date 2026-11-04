@@ -9,6 +9,7 @@
 #include <memory>
 
 #include "engine_bridge.h"
+#include "gpu_info.h"
 #include "power_management.h"
 #include "single_instance.h"
 #include "system_media_transport.h"
@@ -41,6 +42,7 @@ class FlutterWindow : public Win32Window {
   std::unique_ptr<SingleInstance> single_instance_;
   std::unique_ptr<SystemMediaTransport> system_media_transport_;
   std::unique_ptr<PowerManagement> power_management_;
+  std::unique_ptr<GpuInfo> gpu_info_;
 };
 
 #endif  // RUNNER_FLUTTER_WINDOW_H_

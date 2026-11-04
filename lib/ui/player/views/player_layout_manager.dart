@@ -202,7 +202,7 @@ class PlayerLayoutManager with WindowListener, ChangeNotifier {
     );
     controller.seekPreview.suspend();
     controller.setDisplayUpdatesSuspended(true);
-    controller.trimMemory();
+    controller.trimMemory(includeVideo: controller.trimOnMinimize);
     unawaited(libraryRepository?.shrinkMemory());
     PaintingBinding.instance.imageCache.clear();
     PaintingBinding.instance.imageCache.clearLiveImages();

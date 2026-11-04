@@ -151,6 +151,13 @@ void PowerManagement::OnMethodCall(
       }
     }
     result->Success();
+  } else if (method == "isOnAcPower") {
+    SYSTEM_POWER_STATUS status = {};
+    if (::GetSystemPowerStatus(&status) != 0 && status.ACLineStatus != 255) {
+      result->Success(flutter::EncodableValue(status.ACLineStatus == 1));
+    } else {
+      result->Success(flutter::EncodableValue());
+    }
   } else if (method == "reset") {
     Reset();
     result->Success();

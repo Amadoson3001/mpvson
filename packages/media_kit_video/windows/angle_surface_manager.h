@@ -52,6 +52,10 @@ class ANGLESurfaceManager {
 
   void Read();
 
+  // Releases D3D residency and flushes pending GPU work. Serialized with
+  // |Draw| and |Read| by the same mutex.
+  void Trim();
+
   void MakeCurrent(bool value);
 
  private:

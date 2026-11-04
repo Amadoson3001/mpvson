@@ -188,6 +188,22 @@ void VideoOutput::SetVisibility(bool visible) {
   }
 }
 
+void VideoOutput::TrimMemory() {
+  // Teardown takes the same admission lock before its final worker barrier.
+  std::lock_guard<std::mutex> admission(render_admission_mutex_);
+  if (destroyed_) {
+    return;
+  }
+  thread_pool_ref_->Post([this]() {
+    if (destroyed_) {
+      return;
+    }
+    if (surface_manager_ != nullptr) {
+      surface_manager_->Trim();
+    }
+  });
+}
+
 void VideoOutput::NotifyRender() {
   // Teardown takes the same admission lock before its final worker barrier.
   // Every admitted callback has enqueued its task before destruction proceeds.

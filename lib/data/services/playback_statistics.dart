@@ -1,6 +1,10 @@
 import 'package:media_kit/media_kit.dart';
 
+import '../../domain/models/gpu_adapter.dart';
+import 'gpu_info_service.dart';
+
 typedef PlaybackPropertyReader = Future<String> Function(String name);
+typedef PlaybackGpuRowReader = Future<Map<String, String>> Function();
 
 /// An on-demand sample. No observers or background polling run during playback.
 class PlaybackStatistics {
@@ -21,9 +25,17 @@ class PlaybackStatistics {
     'demuxer-cache-duration': 'Buffered media',
   };
 
+  static const gpuProperties = <String>[
+    'Active GPU',
+    'GPU type',
+    'Dedicated memory (used / budget)',
+    'Shared memory (used / budget)',
+  ];
+
   static Future<PlaybackStatistics> read(
     PlaybackPropertyReader readProperty, {
     Duration timeout = const Duration(seconds: 2),
+    PlaybackGpuRowReader? readGpuRows,
   }) async {
     final values = await Future.wait(
       properties.entries.map((entry) async {
@@ -37,7 +49,47 @@ class PlaybackStatistics {
         return MapEntry(entry.value, value ?? 'Unavailable');
       }),
     );
-    return PlaybackStatistics(Map.unmodifiable(Map.fromEntries(values)));
+    final merged = Map<String, String>.fromEntries(values);
+    if (readGpuRows != null) {
+      try {
+        merged.addAll(await readGpuRows());
+      } on Object {
+        // GPU diagnostics are optional; playback information still stands.
+      }
+      for (final label in gpuProperties) {
+        merged.putIfAbsent(label, () => 'Unavailable');
+      }
+    }
+    return PlaybackStatistics(Map.unmodifiable(merged));
+  }
+
+  static Future<Map<String, String>> gpuRows(GpuInfoService gpuInfo) async {
+    final snapshotFuture = gpuInfo.snapshot();
+    final defaultFuture = gpuInfo.resolveDefault();
+    final snapshot = await snapshotFuture;
+    final defaultAdapter = await defaultFuture;
+    if (defaultAdapter == null) {
+      return const <String, String>{
+        'Active GPU': 'Unavailable',
+        'GPU type': 'Unavailable',
+        'Dedicated memory (used / budget)': 'Unavailable',
+        'Shared memory (used / budget)': 'Unavailable',
+      };
+    }
+
+    final adapter = snapshot?.adapterForLuid(defaultAdapter.luid);
+    final local = adapter?.localMemory;
+    final nonLocal = adapter?.nonLocalMemory;
+    return <String, String>{
+      'Active GPU': defaultAdapter.name,
+      'GPU type': (adapter?.kind ?? GpuAdapterKind.unknown).label,
+      'Dedicated memory (used / budget)': local == null
+          ? 'Unavailable'
+          : '${_formatBytes(local.usage)} / ${_formatBytes(local.budget)}',
+      'Shared memory (used / budget)': nonLocal == null
+          ? 'Unavailable'
+          : '${_formatBytes(nonLocal.usage)} / ${_formatBytes(nonLocal.budget)}',
+    };
   }
 
   static String _format(String property, String raw) {
@@ -61,10 +113,27 @@ class PlaybackStatistics {
   }
 }
 
-Future<PlaybackStatistics> readNativePlaybackStatistics(Player player) async {
+Future<PlaybackStatistics> readNativePlaybackStatistics(
+  Player player, {
+  GpuInfoService? gpuInfo,
+}) async {
   final native = player.platform;
   if (native is! NativePlayer) {
     throw UnsupportedError('Playback information requires a native engine.');
   }
-  return PlaybackStatistics.read(native.getProperty);
+  return PlaybackStatistics.read(
+    native.getProperty,
+    readGpuRows: gpuInfo == null
+        ? null
+        : () => PlaybackStatistics.gpuRows(gpuInfo),
+  );
+}
+
+String _formatBytes(int bytes) {
+  const gigabyte = 1024 * 1024 * 1024;
+  const megabyte = 1024 * 1024;
+  if (bytes >= gigabyte) return '${(bytes / gigabyte).toStringAsFixed(1)} GB';
+  if (bytes >= megabyte) return '${(bytes / megabyte).toStringAsFixed(0)} MB';
+  if (bytes > 0) return '${(bytes / 1024).toStringAsFixed(0)} KB';
+  return '0 MB';
 }

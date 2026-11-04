@@ -25,6 +25,9 @@ abstract class DesktopIntegrationService extends ChangeNotifier {
     bool canGoPrevious = true,
   });
   Future<void> setKeepAwake(bool enable, {required bool isVideoPlaying});
+
+  /// Null when the AC/battery state is unavailable.
+  Future<bool?> isOnAcPower();
   Future<void> openDefaultAppsSettings();
   @override
   void dispose();

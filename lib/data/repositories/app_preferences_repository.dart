@@ -7,6 +7,7 @@ import 'package:flutter/material.dart' show ThemeMode;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import '../../domain/models/graphics_settings.dart';
 import '../../domain/models/player_hotkeys.dart';
 
 /// User preference for how to handle opening files when playback is active or paused.
@@ -30,6 +31,7 @@ class DesktopPreferences {
     this.accentPreset = 'lamp',
     this.dynamicArtworkColor = true,
     this.oledBlack = false,
+    this.graphics = const GraphicsSettings(),
   });
 
   static const List<int> seekStepOptions = <int>[1, 2, 5, 10, 15, 30];
@@ -62,6 +64,9 @@ class DesktopPreferences {
   /// Whether to use pitch black surfaces in dark mode for OLED displays.
   final bool oledBlack;
 
+  /// GPU, video memory, and cache tuning.
+  final GraphicsSettings graphics;
+
   DesktopPreferences copyWith({
     OpenBehaviorPreference? openBehavior,
     bool clearOpenBehavior = false,
@@ -74,6 +79,7 @@ class DesktopPreferences {
     String? accentPreset,
     bool? dynamicArtworkColor,
     bool? oledBlack,
+    GraphicsSettings? graphics,
   }) {
     return DesktopPreferences(
       openBehavior: clearOpenBehavior
@@ -89,6 +95,7 @@ class DesktopPreferences {
       accentPreset: accentPreset ?? this.accentPreset,
       dynamicArtworkColor: dynamicArtworkColor ?? this.dynamicArtworkColor,
       oledBlack: oledBlack ?? this.oledBlack,
+      graphics: graphics ?? this.graphics,
     );
   }
 
@@ -126,6 +133,7 @@ class DesktopPreferences {
       accentPreset: json['accentPreset'] as String? ?? 'lamp',
       dynamicArtworkColor: json['dynamicArtworkColor'] as bool? ?? true,
       oledBlack: json['oledBlack'] as bool? ?? false,
+      graphics: GraphicsSettings.fromJson(json['graphics']),
     );
   }
 
@@ -140,6 +148,7 @@ class DesktopPreferences {
     'accentPreset': accentPreset,
     'dynamicArtworkColor': dynamicArtworkColor,
     'oledBlack': oledBlack,
+    'graphics': graphics.toJson(),
   };
 
   static int _readChoice(Object? value, List<int> options, int fallback) {
@@ -165,6 +174,7 @@ class AppPreferencesRepository extends ChangeNotifier {
   bool get isSaving => _writeInFlight != null;
 
   DesktopPreferences get preferences => _preferences;
+  GraphicsSettings get graphicsSettings => _preferences.graphics;
   bool get isLoaded => _loaded;
 
   Future<File> _resolveFile() async {
@@ -275,6 +285,12 @@ class AppPreferencesRepository extends ChangeNotifier {
   Future<void> setKeepAwake(bool keepAwake) async {
     await updatePreferences(
       _preferences.copyWith(keepAwakeDuringPlayback: keepAwake),
+    );
+  }
+
+  Future<void> setGraphicsSettings(GraphicsSettings settings) async {
+    await updatePreferences(
+      _preferences.copyWith(graphics: settings.normalized()),
     );
   }
 
