@@ -81,7 +81,8 @@ echo [3/3] Build SUCCESSFUL!
 if exist "build\windows\x64\runner\Release\mpvson.exe" (
     echo Executable: %CD%\build\windows\x64\runner\Release\mpvson.exe
     echo Launching mpvson...
-    start "" "build\windows\x64\runner\Release\mpvson.exe"
+    cd /d "build\windows\x64\runner\Release"
+    start "" "mpvson.exe"
 ) else (
     echo [WARNING] Executable not found at expected path.
 )
