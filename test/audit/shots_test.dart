@@ -61,9 +61,12 @@ void main() {
         await tester.pumpWidget(h.app());
         await settle(tester);
         await openMedia(tester, h, [
-          'Long Track Title That Keeps Going.mp3',
-          'b.mp3',
-          'c.mp3',
+          'Starlight Serenade.flac',
+          'Midnight Echoes - Ambient Mix.flac',
+          'Solar Wind Symphony.mp3',
+          'Neon Horizon - Synthwave Chill.wav',
+          'Velvet Moon Acoustics.flac',
+          'Aura Borealis - Deep Drift.mp3',
         ]);
         await capture(tester, '${tag}_audio_home');
         await tester.tapAt(Offset(120, size.height - 55));

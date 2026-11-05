@@ -371,7 +371,9 @@ class _EngineTrack extends StatelessWidget {
     final rollbackPending = updates.pendingRollback;
     final canScheduleRollback =
         updates.canRollback && !busy && !hasPendingAction;
-    final rollbackVersion = updates.rollbackVersion?.replaceAll(RegExp(r'-dev[-+.0-9a-zA-Z]*'), '').trim();
+    final rollbackVersion = updates.rollbackVersion
+        ?.replaceAll(RegExp(r'-dev[-+.0-9a-zA-Z]*'), '')
+        .trim();
     final rollbackTarget = updates.rollbackTargetIsBundled
         ? rollbackVersion == null || rollbackVersion.isEmpty
               ? 'the bundled engine'
@@ -650,8 +652,8 @@ class _EngineTrack extends StatelessWidget {
               return Text(
                 updates.usesOfficialMpvSource
                     ? updates.channel == EngineUpdateChannel.stable
-                        ? 'An upstream mpv stable engine release$versionSuffix is available.'
-                        : 'An upstream mpv engine release$versionSuffix is available.'
+                          ? 'An upstream mpv stable engine release$versionSuffix is available.'
+                          : 'An upstream mpv engine release$versionSuffix is available.'
                     : 'A playback engine update$versionSuffix is available.',
                 style: TextStyle(
                   color: context.palette.secondaryText,

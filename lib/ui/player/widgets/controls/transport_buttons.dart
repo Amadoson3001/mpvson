@@ -13,16 +13,25 @@ class TransportButtons extends StatelessWidget {
     super.key,
     required this.controller,
     this.compact = false,
+    this.showStop = true,
+    this.showShuffleRepeat = false,
   });
 
   /// Width of the control row, measured from the same extents the buttons are
   /// built with so surrounding layout can reserve the right amount of space.
-  static double preferredWidth({required bool compact}) {
+  static double preferredWidth({
+    required bool compact,
+    bool showStop = true,
+    bool showShuffleRepeat = false,
+  }) {
     final extent = compact
         ? PlayerControlStyle.compactControlExtent
         : PlayerControlStyle.controlExtent;
     final gap = compact ? 2.0 : 4.0;
-    return 4 * extent + 3 * gap;
+    var count = 3;
+    if (showStop) count++;
+    if (showShuffleRepeat) count += 2;
+    return count * extent + (count - 1) * gap;
   }
 
   /// Shift that puts the play/pause button on the row's center line.
@@ -31,16 +40,31 @@ class TransportButtons extends StatelessWidget {
   /// falls between the play and next buttons. Nudging the row by half that
   /// difference centers the play button — the anchor of the control band —
   /// instead of the gap between two buttons.
-  static double playButtonCenterOffset({required bool compact}) {
+  static double playButtonCenterOffset({
+    required bool compact,
+    bool showStop = true,
+    bool showShuffleRepeat = false,
+  }) {
+    if ((showShuffleRepeat && !showStop) || (!showStop && !showShuffleRepeat)) {
+      return 0.0;
+    }
     final extent = compact
         ? PlayerControlStyle.compactControlExtent
         : PlayerControlStyle.controlExtent;
     final gap = compact ? 2.0 : 4.0;
-    return preferredWidth(compact: compact) / 2 - (extent + gap + extent / 2);
+    return preferredWidth(
+          compact: compact,
+          showStop: showStop,
+          showShuffleRepeat: showShuffleRepeat,
+        ) /
+        2 -
+        (extent + gap + extent / 2);
   }
 
   final PlayerController controller;
   final bool compact;
+  final bool showStop;
+  final bool showShuffleRepeat;
 
   @override
   Widget build(BuildContext context) => PlayerControlStyle(
@@ -48,12 +72,26 @@ class TransportButtons extends StatelessWidget {
     child: Row(
       mainAxisSize: MainAxisSize.min,
       children: [
+        if (showShuffleRepeat) ...[
+          ListenableBuilder(
+            listenable: controller,
+            builder: (context, _) => ControlToggleButton(
+              tooltip: controller.shuffle
+                  ? 'Turn shuffle off'
+                  : 'Turn shuffle on',
+              icon: Icons.shuffle_rounded,
+              active: controller.shuffle,
+              onPressed: controller.toggleShuffle,
+            ),
+          ),
+          SizedBox(width: compact ? 4 : 8),
+        ],
         _TransportButton(
           tooltip: 'Previous',
           icon: Icons.skip_previous_rounded,
           onPressed: controller.current == null ? null : controller.previous,
         ),
-        SizedBox(width: compact ? 2 : 4),
+        SizedBox(width: compact ? 4 : 8),
         // The glyph follows the transport listenable rather than this widget's
         // own rebuilds: views that deliberately skip rebuilds while a track
         // plays (Now Playing) would otherwise strand it on a stale shape.
@@ -67,18 +105,43 @@ class TransportButtons extends StatelessWidget {
                 : controller.togglePlayPause,
           ),
         ),
-        SizedBox(width: compact ? 2 : 4),
+        SizedBox(width: compact ? 4 : 8),
         _TransportButton(
           tooltip: 'Next',
           icon: Icons.skip_next_rounded,
           onPressed: controller.current == null ? null : controller.next,
         ),
-        SizedBox(width: compact ? 2 : 4),
-        _TransportButton(
-          tooltip: 'Stop',
-          icon: Icons.stop_rounded,
-          onPressed: controller.current == null ? null : controller.stop,
-        ),
+        if (showShuffleRepeat) ...[
+          SizedBox(width: compact ? 4 : 8),
+          ListenableBuilder(
+            listenable: controller,
+            builder: (context, _) {
+              final mode = controller.repeatMode;
+              final icon = mode == 'one'
+                  ? Icons.repeat_one_rounded
+                  : Icons.repeat_rounded;
+              final tip = mode == 'off'
+                  ? 'Enable repeat'
+                  : mode == 'all'
+                  ? 'Repeat current'
+                  : 'Disable repeat';
+              return ControlToggleButton(
+                tooltip: tip,
+                icon: icon,
+                active: mode != 'off',
+                onPressed: controller.cycleRepeat,
+              );
+            },
+          ),
+        ],
+        if (showStop) ...[
+          SizedBox(width: compact ? 4 : 8),
+          _TransportButton(
+            tooltip: 'Stop',
+            icon: Icons.stop_rounded,
+            onPressed: controller.current == null ? null : controller.stop,
+          ),
+        ],
       ],
     ),
   );
@@ -127,8 +190,15 @@ class _TransportButtonState extends State<_TransportButton> {
           child: IconButton(
             tooltip: widget.tooltip,
             onPressed: widget.onPressed,
-            style: style.buttonStyle,
-            icon: Icon(widget.icon, size: style.compact ? 18 : 22),
+            style: style.buttonStyle.copyWith(
+              foregroundColor: WidgetStateProperty.resolveWith((states) {
+                if (states.contains(WidgetState.disabled)) {
+                  return context.palette.faint;
+                }
+                return context.palette.primaryText.withValues(alpha: 0.88);
+              }),
+            ),
+            icon: Icon(widget.icon, size: style.compact ? 18 : 22, color: widget.onPressed == null ? context.palette.faint : context.palette.primaryText.withValues(alpha: 0.9)),
             padding: EdgeInsets.zero,
           ),
         ),
@@ -162,6 +232,15 @@ class ControlToggleButton extends StatelessWidget {
         onPressed: onPressed,
         style: style.buttonStyle.copyWith(
           animationDuration: AppMotion.duration(context, AppMotion.quick),
+          foregroundColor: WidgetStateProperty.resolveWith((states) {
+            if (states.contains(WidgetState.selected)) {
+              return Theme.of(context).colorScheme.primary;
+            }
+            if (states.contains(WidgetState.disabled)) {
+              return context.palette.faint;
+            }
+            return context.palette.primaryText.withValues(alpha: 0.88);
+          }),
         ),
         icon: AnimatedSwitcher(
           duration: AppMotion.duration(context, AppMotion.quick),
@@ -180,7 +259,7 @@ class ControlToggleButton extends StatelessWidget {
           child: Icon(
             icon,
             key: ValueKey<IconData>(icon),
-            size: style.iconSize,
+            size: style.iconSize, color: active ? Theme.of(context).colorScheme.primary : context.palette.primaryText.withValues(alpha: 0.9),
           ),
         ),
         padding: EdgeInsets.zero,

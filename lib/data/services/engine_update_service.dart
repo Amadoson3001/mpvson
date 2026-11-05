@@ -397,10 +397,12 @@ class EngineUpdateService extends ChangeNotifier {
           final package = stableRelease.engineRelease;
           if (package == null) {
             try {
-              final currentParsed =
-                  app_version.SemanticVersion.parse(_currentVersion);
-              final stableParsed =
-                  app_version.SemanticVersion.parse(stableRelease.version);
+              final currentParsed = app_version.SemanticVersion.parse(
+                _currentVersion,
+              );
+              final stableParsed = app_version.SemanticVersion.parse(
+                stableRelease.version,
+              );
               if (currentParsed.major == stableParsed.major &&
                   currentParsed.minor == stableParsed.minor &&
                   currentParsed.patch == stableParsed.patch) {

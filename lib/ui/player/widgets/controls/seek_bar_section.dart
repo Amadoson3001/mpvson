@@ -346,24 +346,23 @@ class SharedSeekBarState extends State<SharedSeekBar> {
                   Positioned.fill(
                     child: SliderTheme(
                       data: SliderTheme.of(context).copyWith(
-                        trackHeight: PlayerControlStyle.of(context).compact
-                            ? 4
-                            : 3,
+                        trackHeight: 4,
                         trackShape: const UniformRoundedSliderTrackShape(),
                         trackGap: 0,
-                        thumbShape: thumbVisible
-                            ? const RoundSliderThumbShape(
-                                enabledThumbRadius: 5,
-                                disabledThumbRadius: 5,
-                                elevation: 0,
-                                pressedElevation: 0,
+                        thumbShape: canSeek
+                            ? RoundSliderThumbShape(
+                                enabledThumbRadius: thumbVisible ? 7 : 5,
+                                disabledThumbRadius: 3,
+                                elevation: 2,
+                                pressedElevation: 4,
                               )
                             : SliderComponentShape.noThumb,
                         overlayShape: const RoundSliderOverlayShape(
                           overlayRadius: 14,
                         ),
                         activeTrackColor: Theme.of(context).colorScheme.primary,
-                        inactiveTrackColor: context.palette.border,
+                        inactiveTrackColor: context.palette.borderStrong
+                            .withValues(alpha: 0.65),
                         disabledActiveTrackColor: context.palette.muted,
                         disabledInactiveTrackColor: context.palette.border,
                         overlayColor: Theme.of(

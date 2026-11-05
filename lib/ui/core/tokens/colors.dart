@@ -5,18 +5,18 @@ import 'package:flutter/material.dart';
 abstract final class AppColors {
   // Surfaces
   static const stage = Color(0xFF060606);
-  static const ground = Color(0xFF09090B);
-  static const layer = Color(0xFF121215);
-  static const raised = Color(0xFF18181B);
-  static const hover = Color(0xFF222226);
-  static const line = Color(0xFF27272A);
-  static const lineStrong = Color(0xFF3F3F46);
+  static const ground = Color(0xFF0C0D10);
+  static const layer = Color(0xFF14151B);
+  static const raised = Color(0xFF1B1D25);
+  static const hover = Color(0xFF262833);
+  static const line = Color(0xFF2B2E3A);
+  static const lineStrong = Color(0xFF434757);
 
   // Text
-  static const ink = Color(0xFFF4F4F5);
-  static const inkMuted = Color(0xFFA1A1AA);
-  static const inkDim = Color(0xFF8A8A94);
-  static const inkFaint = Color(0xFF52525B);
+  static const ink = Color(0xFFF9FAFB);
+  static const inkMuted = Color(0xFFC5C9D8);
+  static const inkDim = Color(0xFFAEB4CC);
+  static const inkFaint = Color(0xFF7D859E);
 
   // Accent and support
   static const lamp = Color(0xFFF1A64C);

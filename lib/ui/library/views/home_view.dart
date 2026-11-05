@@ -39,6 +39,16 @@ class HomeView extends StatelessWidget {
   Widget build(BuildContext context) => DecoratedBox(
     decoration: BoxDecoration(
       color: context.palette.background,
+      gradient: RadialGradient(
+        center: const Alignment(0, -0.35),
+        radius: 1.15,
+        colors: [
+          Theme.of(context).colorScheme.primary.withValues(alpha: 0.08),
+          context.palette.raisedSurface.withValues(alpha: 0.15),
+          Colors.transparent,
+        ],
+        stops: const [0.0, 0.45, 1.0],
+      ),
       border: isDragging
           ? Border.all(color: Theme.of(context).colorScheme.primary, width: 2)
           : null,
@@ -58,44 +68,43 @@ class HomeView extends StatelessWidget {
         return CustomScrollView(
           slivers: [
             SliverPadding(
-              padding: EdgeInsets.fromLTRB(inset, 32, inset, 0),
+              padding: EdgeInsets.fromLTRB(inset, 20, inset, 32),
               sliver: SliverToBoxAdapter(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 960),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'Home',
-                      style: Theme.of(context).textTheme.displaySmall,
-                    ),
-                    const SizedBox(height: 24),
-                    Text(
-                      isDragging ? 'Drop files to play' : 'Open your media',
-                      style: Theme.of(context).textTheme.titleLarge,
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Choose a file, open a URL, or drop files here.',
-                      style: context.palette.rowSecondary,
-                    ),
-                    const SizedBox(height: 16),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.baseline,
+                      textBaseline: TextBaseline.alphabetic,
                       children: [
-                        FilledButton.icon(
-                          onPressed: onOpenFiles,
-                          icon: const Icon(Icons.file_open_rounded),
-                          label: const Text('Open file'),
+                        Text(
+                          'Home',
+                          style: Theme.of(context).textTheme.displaySmall,
                         ),
-                        OutlinedButton.icon(
-                          onPressed: onOpenUrl,
-                          icon: const Icon(Icons.link_rounded),
-                          label: const Text('Open URL'),
+                        const SizedBox(width: 14),
+                        Text(
+                          'Desktop Media Center',
+                          style: context.palette.metadata.copyWith(
+                            color: context.palette.mutedText,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w400,
+                          ),
                         ),
                       ],
                     ),
+                    const SizedBox(height: 24),
+                    _DropZoneCard(
+                      isDragging: isDragging,
+                      onOpenFiles: onOpenFiles,
+                      onOpenUrl: onOpenUrl,
+                      compact: recent.isNotEmpty,
+                    ),
+                    if (recent.isEmpty) ...[ const _HomeEmptyGuide(), const _HomeFooterInfo() ],
                     if (recent.isNotEmpty) ...[
-                      const SizedBox(height: 40),
+                      const SizedBox(height: 24),
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.baseline,
                         textBaseline: TextBaseline.alphabetic,
@@ -141,6 +150,8 @@ class HomeView extends StatelessWidget {
                 ),
               ),
             ),
+          ),
+        ),
             if (recent.isNotEmpty)
               SliverPadding(
                 padding: EdgeInsets.fromLTRB(inset, 0, inset, 32),
@@ -489,6 +500,523 @@ class _RecentTileState extends State<_RecentTile> {
             ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _DropZoneCard extends StatelessWidget {
+  const _DropZoneCard({
+    required this.isDragging,
+    required this.onOpenFiles,
+    required this.onOpenUrl,
+    this.compact = false,
+  });
+
+  final bool isDragging;
+  final VoidCallback onOpenFiles;
+  final VoidCallback onOpenUrl;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final primary = Theme.of(context).colorScheme.primary;
+
+    if (compact) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: isDragging
+              ? Color.alphaBlend(primary.withValues(alpha: 0.12), palette.card)
+              : palette.card,
+          borderRadius: BorderRadius.circular(AppRadii.control),
+          border: Border.all(
+            color: isDragging
+                ? primary
+                : palette.borderStrong.withValues(alpha: 0.4),
+            width: isDragging ? 2.0 : 1.0,
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              isDragging
+                  ? Icons.file_download_rounded
+                  : Icons.cloud_upload_outlined,
+              size: 22,
+              color: primary,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    isDragging ? 'Release to play media' : 'Open new media',
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  Text(
+                    'Drop files anywhere, or browse your files',
+                    style: palette.metadata,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            Flexible(
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                alignment: WrapAlignment.end,
+                children: [
+                  FilledButton.icon(
+                    onPressed: onOpenFiles,
+                    icon: const Icon(Icons.file_open_rounded, size: 16),
+                    label: const Text('Open file'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: onOpenUrl,
+                    icon: const Icon(Icons.link_rounded, size: 16),
+                    label: const Text('Open URL'),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+      decoration: BoxDecoration(
+        color: isDragging
+            ? Color.alphaBlend(primary.withValues(alpha: 0.12), palette.card)
+            : palette.card,
+        borderRadius: BorderRadius.circular(AppRadii.card),
+        border: Border.all(
+          color: isDragging
+              ? primary
+              : palette.borderStrong.withValues(alpha: 0.5),
+          width: isDragging ? 2.0 : 1.0,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: isDragging
+                ? primary.withValues(alpha: 0.25)
+                : primary.withValues(alpha: 0.06),
+            blurRadius: isDragging ? 32 : 24,
+            offset: const Offset(0, 4),
+          ),
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.2),
+            blurRadius: 16,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 56,
+            height: 56,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: primary.withValues(alpha: 0.14),
+              border: Border.all(
+                color: primary.withValues(alpha: 0.38),
+                width: 1.5,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: primary.withValues(alpha: 0.18),
+                  blurRadius: 18,
+                  spreadRadius: 1,
+                ),
+              ],
+            ),
+            child: Center(
+              child: Icon(
+                isDragging
+                    ? Icons.file_download_rounded
+                    : Icons.cloud_upload_rounded,
+                size: 28,
+                color: primary,
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            isDragging ? 'Release to play media' : 'Drop media files here',
+            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+              fontWeight: FontWeight.w700,
+              letterSpacing: AppLetterSpacing.title,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 6),
+          Text(
+            isDragging
+                ? 'Files will start playing immediately'
+                : 'Drag and drop audio or video files anywhere, or browse your files',
+            style: palette.rowSecondary.copyWith(
+              color: palette.secondaryText,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 16),
+          Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            alignment: WrapAlignment.center,
+            children: [
+              FilledButton.icon(
+                onPressed: onOpenFiles,
+                icon: const Icon(Icons.file_open_rounded, size: 18),
+                label: const Text('Open file'),
+              ),
+              OutlinedButton.icon(
+                onPressed: onOpenUrl,
+                icon: const Icon(Icons.link_rounded, size: 18),
+                label: const Text('Open URL'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.check_circle_outline_rounded,
+                  size: 14, color: palette.mutedText),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  'Supports MP4, MKV, AVI, MOV, MP3, FLAC, AAC, WAV, and more',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: palette.metadata.copyWith(
+                    color: palette.secondaryText,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _HomeEmptyGuide extends StatelessWidget {
+  const _HomeEmptyGuide();
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 28),
+        Text(
+          'Features & Shortcuts',
+          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.w600,
+            color: palette.primaryText,
+          ),
+        ),
+        const SizedBox(height: 14),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final isWide = constraints.maxWidth >= 640;
+            if (isWide) {
+              return IntrinsicHeight(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: const [
+                    Expanded(
+                      child: _FeatureCard(
+                        icon: Icons.tune_rounded,
+                        title: 'High-Performance Engine',
+                        description:
+                            'Hardware-accelerated playback powered by mpv. Supports HDR tonemapping, high-bitrate video, and bit-perfect lossless audio.',
+                        tags: ['4K HDR', 'H.265 / AV1', 'Lossless FLAC', 'Gapless Audio', 'Hardware Accel', 'Subtitles Engine'],
+                        accentColor: Color(0xFFF1A64C),
+                      ),
+                    ),
+                    SizedBox(width: 16),
+                    Expanded(
+                      child: _ShortcutsCard(
+                        accentColor: Color(0xFFDDB264),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }
+            return Column(
+              children: const [
+                _FeatureCard(
+                  icon: Icons.tune_rounded,
+                  title: 'High-Performance Engine',
+                  description:
+                      'Hardware-accelerated playback powered by mpv. Supports HDR tonemapping, high-bitrate video, and bit-perfect lossless audio.',
+                  tags: ['4K HDR', 'H.265 / AV1', 'Lossless FLAC', 'Gapless Audio', 'Hardware Accel', 'Subtitles Engine'],
+                  accentColor: Color(0xFFF1A64C),
+                ),
+                SizedBox(height: 16),
+                _ShortcutsCard(
+                  accentColor: Color(0xFFDDB264),
+                ),
+              ],
+            );
+          },
+        ),
+      ],
+    );
+  }
+}
+
+class _FeatureCard extends StatelessWidget {
+  const _FeatureCard({
+    required this.icon,
+    required this.title,
+    required this.description,
+    required this.tags,
+    required this.accentColor,
+  });
+
+  final IconData icon;
+  final String title;
+  final String description;
+  final List<String> tags;
+  final Color accentColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: palette.raisedSurface.withValues(alpha: 0.6),
+        borderRadius: BorderRadius.circular(AppRadii.control),
+        border: Border.all(color: palette.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: accentColor.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(AppRadii.control),
+                ),
+                child: Icon(icon, size: 20, color: accentColor),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  title,
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: palette.primaryText,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            description,
+            style: palette.rowSecondary.copyWith(
+              color: palette.secondaryText,
+              height: 1.4,
+            ),
+          ),
+          const Spacer(),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: tags.map((tag) {
+              return Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: palette.surface,
+                  borderRadius: BorderRadius.circular(AppRadii.control),
+                  border: Border.all(
+                    color: palette.borderStrong.withValues(alpha: 0.4),
+                  ),
+                ),
+                child: Text(
+                  tag,
+                  style: palette.metadata.copyWith(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                    color: palette.primaryText.withValues(alpha: 0.85),
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ShortcutsCard extends StatelessWidget {
+  const _ShortcutsCard({
+    required this.accentColor,
+  });
+
+  final Color accentColor;
+
+  Widget _buildKeyRow(BuildContext context, String keyText, String desc) {
+    final palette = context.palette;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+            decoration: BoxDecoration(
+              color: palette.surface,
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(
+                color: palette.borderStrong.withValues(alpha: 0.5),
+              ),
+            ),
+            child: Text(
+              keyText,
+              style: palette.metadata.copyWith(
+                fontWeight: FontWeight.w600,
+                fontSize: 11,
+                color: palette.primaryText,
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              desc,
+              style: palette.rowSecondary.copyWith(
+                color: palette.secondaryText,
+                fontSize: 12,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: palette.raisedSurface.withValues(alpha: 0.6),
+        borderRadius: BorderRadius.circular(AppRadii.control),
+        border: Border.all(color: palette.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: accentColor.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(AppRadii.control),
+                ),
+                child: Icon(
+                  Icons.keyboard_outlined,
+                  size: 20,
+                  color: accentColor,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'Quick Keyboard Shortcuts',
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: palette.primaryText,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _buildKeyRow(context, 'Space', 'Play / Pause playback'),
+          _buildKeyRow(context, 'F', 'Toggle fullscreen'),
+          _buildKeyRow(context, 'M', 'Mute / Unmute audio'),
+          _buildKeyRow(context, '← / →', 'Seek 5 seconds backward / forward'),
+          const Spacer(),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Icon(Icons.tune_rounded, size: 14, color: palette.secondaryText),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  'Customize shortcuts in Settings',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: palette.metadata.copyWith(
+                    fontSize: 11,
+                    color: palette.secondaryText,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _HomeFooterInfo extends StatelessWidget {
+  const _HomeFooterInfo();
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    return Padding(
+      padding: const EdgeInsets.only(top: 20, bottom: 32),
+      child: Center(
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.shield_outlined, size: 14, color: palette.mutedText),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                'mpvson Media Center • High fidelity local playback',
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+                style: palette.metadata.copyWith(
+                  fontSize: 11,
+                  color: palette.mutedText,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

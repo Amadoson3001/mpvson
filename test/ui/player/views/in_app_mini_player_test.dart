@@ -1,7 +1,5 @@
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mpvson/domain/models/media_entry.dart';
 import 'package:mpvson/domain/models/player_hotkeys.dart';
 import 'package:mpvson/ui/library/views/library_shell.dart';
 import 'package:mpvson/ui/player/views/mini_player_overlay.dart';
@@ -59,9 +57,6 @@ void main() {
         final h = Harness.create();
         await openMedia(tester, h, ['test_video.mp4']);
 
-        bool expanded = false;
-        bool dismissed = false;
-
         await tester.pumpWidget(
           MaterialApp(
             home: Scaffold(
@@ -84,8 +79,8 @@ void main() {
                   isFullscreen: false,
                   isMiniPlayer: false,
                   miniProgress: 1.0,
-                  onExpandFromMini: () => expanded = true,
-                  onDismissMini: () => dismissed = true,
+                  onExpandFromMini: () {},
+                  onDismissMini: () {},
                   queueOpen: false,
                   desktopWindow: true,
                   nativeWindow: true,
@@ -149,7 +144,7 @@ void main() {
           desktopWindow: true,
           isShowingLibrary: () => showingLibrary,
           showMessage: (_) {},
-          showFeedback: (_, __, {bool centered = false}) {},
+          showFeedback: (_, _, {bool centered = false}) {},
           isInAppMiniPlayerActive: () => miniActive,
         );
 

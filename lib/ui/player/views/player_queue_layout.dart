@@ -108,10 +108,7 @@ class _PlayerQueueLayoutState extends State<PlayerQueueLayout>
                 if (wide && present)
                   AnimatedBuilder(
                     animation: _progress,
-                    child: _InlinePanel(
-                      open: open,
-                      panel: widget.queuePanel,
-                    ),
+                    child: _InlinePanel(open: open, panel: widget.queuePanel),
                     builder: (context, child) => ClipRect(
                       child: Align(
                         alignment: Alignment.centerLeft,
@@ -209,10 +206,7 @@ class _InlinePanel extends StatelessWidget {
     child: ExcludeSemantics(
       excluding: !open,
       child: RepaintBoundary(
-        child: SizedBox(
-          width: AppLayout.queuePanelWidth,
-          child: panel,
-        ),
+        child: SizedBox(width: AppLayout.queuePanelWidth, child: panel),
       ),
     ),
   );

@@ -46,7 +46,7 @@ class AudioVolumeControl extends StatefulWidget {
     required bool showPercent,
   }) {
     final slider = compact ? compactSliderWidth : sliderWidth;
-    final percent = showPercent ? percentWidth : 0;
+    final percent = showPercent ? percentWidth + 8 : 0;
     return muteExtent + slider + percent;
   }
 
@@ -162,14 +162,17 @@ class _AudioVolumeControlState extends State<AudioVolumeControl> {
             mainAxisSize: MainAxisSize.min,
             children: [
               SizedBox(
-                width: AudioVolumeControl.muteExtent,
+                width: widget.showPercent ? 52 : AudioVolumeControl.muteExtent,
                 height: AudioVolumeControl.muteExtent,
-                child: IconButton(
+                child: Align(
+                  alignment: widget.showPercent ? Alignment.centerRight : Alignment.center,
+                  child: IconButton(
                   icon: Icon(icon, size: widget.compact ? 17 : 20),
                   tooltip: volume <= 0 ? 'Unmute' : 'Mute (${volume.round()}%)',
                   visualDensity: VisualDensity.compact,
                   color: context.palette.secondaryText,
                   onPressed: _toggleMute,
+                  ),
                 ),
               ),
               SizedBox(
@@ -211,17 +214,21 @@ class _AudioVolumeControlState extends State<AudioVolumeControl> {
                   ),
                 ),
               ),
-              if (widget.showPercent)
+              if (widget.showPercent) ...[
+                const SizedBox(width: 8),
                 SizedBox(
                   width: AudioVolumeControl.percentWidth,
                   child: Text(
                     '${volume.round()}%',
                     textAlign: TextAlign.right,
                     style: context.palette.metadata.copyWith(
+                      color: context.palette.primaryText.withValues(alpha: 0.85),
+                      fontWeight: FontWeight.w500,
                       fontFeatures: const [FontFeature.tabularFigures()],
                     ),
                   ),
                 ),
+              ],
             ],
           ),
         );

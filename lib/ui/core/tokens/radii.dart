@@ -8,6 +8,9 @@ abstract final class AppRadii {
   /// Cards, tiles, artwork, dialogs, banners, menus.
   static const double artwork = 12;
 
+  /// Modern container and card radius.
+  static const double card = 16;
+
   /// Hero artwork such as the Now Playing cover.
   static const double artworkHero = 24;
 

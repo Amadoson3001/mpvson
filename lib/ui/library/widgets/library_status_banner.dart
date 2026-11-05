@@ -46,7 +46,7 @@ class LibraryStatusBanner extends StatelessWidget {
               ),
               child: Text(
                 'Opening library...',
-                style: context.palette.metadata,
+                style: context.palette.metadata.copyWith(fontSize: 11),
               ),
             ),
           );
@@ -115,7 +115,7 @@ class LibraryStatusBanner extends StatelessWidget {
           Icon(
             Icons.error_outline_rounded,
             color: context.palette.danger,
-            size: 18,
+            size: 16,
           ),
           const SizedBox(width: 12),
           Expanded(child: Text(message, style: context.palette.rowPrimary)),
@@ -245,15 +245,15 @@ class LibraryStatusBanner extends StatelessWidget {
         vertical: 10,
       ),
       decoration: BoxDecoration(
-        color: context.palette.raisedSurface,
-        borderRadius: BorderRadius.circular(AppRadii.artwork),
-        border: Border.all(color: AppTheme.warning.withValues(alpha: 0.5)),
+        color: context.palette.surface.withValues(alpha: 0.85),
+        borderRadius: BorderRadius.circular(AppRadii.control),
+        border: Border.all(color: context.palette.border),
       ),
       child: Row(
         children: [
           const Icon(
             Icons.cloud_off_rounded,
-            size: 18,
+            size: 16,
             color: AppTheme.warning,
           ),
           const SizedBox(width: 12),
@@ -298,11 +298,36 @@ class LibraryStatusBanner extends StatelessWidget {
                 const SizedBox(height: 2),
                 Text(
                   'Your library entries are preserved and will automatically become playable when reconnected.',
-                  style: context.palette.metadata,
+                  style: context.palette.metadata.copyWith(fontSize: 11),
                 ),
               ],
             ),
           ),
+          if (onRescan != null) ...[
+            const SizedBox(width: 10),
+            OutlinedButton.icon(
+              onPressed: onRescan,
+              icon: const Icon(Icons.refresh_rounded, size: 14),
+              label: const Text('Check again'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppTheme.warning,
+                side: BorderSide(
+                  color: AppTheme.warning.withValues(alpha: 0.35),
+                ),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(AppRadii.control),
+                ),
+                visualDensity: VisualDensity.compact,
+                textStyle: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
