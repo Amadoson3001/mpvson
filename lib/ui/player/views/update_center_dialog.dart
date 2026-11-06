@@ -9,6 +9,7 @@ import '../../../domain/updates/engine_update_channel.dart';
 import '../../../domain/updates/release_info.dart';
 import '../../core/app_motion.dart';
 import '../../core/app_theme.dart';
+import 'update_status.dart';
 
 class UpdateCenterDialog extends StatelessWidget {
   const UpdateCenterDialog({
@@ -27,63 +28,98 @@ class UpdateCenterDialog extends StatelessWidget {
     animation: Listenable.merge([updates, engineUpdates]),
     builder: (context, _) {
       final screenHeight = MediaQuery.sizeOf(context).height;
-      final dialogHeight = screenHeight - 48 < 640 ? screenHeight - 48 : 640.0;
+      final dialogHeight = screenHeight - 48 < 660 ? screenHeight - 48 : 660.0;
       final appBusy = updates.busy;
       final engineBusy = engineUpdates.busy;
+      final theme = Theme.of(context);
 
       return Dialog(
+        backgroundColor: theme.colorScheme.surface,
+        surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppRadii.artwork),
-          side: BorderSide(color: context.palette.border),
+          side: BorderSide(
+            color: theme.colorScheme.outlineVariant.withValues(alpha: 0.8),
+          ),
         ),
         insetPadding: const EdgeInsets.symmetric(
           horizontal: AppSpace.xl,
           vertical: AppSpace.lg,
         ),
         child: SizedBox(
-          width: 620,
+          width: 580,
           height: dialogHeight,
           child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              // Dialog Header
               Padding(
-                padding: const EdgeInsets.fromLTRB(
-                  AppSpace.lg,
-                  AppSpace.sm,
-                  AppSpace.sm,
-                  AppSpace.xs,
-                ),
+                padding: const EdgeInsets.fromLTRB(20, 12, 12, 10),
                 child: Row(
                   children: [
+                    Container(
+                      width: 34,
+                      height: 34,
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.primary.withValues(
+                          alpha: 0.12,
+                        ),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      alignment: Alignment.center,
+                      child: Icon(
+                        Icons.sync_rounded,
+                        size: 20,
+                        color: theme.colorScheme.primary,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
                     Expanded(
-                      child: Text(
-                        'Updates & about',
-                        style: Theme.of(context).textTheme.titleLarge,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Updates & about',
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: -0.2,
+                            ),
+                          ),
+                          const SizedBox(height: 1),
+                          Text(
+                            'Software & playback engine component manager',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                     IconButton(
-                      tooltip: 'Close updates and about',
+                      tooltip: 'Close dialog',
                       constraints: const BoxConstraints.tightFor(
-                        width: 44,
-                        height: 44,
+                        width: 36,
+                        height: 36,
                       ),
                       onPressed: () => Navigator.of(context).pop(),
-                      icon: const Icon(Icons.close_rounded),
+                      icon: const Icon(Icons.close_rounded, size: 20),
                     ),
                   ],
                 ),
               ),
-              const Divider(height: 1),
+              Divider(
+                height: 1,
+                color: theme.colorScheme.outlineVariant.withValues(alpha: 0.4),
+              ),
+
+              // Scrollable Body
               Expanded(
                 child: SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(
-                    AppSpace.lg,
-                    10,
-                    AppSpace.lg,
-                    18,
-                  ),
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 22),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
+                      // Playback Engine Track
                       _EngineTrack(
                         updates: engineUpdates,
                         loadedVersion: engineVersion,
@@ -91,10 +127,9 @@ class UpdateCenterDialog extends StatelessWidget {
                         onAction: _performEngineAction,
                         onRollback: _scheduleEngineRollback,
                       ),
-                      const Padding(
-                        padding: EdgeInsets.only(left: 18),
-                        child: Divider(height: 22),
-                      ),
+                      const SizedBox(height: 14),
+
+                      // Application Track
                       _ApplicationTrack(
                         updates: updates,
                         busy: appBusy,
@@ -104,20 +139,26 @@ class UpdateCenterDialog extends StatelessWidget {
                   ),
                 ),
               ),
-              const Divider(height: 1),
+
+              Divider(
+                height: 1,
+                color: theme.colorScheme.outlineVariant.withValues(alpha: 0.4),
+              ),
+
+              // Dialog Footer
               Padding(
-                padding: const EdgeInsets.fromLTRB(
-                  20,
-                  AppSpace.xs,
-                  20,
-                  AppSpace.sm,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 10,
                 ),
-                child: Align(
-                  alignment: Alignment.centerRight,
-                  child: TextButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    child: const Text('Close'),
-                  ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    OutlinedButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text('Close'),
+                    ),
+                  ],
                 ),
               ),
             ],
@@ -179,13 +220,10 @@ class _ApplicationTrack extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final accent = Theme.of(context).colorScheme.primary;
+    final theme = Theme.of(context);
+    final accent = theme.colorScheme.primary;
     final release = updates.release;
-    final (status, statusColor) = _applicationStatus(
-      context,
-      updates.status,
-      accent,
-    );
+    final (status, statusColor) = appUpdateStatusPresentation(context, updates);
     final action = switch (updates.status) {
       'available' => 'Download package',
       'ready' => 'Open package',
@@ -199,63 +237,70 @@ class _ApplicationTrack extends StatelessWidget {
           'available' || 'ready' => true,
           _ => updates.configured,
         };
-    return _ReleaseTrack(
-      railColor: accent,
+
+    return _ComponentCard(
       icon: Icons.desktop_windows_outlined,
+      accentColor: accent,
       title: 'Application',
+      subtitle: 'Version ${updates.currentVersion}',
       status: status,
       statusColor: statusColor,
-      currentLabel: 'Version ${updates.currentVersion}',
-      content: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           AnimatedSize(
-            duration: AppMotion.duration(context, AppMotion.quick),
-            curve: AppMotion.standardCurve,
+            duration: AppMotion.duration(context, AppMotion.standard),
+            curve: AppMotion.enter,
             alignment: Alignment.topLeft,
-            child: AnimatedSwitcher(
-              duration: AppMotion.duration(context, AppMotion.quick),
-              child: KeyedSubtree(
-                key: ValueKey<String>('app-update-${updates.status}'),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _applicationStatusContent(
-                      context,
-                      updates,
-                      release,
-                      accent,
-                    ),
-                    if (updates.error != null && updates.status != 'error') ...[
-                      const SizedBox(height: 8),
-                      _TrackNotice(
-                        icon: Icons.error_outline_rounded,
-                        color: context.palette.danger,
-                        text: updates.error!,
-                      ),
-                    ],
-                    if (release != null && updates.status == 'ready') ...[
-                      const SizedBox(height: 8),
-                      SelectableText(
-                        'SHA-256  ${release.sha256}',
-                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                          color: context.palette.muted,
-                          fontFamily: 'monospace',
-                        ),
-                      ),
-                    ],
-                  ],
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _applicationStatusContent(
+                  context,
+                  updates,
+                  release,
+                  accent,
                 ),
-              ),
+                if (updates.error != null && updates.status != 'error') ...[
+                  const SizedBox(height: 8),
+                  _TrackNotice(
+                    icon: Icons.error_outline_rounded,
+                    color: context.palette.danger,
+                    text: updates.error!,
+                  ),
+                ],
+                if (release != null && updates.status == 'ready') ...[
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.surfaceContainerHighest
+                          .withValues(alpha: 0.5),
+                      borderRadius: BorderRadius.circular(AppRadii.control),
+                    ),
+                    child: SelectableText(
+                      'SHA-256: ${release.sha256}',
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                        fontFamily: 'monospace',
+                        fontSize: 10.5,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
             ),
           ),
-          const SizedBox(height: 12),
-          Align(
-            alignment: Alignment.centerRight,
-            child: Tooltip(
-              message: action,
-              child: FilledButton.icon(
+          const SizedBox(height: 14),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              FilledButton.icon(
                 onPressed: enabled ? onAction : null,
+                style: _busyButtonStyle(context, busy),
                 icon: busy
                     ? _ActionProgress(reducedMotion: AppMotion.reduce(context))
                     : Icon(
@@ -264,30 +309,16 @@ class _ApplicationTrack extends StatelessWidget {
                             : updates.status == 'available'
                             ? Icons.download_rounded
                             : Icons.refresh_rounded,
+                        size: 16,
                       ),
                 label: Text(action),
               ),
-            ),
+            ],
           ),
         ],
       ),
     );
   }
-
-  static (String, Color) _applicationStatus(
-    BuildContext context,
-    String value,
-    Color accent,
-  ) => switch (value) {
-    'checking' => ('Checking', AppTheme.warning),
-    'available' => ('Update available', accent),
-    'downloading' => ('Downloading', AppTheme.warning),
-    'ready' => ('Downloaded', AppTheme.success),
-    'upToDate' => ('Up to date', AppTheme.success),
-    'error' => ('Check failed', context.palette.danger),
-    'unconfigured' => ('Not configured', context.palette.muted),
-    _ => ('Not checked', context.palette.muted),
-  };
 
   static Widget _applicationStatusContent(
     BuildContext context,
@@ -303,25 +334,24 @@ class _ApplicationTrack extends StatelessWidget {
     'checking' => _TrackNotice(
       icon: Icons.sync_rounded,
       color: accent,
-      text: 'Checking for a newer Mpvson release…',
+      text: 'Checking for newer Mpvson release…',
     ),
-    'upToDate' => const _TrackNotice(
+    'upToDate' => _TrackNotice(
       icon: Icons.check_circle_outline_rounded,
-      color: AppTheme.success,
-      text: 'You are using the latest available version.',
+      color: context.palette.success,
+      text: 'You are using the latest version of Mpvson.',
     ),
     'available' when release != null => _AppReleaseDetails(release: release),
     'downloading' => _ProgressDetail(
       title: release == null
-          ? 'Downloading the application package…'
+          ? 'Downloading package…'
           : 'Downloading version ${release.version}…',
       progress: updates.progress,
     ),
-    'ready' => const _TrackNotice(
+    'ready' => _TrackNotice(
       icon: Icons.verified_outlined,
-      color: AppTheme.success,
-      text:
-          'The verified package is downloaded. Close Mpvson before installing it.',
+      color: context.palette.success,
+      text: 'Verified package downloaded. Close Mpvson before installing.',
     ),
     'error' when updates.error != null => _TrackNotice(
       icon: Icons.error_outline_rounded,
@@ -329,9 +359,9 @@ class _ApplicationTrack extends StatelessWidget {
       text: updates.error!,
     ),
     _ => _TrackNotice(
-      icon: Icons.system_update_alt_rounded,
+      icon: Icons.check_circle_outline_rounded,
       color: context.palette.secondaryText,
-      text: 'Check for a newer Mpvson release.',
+      text: 'Mpvson is ready to check for updates.',
     ),
   };
 }
@@ -353,17 +383,12 @@ class _EngineTrack extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final accent = Theme.of(context).colorScheme.primary;
+    final theme = Theme.of(context);
+    final accent = theme.colorScheme.primary;
     final linux = defaultTargetPlatform == TargetPlatform.linux;
-    final systemManaged =
-        linux || !updates.selfManaged || updates.status == 'systemManaged';
+    final systemManaged = engineSystemManaged(updates);
     final release = updates.release;
-    final (status, color) = _statusLabel(
-      context,
-      updates.status,
-      systemManaged,
-      accent,
-    );
+    final (status, color) = engineUpdateStatusPresentation(context, updates);
     final hasPendingAction =
         updates.status == 'readyToRestart' ||
         updates.pendingVersion != null ||
@@ -371,21 +396,16 @@ class _EngineTrack extends StatelessWidget {
     final rollbackPending = updates.pendingRollback;
     final canScheduleRollback =
         updates.canRollback && !busy && !hasPendingAction;
-    final rollbackVersion = updates.rollbackVersion?.replaceAll(RegExp(r'-dev[-+.0-9a-zA-Z]*'), '').trim();
-    final rollbackTarget = updates.rollbackTargetIsBundled
-        ? rollbackVersion == null || rollbackVersion.isEmpty
-              ? 'the bundled engine'
-              : 'the bundled engine (version $rollbackVersion)'
-        : rollbackVersion == null || rollbackVersion.isEmpty
-        ? 'the previous compatible engine'
-        : 'the previous compatible engine (version $rollbackVersion)';
+    final rollbackVersion = updates.rollbackVersion
+        ?.replaceAll(RegExp(r'-dev[-+.0-9a-zA-Z]*'), '')
+        .trim();
     final action = switch (updates.status) {
       'available' => 'Download and stage',
-      'readyToRestart' => 'Discard pending engine',
+      'readyToRestart' => 'Discard pending',
       'checking' => 'Checking…',
       'downloading' => 'Downloading…',
       'staging' => 'Staging…',
-      _ => 'Check for engine updates',
+      _ => 'Check engine updates',
     };
     final enabled =
         !busy &&
@@ -394,95 +414,119 @@ class _EngineTrack extends StatelessWidget {
           _ => updates.configured,
         };
 
-    return _ReleaseTrack(
-      railColor: color,
+    final cleanLoaded = loadedVersion.trim();
+
+    return _ComponentCard(
       icon: Icons.memory_rounded,
+      accentColor: color,
       title: 'Playback engine',
+      subtitle: cleanLoaded.isEmpty
+          ? 'libmpv'
+          : cleanLoaded.toLowerCase().startsWith('libmpv')
+          ? 'Loaded: $cleanLoaded'
+          : 'Loaded: libmpv $cleanLoaded',
       status: status,
       statusColor: color,
-      currentLabel: 'Loaded engine version $loadedVersion',
-      content: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           AnimatedSize(
-            duration: AppMotion.duration(context, AppMotion.quick),
-            curve: AppMotion.standardCurve,
+            duration: AppMotion.duration(context, AppMotion.standard),
+            curve: AppMotion.enter,
             alignment: Alignment.topLeft,
-            child: AnimatedSwitcher(
-              duration: AppMotion.duration(context, AppMotion.quick),
-              child: KeyedSubtree(
-                key: ValueKey<String>('engine-update-${updates.status}'),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (updates.sourceLabel.trim().isNotEmpty) ...[
-                      Text(
-                        'Source: ${updates.sourceLabel}',
-                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                          color: context.palette.muted,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                    ],
-                    if (updates.usesOfficialMpvSource) ...[
-                      _EngineChannelChooser(
-                        updates: updates,
-                        busy: busy,
-                        hasPendingEngine:
-                            updates.pendingVersion != null ||
-                            updates.pendingBundled,
-                      ),
-                      const SizedBox(height: 12),
-                    ],
-                    _engineStatusContent(
-                      context,
-                      updates,
-                      release,
-                      loadedVersion,
-                      systemManaged,
-                      linux,
-                      accent,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (updates.sourceLabel.trim().isNotEmpty) ...[
+                  Text(
+                    'Source: ${updates.sourceLabel}',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
                     ),
-                    if (updates.configurationWarning case final warning?) ...[
-                      const SizedBox(height: 8),
-                      _TrackNotice(
-                        icon: Icons.warning_amber_rounded,
-                        color: AppTheme.warning,
-                        text: warning,
-                      ),
-                    ],
-                    if (updates.pendingVersion case final pending?
-                        when pending.isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      _TrackNotice(
-                        icon: Icons.pending_outlined,
-                        color: AppTheme.warning,
-                        text: updates.pendingBundled
-                            ? 'Bundled engine version $pending selected for the next restart.'
-                            : rollbackPending
-                            ? 'Rollback to engine version $pending selected for the next restart.'
-                            : 'Staged version $pending',
-                      ),
-                    ] else if (updates.pendingBundled) ...[
-                      const SizedBox(height: 8),
-                      const _TrackNotice(
-                        icon: Icons.pending_outlined,
-                        color: AppTheme.warning,
-                        text: 'Bundled engine selected for the next restart.',
-                      ),
-                    ],
-                  ],
+                  ),
+                  const SizedBox(height: 10),
+                ],
+                if (updates.usesOfficialMpvSource) ...[
+                  _EngineChannelChooser(
+                    updates: updates,
+                    busy: busy,
+                    hasPendingEngine:
+                        updates.pendingVersion != null ||
+                        updates.pendingBundled,
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                _engineStatusContent(
+                  context,
+                  updates,
+                  release,
+                  loadedVersion,
+                  systemManaged,
+                  linux,
+                  accent,
                 ),
-              ),
+                if (updates.lastRejectedVersion case final rejected?
+                    when rejected.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  _TrackNotice(
+                    icon: Icons.history_toggle_off_rounded,
+                    color: context.palette.warning,
+                    text:
+                        'Engine $rejected was rolled back after it could not start. '
+                        'The previous engine is in use; reconfigure updates to retry it.',
+                  ),
+                ],
+                if (updates.configurationWarning case final warning?) ...[
+                  const SizedBox(height: 8),
+                  _TrackNotice(
+                    icon: Icons.warning_amber_rounded,
+                    color: context.palette.warning,
+                    text: warning,
+                  ),
+                ],
+                if (updates.pendingVersion case final pending?
+                    when pending.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  _TrackNotice(
+                    icon: Icons.pending_outlined,
+                    color: context.palette.warning,
+                    text: updates.pendingBundled
+                        ? 'Bundled engine (v$pending) staged for next restart.'
+                        : rollbackPending
+                        ? 'Rollback to v$pending staged for next restart.'
+                        : 'Engine v$pending staged for next restart.',
+                  ),
+                ] else if (updates.pendingBundled) ...[
+                  const SizedBox(height: 8),
+                  _TrackNotice(
+                    icon: Icons.pending_outlined,
+                    color: context.palette.warning,
+                    text: 'Bundled engine selected for next restart.',
+                  ),
+                ],
+              ],
             ),
           ),
           if (!systemManaged) ...[
-            const SizedBox(height: 12),
-            Align(
-              alignment: Alignment.centerRight,
-              child: Tooltip(
-                message: action,
-                child: _engineButton(
+            const SizedBox(height: 14),
+            Wrap(
+              alignment: WrapAlignment.end,
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                if (canScheduleRollback)
+                  OutlinedButton.icon(
+                    onPressed: onRollback,
+                    icon: const Icon(Icons.restore_rounded, size: 16),
+                    label: Text(
+                      rollbackVersion == null || rollbackVersion.isEmpty
+                          ? 'Roll back engine'
+                          : 'Roll back to v$rollbackVersion',
+                    ),
+                  ),
+                _engineButton(
                   context,
                   action: action,
                   enabled: enabled,
@@ -490,30 +534,8 @@ class _EngineTrack extends StatelessWidget {
                   status: updates.status,
                   onAction: onAction,
                 ),
-              ),
+              ],
             ),
-            if (canScheduleRollback) ...[
-              const SizedBox(height: 8),
-              Text(
-                'Select $rollbackTarget for the next restart. The currently loaded engine ($loadedVersion) stays active until then.',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: context.palette.secondaryText,
-                  height: 1.45,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Align(
-                alignment: Alignment.centerRight,
-                child: Tooltip(
-                  message: 'Roll back to $rollbackTarget on the next restart',
-                  child: OutlinedButton.icon(
-                    onPressed: onRollback,
-                    icon: const Icon(Icons.restore_rounded),
-                    label: const Text('Roll back engine'),
-                  ),
-                ),
-              ),
-            ],
           ],
         ],
       ),
@@ -528,50 +550,26 @@ class _EngineTrack extends StatelessWidget {
     required String status,
     required VoidCallback onAction,
   }) {
-    final button = status == 'readyToRestart'
-        ? OutlinedButton.icon(
-            onPressed: enabled ? onAction : null,
-            icon: const Icon(Icons.delete_outline_rounded),
-            label: Text(action),
-          )
-        : FilledButton.icon(
-            onPressed: enabled ? onAction : null,
-            icon: busy
-                ? _ActionProgress(reducedMotion: AppMotion.reduce(context))
-                : Icon(
-                    status == 'available'
-                        ? Icons.download_rounded
-                        : Icons.refresh_rounded,
-                  ),
-            label: Text(action),
-          );
-    return button;
-  }
-
-  static (String, Color) _statusLabel(
-    BuildContext context,
-    String value,
-    bool systemManaged,
-    Color accent,
-  ) {
-    if (systemManaged) return ('System managed', context.palette.secondaryText);
-    return switch (value) {
-      'checking' => ('Checking', AppTheme.warning),
-      'savingChannel' => ('Saving choice', AppTheme.warning),
-      'available' => ('Update available', accent),
-      'downloading' => ('Downloading', AppTheme.warning),
-      'staging' => ('Staging', AppTheme.warning),
-      'readyToRestart' => ('Ready to restart', AppTheme.success),
-      'upToDate' => ('Up to date', AppTheme.success),
-      'newerInstalled' => ('Installed is newer', context.palette.secondaryText),
-      'stableUnavailable' => (
-        'Stable package unavailable',
-        context.palette.muted,
-      ),
-      'error' => ('Update failed', context.palette.danger),
-      'unconfigured' => ('Not configured', context.palette.muted),
-      _ => ('Not checked', context.palette.muted),
-    };
+    if (status == 'readyToRestart') {
+      return OutlinedButton.icon(
+        onPressed: enabled ? onAction : null,
+        icon: const Icon(Icons.delete_outline_rounded, size: 16),
+        label: Text(action),
+      );
+    }
+    return FilledButton.icon(
+      onPressed: enabled ? onAction : null,
+      style: _busyButtonStyle(context, busy),
+      icon: busy
+          ? _ActionProgress(reducedMotion: AppMotion.reduce(context))
+          : Icon(
+              status == 'available'
+                  ? Icons.download_rounded
+                  : Icons.refresh_rounded,
+              size: 16,
+            ),
+      label: Text(action),
+    );
   }
 
   static Widget _engineStatusContent(
@@ -588,7 +586,7 @@ class _EngineTrack extends StatelessWidget {
         icon: Icons.inventory_2_outlined,
         color: context.palette.secondaryText,
         text: linux
-            ? 'On Linux, the system package manager owns libmpv. Update it through your distribution.'
+            ? 'On Linux, the distribution package manager maintains libmpv.'
             : 'The operating system manages updates for this playback engine.',
       );
     }
@@ -599,8 +597,7 @@ class _EngineTrack extends StatelessWidget {
       'unconfigured' when updates.configurationError != null => _TrackNotice(
         icon: Icons.error_outline_rounded,
         color: context.palette.danger,
-        text:
-            'Engine update checks are disabled: ${updates.configurationError}',
+        text: 'Engine updates disabled: ${updates.configurationError}',
       ),
       'unconfigured' => _TrackNotice(
         icon: Icons.info_outline_rounded,
@@ -610,33 +607,33 @@ class _EngineTrack extends StatelessWidget {
       'checking' => _TrackNotice(
         icon: Icons.sync_rounded,
         color: accent,
-        text: 'Checking for a playback engine update…',
+        text: 'Checking for playback engine updates…',
       ),
       'savingChannel' => _TrackNotice(
         icon: Icons.sync_rounded,
         color: accent,
-        text: 'Saving the engine update channel…',
+        text: 'Updating engine update channel…',
       ),
       'stableUnavailable' => _TrackNotice(
         icon: Icons.info_outline_rounded,
         color: context.palette.muted,
         text: updates.stableReleaseVersion == null
-            ? 'The latest mpv stable release does not publish a compatible Windows libmpv package. Mpvson will keep using the currently loaded engine.'
-            : 'mpv ${updates.stableReleaseVersion} does not publish a compatible Windows libmpv package. Mpvson will keep using the currently loaded engine.',
+            ? 'The latest stable release does not publish a compatible Windows package.'
+            : 'mpv ${updates.stableReleaseVersion} does not publish a compatible Windows package. Continuing with current engine.',
       ),
-      'upToDate' => const _TrackNotice(
+      'upToDate' => _TrackNotice(
         icon: Icons.check_circle_outline_rounded,
-        color: AppTheme.success,
+        color: context.palette.success,
         text: 'The loaded playback engine matches the selected source.',
       ),
       'newerInstalled' => _TrackNotice(
-        icon: Icons.arrow_upward_rounded,
+        icon: Icons.check_circle_outline_rounded,
         color: context.palette.secondaryText,
         text:
-            'The loaded engine version $loadedVersion is newer than the latest version from this source (${release?.engineVersion ?? 'unknown'}). Mpvson will not downgrade it.',
+            'Current engine ($loadedVersion) is newer than the remote build. Downgrade skipped.',
       ),
       'available' => Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Builder(
             builder: (context) {
@@ -644,49 +641,40 @@ class _EngineTrack extends StatelessWidget {
               final cleanVersion = rawVersion
                   ?.replaceAll(RegExp(r'-dev[-+.0-9a-zA-Z]*'), '')
                   .trim();
-              final versionSuffix = cleanVersion == null || cleanVersion.isEmpty
-                  ? ''
-                  : ' version $cleanVersion';
+              final versionLabel = cleanVersion == null || cleanVersion.isEmpty
+                  ? 'New engine build'
+                  : 'Engine version $cleanVersion';
               return Text(
-                updates.usesOfficialMpvSource
-                    ? updates.channel == EngineUpdateChannel.stable
-                        ? 'An upstream mpv stable engine release$versionSuffix is available.'
-                        : 'An upstream mpv engine release$versionSuffix is available.'
-                    : 'A playback engine update$versionSuffix is available.',
-                style: TextStyle(
-                  color: context.palette.secondaryText,
-                  height: 1.45,
-                ),
+                '$versionLabel is available for download and staging.',
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyMedium?.copyWith(height: 1.4),
               );
             },
           ),
           if (release != null && release.notes.trim().isNotEmpty) ...[
-            const SizedBox(height: 7),
-            Text(
-              release.notes,
-              style: TextStyle(color: context.palette.muted, height: 1.45),
-            ),
+            ReleaseNotesPreview(notes: release.notes),
           ],
         ],
       ),
       'downloading' => _ProgressDetail(
         title: updates.pendingVersion == null
-            ? 'Downloading the playback engine…'
+            ? 'Downloading playback engine…'
             : 'Downloading engine version ${updates.pendingVersion}…',
         progress: updates.progress,
       ),
       'staging' => _ProgressDetail(
-        title: 'Staging the playback engine…',
+        title: 'Staging engine binaries…',
         progress: updates.progress,
       ),
       'readyToRestart' => _TrackNotice(
         icon: Icons.restart_alt_rounded,
-        color: AppTheme.success,
+        color: context.palette.success,
         text: updates.pendingBundled
-            ? 'Restart Mpvson to use the bundled engine. The player currently has $loadedVersion loaded.'
+            ? 'Restart Mpvson to switch to the bundled engine.'
             : rollbackPending
-            ? 'Restart Mpvson to roll back to engine version ${updates.pendingVersion}. The player currently has $loadedVersion loaded.'
-            : 'Restart Mpvson to activate the staged engine. The player currently has $loadedVersion loaded.',
+            ? 'Restart Mpvson to roll back to engine ${updates.pendingVersion}.'
+            : 'Restart Mpvson to activate the staged engine.',
       ),
       'error' when updates.error != null => _TrackNotice(
         icon: Icons.error_outline_rounded,
@@ -699,9 +687,9 @@ class _EngineTrack extends StatelessWidget {
         text: 'The operating system manages updates for this playback engine.',
       ),
       _ => _TrackNotice(
-        icon: Icons.memory_rounded,
-        color: context.palette.secondaryText,
-        text: 'Check for a playback engine update.',
+        icon: Icons.check_circle_outline_rounded,
+        color: context.palette.success,
+        text: 'Playback engine is active and ready.',
       ),
     };
   }
@@ -718,106 +706,174 @@ class _EngineChannelChooser extends StatelessWidget {
   final bool busy;
   final bool hasPendingEngine;
 
-  @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Text('Update channel', style: Theme.of(context).textTheme.labelLarge),
-      const SizedBox(height: 6),
-      SegmentedButton<EngineUpdateChannel>(
-        segments: const [
-          ButtonSegment(
-            value: EngineUpdateChannel.stable,
-            label: Text('Stable'),
-            icon: Icon(Icons.verified_outlined),
-          ),
-          ButtonSegment(
-            value: EngineUpdateChannel.development,
-            label: Text('Development'),
-            icon: Icon(Icons.science_outlined),
-          ),
-        ],
-        selected: {updates.channel},
-        showSelectedIcon: false,
-        onSelectionChanged: busy || hasPendingEngine
-            ? null
-            : (selected) async {
-                if (selected.isEmpty) return;
-                await updates.setChannel(selected.single);
-              },
-      ),
-      const SizedBox(height: 6),
-      Text(
-        hasPendingEngine
-            ? 'Discard the pending engine to change channels.'
-            : updates.channel == EngineUpdateChannel.stable
-            ? 'Stable releases are recommended. The updater checks for a compatible Windows libmpv package.'
-            : 'Development follows mpv master. mpv marks these builds as untested.',
-        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-          color: updates.channel == EngineUpdateChannel.development
-              ? AppTheme.warning
-              : context.palette.secondaryText,
-          height: 1.4,
-        ),
-      ),
-    ],
-  );
-}
-
-class _ReleaseTrack extends StatelessWidget {
-  const _ReleaseTrack({
-    required this.railColor,
-    required this.icon,
-    required this.title,
-    required this.status,
-    required this.statusColor,
-    required this.currentLabel,
-    required this.content,
-  });
-
-  final Color railColor;
-  final IconData icon;
-  final String title;
-  final String status;
-  final Color statusColor;
-  final String currentLabel;
-  final Widget content;
+  ButtonStyle _channelStyle(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final selectedFill = Color.alphaBlend(
+      scheme.primary.withValues(alpha: 0.16),
+      scheme.surfaceContainer,
+    );
+    return ButtonStyle(
+      backgroundColor: WidgetStateProperty.resolveWith((states) {
+        return states.contains(WidgetState.selected)
+            ? selectedFill
+            : Colors.transparent;
+      }),
+      foregroundColor: WidgetStateProperty.resolveWith((states) {
+        if (states.contains(WidgetState.disabled)) {
+          return states.contains(WidgetState.selected)
+              ? scheme.onSurface.withValues(alpha: 0.72)
+              : scheme.onSurfaceVariant.withValues(alpha: 0.6);
+        }
+        return states.contains(WidgetState.selected)
+            ? scheme.onSurface
+            : scheme.onSurfaceVariant;
+      }),
+      side: WidgetStateProperty.resolveWith((states) {
+        return BorderSide(
+          color: states.contains(WidgetState.selected)
+              ? scheme.primary.withValues(alpha: 0.55)
+              : scheme.outlineVariant,
+        );
+      }),
+    );
+  }
 
   @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.fromLTRB(14, 10, 0, 10),
-    decoration: BoxDecoration(
-      border: Border(left: BorderSide(color: railColor, width: 3)),
-    ),
-    child: Column(
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Icon(icon, size: 21, color: railColor),
-            const SizedBox(width: 9),
-            Expanded(
-              child: Text(
-                title,
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-            ),
-            _StatusPill(status: status, color: statusColor),
-          ],
-        ),
-        const SizedBox(height: 5),
-        Padding(
-          padding: const EdgeInsets.only(left: 30),
-          child: Text(
-            currentLabel,
-            style: Theme.of(context).textTheme.bodySmall,
+        Text(
+          'Update channel',
+          style: theme.textTheme.labelMedium?.copyWith(
+            fontWeight: FontWeight.w600,
           ),
         ),
-        const SizedBox(height: 10),
-        Padding(padding: const EdgeInsets.only(left: 30), child: content),
+        const SizedBox(height: 6),
+        SegmentedButton<EngineUpdateChannel>(
+          style: _channelStyle(context),
+          segments: const [
+            ButtonSegment(
+              value: EngineUpdateChannel.stable,
+              label: Text('Stable'),
+              icon: Icon(Icons.verified_outlined, size: 16),
+            ),
+            ButtonSegment(
+              value: EngineUpdateChannel.development,
+              label: Text('Development'),
+              icon: Icon(Icons.science_outlined, size: 16),
+            ),
+          ],
+          selected: {updates.channel},
+          showSelectedIcon: false,
+          onSelectionChanged: busy || hasPendingEngine
+              ? null
+              : (selected) async {
+                  if (selected.isEmpty) return;
+                  await updates.setChannel(selected.single);
+                },
+        ),
+        const SizedBox(height: 6),
+        Text(
+          hasPendingEngine
+              ? 'Discard the pending engine to change channels.'
+              : updates.channel == EngineUpdateChannel.stable
+              ? 'Stable releases are recommended for production playback.'
+              : 'Development tracks upstream mpv master builds with latest features.',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: updates.channel == EngineUpdateChannel.development
+                ? context.palette.warning
+                : theme.colorScheme.onSurfaceVariant,
+            fontSize: 12.5,
+            height: 1.35,
+          ),
+        ),
       ],
-    ),
-  );
+    );
+  }
+}
+
+class _ComponentCard extends StatelessWidget {
+  const _ComponentCard({
+    required this.accentColor,
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.status,
+    required this.statusColor,
+    required this.child,
+  });
+
+  final Color accentColor;
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final String status;
+  final Color statusColor;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainer,
+        borderRadius: BorderRadius.circular(AppRadii.artwork),
+        border: Border.all(
+          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.8),
+        ),
+      ),
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: accentColor.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: accentColor.withValues(alpha: 0.25),
+                  ),
+                ),
+                alignment: Alignment.center,
+                child: Icon(icon, size: 19, color: accentColor),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: -0.2,
+                      ),
+                    ),
+                    const SizedBox(height: 1),
+                    Text(
+                      subtitle,
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              UpdateStatusPill(label: status, color: statusColor),
+            ],
+          ),
+          const SizedBox(height: 14),
+          child,
+        ],
+      ),
+    );
+  }
 }
 
 class _AppReleaseDetails extends StatelessWidget {
@@ -826,30 +882,226 @@ class _AppReleaseDetails extends StatelessWidget {
   final ReleaseInfo release;
 
   @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Text(
-        'Version ${release.version} is available',
-        style: Theme.of(
-          context,
-        ).textTheme.bodyMedium?.copyWith(color: context.palette.secondaryText),
-      ),
-      if (release.notes.trim().isNotEmpty) ...[
-        const SizedBox(height: 7),
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
         Text(
-          release.notes,
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(height: 1.45),
+          'Version ${release.version} is available for download.',
+          style: theme.textTheme.bodyMedium?.copyWith(
+            color: context.palette.secondaryText,
+          ),
+        ),
+        if (release.notes.trim().isNotEmpty) ...[
+          ReleaseNotesPreview(notes: release.notes),
+        ],
+        const SizedBox(height: 8),
+        _TrackNotice(
+          icon: Icons.shield_outlined,
+          color: context.palette.secondaryText,
+          text: 'Verified with SHA-256 integrity check.',
         ),
       ],
-      const SizedBox(height: 7),
-      _TrackNotice(
-        icon: Icons.shield_outlined,
-        color: context.palette.secondaryText,
-        text: 'Mpvson checks the downloaded package against its SHA-256 hash.',
+    );
+  }
+}
+
+class ReleaseNotesPreview extends StatefulWidget {
+  const ReleaseNotesPreview({super.key, required this.notes});
+
+  final String notes;
+
+  @override
+  State<ReleaseNotesPreview> createState() => _ReleaseNotesPreviewState();
+}
+
+class _ReleaseNotesPreviewState extends State<ReleaseNotesPreview> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final raw = widget.notes.trim();
+    if (raw.isEmpty) return const SizedBox.shrink();
+
+    final theme = Theme.of(context);
+    final lines = raw
+        .split('\n')
+        .map((l) => l.trim())
+        .where(
+          (l) =>
+              l.isNotEmpty &&
+              !l.startsWith('http') &&
+              !l.startsWith('===') &&
+              !l.startsWith('---'),
+        )
+        .toList();
+
+    final bulletRegex = RegExp(r'^[*\-•+]\s*(.+)');
+    final headingRegex = RegExp(
+      r'^(#{1,6}\s+|===+|---+|[A-Za-z0-9 _\-]+:|\b(?:Features|Changes|Changelog|Fixes|Notes)\b)',
+      caseSensitive: false,
+    );
+
+    // Prioritize bullet points in changelogs
+    final bullets = <String>[];
+    for (final line in lines) {
+      final match = bulletRegex.firstMatch(line);
+      if (match != null) {
+        final text = match
+            .group(1)!
+            .replaceAll(RegExp(r'\[([^\]]+)\]\([^\)]+\)'), r'$1')
+            .trim();
+        if (text.length > 3 &&
+            !text.toLowerCase().contains('commit') &&
+            !text.toLowerCase().contains('sha256')) {
+          bullets.add(text.length > 80 ? '${text.substring(0, 77)}…' : text);
+          if (bullets.length >= 2) break;
+        }
+      }
+    }
+
+    final highlights = <String>[];
+    if (bullets.isNotEmpty) {
+      highlights.addAll(bullets);
+    } else {
+      // Fallback: pick clean non-heading lines
+      for (final line in lines) {
+        if (headingRegex.hasMatch(line)) continue;
+        final clean = line
+            .replaceAll(RegExp(r'^[#* \-\t]+'), '')
+            .replaceAll(RegExp(r'\[([^\]]+)\]\([^\)]+\)'), r'$1')
+            .trim();
+        if (clean.length > 5 &&
+            !clean.toLowerCase().contains('commit') &&
+            !clean.toLowerCase().contains('sha256') &&
+            !clean.toLowerCase().startsWith('release notes')) {
+          highlights.add(
+            clean.length > 80 ? '${clean.substring(0, 77)}…' : clean,
+          );
+          if (highlights.length >= 2) break;
+        }
+      }
+    }
+
+    final hasMore = lines.length > 2 || raw.length > 150;
+
+    return Container(
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest.withValues(
+          alpha: 0.35,
+        ),
+        borderRadius: BorderRadius.circular(AppRadii.control),
+        border: Border.all(
+          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.4),
+        ),
       ),
-    ],
-  );
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.auto_awesome_outlined,
+                size: 14,
+                color: theme.colorScheme.primary,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                'Highlights',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: theme.colorScheme.onSurface,
+                ),
+              ),
+              const Spacer(),
+              if (hasMore)
+                InkWell(
+                  onTap: () => setState(() => _expanded = !_expanded),
+                  borderRadius: BorderRadius.circular(4),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 4,
+                      vertical: 2,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          _expanded ? 'Show less' : 'View full notes',
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: theme.colorScheme.primary,
+                            fontSize: 11,
+                          ),
+                        ),
+                        Icon(
+                          _expanded
+                              ? Icons.keyboard_arrow_up_rounded
+                              : Icons.keyboard_arrow_down_rounded,
+                          size: 14,
+                          color: theme.colorScheme.primary,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          if (!_expanded) ...[
+            for (final h
+                in highlights.isNotEmpty ? highlights : [lines.first]) ...[
+              Padding(
+                padding: const EdgeInsets.only(bottom: 2),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '• ',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.primary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    Expanded(
+                      child: Text(
+                        h,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                          fontSize: 12,
+                          height: 1.3,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ] else ...[
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 140),
+              child: SingleChildScrollView(
+                child: Text(
+                  raw,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                    fontSize: 11,
+                    height: 1.35,
+                    fontFamily: 'monospace',
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
 }
 
 class _ProgressDetail extends StatelessWidget {
@@ -859,56 +1111,58 @@ class _ProgressDetail extends StatelessWidget {
   final double progress;
 
   @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Text(title, style: Theme.of(context).textTheme.bodyMedium),
-      const SizedBox(height: 9),
-      LinearProgressIndicator(
-        value: progress > 0
-            ? progress.clamp(0, 1).toDouble()
-            : AppMotion.reduce(context)
-            ? 0
-            : null,
-        minHeight: 4,
-        borderRadius: BorderRadius.circular(AppRadii.control),
-      ),
-      if (progress > 0) ...[
-        const SizedBox(height: 5),
-        Align(
-          alignment: Alignment.centerRight,
-          child: Text(
-            '${(progress.clamp(0, 1).toDouble() * 100).round()}%',
-            style: Theme.of(context).textTheme.labelSmall,
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final percent = progress > 0
+        ? '${(progress.clamp(0, 1).toDouble() * 100).round()}%'
+        : null;
+    final value = progress > 0
+        ? progress.clamp(0, 1).toDouble()
+        : AppMotion.reduce(context)
+        ? 0.0
+        : null;
+
+    return Semantics(
+      label: title,
+      value: percent,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  title,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                    fontSize: 12.5,
+                  ),
+                ),
+              ),
+              if (percent != null)
+                Text(
+                  percent,
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    color: theme.colorScheme.onSurface,
+                    fontWeight: FontWeight.w700,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+            ],
           ),
-        ),
-      ],
-    ],
-  );
-}
-
-class _StatusPill extends StatelessWidget {
-  const _StatusPill({required this.status, required this.color});
-
-  final String status;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
-    decoration: BoxDecoration(
-      color: color.withValues(alpha: 0.12),
-      borderRadius: BorderRadius.circular(AppRadii.control),
-    ),
-    child: AnimatedSwitcher(
-      duration: AppMotion.duration(context, AppMotion.quick),
-      child: Text(
-        status,
-        key: ValueKey<String>(status),
-        style: Theme.of(context).textTheme.labelSmall?.copyWith(color: color),
+          const SizedBox(height: 7),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(AppRadii.pill),
+            child: LinearProgressIndicator(
+              value: value,
+              minHeight: 6,
+              backgroundColor: theme.colorScheme.outlineVariant,
+            ),
+          ),
+        ],
       ),
-    ),
-  );
+    );
+  }
 }
 
 class _TrackNotice extends StatelessWidget {
@@ -926,15 +1180,33 @@ class _TrackNotice extends StatelessWidget {
   Widget build(BuildContext context) => Row(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      Icon(icon, color: color, size: 18),
-      const SizedBox(width: 9),
+      Icon(icon, color: color, size: 16),
+      const SizedBox(width: 8),
       Expanded(
         child: Text(
           text,
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(height: 1.45),
+          style: Theme.of(
+            context,
+          ).textTheme.bodySmall?.copyWith(height: 1.4, fontSize: 12),
         ),
       ),
     ],
+  );
+}
+
+ButtonStyle? _busyButtonStyle(BuildContext context, bool busy) {
+  if (!busy) return null;
+  final scheme = Theme.of(context).colorScheme;
+  final background = Color.alphaBlend(
+    scheme.primary.withValues(alpha: 0.18),
+    scheme.surfaceContainer,
+  );
+  return FilledButton.styleFrom(
+    backgroundColor: background,
+    foregroundColor: scheme.onSurface,
+    disabledBackgroundColor: background,
+    disabledForegroundColor: scheme.onSurface,
+    side: BorderSide(color: scheme.primary.withValues(alpha: 0.45)),
   );
 }
 
@@ -951,7 +1223,7 @@ class _ActionProgress extends StatelessWidget {
         ? const Icon(Icons.more_horiz_rounded, size: 16)
         : CircularProgressIndicator(
             strokeWidth: 2,
-            color: context.palette.accentForeground,
+            color: Theme.of(context).colorScheme.onSurface,
           ),
   );
 }

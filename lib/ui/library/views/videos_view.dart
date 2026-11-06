@@ -795,119 +795,135 @@ class _VideoGridCardState extends State<_VideoGridCard> {
                             : 1.02,
                         duration: AppMotion.duration(context, AppMotion.hover),
                         curve: AppMotion.enter,
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(AppRadii.artwork),
-                          child: AspectRatio(
-                            aspectRatio: 16 / 9,
-                            child: Stack(
-                              fit: StackFit.expand,
-                              children: [
-                                _VideoPreview(
-                                  video: video,
-                                  controller: widget.controller,
-                                ),
-                                if (widget.controller.recent.any(
-                                  (entry) =>
-                                      entry.path == video.path &&
-                                      entry.position > Duration.zero &&
-                                      entry.duration > Duration.zero,
-                                ))
-                                  Positioned(
-                                    left: 0,
-                                    right: 0,
-                                    bottom: 0,
-                                    child: Builder(
-                                      builder: (context) {
-                                        final entry = widget.controller.recent
-                                            .firstWhere(
-                                              (entry) =>
-                                                  entry.path == video.path,
-                                            );
-                                        return LinearProgressIndicator(
-                                          minHeight: 2,
-                                          value:
-                                              (entry.position.inMilliseconds /
-                                                      entry
-                                                          .duration
-                                                          .inMilliseconds)
-                                                  .clamp(0.0, 1.0),
-                                          color: accent,
-                                          backgroundColor: Colors.transparent,
-                                        );
-                                      },
-                                    ),
+                        child: Container(
+                          foregroundDecoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(
+                              AppRadii.artwork,
+                            ),
+                            border: Border.all(
+                              color: context.palette.borderStrong.withValues(
+                                alpha: 0.65,
+                              ),
+                            ),
+                          ),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(
+                              AppRadii.artwork,
+                            ),
+                            child: AspectRatio(
+                              aspectRatio: 16 / 9,
+                              child: Stack(
+                                fit: StackFit.expand,
+                                children: [
+                                  _VideoPreview(
+                                    video: video,
+                                    controller: widget.controller,
                                   ),
-                                // Duration badge
-                                if (video.metadata.duration > Duration.zero)
-                                  Positioned(
-                                    right: 8,
-                                    bottom: 8,
-                                    child: Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 6,
-                                        vertical: 2,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: Colors.black.withValues(
-                                          alpha: 0.75,
-                                        ),
-                                        borderRadius: BorderRadius.circular(
-                                          AppRadii.control,
-                                        ),
-                                      ),
-                                      child: Text(
-                                        formatDuration(video.metadata.duration),
-                                        style: context.palette.badge.copyWith(
-                                          fontSize: AppType.caption,
-                                        ),
+                                  if (widget.controller.recent.any(
+                                    (entry) =>
+                                        entry.path == video.path &&
+                                        entry.position > Duration.zero &&
+                                        entry.duration > Duration.zero,
+                                  ))
+                                    Positioned(
+                                      left: 0,
+                                      right: 0,
+                                      bottom: 0,
+                                      child: Builder(
+                                        builder: (context) {
+                                          final entry = widget.controller.recent
+                                              .firstWhere(
+                                                (entry) =>
+                                                    entry.path == video.path,
+                                              );
+                                          return LinearProgressIndicator(
+                                            minHeight: 2,
+                                            value:
+                                                (entry.position.inMilliseconds /
+                                                        entry
+                                                            .duration
+                                                            .inMilliseconds)
+                                                    .clamp(0.0, 1.0),
+                                            color: accent,
+                                            backgroundColor: Colors.transparent,
+                                          );
+                                        },
                                       ),
                                     ),
-                                  ),
-                                // Missing file indicator badge
-                                if (isUnavailable)
-                                  Positioned(
-                                    left: 8,
-                                    top: 8,
-                                    child: Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 6,
-                                        vertical: 2,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: context.palette.danger
-                                            .withValues(alpha: 0.85),
-                                        borderRadius: BorderRadius.circular(
-                                          AppRadii.control,
+                                  // Duration badge
+                                  if (video.metadata.duration > Duration.zero)
+                                    Positioned(
+                                      right: 8,
+                                      bottom: 8,
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 6,
+                                          vertical: 2,
                                         ),
-                                      ),
-                                      child: Text(
-                                        'File missing',
-                                        style: context.palette.badge.copyWith(
-                                          fontSize: AppType.caption,
-                                          color: Colors.white,
+                                        decoration: BoxDecoration(
+                                          color: Colors.black.withValues(
+                                            alpha: 0.75,
+                                          ),
+                                          borderRadius: BorderRadius.circular(
+                                            AppRadii.control,
+                                          ),
+                                        ),
+                                        child: Text(
+                                          formatDuration(
+                                            video.metadata.duration,
+                                          ),
+                                          style: context.palette.badge.copyWith(
+                                            fontSize: AppType.caption,
+                                          ),
                                         ),
                                       ),
                                     ),
-                                  ),
-                                // Subtle play button overlay on hover or focus
-                                if (showPlayOverlay)
-                                  Center(
-                                    child: IconButton.filled(
-                                      onPressed: widget.onPlay,
-                                      tooltip: 'Play video',
-                                      style: IconButton.styleFrom(
-                                        backgroundColor: Colors.black
-                                            .withValues(alpha: 0.65),
-                                        foregroundColor: accent,
-                                        minimumSize: const Size(40, 40),
-                                      ),
-                                      icon: const Icon(
-                                        Icons.play_arrow_rounded,
-                                        size: 22,
+                                  // Missing file indicator badge
+                                  if (isUnavailable)
+                                    Positioned(
+                                      left: 8,
+                                      top: 8,
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 6,
+                                          vertical: 2,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: context.palette.danger
+                                              .withValues(alpha: 0.85),
+                                          borderRadius: BorderRadius.circular(
+                                            AppRadii.control,
+                                          ),
+                                        ),
+                                        child: Text(
+                                          'File missing',
+                                          style: context.palette.badge.copyWith(
+                                            fontSize: AppType.caption,
+                                            color: Colors.white,
+                                          ),
+                                        ),
                                       ),
                                     ),
-                                  ),
-                              ],
+                                  // Subtle play button overlay on hover or focus
+                                  if (showPlayOverlay)
+                                    Center(
+                                      child: IconButton.filled(
+                                        onPressed: widget.onPlay,
+                                        tooltip: 'Play video',
+                                        style: IconButton.styleFrom(
+                                          backgroundColor: Colors.black
+                                              .withValues(alpha: 0.65),
+                                          foregroundColor: accent,
+                                          minimumSize: const Size(40, 40),
+                                        ),
+                                        icon: const Icon(
+                                          Icons.play_arrow_rounded,
+                                          size: 22,
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
                             ),
                           ),
                         ),

@@ -69,7 +69,12 @@ class ShellSideNav extends StatelessWidget {
               child: _items(context),
             ),
           ),
-          if (showSettings)
+          if (showSettings) ...[
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: AppSpace.xs),
+              child: Divider(height: 1, color: palette.border),
+            ),
+            const SizedBox(height: AppSpace.xs),
             Padding(
               padding: const EdgeInsets.fromLTRB(
                 AppSpace.xs,
@@ -79,6 +84,7 @@ class ShellSideNav extends StatelessWidget {
               ),
               child: _item(_settings),
             ),
+          ],
         ],
       ),
     );
@@ -202,7 +208,7 @@ class _NavItemState extends State<_NavItem> {
     final icon = Icon(
       widget.destination.icon,
       size: 20,
-      color: selected ? accent : palette.secondaryText,
+      color: selected ? accent : palette.primaryText.withValues(alpha: 0.75),
     );
     final content = widget.collapsed
         ? Center(child: icon)
@@ -219,7 +225,7 @@ class _NavItemState extends State<_NavItem> {
                     fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
                     color: selected
                         ? palette.primaryText
-                        : palette.secondaryText,
+                        : palette.primaryText.withValues(alpha: 0.75),
                   ),
                 ),
               ),
@@ -233,7 +239,7 @@ class _NavItemState extends State<_NavItem> {
       excludeSemantics: true,
       child: Material(
         color: selected
-            ? Color.alphaBlend(accent.withValues(alpha: 0.14), palette.sidebar)
+            ? accent.withValues(alpha: 0.12)
             : Colors.transparent,
         borderRadius: radius,
         child: InkWell(
@@ -246,7 +252,13 @@ class _NavItemState extends State<_NavItem> {
             position: DecorationPosition.foreground,
             decoration: BoxDecoration(
               borderRadius: radius,
-              border: _focused ? Border.all(color: accent, width: 2) : null,
+              border: _focused
+                  ? Border.all(color: accent, width: 2)
+                  : selected
+                  ? Border(
+                      left: BorderSide(color: accent, width: 3),
+                    )
+                  : null,
             ),
             child: ConstrainedBox(
               constraints: BoxConstraints(

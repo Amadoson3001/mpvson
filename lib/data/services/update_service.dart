@@ -78,6 +78,7 @@ class UpdateService extends ChangeNotifier {
   bool _busy = false;
   bool _disposed = false;
   bool _downloadable = false;
+  bool _failedDuringDownload = false;
 
   bool get configured => _configured;
   bool get busy => _busy;
@@ -87,6 +88,10 @@ class UpdateService extends ChangeNotifier {
   String? get error => _error;
   ReleaseInfo? get release => _release;
   String? get downloadPath => _downloadPath;
+
+  /// True when the current 'error' state came from a failed download rather
+  /// than a failed update check.
+  bool get failedDuringDownload => _failedDuringDownload;
 
   static Uri? _manifestUriFromEnvironment() {
     final value = _configuredManifest.trim();
@@ -728,6 +733,7 @@ class UpdateService extends ChangeNotifier {
 
   void _fail(Object error) {
     if (_disposed) return;
+    _failedDuringDownload = _status == 'downloading';
     _setState(status: 'error', error: _messageFor(error));
   }
 

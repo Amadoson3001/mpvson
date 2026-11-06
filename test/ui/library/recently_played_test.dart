@@ -4,7 +4,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mpvson/data/repositories/in_memory_media_library_repository.dart';
 import 'package:mpvson/data/repositories/session_repository.dart';
 import 'package:mpvson/domain/models/media_entry.dart';
-import 'package:mpvson/domain/models/playback_session.dart';
 import 'package:mpvson/ui/library/views/home_view.dart';
 import 'package:mpvson/ui/player/player_controller.dart';
 import 'package:mpvson/ui/player/widgets/empty_library.dart';

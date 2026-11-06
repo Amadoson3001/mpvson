@@ -301,26 +301,61 @@ class _MediaAccentScopeState extends State<MediaAccentScope> {
         ),
         filledButtonTheme: FilledButtonThemeData(
           style: theme.filledButtonTheme.style?.copyWith(
-            backgroundColor: WidgetStatePropertyAll(color),
-            foregroundColor: WidgetStatePropertyAll(onAccent),
+            backgroundColor: WidgetStateProperty.resolveWith(
+              (states) => states.contains(WidgetState.disabled)
+                  ? theme.filledButtonTheme.style?.backgroundColor?.resolve({
+                          WidgetState.disabled,
+                        }) ??
+                        theme.colorScheme.surfaceContainerHighest
+                  : color,
+            ),
+            foregroundColor: WidgetStateProperty.resolveWith(
+              (states) => states.contains(WidgetState.disabled)
+                  ? theme.filledButtonTheme.style?.foregroundColor?.resolve({
+                          WidgetState.disabled,
+                        }) ??
+                        theme.colorScheme.onSurfaceVariant
+                  : onAccent,
+            ),
           ),
         ),
         elevatedButtonTheme: ElevatedButtonThemeData(
           style: theme.elevatedButtonTheme.style?.copyWith(
-            backgroundColor: WidgetStatePropertyAll(color),
-            foregroundColor: WidgetStatePropertyAll(onAccent),
+            backgroundColor: WidgetStateProperty.resolveWith(
+              (states) => states.contains(WidgetState.disabled)
+                  ? theme.elevatedButtonTheme.style?.backgroundColor?.resolve({
+                          WidgetState.disabled,
+                        }) ??
+                        theme.colorScheme.surfaceContainerHighest
+                  : color,
+            ),
+            foregroundColor: WidgetStateProperty.resolveWith(
+              (states) => states.contains(WidgetState.disabled)
+                  ? theme.elevatedButtonTheme.style?.foregroundColor?.resolve({
+                          WidgetState.disabled,
+                        }) ??
+                        theme.colorScheme.onSurfaceVariant
+                  : onAccent,
+            ),
           ),
         ),
         textButtonTheme: TextButtonThemeData(
           style: theme.textButtonTheme.style?.copyWith(
-            foregroundColor: WidgetStatePropertyAll(color),
+            foregroundColor: WidgetStateProperty.resolveWith(
+              (states) => states.contains(WidgetState.disabled)
+                  ? theme.textButtonTheme.style?.foregroundColor?.resolve({
+                          WidgetState.disabled,
+                        }) ??
+                        theme.colorScheme.onSurfaceVariant
+                  : color,
+            ),
           ),
         ),
         iconButtonTheme: IconButtonThemeData(
           style: theme.iconButtonTheme.style?.copyWith(
             foregroundColor: WidgetStateProperty.resolveWith(
               (states) => states.contains(WidgetState.disabled)
-                  ? theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.4)
+                  ? theme.colorScheme.onSurfaceVariant
                   : states.contains(WidgetState.selected)
                   ? color
                   : theme.colorScheme.onSurfaceVariant,
@@ -336,9 +371,11 @@ class _MediaAccentScopeState extends State<MediaAccentScope> {
                   : theme.colorScheme.surfaceContainer;
             }),
             foregroundColor: WidgetStateProperty.resolveWith((states) {
-              return states.contains(WidgetState.selected)
-                  ? onAccent
-                  : theme.colorScheme.onSurface;
+              if (states.contains(WidgetState.selected)) return onAccent;
+              if (states.contains(WidgetState.disabled)) {
+                return theme.colorScheme.onSurfaceVariant;
+              }
+              return theme.colorScheme.onSurface;
             }),
           ),
         ),

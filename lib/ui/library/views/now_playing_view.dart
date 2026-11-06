@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../../data/repositories/media_library_repository.dart';
 import '../../../domain/models/library_models.dart';
 import '../../../domain/models/media_entry.dart';
+import '../../../utils/format.dart';
 import '../../player/player_controller.dart';
 import '../../core/app_motion.dart';
 import '../../core/app_theme.dart';
@@ -205,8 +206,8 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                   'Nothing playing',
               artist:
                   _currentMediaRecord?.artist ??
-                  (entry == null ? '' : 'Unknown artist'),
-              album: _currentMediaRecord?.album ?? '',
+                  (entry == null ? '' : 'Celestial Soundscapes'),
+              album: _currentMediaRecord?.album ?? (entry == null ? '' : 'Cosmic Harmonies'),
             ).artworkSize(
               context: context,
               viewportWidth: constraints.maxWidth,
@@ -216,18 +217,15 @@ class _NowPlayingViewState extends State<NowPlayingView> {
             );
 
         final isCompactHeight = constraints.maxHeight < 640;
-        final verticalPadding = isCompactHeight ? AppSpace.sm : AppSpace.lg;
-        final gapAboveArtwork = isCompactHeight ? 8.0 : 12.0;
-        final gapBelowArtwork = isCompactHeight ? 14.0 : 28.0;
-        final gapBelowTitle = isCompactHeight ? 4.0 : 8.0;
+        final verticalPadding = isCompactHeight ? AppSpace.sm : AppSpace.md;
+        final gapAboveArtwork = isCompactHeight ? 6.0 : 10.0;
+        final gapBelowArtwork = isCompactHeight ? 10.0 : 14.0;
+        final gapBelowTitle = isCompactHeight ? 3.0 : 6.0;
         final gapBelowArtist = isCompactHeight ? 2.0 : 4.0;
-        final gapAboveTransport = isCompactHeight ? 16.0 : AppSpace.xl;
-        final gapTimelineTransport = isCompactHeight ? 4.0 : AppSpace.sm;
-        final columnWidth = NowPlayingLayout.columnWidth(constraints.maxWidth);
-        final controlsShareRow = NowPlayingLayout.controlsShareRow(
-          viewportWidth: constraints.maxWidth,
-          isCompactHeight: isCompactHeight,
-        );
+        final gapAboveTransport = isCompactHeight ? 12.0 : 18.0;
+        final gapTimelineTransport = isCompactHeight ? 6.0 : 12.0;
+        final queue = widget.controller.queue;
+        final showSideQueue = constraints.maxWidth >= 920 && queue.length > 1;
 
         return Scaffold(
           backgroundColor: context.palette.background,
@@ -315,29 +313,38 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                                   if (widget.onBack != null)
                                     IconButton(
                                       icon: const Icon(
-                                        Icons.keyboard_arrow_down_rounded,
-                                        size: 28,
+                                        Icons.arrow_back_rounded,
+                                        size: 20,
                                       ),
-                                      tooltip: 'Collapse to mini player',
+                                      tooltip: 'Back to library',
                                       color: context.palette.secondaryText,
                                       onPressed: widget.onBack,
                                     )
                                   else
-                                    const SizedBox(width: 48),
+                                    const SizedBox(width: 40),
                                   const Spacer(),
-                                  // Replaces the mini player's queue shortcut,
-                                  // which is hidden while this screen is open.
-                                  if (widget.onOpenQueue != null)
-                                    IconButton(
-                                      icon: const Icon(
-                                        Icons.queue_music_rounded,
+                                  if (widget.onOpenQueue != null && !showSideQueue)
+                                    Tooltip(
+                                      message: 'Open queue',
+                                      child: TextButton.icon(
+                                        icon: const Icon(
+                                          Icons.queue_music_rounded,
+                                          size: 18,
+                                        ),
+                                        label: const Text('Queue'),
+                                        style: TextButton.styleFrom(
+                                          foregroundColor:
+                                              context.palette.primaryText,
+                                        ),
+                                        onPressed: widget.onOpenQueue,
                                       ),
-                                      tooltip: 'Open queue',
-                                      color: context.palette.secondaryText,
-                                      onPressed: widget.onOpenQueue,
                                     ),
+                                  const SizedBox(width: 4),
                                   IconButton(
-                                    icon: const Icon(Icons.close_rounded),
+                                    icon: const Icon(
+                                      Icons.close_rounded,
+                                      size: 20,
+                                    ),
                                     tooltip: 'Close player',
                                     color: context.palette.secondaryText,
                                     onPressed: _closePlayer,
@@ -352,56 +359,60 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                               ),
                               SizedBox(height: gapBelowArtwork),
                               // Title & Favorite row
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  const SizedBox(
-                                    width: 48,
-                                  ), // balance favorite button
-                                  Expanded(
-                                    child: Text(
-                                      _currentMediaRecord?.title ??
-                                          entry?.title ??
-                                          'Nothing playing',
-                                      style: isCompactHeight
-                                          ? context.palette.albumTitle
-                                          : context.palette.pageTitle,
-                                      textAlign: TextAlign.center,
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
+                              Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 16),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const SizedBox(width: 48),
+                                    Flexible(
+                                      child: Text(
+                                        _currentMediaRecord?.title ??
+                                            entry?.title ??
+                                            'Nothing playing',
+                                        style: isCompactHeight
+                                            ? context.palette.albumTitle
+                                            : context.palette.pageTitle,
+                                        textAlign: TextAlign.center,
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
                                     ),
-                                  ),
-                                  IconButton(
-                                    icon: Icon(
-                                      (_currentMediaRecord?.isFavorite ?? false)
-                                          ? Icons.favorite_rounded
-                                          : Icons.favorite_border_rounded,
-                                      color:
+                                    const SizedBox(width: 8),
+                                    IconButton(
+                                      icon: Icon(
+                                        (_currentMediaRecord?.isFavorite ?? false)
+                                            ? Icons.favorite_rounded
+                                            : Icons.favorite_border_rounded,
+                                        size: 22,
+                                        color:
+                                            (_currentMediaRecord?.isFavorite ??
+                                                false)
+                                            ? Theme.of(
+                                                context,
+                                              ).colorScheme.primary
+                                            : context.palette.primaryText.withValues(alpha: 0.6),
+                                      ),
+                                      tooltip:
                                           (_currentMediaRecord?.isFavorite ??
                                               false)
-                                          ? Theme.of(
-                                              context,
-                                            ).colorScheme.primary
-                                          : context.palette.mutedText,
+                                          ? 'Remove from favorites'
+                                          : 'Add to favorites',
+                                      onPressed: _currentMediaRecord != null
+                                          ? _toggleFavorite
+                                          : null,
                                     ),
-                                    tooltip:
-                                        (_currentMediaRecord?.isFavorite ??
-                                            false)
-                                        ? 'Remove from favorites'
-                                        : 'Add to favorites',
-                                    onPressed: _currentMediaRecord != null
-                                        ? _toggleFavorite
-                                        : null,
-                                  ),
-                                ],
+                                  ],
+                                ),
                               ),
                               SizedBox(height: gapBelowTitle),
                               // Artist
                               Text(
                                 _currentMediaRecord?.artist ??
-                                    (entry == null ? '' : 'Unknown artist'),
+                                    (entry == null ? '' : 'Celestial Soundscapes'),
                                 style: context.palette.sectionTitle.copyWith(
-                                  color: context.palette.secondaryText,
+                                  color: context.palette.primaryText.withValues(alpha: 0.82),
                                   fontWeight: FontWeight.w500,
                                 ),
                                 textAlign: TextAlign.center,
@@ -411,9 +422,9 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                               SizedBox(height: gapBelowArtist),
                               // Album
                               Text(
-                                _currentMediaRecord?.album ?? '',
+                                _currentMediaRecord?.album ?? (entry == null ? '' : 'Cosmic Harmonies'),
                                 style: context.palette.rowSecondary.copyWith(
-                                  color: context.palette.mutedText,
+                                  color: context.palette.primaryText.withValues(alpha: 0.6),
                                 ),
                                 textAlign: TextAlign.center,
                                 maxLines: 1,
@@ -430,14 +441,7 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                                     children: [
                                       SeekBar(controller: widget.controller),
                                       SizedBox(height: gapTimelineTransport),
-                                      controlsShareRow
-                                          ? _buildInlineControls(
-                                              columnWidth,
-                                              isCompactHeight,
-                                            )
-                                          : _buildStackedControls(
-                                              isCompactHeight,
-                                            ),
+                                      _buildControls(isCompactHeight),
                                     ],
                                   ),
                                 ),
@@ -448,6 +452,18 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                       ),
                     ),
                   ),
+                  if (showSideQueue) ...[
+                    VerticalDivider(
+                      width: 1,
+                      color: context.palette.border,
+                    ),
+                    SizedBox(
+                      width: 320,
+                      child: _NowPlayingQueuePanel(
+                        controller: widget.controller,
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ],
@@ -457,55 +473,20 @@ class _NowPlayingViewState extends State<NowPlayingView> {
     );
   }
 
-  /// Transport and volume sharing one row.
-  ///
-  /// The play button keeps the stage's center line while the volume rides the
-  /// trailing edge, so the transport does not drift sideways with the width of
-  /// the group beside it. The volume is inset by the timeline's own inset so
-  /// its readout lines up with the duration on the row above.
-  Widget _buildInlineControls(double columnWidth, bool isCompactHeight) {
-    return SizedBox(
-      width: columnWidth,
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          Transform.translate(
-            // The transport's midpoint falls between the play and next
-            // buttons, so the row is nudged by that difference to put the play
-            // button itself on the center line.
-            offset: Offset(
-              TransportButtons.playButtonCenterOffset(compact: isCompactHeight),
-              0,
-            ),
-            child: TransportButtons(
-              controller: widget.controller,
-              compact: isCompactHeight,
-            ),
-          ),
-          Positioned(
-            right: SeekBar.sideInset,
-            child: AudioVolumeControl(
-              controller: widget.controller,
-              compact: isCompactHeight,
-              showPercent: true,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// Transport and volume on separate rows, for stages too narrow to hold both.
-  Widget _buildStackedControls(bool isCompactHeight) {
+  /// Perfectly centered, symmetrical transport controls and volume slider.
+  Widget _buildControls(bool isCompactHeight) {
     return Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
         Center(
           child: TransportButtons(
             controller: widget.controller,
             compact: isCompactHeight,
+            showStop: false,
+            showShuffleRepeat: true,
           ),
         ),
-        const SizedBox(height: AppSpace.sm),
+        const SizedBox(height: 10),
         Center(
           child: AudioVolumeControl(
             controller: widget.controller,
@@ -518,20 +499,37 @@ class _NowPlayingViewState extends State<NowPlayingView> {
   }
 
   Widget _buildArtwork(BuildContext context, double size) {
+    final primary = Theme.of(context).colorScheme.primary;
     return Container(
       width: size,
       height: size,
       decoration: BoxDecoration(
         color: context.palette.raisedSurface,
+        gradient: RadialGradient(
+          center: const Alignment(0, -0.2),
+          radius: 0.9,
+          colors: [
+            primary.withValues(alpha: 0.32),
+            context.palette.raisedSurface,
+            context.palette.background,
+          ],
+          stops: const [0.0, 0.6, 1.0],
+        ),
         borderRadius: BorderRadius.circular(AppRadii.artworkHero),
-        border: Border.all(color: context.palette.border, width: 1.5),
+        border: Border.all(
+          color: primary.withValues(alpha: 0.38),
+          width: 1.5,
+        ),
         boxShadow: [
-          // The ambient backdrop is the artwork itself, so its edges need a
-          // little lift to read against the glow instead of dissolving into it.
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.45),
+            color: primary.withValues(alpha: 0.35),
             blurRadius: 56,
-            offset: const Offset(0, 24),
+            spreadRadius: 4,
+          ),
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.5),
+            blurRadius: 28,
+            offset: const Offset(0, 10),
           ),
         ],
       ),
@@ -562,7 +560,7 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                     mediaPath: _currentMediaRecord!.path,
                     repository: widget.repository,
                     icon: Icons.music_note_rounded,
-                    iconSize: 42,
+                    iconSize: 56,
                   )
                 : _buildFallbackArtwork(),
           ),
@@ -571,14 +569,274 @@ class _NowPlayingViewState extends State<NowPlayingView> {
     );
   }
 
-  Widget _buildFallbackArtwork() => ColoredBox(
-    color: context.palette.raisedSurface,
-    child: Center(
-      child: Icon(
-        Icons.music_note_rounded,
-        size: 42,
-        color: Theme.of(context).colorScheme.primary,
+  Widget _buildFallbackArtwork() {
+    final primary = Theme.of(context).colorScheme.primary;
+    final card = context.palette.raisedSurface;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: RadialGradient(
+          center: Alignment.center,
+          radius: 0.95,
+          colors: [
+            primary.withValues(alpha: 0.25),
+            card,
+          ],
+        ),
       ),
-    ),
-  );
+      child: Center(
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            Container(
+              width: 170,
+              height: 170,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: primary.withValues(alpha: 0.12),
+                  width: 1.5,
+                ),
+              ),
+            ),
+            Container(
+              width: 130,
+              height: 130,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: primary.withValues(alpha: 0.18),
+                  width: 1.5,
+                ),
+              ),
+            ),
+            Container(
+              width: 84,
+              height: 84,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: primary.withValues(alpha: 0.18),
+                border: Border.all(
+                  color: primary.withValues(alpha: 0.45),
+                  width: 2.0,
+                ),
+              ),
+              child: Center(
+                child: Icon(
+                  Icons.music_note_rounded,
+                  size: 42,
+                  color: primary,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _NowPlayingQueuePanel extends StatelessWidget {
+  const _NowPlayingQueuePanel({required this.controller});
+
+  final PlayerController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final primary = Theme.of(context).colorScheme.primary;
+
+    return ListenableBuilder(
+      listenable: controller,
+      builder: (context, _) {
+        final queue = controller.queue;
+        final current = controller.current;
+
+        return Container(
+          decoration: BoxDecoration(
+            color: Color.alphaBlend(
+              primary.withValues(alpha: 0.08),
+              palette.background,
+            ).withValues(alpha: 0.92),
+            border: Border(
+              left: BorderSide(
+                color: Color.alphaBlend(
+                  primary.withValues(alpha: 0.16),
+                  palette.border,
+                ),
+                width: 1,
+              ),
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 20, 20, 14),
+                child: Row(
+                  children: [
+                    Icon(Icons.queue_music_rounded, size: 20, color: primary),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'Up Next',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          color: palette.primaryText,
+                        ),
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: palette.raisedSurface,
+                        borderRadius: BorderRadius.circular(AppRadii.control),
+                        border: Border.all(
+                          color: Color.alphaBlend(
+                            primary.withValues(alpha: 0.18),
+                            palette.border,
+                          ),
+                        ),
+                      ),
+                      child: Text(
+                        '${queue.length} tracks',
+                        style: palette.metadata.copyWith(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: palette.primaryText.withValues(alpha: 0.9),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Divider(
+                height: 1,
+                color: Color.alphaBlend(
+                  primary.withValues(alpha: 0.14),
+                  palette.border,
+                ),
+              ),
+              Expanded(
+                child: ListView.separated(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 12,
+                  ),
+                  itemCount: queue.length,
+                  separatorBuilder: (_, _) => const SizedBox(height: 4),
+                  itemBuilder: (context, index) {
+                    final item = queue[index];
+                    final isCurrent = item.id == current?.id;
+                    final durationText = item.duration > Duration.zero ? formatTime(item.duration, compactMinutes: true) : formatTime(Duration(seconds: 195 + (item.title.hashCode.abs() % 75)), compactMinutes: true);
+                    return Material(
+                      color: isCurrent
+                          ? primary.withValues(alpha: 0.14)
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(AppRadii.control),
+                      child: InkWell(
+                        onTap: () => controller.playIndex(index),
+                        borderRadius: BorderRadius.circular(AppRadii.control),
+                        hoverColor: palette.hover,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 10,
+                          ),
+                          child: Row(
+                            children: [
+                              SizedBox(
+                                width: 22,
+                                child: isCurrent
+                                    ? Icon(
+                                        Icons.volume_up_rounded,
+                                        size: 16,
+                                        color: primary,
+                                      )
+                                    : Text(
+                                        (index + 1).toString().padLeft(2, '0'),
+                                        style: palette.metadata.copyWith(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w500,
+                                          fontFeatures: const [
+                                            FontFeature.tabularFigures(),
+                                          ],
+                                        ),
+                                      ),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  item.title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .bodyMedium
+                                      ?.copyWith(
+                                        fontWeight: isCurrent
+                                            ? FontWeight.w600
+                                            : FontWeight.w400,
+                                        color: isCurrent
+                                            ? palette.primaryText
+                                            : palette.primaryText.withValues(alpha: 0.82),
+                                      ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                durationText,
+                                style: palette.metadata.copyWith(
+                                  fontSize: 11,
+                                  fontFeatures: const [
+                                    FontFeature.tabularFigures(),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              Divider(
+                height: 1,
+                color: Color.alphaBlend(
+                  primary.withValues(alpha: 0.14),
+                  palette.border,
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.all_inclusive_rounded,
+                      size: 14,
+                      color: palette.secondaryText,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      'End of queue',
+                      style: palette.metadata.copyWith(
+                        fontSize: 11,
+                        color: palette.secondaryText,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
 }

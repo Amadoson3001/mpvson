@@ -80,6 +80,7 @@ final class EngineSelectionState {
     this.pendingRollback = false,
     this.lastRejectedVersion,
     this.bootAttemptToken,
+    this.interruptedBootAttempts = 0,
   });
 
   final EngineInstallRecord? active;
@@ -93,6 +94,13 @@ final class EngineSelectionState {
   /// The engine version a startup rejected, kept so a recovered backup cannot
   /// select it again.
   final String? lastRejectedVersion;
+
+  /// Consecutive boot attempts that ended before they were confirmed or
+  /// rejected, for example when the user closed the window while the staged
+  /// package was still being verified. A bounded number of retries keeps a
+  /// deliberate interruption from discarding the download without turning a
+  /// crashing engine into a boot loop.
+  final int interruptedBootAttempts;
 
   /// Random token generated for an active boot attempt to ensure only the
   /// process holding the corresponding boot lease can commit the result.
@@ -109,6 +117,7 @@ final class EngineSelectionState {
     'pendingRollback': pendingRollback,
     'lastRejectedVersion': lastRejectedVersion,
     'bootAttemptToken': bootAttemptToken,
+    'interruptedBootAttempts': interruptedBootAttempts,
   };
 
   static EngineSelectionState? fromJson(Object? value) {
@@ -120,11 +129,14 @@ final class EngineSelectionState {
     final pendingRollback = value['pendingRollback'] ?? false;
     final lastRejectedVersion = value['lastRejectedVersion'];
     final bootAttemptToken = value['bootAttemptToken'];
+    final interruptedBootAttempts = value['interruptedBootAttempts'] ?? 0;
     if (activeIsBundled is! bool ||
         pendingBundled is! bool ||
         pendingRollback is! bool ||
         (lastRejectedVersion != null && lastRejectedVersion is! String) ||
-        (bootAttemptToken != null && bootAttemptToken is! String)) {
+        (bootAttemptToken != null && bootAttemptToken is! String) ||
+        interruptedBootAttempts is! int ||
+        interruptedBootAttempts < 0) {
       return null;
     }
     final active = _optionalRecord(value, 'active');
@@ -143,6 +155,7 @@ final class EngineSelectionState {
       pendingRollback: pendingRollback,
       lastRejectedVersion: lastRejectedVersion as String?,
       bootAttemptToken: bootAttemptToken as String?,
+      interruptedBootAttempts: interruptedBootAttempts,
     );
   }
 

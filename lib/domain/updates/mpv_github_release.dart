@@ -45,6 +45,12 @@ final class MpvGithubRelease {
   /// `packaging/windows/engine-provenance.json`, so the runtime identity and the
   /// build-time pin stay comparable.
   static String engineVersionFromAssetName(String name) {
+    final stableMatch = _stableAssetPattern.firstMatch(name);
+    if (stableMatch != null) {
+      final version = '${stableMatch[1]}.${stableMatch[2]}.${stableMatch[3]}';
+      SemanticVersion.parse(version);
+      return version;
+    }
     final match = _assetPattern.firstMatch(name);
     if (match == null) {
       throw const FormatException(

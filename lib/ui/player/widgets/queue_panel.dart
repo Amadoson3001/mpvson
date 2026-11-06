@@ -418,10 +418,7 @@ class _QueueCount extends StatelessWidget {
 /// but only the ones that actually deferred a thumbnail subscribe to the
 /// notifier, so a scroll gesture no longer rebuilds the whole visible list.
 class _QueueScrollScope extends InheritedWidget {
-  const _QueueScrollScope({
-    required this.isScrolling,
-    required super.child,
-  });
+  const _QueueScrollScope({required this.isScrolling, required super.child});
 
   final ValueListenable<bool> isScrolling;
 
@@ -491,10 +488,7 @@ class _QueueRemovalCollapseState extends State<_QueueRemovalCollapse>
       builder: (context, child) {
         final progress = AppMotion.exit.transform(_controller.value);
         if (progress == 0) {
-          return IgnorePointer(
-            ignoring: widget.removing,
-            child: child,
-          );
+          return IgnorePointer(ignoring: widget.removing, child: child);
         }
         return IgnorePointer(
           ignoring: widget.removing,
@@ -956,20 +950,21 @@ class _QueueEntryState extends State<_QueueEntry> with WidgetsBindingObserver {
         child: IconButton(
           tooltip: 'Remove ${entry.title} from queue',
           onPressed: widget.onRemove,
-          style: IconButton.styleFrom(
-            minimumSize: const Size(30, 30),
-            padding: EdgeInsets.zero,
-            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          ).copyWith(
-            foregroundColor: WidgetStateProperty.resolveWith(
-              (states) => engaged(states) ? palette.danger : palette.muted,
-            ),
-            overlayColor: WidgetStateProperty.resolveWith(
-              (states) => engaged(states)
-                  ? palette.danger.withValues(alpha: 0.12)
-                  : Colors.transparent,
-            ),
-          ),
+          style:
+              IconButton.styleFrom(
+                minimumSize: const Size(30, 30),
+                padding: EdgeInsets.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ).copyWith(
+                foregroundColor: WidgetStateProperty.resolveWith(
+                  (states) => engaged(states) ? palette.danger : palette.muted,
+                ),
+                overlayColor: WidgetStateProperty.resolveWith(
+                  (states) => engaged(states)
+                      ? palette.danger.withValues(alpha: 0.12)
+                      : Colors.transparent,
+                ),
+              ),
           icon: const Icon(Icons.close_rounded, size: 16),
         ),
       ),
@@ -1012,7 +1007,8 @@ class _QueueThumbnail extends StatelessWidget {
         final duration = entry.duration > Duration.zero
             ? entry.duration
             : (thumbnail?.duration ?? Duration.zero);
-        final imageIsAvailable = thumbnail != null && thumbnail.bytes.isNotEmpty;
+        final imageIsAvailable =
+            thumbnail != null && thumbnail.bytes.isNotEmpty;
 
         final ratio =
             MediaQuery.maybeDevicePixelRatioOf(context) ??

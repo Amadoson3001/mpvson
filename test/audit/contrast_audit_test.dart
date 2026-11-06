@@ -16,6 +16,9 @@ double contrast(Color a, Color b) {
   return (math.max(la, lb) + 0.05) / (math.min(la, lb) + 0.05);
 }
 
+Color _tint(Color color, Color surface, [double alpha = 0.16]) =>
+    Color.alphaBlend(color.withValues(alpha: alpha), surface);
+
 void main() {
   test('contrast report', () {
     final rows = <String>[];
@@ -25,6 +28,10 @@ void main() {
             ? AppTheme.darkTheme(accent: preset.color)
             : AppTheme.lightTheme(accent: preset.lightColor);
         final p = AppPalette(theme.colorScheme);
+        final buttonStyle = theme.filledButtonTheme.style!;
+        const disabled = {WidgetState.disabled};
+        final disabledFg = buttonStyle.foregroundColor!.resolve(disabled)!;
+        final disabledBg = buttonStyle.backgroundColor!.resolve(disabled)!;
         final pairs = <String, (Color, Color, double)>{
           'accent on bg': (p.accent, p.background, 4.5),
           'accent on sidebar': (p.accent, p.sidebar, 4.5),
@@ -34,7 +41,21 @@ void main() {
           'secondary on card': (p.secondaryText, p.card, 4.5),
           'secondary on sidebar': (p.secondaryText, p.sidebar, 4.5),
           'text on bg': (p.text, p.background, 7),
+          'bodySmall on card': (theme.textTheme.bodySmall!.color!, p.card, 4.5),
           'muted/faint on bg': (p.faint, p.background, 3),
+          'success on card': (p.success, p.card, 4.5),
+          'warning on card': (p.warning, p.card, 4.5),
+          'info on card': (p.info, p.card, 4.5),
+          'danger on card': (p.danger, p.card, 4.5),
+          'success pill': (p.success, _tint(p.success, p.card), 4.5),
+          'warning pill': (p.warning, _tint(p.warning, p.card), 4.5),
+          'danger pill': (p.danger, _tint(p.danger, p.card), 4.5),
+          'disabled button': (disabledFg, disabledBg, 4.5),
+          'busy button': (
+            p.text,
+            Color.alphaBlend(p.accent.withValues(alpha: 0.18), p.card),
+            4.5,
+          ),
         };
         pairs.forEach((name, v) {
           final c = contrast(v.$1, v.$2);
@@ -49,5 +70,23 @@ void main() {
     }
     // ignore: avoid_print
     print('CONTRAST FAILURES (${rows.length})\n${rows.join('\n')}');
+    expect(rows, isEmpty, reason: rows.join('\n'));
+  });
+
+  test('palette text styles keep the app font', () {
+    for (final theme in [AppTheme.darkTheme(), AppTheme.lightTheme()]) {
+      final p = AppPalette(theme.colorScheme);
+      for (final style in [
+        p.pageTitle,
+        p.albumTitle,
+        p.sectionTitle,
+        p.rowPrimary,
+        p.rowSecondary,
+        p.metadata,
+        p.badge,
+      ]) {
+        expect(style.fontFamily, AppType.family);
+      }
+    }
   });
 }

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../../utils/format.dart';
+import '../../core/app_theme.dart';
 import '../../player/player_controller.dart';
 import '../../player/widgets/player_controls.dart';
 import '../../player/widgets/player_control_style.dart';
@@ -41,10 +42,12 @@ class _SeekBarState extends State<SeekBar> {
               compactMinutes: true,
             ),
             style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: context.palette.primaryText.withValues(alpha: 0.85),
+              fontWeight: FontWeight.w500,
               fontFeatures: const [FontFeature.tabularFigures()],
             ),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 10),
           Expanded(
             child: PlayerControlStyle(
               compact: true,
@@ -57,10 +60,12 @@ class _SeekBarState extends State<SeekBar> {
               ),
             ),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 10),
           Text(
             formatTime(widget.controller.duration, compactMinutes: true),
             style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: context.palette.primaryText.withValues(alpha: 0.85),
+              fontWeight: FontWeight.w500,
               fontFeatures: const [FontFeature.tabularFigures()],
             ),
           ),

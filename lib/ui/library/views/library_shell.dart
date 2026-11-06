@@ -374,6 +374,20 @@ class _LibraryShellState extends State<LibraryShell>
                                   crossAxisAlignment:
                                       CrossAxisAlignment.stretch,
                                   children: [
+                                    // System status stays anchored at the top of
+                                    // every section, above section chrome.
+                                    Center(
+                                      child: ConstrainedBox(
+                                        constraints: const BoxConstraints(
+                                          maxWidth: 960,
+                                        ),
+                                        child: LibraryStatusBanner(
+                                          repository: widget.repository,
+                                          onRescan: () =>
+                                              widget.repository.rescanAll(),
+                                        ),
+                                      ),
+                                    ),
                                     // Header Bar (Search & Mobile Drawer Trigger)
                                     if (_currentSection !=
                                         LibrarySection.settings)
@@ -386,12 +400,6 @@ class _LibraryShellState extends State<LibraryShell>
                                               showBackLabel: width >= 600,
                                             ),
                                       ),
-                                    // Status Banners (Scanning indicator, Unavailable drive warning)
-                                    LibraryStatusBanner(
-                                      repository: widget.repository,
-                                      onRescan: () =>
-                                          widget.repository.rescanAll(),
-                                    ),
                                     // Main Stage View
                                     Expanded(child: _buildContentStage()),
                                   ],
@@ -567,16 +575,39 @@ class _LibraryShellState extends State<LibraryShell>
             ),
           const SizedBox(width: 12),
           // Medium screen On-Demand Queue Toggle
-          if (canDockQueue) ...[
-            const SizedBox(width: 6),
-            IconButton(
+          if (canDockQueue && _currentSection != LibrarySection.home) ...[
+            const SizedBox(width: 8),
+            TextButton.icon(
+              onPressed: () => _setQueueOpen(!queueOpen),
               icon: Icon(
                 Icons.queue_music_rounded,
-                size: 20,
+                size: 18,
                 color: queueOpen ? accent : context.palette.secondaryText,
               ),
-              tooltip: queueOpen ? 'Close queue' : 'Open queue',
-              onPressed: () => _setQueueOpen(!queueOpen),
+              label: Text(
+                'Queue',
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: queueOpen ? accent : context.palette.secondaryText,
+                ),
+              ),
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
+                backgroundColor: queueOpen
+                    ? accent.withValues(alpha: 0.14)
+                    : Colors.transparent,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(AppRadii.control),
+                  side: BorderSide(
+                    color: queueOpen
+                        ? accent.withValues(alpha: 0.3)
+                        : Colors.transparent,
+                  ),
+                ),
+              ),
             ),
           ],
         ],
@@ -732,9 +763,12 @@ class _LibraryShellState extends State<LibraryShell>
             Icons.queue_music_rounded,
             isCollapsed,
           ),
-          const SizedBox(height: 16),
-          Divider(height: 1, color: context.palette.border),
-          const SizedBox(height: 8),
+          const SizedBox(height: 12),
+          Divider(
+            height: 1,
+            color: context.palette.borderStrong.withValues(alpha: 0.7),
+          ),
+          const SizedBox(height: 6),
           _navItem(
             LibrarySection.folders,
             'Folders',
@@ -1074,7 +1108,9 @@ class _LibraryShellState extends State<LibraryShell>
                                 children: [
                                   if (isVideo)
                                     ColoredBox(
-                                      color: Colors.black.withValues(alpha: 0.45),
+                                      color: Colors.black.withValues(
+                                        alpha: 0.45,
+                                      ),
                                     ),
                                   LibraryArtwork(
                                     mediaPath: current.path,

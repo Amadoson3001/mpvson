@@ -179,7 +179,7 @@ abstract final class AppTheme {
           height: 1.4,
         ),
         bodySmall: TextStyle(
-          color: muted,
+          color: secondaryText,
           fontSize: AppType.caption,
           height: 1.4,
         ),
@@ -353,8 +353,8 @@ abstract final class AppTheme {
         style: ElevatedButton.styleFrom(
           foregroundColor: accentForeground,
           backgroundColor: accent,
-          disabledForegroundColor: accentForeground.withValues(alpha: 0.5),
-          disabledBackgroundColor: accent.withValues(alpha: 0.35),
+          disabledForegroundColor: secondaryText,
+          disabledBackgroundColor: hover,
           minimumSize: const Size(44, 44),
           padding: const EdgeInsets.symmetric(horizontal: 18),
           shape: RoundedRectangleBorder(
@@ -367,19 +367,23 @@ abstract final class AppTheme {
             FilledButton.styleFrom(
               foregroundColor: accentForeground,
               backgroundColor: accent,
-              disabledForegroundColor: muted,
-              disabledBackgroundColor: accent.withValues(alpha: 0.28),
+              disabledForegroundColor: secondaryText,
+              disabledBackgroundColor: hover,
               minimumSize: const Size(44, 44),
               padding: const EdgeInsets.symmetric(horizontal: 18),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(AppRadii.control),
               ),
             ).copyWith(
-              side: WidgetStateProperty.resolveWith(
-                (states) => states.contains(WidgetState.focused)
-                    ? const BorderSide(color: text, width: 2)
-                    : BorderSide.none,
-              ),
+              side: WidgetStateProperty.resolveWith((states) {
+                if (states.contains(WidgetState.disabled)) {
+                  return BorderSide(color: borderStrong);
+                }
+                if (states.contains(WidgetState.focused)) {
+                  return const BorderSide(color: text, width: 2);
+                }
+                return BorderSide.none;
+              }),
             ),
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
@@ -448,7 +452,7 @@ abstract final class AppTheme {
       outlineVariant: border,
       onSurface: text,
       onSurfaceVariant: secTxt,
-      error: AppColors.rose,
+      error: AppColors.roseLight,
       onError: onAccent,
       scrim: AppColors.lightScrim,
     );
@@ -535,7 +539,7 @@ abstract final class AppTheme {
           height: 1.4,
         ),
         bodySmall: TextStyle(
-          color: mtd,
+          color: secTxt,
           fontSize: AppType.caption,
           height: 1.4,
         ),
@@ -714,8 +718,8 @@ abstract final class AppTheme {
         style: ElevatedButton.styleFrom(
           foregroundColor: onAccent,
           backgroundColor: accent,
-          disabledForegroundColor: onAccent.withValues(alpha: 0.5),
-          disabledBackgroundColor: accent.withValues(alpha: 0.35),
+          disabledForegroundColor: secTxt,
+          disabledBackgroundColor: hover,
           minimumSize: const Size(44, 44),
           padding: const EdgeInsets.symmetric(horizontal: 18),
           shape: RoundedRectangleBorder(
@@ -728,19 +732,23 @@ abstract final class AppTheme {
             FilledButton.styleFrom(
               foregroundColor: onAccent,
               backgroundColor: accent,
-              disabledForegroundColor: mtd,
-              disabledBackgroundColor: accent.withValues(alpha: 0.28),
+              disabledForegroundColor: secTxt,
+              disabledBackgroundColor: hover,
               minimumSize: const Size(44, 44),
               padding: const EdgeInsets.symmetric(horizontal: 18),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(AppRadii.control),
               ),
             ).copyWith(
-              side: WidgetStateProperty.resolveWith(
-                (states) => states.contains(WidgetState.focused)
-                    ? const BorderSide(color: text, width: 2)
-                    : BorderSide.none,
-              ),
+              side: WidgetStateProperty.resolveWith((states) {
+                if (states.contains(WidgetState.disabled)) {
+                  return const BorderSide(color: borderStrong);
+                }
+                if (states.contains(WidgetState.focused)) {
+                  return const BorderSide(color: text, width: 2);
+                }
+                return BorderSide.none;
+              }),
             ),
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
@@ -812,15 +820,23 @@ class AppPalette {
   Color get secondaryText => scheme.onSurfaceVariant;
   Color get muted => secondaryText;
   Color get mutedText => secondaryText;
+  bool get isDark => scheme.brightness == Brightness.dark;
   Color get faint => secondaryText.withValues(alpha: AppOpacity.faint);
 
   // --- Accent ---------------------------------------------------------------
   Color get accent => scheme.primary;
   Color get accentForeground => scheme.onPrimary;
   Color get danger => scheme.error;
+  Color get success => isDark ? AppColors.jade : AppColors.jadeLight;
+  Color get warning => isDark ? AppColors.gold : AppColors.goldLight;
+  Color get info => isDark ? AppColors.sky : AppColors.skyLight;
 
   // --- Typography -----------------------------------------------------------
+  // These styles replace the ambient style when used in DefaultTextStyle, so
+  // they must name the UI font themselves.
   TextStyle get pageTitle => TextStyle(
+    fontFamily: AppType.family,
+    fontFamilyFallback: AppType.familyFallback,
     color: text,
     fontSize: AppType.display,
     fontWeight: FontWeight.w600,
@@ -829,6 +845,8 @@ class AppPalette {
   );
 
   TextStyle get albumTitle => TextStyle(
+    fontFamily: AppType.family,
+    fontFamilyFallback: AppType.familyFallback,
     color: text,
     fontSize: AppType.title,
     fontWeight: FontWeight.w600,
@@ -837,6 +855,8 @@ class AppPalette {
   );
 
   TextStyle get sectionTitle => TextStyle(
+    fontFamily: AppType.family,
+    fontFamilyFallback: AppType.familyFallback,
     color: text,
     fontSize: AppType.body,
     fontWeight: FontWeight.w600,
@@ -845,6 +865,8 @@ class AppPalette {
   );
 
   TextStyle get rowPrimary => TextStyle(
+    fontFamily: AppType.family,
+    fontFamilyFallback: AppType.familyFallback,
     color: text,
     fontSize: AppType.small,
     fontWeight: FontWeight.w400,
@@ -852,6 +874,8 @@ class AppPalette {
   );
 
   TextStyle get rowSecondary => TextStyle(
+    fontFamily: AppType.family,
+    fontFamilyFallback: AppType.familyFallback,
     color: secondaryText,
     fontSize: AppType.caption,
     fontWeight: FontWeight.normal,
@@ -859,6 +883,8 @@ class AppPalette {
   );
 
   TextStyle get metadata => TextStyle(
+    fontFamily: AppType.family,
+    fontFamilyFallback: AppType.familyFallback,
     color: muted,
     fontSize: AppType.caption,
     fontWeight: FontWeight.normal,
@@ -866,6 +892,8 @@ class AppPalette {
   );
 
   TextStyle get badge => TextStyle(
+    fontFamily: AppType.family,
+    fontFamilyFallback: AppType.familyFallback,
     color: text,
     fontSize: AppType.caption,
     fontWeight: FontWeight.w600,

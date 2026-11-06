@@ -53,9 +53,31 @@ Future<EngineBootSelection> _initializeMediaKitWithFallbacks(
 }) async {
   try {
     if (Platform.isWindows) {
-      await const MethodChannel(
-        'mpvson/engine',
-      ).invokeMethod<void>('configure', initial.libraryPath);
+      const channel = MethodChannel('mpvson/engine');
+      final loadedPath = await channel.invokeMethod<String>('libraryPath');
+      if (loadedPath != null &&
+          loadedPath.isNotEmpty &&
+          loadedPath != initial.libraryPath) {
+        // A hot restart keeps the native engine module loaded for the whole
+        // process and it cannot switch libraries. Keep the engine that is
+        // already loaded and leave the staged package queued for the next
+        // full launch instead of failing startup.
+        await engineUpdates.abandonPendingBootAttempt();
+        MediaKit.ensureInitialized(libmpv: loadedPath);
+        final loadedVersion =
+            bundledEnginePath != null && p.equals(loadedPath, bundledEnginePath)
+                ? bundledEngineVersion
+                : p.basename(p.dirname(loadedPath));
+        return EngineBootSelection(
+          libraryPath: loadedPath,
+          version: loadedVersion,
+          isBundled:
+              bundledEnginePath != null &&
+              p.equals(loadedPath, bundledEnginePath),
+          isPending: false,
+        );
+      }
+      await channel.invokeMethod<void>('configure', initial.libraryPath);
     }
     MediaKit.ensureInitialized(libmpv: initial.libraryPath);
     return initial;

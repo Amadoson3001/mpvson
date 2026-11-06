@@ -130,11 +130,16 @@ class AppearanceSettingsSection extends StatelessWidget {
                                     color: accent,
                                   ),
                                   const SizedBox(width: 5),
-                                  Text(
-                                    'Overridden by active artwork',
-                                    style: theme.textTheme.labelSmall?.copyWith(
-                                      color: accent,
-                                      fontWeight: FontWeight.w600,
+                                  Flexible(
+                                    child: Text(
+                                      'Overridden by active artwork',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: theme.textTheme.labelSmall
+                                          ?.copyWith(
+                                            color: accent,
+                                            fontWeight: FontWeight.w600,
+                                          ),
                                     ),
                                   ),
                                 ],

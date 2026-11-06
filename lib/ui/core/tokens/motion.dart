@@ -21,6 +21,10 @@ abstract final class AppMotion {
   static const Duration sheetEnter = Duration(milliseconds: 240);
   static const Duration sheetExit = Duration(milliseconds: 200);
 
+  /// Start scale for the dialog morph. The surface grows from the trigger
+  /// point without any cross-fade of its content.
+  static const double dialogMorphBeginScale = 0.86;
+
   static const Curve enter = Cubic(0.16, 1, 0.3, 1);
   static const Curve exit = Cubic(0.4, 0, 1, 1);
 
@@ -155,6 +159,89 @@ class _AppMotionRevealState extends State<AppMotionReveal>
           // Keep controls usable during the brief opening fade.
           alwaysIncludeSemantics: true,
           child: Transform.scale(scale: scale, child: child),
+        );
+      },
+    );
+  }
+}
+
+/// Opens a modal dialog with the app's morph presentation.
+///
+/// The surface grows out of [anchor] — the global-coordinates origin of the
+/// widget that triggered the dialog — with a pure scale transition. The dialog
+/// itself never cross-fades; only the scrim behind it fades. When [anchor] is
+/// omitted the surface scales up from its own center.
+Future<T?> showMorphDialog<T>({
+  required BuildContext context,
+  required WidgetBuilder builder,
+  Offset? anchor,
+  bool barrierDismissible = true,
+  Color barrierColor = Colors.black54,
+}) {
+  return showGeneralDialog<T>(
+    context: context,
+    barrierDismissible: barrierDismissible,
+    barrierColor: barrierColor,
+    barrierLabel:
+        Localizations.of<MaterialLocalizations>(context, MaterialLocalizations)
+            ?.modalBarrierDismissLabel ??
+        'Close dialog',
+    transitionDuration: AppMotion.emphasized,
+    pageBuilder: (context, animation, secondaryAnimation) => builder(context),
+    transitionBuilder: (context, animation, secondaryAnimation, child) {
+      if (AppMotion.lowPower(context)) return child;
+      return _MorphDialogTransition(
+        animation: animation,
+        anchor: anchor,
+        child: child,
+      );
+    },
+  );
+}
+
+class _MorphDialogTransition extends StatefulWidget {
+  const _MorphDialogTransition({
+    required this.animation,
+    required this.anchor,
+    required this.child,
+  });
+
+  final Animation<double> animation;
+  final Offset? anchor;
+  final Widget child;
+
+  @override
+  State<_MorphDialogTransition> createState() =>
+      _MorphDialogTransitionState();
+}
+
+class _MorphDialogTransitionState extends State<_MorphDialogTransition> {
+  late final CurvedAnimation _curved = CurvedAnimation(
+    parent: widget.animation,
+    curve: AppMotion.enter,
+    reverseCurve: AppMotion.exit,
+  );
+
+  @override
+  void dispose() {
+    _curved.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _curved,
+      child: widget.child,
+      builder: (context, child) {
+        final begin = AppMotion.dialogMorphBeginScale;
+        return Transform.scale(
+          scale: begin + (1 - begin) * _curved.value,
+          // The transition fills the whole window, so a global anchor is
+          // already in this transform's local space.
+          origin: widget.anchor,
+          alignment: widget.anchor == null ? Alignment.center : null,
+          child: child,
         );
       },
     );

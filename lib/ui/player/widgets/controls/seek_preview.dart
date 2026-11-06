@@ -480,8 +480,8 @@ class _PreviewUnavailableFrame extends StatelessWidget {
           const SizedBox(height: 4),
           Text(
             'Preview unavailable',
-            style: TextStyle(
-              color: context.palette.secondaryText.withValues(alpha: 0.7),
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: context.palette.secondaryText,
               fontSize: AppType.caption,
               fontWeight: FontWeight.w500,
             ),

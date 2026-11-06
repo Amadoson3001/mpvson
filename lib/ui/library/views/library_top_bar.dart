@@ -117,13 +117,43 @@ class LibraryTopBar extends StatelessWidget {
                     color: palette.secondaryText,
                     icon: const Icon(Icons.link_rounded),
                   ),
-                if (canDockQueue)
-                  IconButton(
-                    icon: const Icon(Icons.queue_music_rounded),
-                    isSelected: queueOpen,
-                    tooltip: queueOpen ? 'Close queue' : 'Open queue',
-                    color: queueOpen ? palette.accent : palette.secondaryText,
-                    onPressed: onToggleQueue,
+                if (canDockQueue && section != LibrarySection.home)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: TextButton.icon(
+                      onPressed: onToggleQueue,
+                      icon: Icon(
+                        Icons.queue_music_rounded,
+                        size: 18,
+                        color: queueOpen ? palette.accent : palette.secondaryText,
+                      ),
+                      label: Text(
+                        'Queue',
+                        style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: queueOpen
+                              ? palette.accent
+                              : palette.secondaryText,
+                        ),
+                      ),
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
+                        backgroundColor: queueOpen
+                            ? palette.accent.withValues(alpha: 0.14)
+                            : Colors.transparent,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(AppRadii.control),
+                          side: BorderSide(
+                            color: queueOpen
+                                ? palette.accent.withValues(alpha: 0.3)
+                                : Colors.transparent,
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
               ],
             ),
@@ -196,7 +226,31 @@ class _SearchField extends StatelessWidget {
                       tooltip: 'Clear search',
                       onPressed: controller.clear,
                     )
-                  : null,
+                  : Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: Center(
+                        widthFactor: 1,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: palette.background.withValues(alpha: 0.6),
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(color: palette.border),
+                          ),
+                          child: Text(
+                            'Ctrl+F',
+                            style: palette.metadata.copyWith(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                              color: palette.mutedText,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
               filled: true,
               fillColor: palette.raisedSurface,
               contentPadding: const EdgeInsets.symmetric(vertical: AppSpace.xs),

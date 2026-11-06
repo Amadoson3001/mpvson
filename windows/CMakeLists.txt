@@ -49,26 +49,6 @@ endfunction()
 set(FLUTTER_MANAGED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/flutter")
 add_subdirectory(${FLUTTER_MANAGED_DIR})
 
-# Application build; see runner/CMakeLists.txt.
-add_subdirectory("runner")
-
-
-# Generated plugin build rules, which manage building the plugins and adding
-# them to the application.
-include(flutter/generated_plugins.cmake)
-
-# The stock video plugin imports libmpv at process load time. Resolve its render
-# API from the same explicitly selected module used by Dart instead, so a staged
-# engine can live outside the application directory without mixing two engines.
-if(TARGET media_kit_video_plugin)
-  get_target_property(MPVSON_VIDEO_LIBRARIES media_kit_video_plugin LINK_LIBRARIES)
-  list(FILTER MPVSON_VIDEO_LIBRARIES EXCLUDE REGEX "[/\\\\]libmpv\\.dll\\.a$")
-  set_property(TARGET media_kit_video_plugin PROPERTY LINK_LIBRARIES "${MPVSON_VIDEO_LIBRARIES}")
-  target_compile_definitions(media_kit_video_plugin PRIVATE MPV_CPLUGIN_DYNAMIC_SYM)
-  target_sources(media_kit_video_plugin PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/engine_library_bridge.cpp")
-endif()
-
-
 # === Bundled engine ===
 # The locked media_kit_libs_windows_video release ships a September 2023 mpv
 # build (v0.36.0-403-g652a1dd907). mpv does not publish security fixes for
@@ -156,12 +136,19 @@ else()
     endif()
   endif()
   if(NOT EXISTS "${MPVSON_ENGINE_ARTIFACT}")
-    set(_MPVSON_FALLBACK_ARCHIVE "${CMAKE_CURRENT_SOURCE_DIR}/../build-release/windows/x64/engine/${MPVSON_ENGINE_ARTIFACT_NAME}")
-    if(EXISTS "${_MPVSON_FALLBACK_ARCHIVE}")
-      file(MAKE_DIRECTORY "${MPVSON_ENGINE_CACHE_DIR}")
-      file(COPY "${_MPVSON_FALLBACK_ARCHIVE}" DESTINATION "${MPVSON_ENGINE_CACHE_DIR}")
-      message(STATUS "Mpvson engine: restored cached archive from ${_MPVSON_FALLBACK_ARCHIVE}")
-    endif()
+    set(_MPVSON_CACHE_CANDIDATES
+      "$ENV{LOCALAPPDATA}/mpvson/engine_cache/${MPVSON_ENGINE_ARTIFACT_NAME}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../packaging/windows/engine_cache/${MPVSON_ENGINE_ARTIFACT_NAME}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../build-release/windows/x64/engine/${MPVSON_ENGINE_ARTIFACT_NAME}"
+    )
+    foreach(_candidate IN LISTS _MPVSON_CACHE_CANDIDATES)
+      if(EXISTS "${_candidate}")
+        file(MAKE_DIRECTORY "${MPVSON_ENGINE_CACHE_DIR}")
+        file(COPY "${_candidate}" DESTINATION "${MPVSON_ENGINE_CACHE_DIR}")
+        message(STATUS "Mpvson engine: restored cached archive from ${_candidate}")
+        break()
+      endif()
+    endforeach()
   endif()
   if(NOT EXISTS "${MPVSON_ENGINE_ARTIFACT}")
     message(STATUS
@@ -184,6 +171,12 @@ else()
         "download failed with code ${MPVSON_ENGINE_DOWNLOAD_CODE}: ${MPVSON_ENGINE_DOWNLOAD_MESSAGE}")
     endif()
   endif()
+  # Save to persistent LocalAppData cache so future clean builds do not re-download
+  if(DEFINED ENV{LOCALAPPDATA} AND EXISTS "${MPVSON_ENGINE_ARTIFACT}")
+    file(MAKE_DIRECTORY "$ENV{LOCALAPPDATA}/mpvson/engine_cache")
+    file(COPY "${MPVSON_ENGINE_ARTIFACT}" DESTINATION "$ENV{LOCALAPPDATA}/mpvson/engine_cache")
+  endif()
+
   file(SIZE "${MPVSON_ENGINE_ARTIFACT}" MPVSON_ENGINE_ARTIFACT_LOCAL_SIZE)
   if(NOT MPVSON_ENGINE_ARTIFACT_LOCAL_SIZE EQUAL MPVSON_ENGINE_ARTIFACT_SIZE)
     mpvson_engine_fail(
@@ -226,6 +219,24 @@ else()
   message(STATUS
     "Mpvson engine: ${MPVSON_ENGINE_VERSION} verified "
     "(${MPVSON_ENGINE_MEMBER_SIZE} bytes, ${MPVSON_ENGINE_MEMBER_SHA})")
+endif()
+
+# Application build; see runner/CMakeLists.txt.
+add_subdirectory("runner")
+
+# Generated plugin build rules, which manage building the plugins and adding
+# them to the application.
+include(flutter/generated_plugins.cmake)
+
+# The stock video plugin imports libmpv at process load time. Resolve its render
+# API from the same explicitly selected module used by Dart instead, so a staged
+# engine can live outside the application directory without mixing two engines.
+if(TARGET media_kit_video_plugin)
+  get_target_property(MPVSON_VIDEO_LIBRARIES media_kit_video_plugin LINK_LIBRARIES)
+  list(FILTER MPVSON_VIDEO_LIBRARIES EXCLUDE REGEX "[/\\\\]libmpv\\.dll\\.a$")
+  set_property(TARGET media_kit_video_plugin PROPERTY LINK_LIBRARIES "${MPVSON_VIDEO_LIBRARIES}")
+  target_compile_definitions(media_kit_video_plugin PRIVATE MPV_CPLUGIN_DYNAMIC_SYM)
+  target_sources(media_kit_video_plugin PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/engine_library_bridge.cpp")
 endif()
 
 if(PLUGIN_BUNDLED_LIBRARIES)

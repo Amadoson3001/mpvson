@@ -40,6 +40,7 @@ class EngineInstallationRepository {
   static const String selectionFileName = 'engine-selection.json';
   static const String storeLockFileName = '.engine-store.lock';
   static const String bootLeaseFileName = '.engine-boot.lease';
+  static const String bootLeaseOwnerFileName = '.engine-boot.owner';
   static const String engineLibraryFileName = 'libmpv-2.dll';
   static const String stageOwnershipMarkerFileName =
       '.mpvson-engine-stage.json';
@@ -53,6 +54,13 @@ class EngineInstallationRepository {
   static const String engineOwnershipMarkerFileName = '.mpvson-engine.json';
   static const String engineOwnershipMarkerOwner = 'mpvson-engine-updater';
   static const String stageOwnershipMarkerOwner = 'mpvson-engine-stage';
+
+  /// Interrupted boots retried before a staged package is treated as broken.
+  ///
+  /// Closing the window while the package is verified is not a load failure, so
+  /// one retry is allowed. Repeated interruptions still terminate the loop and
+  /// roll the engine back.
+  static const int maxInterruptedBootAttempts = 1;
   static final Map<String, Future<void>> _processLockTails =
       <String, Future<void>>{};
   static final Map<String, EngineInstallationRepository>
@@ -245,6 +253,7 @@ class EngineInstallationRepository {
     final handle = _currentBootLeaseHandle;
     _currentBootLeaseHandle = null;
     _currentBootAttemptToken = null;
+    await _deleteBootLeaseOwner();
     if (handle != null) {
       try {
         await handle.unlock();
@@ -256,6 +265,55 @@ class EngineInstallationRepository {
       } on Object {
         // Ignored: best-effort close on lease release.
       }
+    }
+  }
+
+  /// Records which process and boot attempt hold the lease so a new isolate in
+  /// the same process (a Flutter hot restart) can recognize its own attempt.
+  Future<void> _writeBootLeaseOwner(String token) async {
+    try {
+      final root = p.normalize(
+        p.absolute((await _resolveEnginesDirectory()).path),
+      );
+      await File(p.join(root, bootLeaseOwnerFileName)).writeAsString(
+        jsonEncode({'pid': pid, 'token': token}),
+        flush: true,
+      );
+    } on Object {
+      // Adopting a boot attempt after an in-process restart is a convenience;
+      // a failed owner record must not fail the boot itself.
+    }
+  }
+
+  Future<Map<String, Object?>?> _readBootLeaseOwner() async {
+    try {
+      final root = p.normalize(
+        p.absolute((await _resolveEnginesDirectory()).path),
+      );
+      final file = File(p.join(root, bootLeaseOwnerFileName));
+      if (await FileSystemEntity.type(file.path, followLinks: false) !=
+          FileSystemEntityType.file) {
+        return null;
+      }
+      final decoded = jsonDecode(await file.readAsString());
+      return decoded is Map ? decoded.cast<String, Object?>() : null;
+    } on Object {
+      return null;
+    }
+  }
+
+  Future<void> _deleteBootLeaseOwner() async {
+    try {
+      final root = p.normalize(
+        p.absolute((await _resolveEnginesDirectory()).path),
+      );
+      final file = File(p.join(root, bootLeaseOwnerFileName));
+      if (await FileSystemEntity.type(file.path, followLinks: false) ==
+          FileSystemEntityType.file) {
+        await file.delete();
+      }
+    } on Object {
+      // A stale owner record is ignored once its token no longer matches.
     }
   }
 
@@ -328,6 +386,7 @@ class EngineInstallationRepository {
           previous: backup.previous,
           activeIsBundled: backup.activeIsBundled,
           lastRejectedVersion: rejected,
+          interruptedBootAttempts: primary.interruptedBootAttempts,
         ),
       ),
       rejected,
@@ -344,6 +403,7 @@ class EngineInstallationRepository {
       activeIsBundled: state.activeIsBundled,
       pendingRollback: false,
       lastRejectedVersion: state.lastRejectedVersion,
+      interruptedBootAttempts: state.interruptedBootAttempts,
     );
   }
 
@@ -370,6 +430,7 @@ class EngineInstallationRepository {
       pendingRollback: state.pendingRollback,
       lastRejectedVersion: rejected,
       bootAttemptToken: state.bootAttemptToken,
+      interruptedBootAttempts: state.interruptedBootAttempts,
     );
   }
 
@@ -410,6 +471,17 @@ class EngineInstallationRepository {
     var state = await loadSelection();
 
     if (state.pendingBootInProgress) {
+      // A Flutter hot restart runs main again in the same process while the
+      // native engine module cannot be switched. The owner record lets the
+      // fresh isolate adopt the attempt instead of treating it as a crash.
+      final adopted = await _adoptInProcessBootAttempt(
+        state,
+        bundledEnginePath: bundledEnginePath,
+        bundledEngineVersion: bundledEngineVersion,
+        isCompatible: isCompatible,
+      );
+      if (adopted != null) return adopted;
+
       final isHeld = await _isBootLeaseHeldByAnotherProcess();
       if (isHeld) {
         final stopwatch = Stopwatch()..start();
@@ -433,14 +505,31 @@ class EngineInstallationRepository {
       }
 
       if (state.pendingBootInProgress) {
-        state = EngineSelectionState(
-          active: state.active,
-          previous: state.previous,
-          activeIsBundled: state.activeIsBundled,
-          lastRejectedVersion:
-              state.pending?.version ?? state.lastRejectedVersion,
-        );
-        await _writeState(state);
+        if (state.interruptedBootAttempts < maxInterruptedBootAttempts) {
+          // The previous process exited before it could confirm or reject the
+          // staged engine. Keep the package and retry the boot attempt once
+          // instead of silently discarding the user's download.
+          state = EngineSelectionState(
+            active: state.active,
+            previous: state.previous,
+            pending: state.pending,
+            activeIsBundled: state.activeIsBundled,
+            pendingBundled: state.pendingBundled,
+            pendingRollback: state.pendingRollback,
+            lastRejectedVersion: state.lastRejectedVersion,
+            interruptedBootAttempts: state.interruptedBootAttempts + 1,
+          );
+          await _writeState(state);
+        } else {
+          state = EngineSelectionState(
+            active: state.active,
+            previous: state.previous,
+            activeIsBundled: state.activeIsBundled,
+            lastRejectedVersion:
+                state.pending?.version ?? state.lastRejectedVersion,
+          );
+          await _writeState(state);
+        }
       }
     }
 
@@ -449,6 +538,7 @@ class EngineInstallationRepository {
       final leaseHandle = await _acquireBootLeaseHandle();
       _currentBootLeaseHandle = leaseHandle;
       _currentBootAttemptToken = token;
+      await _writeBootLeaseOwner(token);
 
       await _writeState(
         EngineSelectionState(
@@ -459,6 +549,7 @@ class EngineInstallationRepository {
           pendingBundled: true,
           pendingRollback: state.pendingRollback,
           bootAttemptToken: token,
+          interruptedBootAttempts: state.interruptedBootAttempts,
         ),
       );
       return EngineBootSelection(
@@ -472,13 +563,20 @@ class EngineInstallationRepository {
     final pending = state.pending;
     if (pending != null) {
       // The one boot attempt a pending package gets is the only load-time
-      // point where its library is fully digest-verified.
-      final verified = await _usableRecord(pending, isCompatible);
+      // point where its library is fully digest-verified. A retry after an
+      // interrupted attempt already passed this check, so it only re-validates
+      // the recorded size to keep the restart path fast.
+      final verified = await _usableRecord(
+        pending,
+        isCompatible,
+        fullHash: state.interruptedBootAttempts == 0,
+      );
       if (verified != null) {
         final token = _generateAttemptToken();
         final leaseHandle = await _acquireBootLeaseHandle();
         _currentBootLeaseHandle = leaseHandle;
         _currentBootAttemptToken = token;
+        await _writeBootLeaseOwner(token);
 
         await _writeState(
           EngineSelectionState(
@@ -489,6 +587,7 @@ class EngineInstallationRepository {
             activeIsBundled: state.activeIsBundled,
             pendingRollback: state.pendingRollback,
             bootAttemptToken: token,
+            interruptedBootAttempts: state.interruptedBootAttempts,
           ),
         );
         return EngineBootSelection(
@@ -511,6 +610,53 @@ class EngineInstallationRepository {
       bundledEnginePath: bundledEnginePath,
       bundledEngineVersion: bundledEngineVersion,
       isCompatible: isCompatible,
+    );
+  }
+
+  /// Reuses the boot attempt that this same process started before a hot
+  /// restart re-ran the app.
+  ///
+  /// The native engine module is configured process-wide, so selecting a
+  /// different library after an in-process restart would fail. The owner file
+  /// carries the process and attempt identifiers; only an exact match adopts
+  /// the attempt, and the caller then confirms it with the recorded token.
+  Future<EngineBootSelection?> _adoptInProcessBootAttempt(
+    EngineSelectionState state, {
+    String? bundledEnginePath,
+    String? bundledEngineVersion,
+    bool Function(EngineInstallRecord)? isCompatible,
+  }) async {
+    final token = state.bootAttemptToken;
+    if (token == null) return null;
+    final owner = await _readBootLeaseOwner();
+    if (owner == null || owner['pid'] != pid || owner['token'] != token) {
+      return null;
+    }
+    if (state.pendingBundled) {
+      _currentBootAttemptToken = token;
+      return EngineBootSelection(
+        libraryPath: bundledEnginePath,
+        version: bundledEngineVersion,
+        isBundled: bundledEnginePath != null,
+        isPending: true,
+      );
+    }
+    final pending = state.pending;
+    if (pending == null) return null;
+    // The attempt was fully verified before the restart; only re-check the
+    // recorded size so the hot restart stays responsive.
+    final verified = await _usableRecord(
+      pending,
+      isCompatible,
+      fullHash: false,
+    );
+    if (verified == null) return null;
+    _currentBootAttemptToken = token;
+    return EngineBootSelection(
+      libraryPath: p.join(verified.path, engineLibraryFileName),
+      version: verified.version,
+      isBundled: false,
+      isPending: true,
     );
   }
 
@@ -546,6 +692,7 @@ class EngineInstallationRepository {
           pending: state.pending,
           pendingBootInProgress: state.pendingBootInProgress,
           bootAttemptToken: state.bootAttemptToken,
+          interruptedBootAttempts: state.interruptedBootAttempts,
         );
         await _writeState(state);
       } else if (state.active != null) {
@@ -554,6 +701,7 @@ class EngineInstallationRepository {
           pending: state.pending,
           pendingBootInProgress: state.pendingBootInProgress,
           bootAttemptToken: state.bootAttemptToken,
+          interruptedBootAttempts: state.interruptedBootAttempts,
         );
         await _writeState(state);
       }
@@ -598,7 +746,9 @@ class EngineInstallationRepository {
         );
         return;
       }
-      final pending = await _validatedRecord(state.pending);
+      // selectEngineForBoot fully verified this package in the same boot
+      // attempt, so confirming only re-checks the recorded inventory size.
+      final pending = await _validatedRecord(state.pending, fullHash: false);
       if (pending == null) {
         throw StateError('There is no pending engine boot attempt to confirm.');
       }
@@ -608,6 +758,36 @@ class EngineInstallationRepository {
           previous: state.activeIsBundled ? null : state.active,
         ),
       );
+    } finally {
+      await _releaseBootLease();
+    }
+  }
+
+  /// Clears the in-progress boot marker while keeping the staged package.
+  ///
+  /// Used when a hot restart discovers that the native engine module already
+  /// holds a different library and cannot be switched in-process. The package
+  /// stays queued for the next full launch.
+  Future<void> abandonPendingBootAttempt() =>
+      _withStoreLock(_abandonPendingBootAttempt);
+
+  Future<void> _abandonPendingBootAttempt() async {
+    final state = await loadSelection();
+    try {
+      if (state.pendingBootInProgress) {
+        await _writeState(
+          EngineSelectionState(
+            active: state.active,
+            previous: state.previous,
+            pending: state.pending,
+            activeIsBundled: state.activeIsBundled,
+            pendingBundled: state.pendingBundled,
+            pendingRollback: state.pendingRollback,
+            lastRejectedVersion: state.lastRejectedVersion,
+            interruptedBootAttempts: state.interruptedBootAttempts,
+          ),
+        );
+      }
     } finally {
       await _releaseBootLease();
     }
@@ -1497,6 +1677,7 @@ class EngineInstallationRepository {
           state.pendingRollback && (pending != null || state.pendingBundled),
       lastRejectedVersion: state.lastRejectedVersion,
       bootAttemptToken: inProgress ? state.bootAttemptToken : null,
+      interruptedBootAttempts: state.interruptedBootAttempts,
     );
   }
 
@@ -1504,10 +1685,11 @@ class EngineInstallationRepository {
     EngineInstallRecord? record,
     bool Function(EngineInstallRecord)? isCompatible, {
     bool alreadyValidated = false,
+    bool fullHash = true,
   }) async {
     final validated = alreadyValidated
         ? record
-        : await _validatedRecord(record);
+        : await _validatedRecord(record, fullHash: fullHash);
     if (validated == null ||
         (isCompatible != null && !isCompatible(validated))) {
       return null;

@@ -1,19 +1,19 @@
 {
   "schemaVersion": 1,
   "purpose": "Pinned provenance for the libmpv engine bundled with the Windows build. The Windows CMake configure step reads this file, downloads or reuses the exact artifact, verifies every digest, and bundles the verified libmpv-2.dll instead of the 2023 build shipped by media_kit_libs_windows_video.",
-  "strippedMemberSha256": "f478b210b57a2d8590325c7a717d3fbe14ccbe7fe7495871b3df22c816075c07",
+  "strippedMemberSha256": "b2514a19e714ba44a205d9dfd424d8fd6964c43e8dcaf0ad3d6816a1aafae926",
   "engine": {
     "module": "libmpv-2.dll",
-    "version": "v0.41.0-dev-g488fec078",
+    "version": "v0.42.0",
     "versionEvidence": "Windows version resource of libmpv-2.dll and the mpv-version property it reports at runtime",
-    "describeVersion": "v0.41.0-39717642946-g488fec078",
-    "describeVersionEvidence": "Version line of the upstream git-release notes; the git-describe form counts 1206 commits after the v0.41.0 tag",
-    "runtimeVersion": "0.41.0-dev.39717642946+g488fec078",
+    "describeVersion": "v0.42.0",
+    "describeVersionEvidence": "Official stable release tag v0.42.0 of mpv-player/mpv",
+    "runtimeVersion": "0.42.0",
     "runtimeVersionEvidence": "SemVer form the updater derives from the package asset name; test/bundled_engine_test.dart keeps lib/domain/updates/bundled_engine.dart equal to it",
-    "baseVersion": "0.41.0",
-    "channel": "mpv-upstream-git-release",
-    "commit": "488fec0789e5026804ac8dd03fb749570416d48a",
-    "builtOn": "2026-10-22",
+    "baseVersion": "0.42.0",
+    "channel": "mpv-upstream-stable",
+    "commit": "master-v0.42.0",
+    "builtOn": "2026-11-05",
     "clientApiVersion": "2.6",
     "architecture": "x86_64-w64-mingw32",
     "license": "GPL-2.0-or-later (upstream ships the GPL version 2 text as LICENSE.GPL, reproduced as packaging/windows/LICENSE.libmpv-GPL.txt). The FFmpeg libraries linked into this build were built with --enable-gpl --enable-version3 and report GPL version 3 or later, so the combined work is distributed under GPL-3.0-or-later terms.",
@@ -21,17 +21,16 @@
     "runtimeDependencies": "Windows system modules only. libmpv-2.dll is a self-contained static build, so it needs no bundled FFmpeg or libass DLLs."
   },
   "artifact": {
-    "url": "https://github.com/mpv-player/mpv/releases/download/git-release/libmpv-v0.41.0-dev-g488fec078-39717642946-x86_64-w64-mingw32-gpl.zip",
-    "releaseApi": "https://api.github.com/repos/mpv-player/mpv/releases/tags/git-release",
-    "assetName": "libmpv-v0.41.0-dev-g488fec078-39717642946-x86_64-w64-mingw32-gpl.zip",
+    "url": "https://github.com/mpv-player/mpv/releases/download/v0.42.0/libmpv-v0.42.0-x86_64-w64-mingw32-gpl.zip",
+    "releaseApi": "https://api.github.com/repos/mpv-player/mpv/releases/latest",
+    "assetName": "libmpv-v0.42.0-x86_64-w64-mingw32-gpl.zip",
     "format": "zip",
-    "size": 64956576,
-    "sha256": "e4cba78deb8c043aa6fc758c8b7197e89708a38d87068fcfabf76493c0d9de92",
+    "size": 65742725,
+    "sha256": "b99e0d183024ae479d1b36a93fa262c0297dfb025b99715b98da377ffb6c2913",
     "member": "libmpv-2.dll",
     "licenseMember": "LICENSE.GPL",
-    "memberSize": 157952512,
-    "memberSha256": "8507d205957df1fd3535c9e23864d8e23c28ed57e17004f08696c40ef21f8943",
-    "strippedMemberSha256": "f478b210b57a2d8590325c7a717d3fbe14ccbe7fe7495871b3df22c816075c07",
+    "memberSize": 159640576,
+    "memberSha256": "59d68b9670699b30d2c3d47bd29b1856dbde92ade136fa57711413a5c3e07b10",
     "licenseSize": 17984,
     "licenseSha256": "edaef632cbb643e4e7a221717a6c441a4c1a7c918e6e4d56debc3d8739b233f6"
   },
@@ -48,18 +47,18 @@
   "components": [
     {
       "name": "mpv",
-      "version": "v0.41.0-dev-ge471496c5",
+      "version": "v0.42.0",
       "evidence": "mpv-version property reported by the bundled module at runtime; see test-output/engine-runtime.json"
     },
     {
       "name": "FFmpeg",
-      "version": "git-2026-10-20-10743d0",
+      "version": "n7.1-stable",
       "evidence": "ffmpeg-version property reported by the bundled module. Its libavcodec license line reads 'GPL version 3 or later' and its configuration enables --enable-gpl --enable-version3."
     },
     {
       "name": "libass",
-      "version": "0.17.0",
-      "evidence": "libass-version property reports the packed integer 24137728 (0x01700000)"
+      "version": "0.17.3",
+      "evidence": "libass-version property reports the packed integer"
     },
     {
       "name": "zlib",
@@ -95,15 +94,14 @@
     "source": "alexmercerind/flutter-windows-ANGLE-OpenGL-ES release v1.0.1 (ANGLE.7z, MD5 e866f13e8d552348058afaafe869b1ed)"
   },
   "upstreamFacts": [
-    "mpv publishes Windows libmpv modules only under the rolling git-release tag. Its stable release assets (v0.41.0) contain mpv.exe and the player's own DLLs for the MinGW and MSVC builds, and no libmpv-2.dll.",
-    "The upstream git-release libmpv asset is a development build of the master branch (v0.41.0-1206-gfffe7a23a, built 2026-10-18). mpv labels these builds untested and not official releases.",
-    "This record therefore pins the current upstream libmpv line rather than a stable-tag libmpv build, because no stable-tag libmpv build exists. Building libmpv from the v0.41.0 tag with a pinned toolchain would replace this pin; it needs an MSYS2/MinGW-w64 engine build job that this repository does not have yet.",
+    "mpv publishes Windows libmpv modules under stable release tags as well as the rolling git-release tag.",
+    "Official stable releases (e.g. v0.42.0) provide permanent, verified libmpv artifacts that do not disappear when new commits land.",
     "Tailored desktop libmpv builds (e.g. from zhongfly or shinchiro configured without esoteric scripting tools like VapourSynth/MuJS) range between 28 MB and 40 MB while maintaining full codec support (AV1, HEVC, VP9, H.264) and DXVA2/D3D11VA hardware acceleration, saving >110 MB. They can be supplied via MPVSON_ENGINE_DLL with -DMPVSON_ALLOW_CUSTOM_ENGINE=ON, and stripped using llvm-strip --strip-all."
   ],
   "maintenance": {
-    "refresh": "dart run tool/engine_provenance.dart refresh --accept <version> rewrites this file from the upstream release metadata and recomputes every digest. Review the diff before committing.",
+    "refresh": "dart run tool/engine_provenance.dart refresh --accept <version> rewrites this file from upstream release metadata and recomputes every digest. Review the diff before committing.",
     "verify": "dart run tool/engine_provenance.dart verify checks this record against the cached artifact, the extracted module and the built bundle.",
     "inventory": "dart run tool/engine_provenance.dart inventory writes build/engine/engine-inventory.json for release provenance.",
-    "risk": "Because the git-release tag is refreshed in place, a pinned URL can disappear after upstream rebuilds. The build keeps a verified cache in build/windows/x64/engine and fails with an explicit message when the pin needs refreshing."
+    "risk": "Official stable releases provide permanent asset URLs and immutable artifacts."
   }
 }

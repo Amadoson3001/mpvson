@@ -7,6 +7,7 @@ import '../../../domain/models/media_thumbnail.dart';
 import '../../../utils/format.dart';
 import '../../core/app_theme.dart';
 import '../../core/components/app_popup_menu_item.dart';
+import '../../core/components/page_header.dart';
 import '../../core/toast/app_toast.dart';
 import '../../player/player_controller.dart';
 import '../widgets/library_artwork.dart';
@@ -39,6 +40,16 @@ class HomeView extends StatelessWidget {
   Widget build(BuildContext context) => DecoratedBox(
     decoration: BoxDecoration(
       color: context.palette.background,
+      gradient: RadialGradient(
+        center: const Alignment(0, -0.35),
+        radius: 1.15,
+        colors: [
+          Theme.of(context).colorScheme.primary.withValues(alpha: 0.08),
+          context.palette.raisedSurface.withValues(alpha: 0.15),
+          Colors.transparent,
+        ],
+        stops: const [0.0, 0.45, 1.0],
+      ),
       border: isDragging
           ? Border.all(color: Theme.of(context).colorScheme.primary, width: 2)
           : null,
@@ -58,86 +69,85 @@ class HomeView extends StatelessWidget {
         return CustomScrollView(
           slivers: [
             SliverPadding(
-              padding: EdgeInsets.fromLTRB(inset, 32, inset, 0),
+              padding: EdgeInsets.fromLTRB(inset, 20, inset, 32),
               sliver: SliverToBoxAdapter(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Home',
-                      style: Theme.of(context).textTheme.displaySmall,
-                    ),
-                    const SizedBox(height: 24),
-                    Text(
-                      isDragging ? 'Drop files to play' : 'Open your media',
-                      style: Theme.of(context).textTheme.titleLarge,
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Choose a file, open a URL, or drop files here.',
-                      style: context.palette.rowSecondary,
-                    ),
-                    const SizedBox(height: 16),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 960),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        FilledButton.icon(
-                          onPressed: onOpenFiles,
-                          icon: const Icon(Icons.file_open_rounded),
-                          label: const Text('Open file'),
+                        const PageHeader(
+                          title: 'Home',
+                          subtitle: 'Desktop Media Center',
+                          padding: EdgeInsets.zero,
                         ),
-                        OutlinedButton.icon(
-                          onPressed: onOpenUrl,
-                          icon: const Icon(Icons.link_rounded),
-                          label: const Text('Open URL'),
+                        const SizedBox(height: 24),
+                        _DropZoneCard(
+                          isDragging: isDragging,
+                          onOpenFiles: onOpenFiles,
+                          onOpenUrl: onOpenUrl,
+                          compact: recent.isNotEmpty,
                         ),
+                        if (recent.isEmpty) const _HomeEmptyGuide(),
+                        if (recent.isNotEmpty) ...[
+                          const SizedBox(height: 24),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.baseline,
+                            textBaseline: TextBaseline.alphabetic,
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  'Recently played',
+                                  overflow: TextOverflow.ellipsis,
+                                  maxLines: 1,
+                                  style: Theme.of(
+                                    context,
+                                  ).textTheme.titleLarge,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Text(
+                                '${recent.length} ${recent.length == 1 ? 'item' : 'items'}',
+                                style: context.palette.metadata,
+                              ),
+                              const Spacer(),
+                              TextButton.icon(
+                                onPressed:
+                                    onClearRecent ??
+                                    () {
+                                      final cleared = controller.clearRecent();
+                                      if (cleared.isNotEmpty &&
+                                          context.mounted) {
+                                        AppToast.show(
+                                          context,
+                                          'Recently played cleared',
+                                          actionLabel: 'Undo',
+                                          onAction: () => controller
+                                              .restoreRecentList(cleared),
+                                        );
+                                      }
+                                    },
+                                icon: const Icon(
+                                  Icons.clear_all_rounded,
+                                  size: 16,
+                                ),
+                                label: const Text('Clear all'),
+                                style: TextButton.styleFrom(
+                                  foregroundColor: context.palette.mutedText,
+                                  visualDensity: VisualDensity.compact,
+                                  textStyle: Theme.of(
+                                    context,
+                                  ).textTheme.bodySmall,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 20),
+                        ],
                       ],
                     ),
-                    if (recent.isNotEmpty) ...[
-                      const SizedBox(height: 40),
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.baseline,
-                        textBaseline: TextBaseline.alphabetic,
-                        children: [
-                          Text(
-                            'Recently played',
-                            style: Theme.of(context).textTheme.titleLarge,
-                          ),
-                          const SizedBox(width: 12),
-                          Text(
-                            '${recent.length} ${recent.length == 1 ? 'item' : 'items'}',
-                            style: context.palette.metadata,
-                          ),
-                          const Spacer(),
-                          TextButton.icon(
-                            onPressed:
-                                onClearRecent ??
-                                () {
-                                  final cleared = controller.clearRecent();
-                                  if (cleared.isNotEmpty && context.mounted) {
-                                    AppToast.show(
-                                      context,
-                                      'Recently played cleared',
-                                      actionLabel: 'Undo',
-                                      onAction: () =>
-                                          controller.restoreRecentList(cleared),
-                                    );
-                                  }
-                                },
-                            icon: const Icon(Icons.clear_all_rounded, size: 16),
-                            label: const Text('Clear all'),
-                            style: TextButton.styleFrom(
-                              foregroundColor: context.palette.mutedText,
-                              visualDensity: VisualDensity.compact,
-                              textStyle: Theme.of(context).textTheme.bodySmall,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 20),
-                    ],
-                  ],
+                  ),
                 ),
               ),
             ),
@@ -489,6 +499,313 @@ class _RecentTileState extends State<_RecentTile> {
             ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _DropZoneCard extends StatelessWidget {
+  const _DropZoneCard({
+    required this.isDragging,
+    required this.onOpenFiles,
+    required this.onOpenUrl,
+    this.compact = false,
+  });
+
+  final bool isDragging;
+  final VoidCallback onOpenFiles;
+  final VoidCallback onOpenUrl;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final primary = Theme.of(context).colorScheme.primary;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    if (compact) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: isDragging
+              ? Color.alphaBlend(primary.withValues(alpha: 0.12), palette.card)
+              : palette.card,
+          borderRadius: BorderRadius.circular(AppRadii.control),
+          border: Border.all(
+            color: isDragging
+                ? primary
+                : palette.borderStrong.withValues(alpha: 0.4),
+            width: isDragging ? 2.0 : 1.0,
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              isDragging
+                  ? Icons.file_download_rounded
+                  : Icons.cloud_upload_outlined,
+              size: 22,
+              color: primary,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    isDragging ? 'Release to play media' : 'Open new media',
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  Text(
+                    'Drop files anywhere, or browse your files',
+                    style: palette.metadata,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            Flexible(
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                alignment: WrapAlignment.end,
+                children: [
+                  FilledButton.icon(
+                    onPressed: onOpenFiles,
+                    icon: const Icon(Icons.file_open_rounded, size: 16),
+                    label: const Text('Open file'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: onOpenUrl,
+                    icon: const Icon(Icons.link_rounded, size: 16),
+                    label: const Text('Open URL'),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
+      decoration: BoxDecoration(
+        color: isDragging
+            ? Color.alphaBlend(primary.withValues(alpha: 0.12), palette.card)
+            : palette.card,
+        borderRadius: BorderRadius.circular(AppRadii.card),
+        border: Border.all(
+          color: isDragging
+              ? primary
+              : isDark
+              ? palette.borderStrong.withValues(alpha: 0.45)
+              : palette.borderStrong,
+          width: isDragging ? 2.0 : 1.0,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: isDragging
+                ? primary.withValues(alpha: 0.25)
+                : primary.withValues(alpha: isDark ? 0.05 : 0.03),
+            blurRadius: isDragging ? 32 : 24,
+            offset: const Offset(0, 4),
+          ),
+          BoxShadow(
+            color: Colors.black.withValues(alpha: isDark ? 0.18 : 0.05),
+            blurRadius: isDark ? 16 : 24,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 58,
+            height: 58,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: primary.withValues(alpha: 0.12),
+              border: Border.all(
+                color: primary.withValues(alpha: 0.35),
+                width: 1.5,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: primary.withValues(alpha: 0.15),
+                  blurRadius: 18,
+                  spreadRadius: 1,
+                ),
+              ],
+            ),
+            child: Center(
+              child: Icon(
+                isDragging
+                    ? Icons.file_download_rounded
+                    : Icons.cloud_upload_rounded,
+                size: 28,
+                color: primary,
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            isDragging ? 'Release to play media' : 'Drop media files here',
+            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+              fontWeight: FontWeight.w700,
+              letterSpacing: AppLetterSpacing.title,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 6),
+          Text(
+            isDragging
+                ? 'Files will start playing immediately'
+                : 'Drag and drop video or audio files anywhere, or browse your files',
+            style: palette.rowSecondary.copyWith(color: palette.secondaryText),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 18),
+          Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            alignment: WrapAlignment.center,
+            children: [
+              FilledButton.icon(
+                onPressed: onOpenFiles,
+                icon: const Icon(Icons.file_open_rounded, size: 18),
+                label: const Text('Open file'),
+              ),
+              OutlinedButton.icon(
+                onPressed: onOpenUrl,
+                icon: const Icon(Icons.link_rounded, size: 18),
+                label: const Text('Open URL'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            alignment: WrapAlignment.center,
+            children: const [
+              _FormatBadge('MP4'),
+              _FormatBadge('MKV'),
+              _FormatBadge('AVI'),
+              _FormatBadge('MOV'),
+              _FormatBadge('MP3'),
+              _FormatBadge('FLAC'),
+              _FormatBadge('AAC'),
+              _FormatBadge('WAV'),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FormatBadge extends StatelessWidget {
+  const _FormatBadge(this.label);
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: palette.raisedSurface.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: palette.borderStrong.withValues(alpha: 0.35)),
+      ),
+      child: Text(
+        label,
+        style: palette.metadata.copyWith(
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+          letterSpacing: 0.3,
+          color: palette.secondaryText,
+        ),
+      ),
+    );
+  }
+}
+
+class _HomeEmptyGuide extends StatelessWidget {
+  const _HomeEmptyGuide();
+
+  Widget _buildKeyPill(BuildContext context, String keyText, String label) {
+    final palette = context.palette;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+          decoration: BoxDecoration(
+            color: palette.surface,
+            borderRadius: BorderRadius.circular(4),
+            border: Border.all(
+              color: palette.borderStrong.withValues(alpha: 0.5),
+            ),
+          ),
+          child: Text(
+            keyText,
+            style: palette.metadata.copyWith(
+              fontWeight: FontWeight.w600,
+              fontSize: 11,
+              color: palette.primaryText,
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Text(
+          label,
+          style: palette.rowSecondary.copyWith(
+            color: palette.secondaryText,
+            fontSize: 12,
+          ),
+        ),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 20, bottom: 24),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+        decoration: BoxDecoration(
+          color: palette.isDark
+              ? palette.raisedSurface.withValues(alpha: 0.45)
+              : palette.surface,
+          borderRadius: BorderRadius.circular(AppRadii.control),
+          border: Border.all(color: palette.border),
+        ),
+        child: Center(
+          child: Wrap(
+            spacing: 24,
+            runSpacing: 10,
+            alignment: WrapAlignment.center,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              _buildKeyPill(context, 'Space', 'Play / Pause'),
+              _buildKeyPill(context, 'F', 'Fullscreen'),
+              _buildKeyPill(context, 'M', 'Mute'),
+              _buildKeyPill(context, '← / →', 'Seek 5s'),
+            ],
+          ),
+        ),
       ),
     );
   }
