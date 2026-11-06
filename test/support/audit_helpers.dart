@@ -116,11 +116,14 @@ Future<List<String>> openMedia(
 }
 
 /// Moves a mouse pointer to [at] so hover-only chrome appears.
-Future<void> hover(WidgetTester tester, Offset at) async {
+/// Returns the gesture; remove its pointer before adding another mouse
+/// device (the mouse tracker only tolerates one live mouse pointer).
+Future<TestGesture> hover(WidgetTester tester, Offset at) async {
   final g = await tester.createGesture(kind: PointerDeviceKind.mouse);
   await g.addPointer(location: Offset.zero);
   await g.moveTo(at);
   await settle(tester);
+  return g;
 }
 
 /// Runs [body] and returns layout errors plus font-family violations seen

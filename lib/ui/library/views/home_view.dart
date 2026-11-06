@@ -7,6 +7,7 @@ import '../../../domain/models/media_thumbnail.dart';
 import '../../../utils/format.dart';
 import '../../core/app_theme.dart';
 import '../../core/components/app_popup_menu_item.dart';
+import '../../core/components/page_header.dart';
 import '../../core/toast/app_toast.dart';
 import '../../player/player_controller.dart';
 import '../widgets/library_artwork.dart';
@@ -75,83 +76,81 @@ class HomeView extends StatelessWidget {
                     constraints: const BoxConstraints(maxWidth: 960),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.baseline,
-                      textBaseline: TextBaseline.alphabetic,
                       children: [
-                        Text(
-                          'Home',
-                          style: Theme.of(context).textTheme.displaySmall,
+                        const PageHeader(
+                          title: 'Home',
+                          subtitle: 'Desktop Media Center',
+                          padding: EdgeInsets.zero,
                         ),
-                        const SizedBox(width: 14),
-                        Text(
-                          'Desktop Media Center',
-                          style: context.palette.metadata.copyWith(
-                            color: context.palette.mutedText,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w400,
+                        const SizedBox(height: 24),
+                        _DropZoneCard(
+                          isDragging: isDragging,
+                          onOpenFiles: onOpenFiles,
+                          onOpenUrl: onOpenUrl,
+                          compact: recent.isNotEmpty,
+                        ),
+                        if (recent.isEmpty) const _HomeEmptyGuide(),
+                        if (recent.isNotEmpty) ...[
+                          const SizedBox(height: 24),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.baseline,
+                            textBaseline: TextBaseline.alphabetic,
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  'Recently played',
+                                  overflow: TextOverflow.ellipsis,
+                                  maxLines: 1,
+                                  style: Theme.of(
+                                    context,
+                                  ).textTheme.titleLarge,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Text(
+                                '${recent.length} ${recent.length == 1 ? 'item' : 'items'}',
+                                style: context.palette.metadata,
+                              ),
+                              const Spacer(),
+                              TextButton.icon(
+                                onPressed:
+                                    onClearRecent ??
+                                    () {
+                                      final cleared = controller.clearRecent();
+                                      if (cleared.isNotEmpty &&
+                                          context.mounted) {
+                                        AppToast.show(
+                                          context,
+                                          'Recently played cleared',
+                                          actionLabel: 'Undo',
+                                          onAction: () => controller
+                                              .restoreRecentList(cleared),
+                                        );
+                                      }
+                                    },
+                                icon: const Icon(
+                                  Icons.clear_all_rounded,
+                                  size: 16,
+                                ),
+                                label: const Text('Clear all'),
+                                style: TextButton.styleFrom(
+                                  foregroundColor: context.palette.mutedText,
+                                  visualDensity: VisualDensity.compact,
+                                  textStyle: Theme.of(
+                                    context,
+                                  ).textTheme.bodySmall,
+                                ),
+                              ),
+                            ],
                           ),
-                        ),
+                          const SizedBox(height: 20),
+                        ],
                       ],
                     ),
-                    const SizedBox(height: 24),
-                    _DropZoneCard(
-                      isDragging: isDragging,
-                      onOpenFiles: onOpenFiles,
-                      onOpenUrl: onOpenUrl,
-                      compact: recent.isNotEmpty,
-                    ),
-                    if (recent.isEmpty) const _HomeEmptyGuide(),
-                    if (recent.isNotEmpty) ...[
-                      const SizedBox(height: 24),
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.baseline,
-                        textBaseline: TextBaseline.alphabetic,
-                        children: [
-                          Text(
-                            'Recently played',
-                            style: Theme.of(context).textTheme.titleLarge,
-                          ),
-                          const SizedBox(width: 12),
-                          Text(
-                            '${recent.length} ${recent.length == 1 ? 'item' : 'items'}',
-                            style: context.palette.metadata,
-                          ),
-                          const Spacer(),
-                          TextButton.icon(
-                            onPressed:
-                                onClearRecent ??
-                                () {
-                                  final cleared = controller.clearRecent();
-                                  if (cleared.isNotEmpty && context.mounted) {
-                                    AppToast.show(
-                                      context,
-                                      'Recently played cleared',
-                                      actionLabel: 'Undo',
-                                      onAction: () =>
-                                          controller.restoreRecentList(cleared),
-                                    );
-                                  }
-                                },
-                            icon: const Icon(Icons.clear_all_rounded, size: 16),
-                            label: const Text('Clear all'),
-                            style: TextButton.styleFrom(
-                              foregroundColor: context.palette.mutedText,
-                              visualDensity: VisualDensity.compact,
-                              textStyle: Theme.of(context).textTheme.bodySmall,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 20),
-                    ],
-                  ],
+                  ),
                 ),
               ),
             ),
-          ),
-        ),
             if (recent.isNotEmpty)
               SliverPadding(
                 padding: EdgeInsets.fromLTRB(inset, 0, inset, 32),
@@ -522,6 +521,7 @@ class _DropZoneCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.palette;
     final primary = Theme.of(context).colorScheme.primary;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
     if (compact) {
       return Container(
@@ -603,20 +603,22 @@ class _DropZoneCard extends StatelessWidget {
         border: Border.all(
           color: isDragging
               ? primary
-              : palette.borderStrong.withValues(alpha: 0.45),
+              : isDark
+              ? palette.borderStrong.withValues(alpha: 0.45)
+              : palette.borderStrong,
           width: isDragging ? 2.0 : 1.0,
         ),
         boxShadow: [
           BoxShadow(
             color: isDragging
                 ? primary.withValues(alpha: 0.25)
-                : primary.withValues(alpha: 0.05),
+                : primary.withValues(alpha: isDark ? 0.05 : 0.03),
             blurRadius: isDragging ? 32 : 24,
             offset: const Offset(0, 4),
           ),
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.18),
-            blurRadius: 16,
+            color: Colors.black.withValues(alpha: isDark ? 0.18 : 0.05),
+            blurRadius: isDark ? 16 : 24,
             offset: const Offset(0, 4),
           ),
         ],
@@ -666,9 +668,7 @@ class _DropZoneCard extends StatelessWidget {
             isDragging
                 ? 'Files will start playing immediately'
                 : 'Drag and drop video or audio files anywhere, or browse your files',
-            style: palette.rowSecondary.copyWith(
-              color: palette.secondaryText,
-            ),
+            style: palette.rowSecondary.copyWith(color: palette.secondaryText),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 18),
@@ -723,17 +723,15 @@ class _FormatBadge extends StatelessWidget {
       decoration: BoxDecoration(
         color: palette.raisedSurface.withValues(alpha: 0.5),
         borderRadius: BorderRadius.circular(4),
-        border: Border.all(
-          color: palette.borderStrong.withValues(alpha: 0.35),
-        ),
+        border: Border.all(color: palette.borderStrong.withValues(alpha: 0.35)),
       ),
       child: Text(
         label,
         style: palette.metadata.copyWith(
-          fontSize: 10,
+          fontSize: 11,
           fontWeight: FontWeight.w600,
-          letterSpacing: 0.4,
-          color: palette.mutedText,
+          letterSpacing: 0.3,
+          color: palette.secondaryText,
         ),
       ),
     );
@@ -788,7 +786,9 @@ class _HomeEmptyGuide extends StatelessWidget {
         width: double.infinity,
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
         decoration: BoxDecoration(
-          color: palette.raisedSurface.withValues(alpha: 0.45),
+          color: palette.isDark
+              ? palette.raisedSurface.withValues(alpha: 0.45)
+              : palette.surface,
           borderRadius: BorderRadius.circular(AppRadii.control),
           border: Border.all(color: palette.border),
         ),

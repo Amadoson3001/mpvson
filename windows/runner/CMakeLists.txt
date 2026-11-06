@@ -46,3 +46,16 @@ target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 
 # Run the Flutter tool portions of the build. This must not be removed.
 add_dependencies(${BINARY_NAME} flutter_assemble)
+
+# Ensure verified libmpv-2.dll and engine provenance are copied to the runner output directory on every build (Debug & Release)
+if(MPVSON_ENGINE_MODULE)
+  add_custom_command(TARGET ${BINARY_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${MPVSON_ENGINE_MODULE}"
+      "$<TARGET_FILE_DIR:${BINARY_NAME}>/${MPVSON_ENGINE_MEMBER}"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${MPVSON_ENGINE_PROVENANCE}"
+      "$<TARGET_FILE_DIR:${BINARY_NAME}>/engine-provenance.json"
+    COMMENT "Copying verified ${MPVSON_ENGINE_MEMBER} and provenance to output directory"
+  )
+endif()

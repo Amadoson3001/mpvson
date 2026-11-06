@@ -46,6 +46,11 @@ final RegExp _assetPattern = RegExp(
   r'^libmpv-v(\d+\.\d+\.\d+)-dev-g([0-9a-f]+)-(\d+)-x86_64-w64-mingw32-gpl\.zip$',
 );
 
+/// The x64 MinGW GPL libmpv asset of an official upstream stable release.
+final RegExp _stableAssetPattern = RegExp(
+  r'^libmpv-v(\d+\.\d+\.\d+)-x86_64-w64-mingw32-gpl\.zip$',
+);
+
 /// Files that still come from media_kit_libs_windows_video and serve the video
 /// renderer's ANGLE path rather than the engine.
 const List<String> _companionFiles = <String>[
@@ -67,6 +72,8 @@ Future<void> main(List<String> arguments) async {
       exitCode = await _verify(root) ? 0 : 1;
     case 'refresh':
       exitCode = await _refresh(root, options) ? 0 : 1;
+    case 'sync-active':
+      exitCode = await _syncActive(root, options) ? 0 : 1;
     case 'inventory':
       exitCode = await _inventory(root, options) ? 0 : 1;
     case 'help':
@@ -86,6 +93,7 @@ Usage: dart run tool/engine_provenance.dart <command> [options]
 Commands:
   verify                              Verify the record, license, cache and bundle.
   refresh --accept <version>          Re-pin the engine from upstream metadata.
+  sync-active                         Sync the active in-app engine update into the build pin.
   inventory                           Write build/engine/engine-inventory.json.
 
 Options:
@@ -203,7 +211,8 @@ bool _verifyRecordShape(Map<String, Object?> record, List<String> problems) {
     'assetName',
     section: 'artifact',
   );
-  if (!_assetPattern.hasMatch(assetName)) {
+  if (!_assetPattern.hasMatch(assetName) &&
+      !_stableAssetPattern.hasMatch(assetName)) {
     problems.add(
       'artifact.assetName is not the x64 MinGW GPL libmpv asset this project pins: $assetName',
     );
@@ -233,7 +242,7 @@ bool _verifyRecordShape(Map<String, Object?> record, List<String> problems) {
     section: 'engine',
   );
   if (!RegExp(
-    r'^\d+\.\d+\.\d+-dev\.\d+\+g[0-9a-f]+$',
+    r'^\d+\.\d+\.\d+(-dev\.\d+\+g[0-9a-f]+)?$',
   ).hasMatch(runtimeVersion)) {
     problems.add(
       'engine.runtimeVersion must be the SemVer form the updater stores: "$runtimeVersion"',
@@ -249,11 +258,12 @@ bool _verifyRecordShape(Map<String, Object?> record, List<String> problems) {
       'engine.describeVersion must start with "v": "$describeVersion"',
     );
   }
+  final String cleanVer = version.replaceFirst(RegExp(r'^[vV]'), '');
   if (!_requireString(
     record,
     'assetName',
     section: 'artifact',
-  ).contains(version)) {
+  ).contains(cleanVer)) {
     problems.add(
       'artifact.assetName does not carry the recorded engine version "$version".',
     );
@@ -677,6 +687,99 @@ Future<String?> _resolveCommit(http.Client client, String shortCommit) async {
     return null;
   }
   return null;
+}
+
+Future<bool> _syncActive(String root, _Options options) async {
+  final appData = Platform.environment['APPDATA'];
+  if (appData == null || appData.isEmpty) {
+    stderr.writeln('APPDATA environment variable is not set.');
+    return false;
+  }
+  final enginesDir = Directory(
+    p.join(appData, 'Mpvson', 'Mpvson', 'mpvson', 'engines'),
+  );
+  final selectionFile = File(p.join(enginesDir.path, 'engine-selection.json'));
+  if (!selectionFile.existsSync()) {
+    stdout.writeln('No installed engines found in AppData.');
+    return true;
+  }
+  final Object? decoded = jsonDecode(selectionFile.readAsStringSync());
+  if (decoded is! Map<String, Object?>) return false;
+  final active = decoded['active'];
+  if (active is! Map<String, Object?>) {
+    stdout.writeln(
+      'Active engine in AppData is bundled fallback; nothing to sync.',
+    );
+    return true;
+  }
+  final version = active['version'] as String?;
+  final activePath = active['path'] as String?;
+  if (version == null || activePath == null) {
+    stderr.writeln('Active engine record is missing version or path.');
+    return false;
+  }
+  final activeDll = File(p.join(activePath, 'libmpv-2.dll'));
+  if (!activeDll.existsSync()) {
+    stderr.writeln('Active engine DLL missing at ${activeDll.path}');
+    return false;
+  }
+  final activeSha = sha256.convert(activeDll.readAsBytesSync()).toString();
+  stdout.writeln('Active engine installed in AppData: v$version ($activeSha)');
+
+  // 1. Ensure engine cache directory has this DLL
+  final versionDir = Directory(p.join(root, _cacheRelative, 'v$version'));
+  await versionDir.create(recursive: true);
+  final cachedDll = File(p.join(versionDir.path, 'libmpv-2.dll'));
+  await activeDll.copy(cachedDll.path);
+  stdout.writeln('Copied to engine cache: ${cachedDll.path}');
+
+  // 2. Ensure runner directories have this DLL if they exist
+  for (final mode in ['Release', 'Debug']) {
+    final runnerDir = Directory(p.join(root, 'build/windows/x64/runner', mode));
+    if (runnerDir.existsSync()) {
+      await activeDll.copy(p.join(runnerDir.path, 'libmpv-2.dll'));
+      stdout.writeln(
+        'Copied to $mode runner: ${p.join(runnerDir.path, 'libmpv-2.dll')}',
+      );
+    }
+  }
+
+  // 3. Update lib/domain/updates/bundled_engine.dart
+  final bundledFile = File(
+    p.join(root, 'lib/domain/updates/bundled_engine.dart'),
+  );
+  if (bundledFile.existsSync()) {
+    final content = bundledFile.readAsStringSync();
+    final updated = content.replaceAll(
+      RegExp(r"defaultValue:\s*'[^']+'"),
+      "defaultValue: '$version'",
+    );
+    await bundledFile.writeAsString(updated);
+    stdout.writeln(
+      'Updated bundledEngineVersion to "$version" in bundled_engine.dart',
+    );
+  }
+
+  // 4. Update packaging/windows/engine-provenance.json
+  final recordPath = p.join(root, _recordRelative);
+  final Map<String, Object?> record = _readJson(recordPath);
+  final Map<String, Object?> engine = _section(record, 'engine');
+  final Map<String, Object?> artifact = _section(record, 'artifact');
+  engine['version'] = 'v$version';
+  engine['describeVersion'] = 'v$version';
+  engine['runtimeVersion'] = version;
+  engine['baseVersion'] = version;
+  engine['channel'] = 'mpv-upstream-stable';
+  artifact['assetName'] = 'libmpv-v$version-x86_64-w64-mingw32-gpl.zip';
+  artifact['url'] =
+      'https://github.com/mpv-player/mpv/releases/download/v$version/libmpv-v$version-x86_64-w64-mingw32-gpl.zip';
+  artifact['memberSha256'] = activeSha;
+  artifact['memberSize'] = activeDll.lengthSync();
+  await File(
+    recordPath,
+  ).writeAsString(const JsonEncoder.withIndent('  ').convert(record) + '\n');
+  stdout.writeln('Updated engine-provenance.json with active engine v$version');
+  return true;
 }
 
 Future<bool> _inventory(String root, _Options options) async {

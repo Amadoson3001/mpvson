@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/app_motion.dart';
 import '../../../core/app_theme.dart';
 import '../../../core/components/app_mark.dart';
 import '../../../../data/services/engine_update_service.dart';
 import '../../../../data/services/update_service.dart';
-import '../../../../domain/updates/engine_update_channel.dart';
 import '../update_center_dialog.dart';
+import '../update_status.dart';
 import 'settings_shared_widgets.dart';
 
 class AboutSettingsSection extends StatelessWidget {
@@ -21,8 +22,13 @@ class AboutSettingsSection extends StatelessWidget {
   final String engineVersion;
 
   void _openUpdateCenter(BuildContext context) {
-    showDialog<void>(
+    final box = context.findRenderObject() as RenderBox?;
+    final anchor = box != null && box.hasSize
+        ? box.localToGlobal(box.size.center(Offset.zero))
+        : null;
+    showMorphDialog<void>(
       context: context,
+      anchor: anchor,
       builder: (_) => UpdateCenterDialog(
         updates: updates,
         engineUpdates: engineUpdates,
@@ -51,9 +57,9 @@ class AboutSettingsSection extends StatelessWidget {
                 width: 1,
               ),
             ),
-            child: Row(
-              children: [
-                Container(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final avatar = Container(
                   width: 52,
                   height: 52,
                   decoration: BoxDecoration(
@@ -66,60 +72,97 @@ class AboutSettingsSection extends StatelessWidget {
                   ),
                   alignment: Alignment.center,
                   child: const AppMark(size: 30),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Text(
+                );
+                final identity = Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
                             'Mpvson',
+                            overflow: TextOverflow.ellipsis,
                             style: theme.textTheme.titleMedium?.copyWith(
                               fontWeight: FontWeight.w700,
                               letterSpacing: -0.3,
                             ),
                           ),
-                          const SizedBox(width: 8),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 2,
-                            ),
-                            decoration: BoxDecoration(
-                              color: accent.withValues(alpha: 0.12),
-                              borderRadius: BorderRadius.circular(
-                                AppRadii.control,
-                              ),
-                            ),
-                            child: Text(
-                              'v${updates.currentVersion}',
-                              style: theme.textTheme.labelSmall?.copyWith(
-                                color: accent,
-                                fontWeight: FontWeight.w600,
-                              ),
+                        ),
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: accent.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(
+                              AppRadii.control,
                             ),
                           ),
+                          child: Text(
+                            'v${updates.currentVersion}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: accent,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      'Modern desktop media player powered by mpv',
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                );
+                final updateButton = Builder(
+                  builder: (buttonContext) => FilledButton.tonalIcon(
+                    onPressed: () => _openUpdateCenter(buttonContext),
+                    icon: const Icon(Icons.sync_rounded, size: 16),
+                    label: const Text('Update center'),
+                  ),
+                );
+                if (constraints.maxWidth < 480) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          avatar,
+                          const SizedBox(width: 16),
+                          Expanded(child: identity),
                         ],
                       ),
-                      const SizedBox(height: 3),
-                      Text(
-                        'Modern desktop media player powered by mpv',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
+                      const SizedBox(height: 14),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: updateButton,
                       ),
                     ],
-                  ),
-                ),
-                const SizedBox(width: 12),
-                FilledButton.tonalIcon(
-                  onPressed: () => _openUpdateCenter(context),
-                  icon: const Icon(Icons.sync_rounded, size: 16),
-                  label: const Text('Update center'),
-                ),
-              ],
+                  );
+                }
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    avatar,
+                    const SizedBox(width: 16),
+                    Expanded(child: identity),
+                    const SizedBox(width: 12),
+                    updateButton,
+                  ],
+                );
+              },
             ),
           ),
           const SizedBox(height: 20),
@@ -129,46 +172,34 @@ class AboutSettingsSection extends StatelessWidget {
             title: 'Software & Engine',
             children: [
               AnimatedBuilder(
-                animation: Listenable.merge([updates, engineUpdates]),
+                animation: updates,
                 builder: (context, _) {
-                  final (statusText, statusColor) = _appStatusInfo(
-                    context,
-                    updates.status,
-                    accent,
-                  );
+                  final (statusText, statusColor) =
+                      appUpdateStatusPresentation(context, updates);
                   return _AboutTile(
                     icon: Icons.desktop_windows_outlined,
                     title: 'Application updates',
-                    subtitle: _updateSummary(),
-                    subtitleKey: ValueKey<String>(
-                      'update-summary-${updates.status}-${engineUpdates.status}',
-                    ),
-                    trailing: _StatusBadge(
+                    subtitle: 'In-app update checks',
+                    trailing: UpdateStatusPill(
                       label: statusText,
                       color: statusColor,
                     ),
-                    onTap: () => _openUpdateCenter(context),
                   );
                 },
               ),
               AnimatedBuilder(
                 animation: engineUpdates,
                 builder: (context, _) {
-                  final (statusText, statusColor) = _engineStatusInfo(
-                    context,
-                    engineUpdates.status,
-                    accent,
-                  );
-                  final cleanEngine = _formatEngineVersion(engineVersion);
+                  final (statusText, statusColor) =
+                      engineUpdateStatusPresentation(context, engineUpdates);
                   return _AboutTile(
                     icon: Icons.memory_rounded,
                     title: 'Playback engine',
-                    subtitle: cleanEngine,
-                    trailing: _StatusBadge(
+                    subtitle: _formatEngineVersion(engineVersion),
+                    trailing: UpdateStatusPill(
                       label: statusText,
                       color: statusColor,
                     ),
-                    onTap: () => _openUpdateCenter(context),
                   );
                 },
               ),
@@ -177,8 +208,6 @@ class AboutSettingsSection extends StatelessWidget {
                 title: 'Engine channel & distribution',
                 subtitle:
                     '${engineUpdates.channel.name.toUpperCase()} · ${engineUpdates.sourceLabel}',
-                trailing: const Icon(Icons.chevron_right_rounded, size: 18),
-                onTap: () => _openUpdateCenter(context),
               ),
             ],
           ),
@@ -207,70 +236,8 @@ class AboutSettingsSection extends StatelessWidget {
   static String _formatEngineVersion(String raw) {
     final clean = raw.trim();
     if (clean.isEmpty) return 'libmpv';
+    if (clean.toLowerCase().startsWith('libmpv')) return clean;
     return 'libmpv $clean';
-  }
-
-  static (String, Color) _appStatusInfo(
-    BuildContext context,
-    String status,
-    Color accent,
-  ) => switch (status) {
-    'checking' => ('Checking…', AppTheme.warning),
-    'available' => ('Update ready', accent),
-    'downloading' => ('Downloading…', AppTheme.warning),
-    'ready' => ('Downloaded', AppTheme.success),
-    'upToDate' => ('Up to date', AppTheme.success),
-    'error' => ('Check failed', context.palette.danger),
-    'unconfigured' => ('Not configured', context.palette.muted),
-    _ => ('Idle', context.palette.muted),
-  };
-
-  static (String, Color) _engineStatusInfo(
-    BuildContext context,
-    String status,
-    Color accent,
-  ) => switch (status) {
-    'available' => ('Update ready', accent),
-    'staging' || 'downloading' => ('In progress', AppTheme.warning),
-    'readyToRestart' => ('Restart ready', AppTheme.success),
-    'newerInstalled' => ('Upstream older', context.palette.secondaryText),
-    'stableUnavailable' => ('Channel fallback', context.palette.muted),
-    'error' => ('Check failed', context.palette.danger),
-    'upToDate' => ('Up to date', AppTheme.success),
-    _ => ('Ready', AppTheme.success),
-  };
-
-  String _updateSummary() {
-    final appStatus = switch (updates.status) {
-      'checking' => 'Checking…',
-      'available' => 'Update available',
-      'downloading' => 'Downloading…',
-      'ready' => 'Update downloaded',
-      'upToDate' => 'Up to date',
-      'error' => 'Check failed',
-      'unconfigured' => 'Checks not configured',
-      _ => null,
-    };
-    final engineStatus = switch (engineUpdates.status) {
-      'available' =>
-        engineUpdates.usesOfficialMpvSource
-            ? engineUpdates.channel == EngineUpdateChannel.stable
-                  ? 'Stable engine update available'
-                  : 'Engine update available'
-            : 'Engine update available',
-      'stableUnavailable' => 'Stable engine build unavailable',
-      'newerInstalled' => 'Installed engine is newer',
-      'savingChannel' => 'Saving engine channel',
-      'downloading' || 'staging' => 'Engine update in progress',
-      'readyToRestart' => 'Engine staged',
-      'error' => 'Engine update failed',
-      'upToDate' => 'Engine up to date',
-      _ => null,
-    };
-    final summary = appStatus == null
-        ? 'Mpvson ${updates.currentVersion}'
-        : 'Mpvson ${updates.currentVersion} · $appStatus';
-    return engineStatus == null ? summary : '$summary · $engineStatus';
   }
 }
 
@@ -279,22 +246,18 @@ class _AboutTile extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.subtitle,
-    this.subtitleKey,
     this.trailing,
-    this.onTap,
   });
 
   final IconData icon;
   final String title;
   final String subtitle;
-  final Key? subtitleKey;
   final Widget? trailing;
-  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final content = Padding(
+    return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Row(
         children: [
@@ -330,7 +293,6 @@ class _AboutTile extends StatelessWidget {
                 const SizedBox(height: 1),
                 Text(
                   subtitle,
-                  key: subtitleKey,
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
@@ -338,50 +300,8 @@ class _AboutTile extends StatelessWidget {
               ],
             ),
           ),
-          if (trailing != null) ...[
-            const SizedBox(width: 12),
-            trailing!,
-          ],
+          if (trailing != null) ...[const SizedBox(width: 12), trailing!],
         ],
-      ),
-    );
-
-    if (onTap == null) return content;
-
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(AppRadii.control),
-      child: content,
-    );
-  }
-}
-
-class _StatusBadge extends StatelessWidget {
-  const _StatusBadge({required this.label, required this.color});
-
-  final String label;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(AppRadii.pill),
-        border: Border.all(
-          color: color.withValues(alpha: 0.25),
-          width: 1,
-        ),
-      ),
-      child: Text(
-        label,
-        style: theme.textTheme.labelSmall?.copyWith(
-          color: color,
-          fontWeight: FontWeight.w600,
-          fontSize: 11,
-        ),
       ),
     );
   }

@@ -362,8 +362,8 @@ class _ToastCardState extends State<_ToastCard> with TickerProviderStateMixin {
 
   Color _accentFor(AppToastTone tone) => switch (tone) {
     AppToastTone.neutral => context.palette.secondaryText,
-    AppToastTone.success => AppTheme.success,
-    AppToastTone.warning => AppTheme.warning,
+    AppToastTone.success => context.palette.success,
+    AppToastTone.warning => context.palette.warning,
     AppToastTone.danger => context.palette.danger,
   };
 

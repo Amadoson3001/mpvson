@@ -56,9 +56,9 @@ if "!VS_INSTALLED!"=="0" (
     )
 )
 
-:: 4. Configure Plugin Junctions (bypasses Windows Developer Mode)
-echo [1/3] Configuring Flutter plugin junctions...
-call dart run tool/setup_windows_build.dart
+:: 4. Configure Plugin Junctions & Engine Environment
+echo [1/3] Configuring Flutter plugin junctions and playback engine...
+call dart run tool/setup_windows_build.dart %*
 if %errorlevel% neq 0 (
     echo [ERROR] Failed to configure plugin junctions.
     pause

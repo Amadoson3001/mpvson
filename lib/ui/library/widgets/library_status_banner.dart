@@ -251,10 +251,10 @@ class LibraryStatusBanner extends StatelessWidget {
       ),
       child: Row(
         children: [
-          const Icon(
+          Icon(
             Icons.cloud_off_rounded,
             size: 16,
-            color: AppTheme.warning,
+            color: context.palette.warning,
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -268,7 +268,7 @@ class LibraryStatusBanner extends StatelessWidget {
                       child: Text(
                         'Drive unavailable ($folderText)',
                         style: context.palette.rowPrimary.copyWith(
-                          color: AppTheme.warning,
+                          color: context.palette.warning,
                           fontWeight: FontWeight.w600,
                         ),
                         maxLines: 1,
@@ -282,14 +282,14 @@ class LibraryStatusBanner extends StatelessWidget {
                         vertical: 1.5,
                       ),
                       decoration: BoxDecoration(
-                        color: AppTheme.warning.withValues(alpha: 0.15),
+                        color: context.palette.warning.withValues(alpha: 0.15),
                         borderRadius: BorderRadius.circular(AppRadii.control),
                       ),
                       child: Text(
                         'Items preserved',
                         style: context.palette.badge.copyWith(
                           fontSize: AppType.caption,
-                          color: AppTheme.warning,
+                          color: context.palette.warning,
                         ),
                       ),
                     ),
@@ -310,9 +310,9 @@ class LibraryStatusBanner extends StatelessWidget {
               icon: const Icon(Icons.refresh_rounded, size: 14),
               label: const Text('Check again'),
               style: OutlinedButton.styleFrom(
-                foregroundColor: AppTheme.warning,
+                foregroundColor: context.palette.warning,
                 side: BorderSide(
-                  color: AppTheme.warning.withValues(alpha: 0.35),
+                  color: context.palette.warning.withValues(alpha: 0.35),
                 ),
                 padding: const EdgeInsets.symmetric(
                   horizontal: 10,
@@ -322,9 +322,9 @@ class LibraryStatusBanner extends StatelessWidget {
                   borderRadius: BorderRadius.circular(AppRadii.control),
                 ),
                 visualDensity: VisualDensity.compact,
-                textStyle: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  fontWeight: FontWeight.w600,
-                ),
+                textStyle: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600),
               ),
             ),
           ],

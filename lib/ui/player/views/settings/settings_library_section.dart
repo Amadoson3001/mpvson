@@ -63,7 +63,9 @@ class MediaLibrarySettingsSection extends StatelessWidget {
             children: [
               Padding(
                 padding: const EdgeInsets.fromLTRB(40, 24, 40, 16),
-                child: Row(
+                child: Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
                   children: [
                     FilledButton.icon(
                       key: const ValueKey('add-folder-button'),
@@ -74,7 +76,6 @@ class MediaLibrarySettingsSection extends StatelessWidget {
                       label: const Text('Add media folder'),
                       onPressed: isReady ? () => _addFolder(context) : null,
                     ),
-                    const SizedBox(width: 10),
                     OutlinedButton.icon(
                       key: const ValueKey('rescan-all-button'),
                       icon: const Icon(Icons.refresh_rounded, size: 17),
@@ -138,8 +139,8 @@ class MediaLibrarySettingsSection extends StatelessWidget {
                                     height: 7,
                                     decoration: BoxDecoration(
                                       color: folder.isAvailable
-                                          ? AppColors.jade
-                                          : AppColors.rose,
+                                          ? context.palette.success
+                                          : context.palette.danger,
                                       shape: BoxShape.circle,
                                     ),
                                   ),
@@ -151,14 +152,20 @@ class MediaLibrarySettingsSection extends StatelessWidget {
                                     style: theme.textTheme.bodySmall?.copyWith(
                                       color: folder.isAvailable
                                           ? theme.colorScheme.onSurfaceVariant
-                                          : AppColors.rose,
+                                          : context.palette.danger,
                                     ),
                                   ),
                                   const Text(' · '),
-                                  Text(
-                                    '${folder.fileCount} indexed ${folder.fileCount == 1 ? 'file' : 'files'}',
-                                    style: theme.textTheme.bodySmall?.copyWith(
-                                      color: theme.colorScheme.onSurfaceVariant,
+                                  Expanded(
+                                    child: Text(
+                                      '${folder.fileCount} indexed ${folder.fileCount == 1 ? 'file' : 'files'}',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: theme.textTheme.bodySmall
+                                          ?.copyWith(
+                                            color: theme
+                                                .colorScheme.onSurfaceVariant,
+                                          ),
                                     ),
                                   ),
                                 ],

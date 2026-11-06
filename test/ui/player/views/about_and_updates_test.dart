@@ -86,6 +86,32 @@ void main() {
     expect(find.text('Application'), findsOneWidget);
   });
 
+  testWidgets('Status tiles are informational and do not open UpdateCenterDialog', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(() => tester.view.resetPhysicalSize());
+
+    await tester.pumpWidget(
+      buildTestWidget(
+        AboutSettingsSection(
+          updates: updates,
+          engineUpdates: engineUpdates,
+          engineVersion: 'v0.42.0',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    for (final tile in ['Application updates', 'Playback engine', 'Engine channel & distribution']) {
+      await tester.tap(find.text(tile), warnIfMissed: false);
+      await tester.pumpAndSettle();
+    }
+
+    expect(find.byType(UpdateCenterDialog), findsNothing);
+  });
+
   testWidgets('UpdateCenterDialog renders without overflows at standard dialog size', (
     tester,
   ) async {

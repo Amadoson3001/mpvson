@@ -676,14 +676,17 @@ class _NowPlayingQueuePanel extends StatelessWidget {
                   children: [
                     Icon(Icons.queue_music_rounded, size: 20, color: primary),
                     const SizedBox(width: 10),
-                    Text(
-                      'Up Next',
-                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w700,
-                        color: palette.primaryText,
+                    Expanded(
+                      child: Text(
+                        'Up Next',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          color: palette.primaryText,
+                        ),
                       ),
                     ),
-                    const Spacer(),
                     Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 8,

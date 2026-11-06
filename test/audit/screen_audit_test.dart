@@ -37,15 +37,17 @@ void main() {
                       'c.mkv',
                     ]
                   : ['c.mkv', 'Long Track Title That Keeps Going.mp3', 'b.mp3'];
+              TestGesture? mouse;
               problems.addAll(
                 await auditStep(tester, 'open-$state', () async {
                   await openMedia(tester, h, names);
-                  await hover(tester, size.center(Offset.zero));
+                  mouse = await hover(tester, size.center(Offset.zero));
                 }),
               );
               if (state == 'video') {
                 problems.addAll(
                   await auditStep(tester, 'video-menu', () async {
+                    await mouse?.removePointer();
                     final g = await tester.createGesture(
                       kind: PointerDeviceKind.mouse,
                       buttons: kSecondaryMouseButton,
@@ -53,6 +55,7 @@ void main() {
                     await g.addPointer(location: size.center(Offset.zero));
                     await g.down(size.center(Offset.zero));
                     await g.up();
+                    await g.removePointer();
                     await settle(tester);
                     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
                     await settle(tester);

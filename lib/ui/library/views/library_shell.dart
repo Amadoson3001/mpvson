@@ -374,6 +374,20 @@ class _LibraryShellState extends State<LibraryShell>
                                   crossAxisAlignment:
                                       CrossAxisAlignment.stretch,
                                   children: [
+                                    // System status stays anchored at the top of
+                                    // every section, above section chrome.
+                                    Center(
+                                      child: ConstrainedBox(
+                                        constraints: const BoxConstraints(
+                                          maxWidth: 960,
+                                        ),
+                                        child: LibraryStatusBanner(
+                                          repository: widget.repository,
+                                          onRescan: () =>
+                                              widget.repository.rescanAll(),
+                                        ),
+                                      ),
+                                    ),
                                     // Header Bar (Search & Mobile Drawer Trigger)
                                     if (_currentSection !=
                                         LibrarySection.settings)
@@ -386,17 +400,6 @@ class _LibraryShellState extends State<LibraryShell>
                                               showBackLabel: width >= 600,
                                             ),
                                       ),
-                                    // Status Banners (Scanning indicator, Unavailable drive warning)
-                                    Center(
-                                      child: ConstrainedBox(
-                                        constraints: const BoxConstraints(maxWidth: 960),
-                                        child: LibraryStatusBanner(
-                                          repository: widget.repository,
-                                          onRescan: () =>
-                                              widget.repository.rescanAll(),
-                                        ),
-                                      ),
-                                    ),
                                     // Main Stage View
                                     Expanded(child: _buildContentStage()),
                                   ],
@@ -589,7 +592,10 @@ class _LibraryShellState extends State<LibraryShell>
                 ),
               ),
               style: TextButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
                 backgroundColor: queueOpen
                     ? accent.withValues(alpha: 0.14)
                     : Colors.transparent,
@@ -757,9 +763,12 @@ class _LibraryShellState extends State<LibraryShell>
             Icons.queue_music_rounded,
             isCollapsed,
           ),
-          const SizedBox(height: 16),
-          Divider(height: 1, color: context.palette.border),
-          const SizedBox(height: 8),
+          const SizedBox(height: 12),
+          Divider(
+            height: 1,
+            color: context.palette.borderStrong.withValues(alpha: 0.7),
+          ),
+          const SizedBox(height: 6),
           _navItem(
             LibrarySection.folders,
             'Folders',

@@ -192,6 +192,7 @@ class EngineUpdateService extends ChangeNotifier {
   bool _disposed = false;
   bool _initialized = false;
   bool _initializing = false;
+  bool _failedDuringDownload = false;
   EngineUpdateChannel _channel = EngineUpdateChannel.stable;
   String? _stableReleaseVersion;
 
@@ -214,6 +215,10 @@ class EngineUpdateService extends ChangeNotifier {
   double get progress => _progress;
   String? get error => _error;
 
+  /// True when the current 'error' state came from a failed download or
+  /// staging run rather than a failed update check.
+  bool get failedDuringDownload => _failedDuringDownload;
+
   /// Explains why a partial custom engine feed was ignored and the official
   /// source kept, or null when nothing needs explaining.
   String? get configurationWarning => _configurationWarning;
@@ -226,6 +231,12 @@ class EngineUpdateService extends ChangeNotifier {
   String? get pendingVersion => _pendingVersion;
   bool get pendingBundled => _selectionState?.pendingBundled ?? false;
   bool get pendingRollback => _selectionState?.pendingRollback ?? false;
+
+  /// The version a startup rolled back after it could not be activated.
+  ///
+  /// The update center surfaces this so a package that disappears from the
+  /// active selection is explained instead of silently lost.
+  String? get lastRejectedVersion => _selectionState?.lastRejectedVersion;
 
   bool get canRollback {
     final state = _selectionState;
@@ -583,6 +594,33 @@ class EngineUpdateService extends ChangeNotifier {
       if (!_disposed) _fail(error);
     } finally {
       _finishOperation();
+    }
+  }
+
+  /// Leaves the staged package queued without confirming this boot attempt.
+  ///
+  /// An in-process restart cannot switch the native engine module, so the
+  /// package stays pending for the next full launch instead of being rejected.
+  Future<void> abandonPendingBootAttempt() async {
+    if (_disposed || !_isSelfManagedPlatform) return;
+    try {
+      await _repository.abandonPendingBootAttempt();
+      if (_disposed) return;
+      final selection = await _repository.loadSelection();
+      if (_disposed) return;
+      _selectionState = selection;
+      _pendingVersion = selection.pendingBundled
+          ? _bundledVersion
+          : selection.pending?.version;
+      _setState(
+        status: _pendingVersion != null
+            ? 'readyToRestart'
+            : (_configured ? 'idle' : 'unconfigured'),
+        progress: 0,
+        error: null,
+      );
+    } on Object catch (error) {
+      if (!_disposed) _fail(error);
     }
   }
 
@@ -1269,6 +1307,7 @@ class EngineUpdateService extends ChangeNotifier {
         ? null
         : error.toString();
     if (message == null) return;
+    _failedDuringDownload = _status == 'downloading' || _status == 'staging';
     _setState(status: 'error', progress: 0, error: message);
   }
 
