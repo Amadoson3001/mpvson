@@ -117,12 +117,15 @@ class AppChrome {
       danger: danger,
       onDanger: onAccent,
       // The accent is both a button fill and text on every surface, so it is
-      // nudged until it reads as both.
+      // nudged until it reads as both. The surface set matches the pairs the
+      // contrast audit checks (background, sidebar, card) plus onAccent, so
+      // curated preset accents stay byte-stable and the nudge only fires when
+      // a color genuinely fails the WCAG gate.
       accent: AppContrast.readableAccent(
         accent,
         brightness: brightness,
         onAccent: onAccent,
-        surfaces: [background, surface, card, hover],
+        surfaces: [background, surface, card],
       ),
       onAccent: onAccent,
       inputFill: dark ? background : card,
@@ -159,7 +162,13 @@ class AppChrome {
 
   /// Clearly dimmer than [secondaryText] in both themes, so a disabled control
   /// never reads as an enabled one.
-  Color get disabledForeground => muted.withValues(alpha: 0.55);
+  ///
+  /// The dimming comes from the alpha, but WCAG math ignores alpha, so the
+  /// base color itself has to clear 4.5:1 against [hover]. On the bright light
+  /// surfaces [muted] only reaches ~4.4:1 there, so light themes start from
+  /// [secondaryText] instead.
+  Color get disabledForeground =>
+      (isDark ? muted : secondaryText).withValues(alpha: 0.55);
 
   /// Soft surface drop shadow for floating menus only.
   Color get shadow => Colors.black.withValues(alpha: isDark ? 0.45 : 0.14);
