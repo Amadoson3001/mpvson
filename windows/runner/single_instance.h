@@ -21,8 +21,12 @@ class SingleInstance {
 
   SingleInstance(const SingleInstance&) = delete;
   SingleInstance& operator=(const SingleInstance&) = delete;
-  SingleInstance(SingleInstance&& other) noexcept;
-  SingleInstance& operator=(SingleInstance&& other) noexcept;
+  // Moves are deleted: a moved-from instance would hand the single-instance
+  // mutex handle to another object while the server thread keeps running with
+  // |this|, breaking the mutex ownership and thread invariants. Instances are
+  // always owned through std::unique_ptr.
+  SingleInstance(SingleInstance&&) = delete;
+  SingleInstance& operator=(SingleInstance&&) = delete;
 
   // Tries to acquire primary instance ownership or forwards arguments to the primary instance.
   // Returns true if this is the primary instance and execution should proceed.

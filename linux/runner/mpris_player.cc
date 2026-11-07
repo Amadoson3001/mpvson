@@ -111,6 +111,10 @@ struct _MprisPlayer {
   gchar* meta_url;
   gint64 meta_length;
 
+  // The Metadata dictionary that was last emitted through PropertiesChanged,
+  // used to suppress redundant signals. Full (non-floating) reference.
+  GVariant* last_emitted_metadata;
+
   // Power Management / Inhibit
   gboolean is_inhibited;
   gchar* inhibit_portal_handle;
@@ -201,20 +205,26 @@ static GVariant* build_metadata_dictionary(MprisPlayer* self) {
 }
 
 static void emit_player_properties_changed(MprisPlayer* self, GVariant* changed_dict) {
+  if (changed_dict == nullptr) {
+    return;
+  }
+  // |changed_dict| comes from g_variant_builder_end() and is floating. Sink it
+  // so this function owns a full reference (released by the autoptr on every
+  // path), independent of how the signal body below takes its reference.
+  g_autoptr(GVariant) changed = g_variant_ref_sink(changed_dict);
+
   if (self->dbus_connection == nullptr) {
-    if (changed_dict != nullptr) {
-      g_variant_unref(changed_dict);
-    }
     return;
   }
 
   GVariantBuilder invalidated_builder;
   g_variant_builder_init(&invalidated_builder, G_VARIANT_TYPE("as"));
 
-  g_autoptr(GVariant) body = g_variant_new("(sa{sv}as)",
-                                           MPRIS_PLAYER_INTERFACE,
-                                           changed_dict,
-                                           &invalidated_builder);
+  g_autoptr(GVariant) body =
+      g_variant_ref_sink(g_variant_new("(sa{sv}as)",
+                                       MPRIS_PLAYER_INTERFACE,
+                                       changed,
+                                       &invalidated_builder));
 
   g_dbus_connection_emit_signal(self->dbus_connection,
                                 nullptr,
@@ -520,7 +530,12 @@ static gboolean player_set_property(GDBusConnection* connection,
   MprisPlayer* self = MPRIS_PLAYER(user_data);
 
   if (g_strcmp0(property_name, "Rate") == 0) {
-    self->rate = g_variant_get_double(value);
+    const gdouble new_rate = g_variant_get_double(value);
+    if (new_rate == self->rate) {
+      // Unchanged; do not emit a redundant PropertiesChanged.
+      return TRUE;
+    }
+    self->rate = new_rate;
     if (self->media_controls_channel != nullptr) {
       g_autoptr(FlValue) args = fl_value_new_map();
       fl_value_set_string_take(args, "rate", fl_value_new_float(self->rate));
@@ -534,7 +549,12 @@ static gboolean player_set_property(GDBusConnection* connection,
   }
 
   if (g_strcmp0(property_name, "Volume") == 0) {
-    self->volume = g_variant_get_double(value);
+    const gdouble new_volume = g_variant_get_double(value);
+    if (new_volume == self->volume) {
+      // Unchanged; do not emit a redundant PropertiesChanged.
+      return TRUE;
+    }
+    self->volume = new_volume;
     if (self->media_controls_channel != nullptr) {
       g_autoptr(FlValue) args = fl_value_new_map();
       fl_value_set_string_take(args, "volume", fl_value_new_float(self->volume));
@@ -548,8 +568,13 @@ static gboolean player_set_property(GDBusConnection* connection,
   }
 
   if (g_strcmp0(property_name, "LoopStatus") == 0) {
+    const gchar* new_loop_status = g_variant_get_string(value, nullptr);
+    if (g_strcmp0(new_loop_status, self->loop_status) == 0) {
+      // Unchanged; do not emit a redundant PropertiesChanged.
+      return TRUE;
+    }
     g_free(self->loop_status);
-    self->loop_status = g_strdup(g_variant_get_string(value, nullptr));
+    self->loop_status = g_strdup(new_loop_status);
     if (self->media_controls_channel != nullptr) {
       g_autoptr(FlValue) args = fl_value_new_map();
       fl_value_set_string_take(args, "loopStatus", fl_value_new_string(self->loop_status));
@@ -563,7 +588,12 @@ static gboolean player_set_property(GDBusConnection* connection,
   }
 
   if (g_strcmp0(property_name, "Shuffle") == 0) {
-    self->shuffle = g_variant_get_boolean(value);
+    const gboolean new_shuffle = g_variant_get_boolean(value);
+    if (new_shuffle == self->shuffle) {
+      // Unchanged; do not emit a redundant PropertiesChanged.
+      return TRUE;
+    }
+    self->shuffle = new_shuffle;
     if (self->media_controls_channel != nullptr) {
       g_autoptr(FlValue) args = fl_value_new_map();
       fl_value_set_string_take(args, "shuffle", fl_value_new_bool(self->shuffle));
@@ -738,7 +768,9 @@ void mpris_player_uninhibit_power(MprisPlayer* self) {
   }
 
   if (self->inhibit_portal_handle != nullptr) {
-    g_dbus_connection_call_sync(
+    // call_sync returns a full reference; it must be freed even when the
+    // reply is not needed.
+    g_autoptr(GVariant) reply = g_dbus_connection_call_sync(
         self->dbus_connection,
         PORTAL_BUS_NAME,
         self->inhibit_portal_handle,
@@ -754,7 +786,7 @@ void mpris_player_uninhibit_power(MprisPlayer* self) {
   }
 
   if (self->screensaver_cookie != 0) {
-    g_dbus_connection_call_sync(
+    g_autoptr(GVariant) reply = g_dbus_connection_call_sync(
         self->dbus_connection,
         SCREENSAVER_BUS_NAME,
         SCREENSAVER_OBJECT_PATH,
@@ -777,7 +809,8 @@ void mpris_player_emit_seeked(MprisPlayer* self, gint64 position_micros) {
   self->last_position_update_time = g_get_monotonic_time();
 
   if (self->dbus_connection != nullptr) {
-    g_autoptr(GVariant) body = g_variant_new("(x)", position_micros);
+    g_autoptr(GVariant) body =
+        g_variant_ref_sink(g_variant_new("(x)", position_micros));
     g_dbus_connection_emit_signal(self->dbus_connection,
                                   nullptr,
                                   MPRIS_OBJECT_PATH,
@@ -812,6 +845,10 @@ static void handle_update_playback_state(MprisPlayer* self, FlValue* args) {
 
   GVariantBuilder changed;
   g_variant_builder_init(&changed, G_VARIANT_TYPE("a{sv}"));
+  // Set when a property was actually modified; the PropertiesChanged signal
+  // is only emitted when something changed (timeline-only updates must not
+  // emit an empty signal).
+  gboolean changed_any = FALSE;
 
   if (fl_value_get_type(args) == FL_VALUE_TYPE_MAP) {
     FlValue* status_val = fl_value_lookup_string(args, "status");
@@ -842,6 +879,7 @@ static void handle_update_playback_state(MprisPlayer* self, FlValue* args) {
         self->playback_status = g_strdup(new_status);
         g_variant_builder_add(&changed, "{sv}", "PlaybackStatus",
                               g_variant_new_string(self->playback_status));
+        changed_any = TRUE;
       }
     }
 
@@ -860,6 +898,7 @@ static void handle_update_playback_state(MprisPlayer* self, FlValue* args) {
         self->rate = new_rate;
         g_variant_builder_add(&changed, "{sv}", "Rate",
                               g_variant_new_double(self->rate));
+        changed_any = TRUE;
       }
     }
 
@@ -901,10 +940,37 @@ static void handle_update_playback_state(MprisPlayer* self, FlValue* args) {
       self->playback_status = g_strdup(new_status);
       g_variant_builder_add(&changed, "{sv}", "PlaybackStatus",
                             g_variant_new_string(self->playback_status));
+      changed_any = TRUE;
     }
   }
 
-  emit_player_properties_changed(self, g_variant_builder_end(&changed));
+  if (changed_any) {
+    emit_player_properties_changed(self, g_variant_builder_end(&changed));
+  } else {
+    g_variant_builder_clear(&changed);
+  }
+}
+
+static void emit_metadata_changed(MprisPlayer* self) {
+  // The dictionary is sunk so it can be both cached for the next comparison
+  // and embedded into the signal body without ownership ambiguities.
+  GVariant* metadata =
+      g_variant_ref_sink(g_variant_new_variant(build_metadata_dictionary(self)));
+  if (self->last_emitted_metadata != nullptr &&
+      g_variant_equal(self->last_emitted_metadata, metadata)) {
+    // Nothing changed; do not emit a redundant PropertiesChanged.
+    g_variant_unref(metadata);
+    return;
+  }
+  g_clear_pointer(&self->last_emitted_metadata, g_variant_unref);
+  self->last_emitted_metadata = g_variant_ref(metadata);
+
+  GVariantBuilder b;
+  g_variant_builder_init(&b, G_VARIANT_TYPE("a{sv}"));
+  g_variant_builder_add_value(&b, g_variant_new_dict_entry(
+      g_variant_new_string("Metadata"), metadata));
+  emit_player_properties_changed(self, g_variant_builder_end(&b));
+  g_variant_unref(metadata);
 }
 
 static void handle_update_metadata(MprisPlayer* self, FlValue* args) {
@@ -986,12 +1052,7 @@ static void handle_update_metadata(MprisPlayer* self, FlValue* args) {
     self->meta_length = parse_int_or_duration(dur_val) * 1000;
   }
 
-  GVariantBuilder b;
-  g_variant_builder_init(&b, G_VARIANT_TYPE("a{sv}"));
-  g_variant_builder_add_value(&b, g_variant_new_dict_entry(
-      g_variant_new_string("Metadata"),
-      g_variant_new_variant(build_metadata_dictionary(self))));
-  emit_player_properties_changed(self, g_variant_builder_end(&b));
+  emit_metadata_changed(self);
 }
 
 static void handle_clear_metadata(MprisPlayer* self) {
@@ -1004,12 +1065,7 @@ static void handle_clear_metadata(MprisPlayer* self) {
   g_clear_pointer(&self->meta_url, g_free);
   self->meta_length = 0;
 
-  GVariantBuilder b;
-  g_variant_builder_init(&b, G_VARIANT_TYPE("a{sv}"));
-  g_variant_builder_add_value(&b, g_variant_new_dict_entry(
-      g_variant_new_string("Metadata"),
-      g_variant_new_variant(build_metadata_dictionary(self))));
-  emit_player_properties_changed(self, g_variant_builder_end(&b));
+  emit_metadata_changed(self);
 }
 
 static void handle_update_capabilities(MprisPlayer* self, FlValue* args) {
@@ -1019,6 +1075,7 @@ static void handle_update_capabilities(MprisPlayer* self, FlValue* args) {
 
   GVariantBuilder changed;
   g_variant_builder_init(&changed, G_VARIANT_TYPE("a{sv}"));
+  gboolean changed_any = FALSE;
 
   FlValue* can_play_val = fl_value_lookup_string(args, "canPlay");
   if (can_play_val != nullptr && fl_value_get_type(can_play_val) == FL_VALUE_TYPE_BOOL) {
@@ -1026,6 +1083,7 @@ static void handle_update_capabilities(MprisPlayer* self, FlValue* args) {
     if (val != self->can_play) {
       self->can_play = val;
       g_variant_builder_add(&changed, "{sv}", "CanPlay", g_variant_new_boolean(self->can_play));
+      changed_any = TRUE;
     }
   }
 
@@ -1035,6 +1093,7 @@ static void handle_update_capabilities(MprisPlayer* self, FlValue* args) {
     if (val != self->can_pause) {
       self->can_pause = val;
       g_variant_builder_add(&changed, "{sv}", "CanPause", g_variant_new_boolean(self->can_pause));
+      changed_any = TRUE;
     }
   }
 
@@ -1044,6 +1103,7 @@ static void handle_update_capabilities(MprisPlayer* self, FlValue* args) {
     if (val != self->can_seek) {
       self->can_seek = val;
       g_variant_builder_add(&changed, "{sv}", "CanSeek", g_variant_new_boolean(self->can_seek));
+      changed_any = TRUE;
     }
   }
 
@@ -1053,6 +1113,7 @@ static void handle_update_capabilities(MprisPlayer* self, FlValue* args) {
     if (val != self->can_go_next) {
       self->can_go_next = val;
       g_variant_builder_add(&changed, "{sv}", "CanGoNext", g_variant_new_boolean(self->can_go_next));
+      changed_any = TRUE;
     }
   }
 
@@ -1062,10 +1123,15 @@ static void handle_update_capabilities(MprisPlayer* self, FlValue* args) {
     if (val != self->can_go_previous) {
       self->can_go_previous = val;
       g_variant_builder_add(&changed, "{sv}", "CanGoPrevious", g_variant_new_boolean(self->can_go_previous));
+      changed_any = TRUE;
     }
   }
 
-  emit_player_properties_changed(self, g_variant_builder_end(&changed));
+  if (changed_any) {
+    emit_player_properties_changed(self, g_variant_builder_end(&changed));
+  } else {
+    g_variant_builder_clear(&changed);
+  }
 }
 
 static void handle_set_keep_awake(MprisPlayer* self, FlValue* args) {
@@ -1293,6 +1359,8 @@ void mpris_player_dispose(MprisPlayer* self) {
     g_dbus_node_info_unref(self->introspection_data);
     self->introspection_data = nullptr;
   }
+
+  g_clear_pointer(&self->last_emitted_metadata, g_variant_unref);
 
   g_clear_object(&self->media_controls_channel);
   g_clear_object(&self->power_channel);

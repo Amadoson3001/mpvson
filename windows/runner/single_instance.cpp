@@ -24,26 +24,6 @@ SingleInstance::~SingleInstance() {
   CleanUp();
 }
 
-SingleInstance::SingleInstance(SingleInstance&& other) noexcept {
-  *this = std::move(other);
-}
-
-SingleInstance& SingleInstance::operator=(SingleInstance&& other) noexcept {
-  if (this != &other) {
-    CleanUp();
-    mutex_ = other.mutex_;
-    other.mutex_ = nullptr;
-    stop_event_ = other.stop_event_;
-    other.stop_event_ = nullptr;
-    window_handle_ = other.window_handle_;
-    other.window_handle_ = nullptr;
-    server_thread_ = std::move(other.server_thread_);
-    stopping_.store(other.stopping_.load());
-    channel_ = std::move(other.channel_);
-  }
-  return *this;
-}
-
 std::vector<std::wstring> SingleInstance::GetRawCommandLineArgs() {
   int argc = 0;
   wchar_t** argv = ::CommandLineToArgvW(::GetCommandLineW(), &argc);
@@ -148,10 +128,13 @@ void SingleInstance::ForwardToPrimary(const std::vector<std::wstring>& raw_args)
   // Allow the primary instance to set its window as foreground
   ::AllowSetForegroundWindow(ASFW_ANY);
 
-  // Find the primary instance window and bring it to foreground
-  HWND hwnd = ::FindWindowW(kWindowClassName, nullptr);
+  // Find the primary instance window and bring it to foreground. Match the
+  // window created in main.cpp: the FLUTTER_RUNNER_WIN32_WINDOW class with the
+  // kWindowTitle title. Fall back to the class name alone in case the title
+  // was changed at runtime.
+  HWND hwnd = ::FindWindowW(kWindowClassName, kWindowTitle);
   if (hwnd == nullptr) {
-    hwnd = ::FindWindowW(nullptr, kWindowTitle);
+    hwnd = ::FindWindowW(kWindowClassName, nullptr);
   }
   if (hwnd != nullptr) {
     if (::IsIconic(hwnd)) {
@@ -186,8 +169,15 @@ bool SingleInstance::AcquireOwnershipOrForward() {
     if (mutex_ != nullptr) {
       DWORD wait_result = ::WaitForSingleObject(mutex_, 10000);
       if (wait_result == WAIT_OBJECT_0 || wait_result == WAIT_ABANDONED) {
+        // Ownership acquired; proceed as the primary instance.
         return true;
       }
+      // The wait timed out or failed, so this process does NOT own the mutex.
+      // Drop the handle instead of leaving one that looks owned (CleanUp would
+      // otherwise release/close a mutex held by a stale instance). Recovery
+      // was explicitly requested, so proceed as primary regardless.
+      ::CloseHandle(mutex_);
+      mutex_ = nullptr;
     }
     return true;
   }
@@ -410,6 +400,11 @@ void SingleInstance::CleanUp() {
     stop_event_ = nullptr;
   }
   if (mutex_ != nullptr) {
+    // Release ownership before closing the handle so the next process is not
+    // kept waiting between the release and the close. ReleaseMutex fails with
+    // ERROR_NOT_OWNER when this process never acquired the mutex (secondary
+    // instance or a failed recovery wait), which is harmless.
+    ::ReleaseMutex(mutex_);
     ::CloseHandle(mutex_);
     mutex_ = nullptr;
   }

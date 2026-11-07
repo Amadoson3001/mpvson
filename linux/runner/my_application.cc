@@ -34,7 +34,7 @@ static void forward_paths_to_flutter(MyApplication* self, GPtrArray* paths) {
     return;
   }
 
-  FlValue* args = fl_value_new_list();
+  g_autoptr(FlValue) args = fl_value_new_list();
   for (guint i = 0; i < paths->len; i++) {
     const gchar* p = (const gchar*)g_ptr_array_index(paths, i);
     fl_value_append_take(args, fl_value_new_string(p));
@@ -135,7 +135,7 @@ static void my_application_activate(GApplication* application) {
 
   // Flush any open requests queued prior to channel readiness
   if (self->pending_open_files != nullptr && self->pending_open_files->len > 0) {
-    FlValue* args = fl_value_new_list();
+    g_autoptr(FlValue) args = fl_value_new_list();
     for (guint i = 0; i < self->pending_open_files->len; i++) {
       const gchar* p = (const gchar*)g_ptr_array_index(self->pending_open_files, i);
       fl_value_append_take(args, fl_value_new_string(p));

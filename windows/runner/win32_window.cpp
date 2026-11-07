@@ -107,7 +107,10 @@ const wchar_t* WindowClassRegistrar::GetWindowClass() {
 }
 
 void WindowClassRegistrar::UnregisterWindowClass() {
-  UnregisterClass(kWindowClassName, nullptr);
+  // The instance handle must match the one the class was registered with in
+  // GetWindowClass(), otherwise UnregisterClass fails and the class stays
+  // registered for the lifetime of the process.
+  UnregisterClass(kWindowClassName, GetModuleHandle(nullptr));
   class_registered_ = false;
 }
 
