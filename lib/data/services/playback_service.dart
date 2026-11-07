@@ -451,6 +451,21 @@ class MediaKitPlaybackService
     );
     _videoController = controller;
     _applyStoredVideoPolicy(controller);
+    // A failed native attachment (platform channel error, missing decoder,
+    // disposed engine) must not be cached: drop the broken controller so the
+    // next video open or rendered frame recreates it.
+    unawaited(
+      controller.platform.future.then<void>(
+        (_) {},
+        onError: (Object _) {
+          if (identical(_videoController, controller)) {
+            _videoController = null;
+            _lastAppliedWidth = null;
+            _lastAppliedHeight = null;
+          }
+        },
+      ),
+    );
     return controller;
   }
 
@@ -486,7 +501,13 @@ class MediaKitPlaybackService
     final controller = _videoController;
     if (visibilityChanged && controller != null) {
       _lastAppliedVisibility = policy.visible;
-      unawaited(controller.setRenderVisibility(policy.visible));
+      // Best-effort: a platform channel failure must not become an unhandled
+      // async error; the next policy application retries the visibility.
+      unawaited(
+        controller
+            .setRenderVisibility(policy.visible)
+            .catchError((Object _) {}),
+      );
     }
     _syncVideoDecoding(policy.visible);
     _scheduleResize();
