@@ -41,3 +41,34 @@ tool and judge them: spacing, alignment, hierarchy, truncation, contrast.
   `TextStyle(fontSize: ...)` passed to `ButtonStyle.textStyle` replaces the
   theme style and drops the family. Build such styles from
   `Theme.of(context).textTheme.labelLarge?.copyWith(...)` instead.
+
+## Manual Windows smoke checklist
+
+Run each scenario by hand against a release build on Windows; every line ends
+with the expected result.
+
+- Rapid next/prev: hammer next and prev through the queue faster than tracks
+  can open; when the UI settles, the Now Playing title and progress match the
+  engine's actual final track and no spinner stays visible for more than a
+  moment.
+- Mini-player double toggle: open and immediately close the mini player twice
+  in a row; the main window restores to its correct pre-mini bounds both times
+  with no blank, ghost, or duplicated window.
+- Settings over Now Playing, then Esc: open Settings while Now Playing is up,
+  then press Esc; Settings closes, Now Playing is untouched underneath, and
+  playback state is unchanged.
+- Folder drop not in the library: drop a folder that is not part of the
+  library onto the window; the app points to Settings with import guidance
+  instead of adding it silently, crashing, or hanging.
+- Folder remove mid-scan: remove a folder while its scan is still running;
+  the scan ends cleanly, the queue and library stay consistent, and no error
+  dialog or stuck progress indicator remains.
+- Update notes containing only a link: feed the update dialog release notes
+  that are nothing but a URL; the dialog renders the link and does not crash.
+- Quit while scanning: quit the app while a scan is in progress; the process
+  exits promptly, no scan survives in the background, and the next launch
+  opens a healthy database.
+- Shipped DLL signatures: in the shipped bundle run
+  `Get-AuthenticodeSignature` on `flutter_windows.dll`,
+  `d3dcompiler_47.dll`, and `vulkan-1.dll`; all three report Status `Valid`
+  because packaging never strips them.
