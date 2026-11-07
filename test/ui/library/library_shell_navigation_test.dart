@@ -19,6 +19,9 @@ class _SettingsFlag {
   void Function()? toggleSettings;
 }
 
+/// Set by [_pumpShell]; counts how often the shell invoked [LibraryShell.onSettings].
+int settingsOpened = 0;
+
 Future<void> _pumpShell(
   WidgetTester tester,
   Harness h,
@@ -47,7 +50,10 @@ Future<void> _pumpShell(
             ),
             folders: const SizedBox.shrink(key: Key('folders-stage')),
             showSettings: flag.showSettings,
-            onSettings: () => setState(() => flag.showSettings = true),
+            onSettings: () {
+              settingsOpened++;
+              setState(() => flag.showSettings = true);
+            },
             onCloseSettings: () {
               flag.settingsClosed++;
               setState(() => flag.showSettings = false);
@@ -133,6 +139,40 @@ void main() {
         await h.shutdown(tester);
       },
     );
+
+    testWidgets('Escape closes the embedded Settings through onCloseSettings', (
+      tester,
+    ) async {
+      configureView(tester, size: const Size(1240, 780));
+      final h = buildHarness();
+      final flag = _SettingsFlag();
+      final homeFocus = FocusNode(debugLabel: 'home-stage-focus');
+      final settingsFocus = FocusNode(debugLabel: 'settings-stage-focus');
+      await _pumpShell(tester, h, flag, homeFocus, settingsFocus);
+
+      // Open Settings from the sidebar, then press Esc.
+      settingsOpened = 0;
+      await tester.tap(find.text('Settings'));
+      await settle(tester);
+      expect(settingsOpened, 1);
+      expect(find.byKey(const Key('settings-stage')), findsOneWidget);
+      settingsFocus.requestFocus();
+      await tester.pump();
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await settle(tester);
+      expect(flag.settingsClosed, 1);
+      expect(flag.showSettings, isFalse);
+      expect(find.byKey(const Key('settings-stage')), findsNothing);
+      expect(find.byKey(const Key('home-stage')), findsOneWidget);
+
+      // Esc while the library is showing does not close Settings again.
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await settle(tester);
+      expect(flag.settingsClosed, 1);
+
+      await h.shutdown(tester);
+    });
 
     testWidgets(
       'a section click during the closing animation wins over the stale '
