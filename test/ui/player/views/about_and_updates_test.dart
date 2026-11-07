@@ -205,6 +205,36 @@ Build commit: 849a37bc89d201e74a
       expect(find.text('View full notes'), findsOneWidget);
     },
   );
+
+  testWidgets('Release notes containing only a link do not crash the preview', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 700);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(() => tester.view.resetPhysicalSize());
+
+    // Every line of these notes is filtered out (links / rules), so the
+    // internal `lines` list is empty. This used to crash on `lines.first`.
+    const linkOnlyNotes = '''
+https://github.com/mpvson/mpvson/releases/tag/v1.3.0
+---
+
+''';
+
+    await tester.pumpWidget(
+      buildTestWidget(
+        const Column(children: [_TestNotesHost(notes: linkOnlyNotes)]),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Highlights'), findsOneWidget);
+    // The raw notes are surfaced as the fallback highlight line.
+    expect(
+      find.textContaining('https://github.com/mpvson/mpvson/releases'),
+      findsOneWidget,
+    );
+  });
 }
 
 class _TestNotesHost extends StatelessWidget {

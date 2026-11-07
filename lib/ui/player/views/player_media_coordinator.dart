@@ -14,6 +14,7 @@ import '../../../data/services/update_service.dart';
 import '../../../domain/models/media_catalog.dart';
 import '../../../domain/models/media_entry.dart';
 import '../../../domain/models/open_request.dart';
+import '../../core/components/app_dialog.dart';
 import '../../core/toast/app_toast.dart';
 import '../player_controller.dart';
 import '../widgets/open_url_dialog.dart';
@@ -154,7 +155,7 @@ class PlayerMediaCoordinator {
     onCloseContextMenu();
     final url = await withControlsVisible(
       () => urlPrompt == null
-          ? showDialog<String>(
+          ? AppDialog.show<String>(
               context: context,
               builder: (_) => const OpenUrlDialog(),
             )
@@ -212,9 +213,25 @@ class PlayerMediaCoordinator {
   });
 
   Future<void> loadSubtitle() async {
-    final path = await pickSubtitle();
-    if (path == null) return;
-    await controller.loadSubtitle(path);
+    final ctx = context;
+    final String? path;
+    try {
+      path = await pickSubtitle();
+    } catch (_) {
+      showMessage('The file picker could not be opened.');
+      return;
+    }
+    if (path == null || path.isEmpty) return;
+    try {
+      await controller.loadSubtitle(path);
+    } catch (_) {
+      if (!ctx.mounted) return;
+      AppToast.show(
+        ctx,
+        'Mpvson could not load that subtitle file.',
+        tone: AppToastTone.danger,
+      );
+    }
   }
 
   Future<void> removeQueueEntryById(String id) async {
@@ -278,7 +295,7 @@ class PlayerMediaCoordinator {
       return;
     }
     await withControlsVisible(
-      () => showDialog<void>(
+      () => AppDialog.show<void>(
         context: context,
         builder: (_) => SettingsDialog(
           controller: controller,
@@ -298,7 +315,7 @@ class PlayerMediaCoordinator {
     onCloseContextMenu();
     final gpuInfo = GpuInfoService();
     await withControlsVisible(
-      () => showDialog<void>(
+      () => AppDialog.show<void>(
         context: context,
         builder: (_) => PlaybackInfoDialog(
           readStatistics: () =>

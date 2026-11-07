@@ -18,7 +18,7 @@ class LibraryFoldersView extends StatelessWidget {
       MediaLibrarySettingsSection(libraryRepository: repository);
 }
 
-class MediaLibrarySettingsSection extends StatelessWidget {
+class MediaLibrarySettingsSection extends StatefulWidget {
   const MediaLibrarySettingsSection({
     super.key,
     required this.libraryRepository,
@@ -28,15 +28,40 @@ class MediaLibrarySettingsSection extends StatelessWidget {
   final MediaLibraryRepository libraryRepository;
   final Future<String?> Function()? pickDirectory;
 
-  Future<void> _addFolder(BuildContext context) async {
+  @override
+  State<MediaLibrarySettingsSection> createState() =>
+      _MediaLibrarySettingsSectionState();
+}
+
+class _MediaLibrarySettingsSectionState
+    extends State<MediaLibrarySettingsSection> {
+  /// Folder operations currently in flight. The mutating controls stay
+  /// disabled while this is non-zero so the repository never runs two folder
+  /// mutations concurrently.
+  int _pendingOperations = 0;
+
+  bool get _busy => _pendingOperations > 0;
+
+  /// Runs [operation] with the readiness gate engaged; errors propagate to
+  /// the caller for its own messaging.
+  Future<void> _runOperation(Future<void> Function() operation) async {
+    setState(() => _pendingOperations++);
     try {
-      final path = await (pickDirectory != null
-          ? pickDirectory!()
+      await operation();
+    } finally {
+      if (mounted) setState(() => _pendingOperations--);
+    }
+  }
+
+  Future<void> _addFolder() async {
+    try {
+      final path = await (widget.pickDirectory != null
+          ? widget.pickDirectory!()
           : getDirectoryPath());
       if (path == null || path.isEmpty) return;
-      await libraryRepository.addFolder(path);
+      await _runOperation(() => widget.libraryRepository.addFolder(path));
     } catch (_) {
-      if (!context.mounted) return;
+      if (!mounted) return;
       AppToast.show(
         context,
         'Could not add folder. Please check directory permissions.',
@@ -45,14 +70,30 @@ class MediaLibrarySettingsSection extends StatelessWidget {
     }
   }
 
+  Future<void> _removeFolder(String path) async {
+    try {
+      await _runOperation(() => widget.libraryRepository.removeFolder(path));
+    } catch (_) {
+      if (!mounted) return;
+      AppToast.show(
+        context,
+        'Could not remove that folder. Please check directory permissions.',
+        tone: AppToastTone.danger,
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) => ListenableBuilder(
-    listenable: libraryRepository,
+    listenable: widget.libraryRepository,
     builder: (context, _) {
-      final folders = libraryRepository.folders;
+      final repository = widget.libraryRepository;
+      final folders = repository.folders;
       final theme = Theme.of(context);
       final accent = theme.colorScheme.primary;
-      final isReady = libraryRepository.isReady;
+      // Readiness gate: the repository must be initialized AND no folder
+      // operation may be in flight before the mutating controls re-arm.
+      final isReady = repository.isReady && !_busy;
 
       return Align(
         alignment: Alignment.topCenter,
@@ -74,14 +115,14 @@ class MediaLibrarySettingsSection extends StatelessWidget {
                         size: 17,
                       ),
                       label: const Text('Add media folder'),
-                      onPressed: isReady ? () => _addFolder(context) : null,
+                      onPressed: isReady ? _addFolder : null,
                     ),
                     OutlinedButton.icon(
                       key: const ValueKey('rescan-all-button'),
                       icon: const Icon(Icons.refresh_rounded, size: 17),
                       label: const Text('Rescan library'),
                       onPressed: isReady && folders.isNotEmpty
-                          ? () => unawaited(libraryRepository.rescanAll())
+                          ? () => unawaited(_runOperation(repository.rescanAll))
                           : null,
                     ),
                   ],
@@ -178,9 +219,10 @@ class MediaLibrarySettingsSection extends StatelessWidget {
                                   Icons.delete_outline_rounded,
                                   size: 19,
                                 ),
-                                onPressed: () => unawaited(
-                                  libraryRepository.removeFolder(folder.path),
-                                ),
+                                onPressed: isReady
+                                    ? () =>
+                                          unawaited(_removeFolder(folder.path))
+                                    : null,
                               ),
                             ),
                           );

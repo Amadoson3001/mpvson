@@ -16,16 +16,14 @@ import '../../core/app_motion.dart';
 import '../../core/app_theme.dart';
 import '../../core/components/media_accent_scope.dart';
 import '../../core/toast/toast_layout.dart';
-import '../../library/views/home_view.dart';
-import '../../library/views/library_shell.dart';
 import '../player_controller.dart';
 import '../widgets/queue_panel.dart';
 import 'player_chrome_controller.dart';
 import 'player_drag_drop.dart';
+import 'player_embedded_library.dart';
 import 'player_layout_manager.dart';
 import 'player_media_coordinator.dart';
 import 'player_stage.dart';
-import 'settings_dialog.dart';
 
 /// Player surface plus the inline/drawer queue, with the library shell layered
 /// on top when it is showing.
@@ -116,7 +114,7 @@ class _PlayerContentState extends State<PlayerContent>
         : 0.0,
   );
 
-  late final Animation<double> _miniPlayerCurved = CurvedAnimation(
+  late final CurvedAnimation _miniPlayerCurved = CurvedAnimation(
     parent: _miniPlayerController,
     curve: Curves.easeInOutCubic,
     reverseCurve: Curves.easeInOutCubic,
@@ -196,6 +194,7 @@ class _PlayerContentState extends State<PlayerContent>
 
   @override
   void dispose() {
+    _miniPlayerCurved.dispose();
     _miniPlayerController.dispose();
     widget.controller.removeListener(_handlePlaybackChanges);
     _wheelResetTimer?.cancel();
@@ -247,46 +246,22 @@ class _PlayerContentState extends State<PlayerContent>
   }
 
   Widget _buildLibrary(MediaLibraryRepository repository) {
-    return LibraryShell(
+    return PlayerEmbeddedLibrary(
       repository: repository,
       controller: widget.controller,
-      initialSection: LibrarySection.home,
+      media: widget.media,
+      chrome: widget.chrome,
+      updates: widget.updates,
+      engineUpdates: widget.engineUpdates,
+      appPreferences: widget.appPreferences,
+      libraryRepository: widget.libraryRepository,
+      desktopIntegration: widget.desktopIntegration,
       homeNavigationRequest: widget.homeNavigationRequest,
-      queueOpen: widget.chrome.queueOpen,
-      onQueueOpenChanged: widget.chrome.setQueueOpen,
-      home: HomeView(
-        repository: repository,
-        controller: widget.controller,
-        recent: widget.controller.recent,
-        onOpenFiles: widget.media.pickAndOpenFiles,
-        onOpenUrl: widget.media.openUrl,
-        onOpenRecent: widget.media.playRecent,
-        onRemoveRecent: widget.media.removeRecent,
-        onClearRecent: widget.media.clearRecent,
-        isDragging: widget.draggingFiles,
-      ),
-      onOpenFiles: widget.media.pickAndOpenFiles,
-      onOpenUrl: widget.media.openUrl,
-      onAddQueueFiles: widget.media.addQueueFiles,
-      onBackToPlayer: widget.controller.hasMedia && widget.controller.isVideo
-          ? _returnToPlayerAnimated
-          : null,
-      onAddFolders: widget.media.addLibraryFolder,
-      showSettings: widget.settingsOpen,
-      onSettings: widget.onSettingsOpened,
-      onCloseSettings: widget.onSettingsClosed,
-      folders: LibraryFoldersView(repository: repository),
-      settings: SettingsDialog(
-        controller: widget.controller,
-        updates: widget.updates,
-        engineUpdates: widget.engineUpdates,
-        pickSubtitle: widget.media.pickSubtitle,
-        appPreferences: widget.appPreferences,
-        libraryRepository: widget.libraryRepository,
-        desktopIntegration: widget.desktopIntegration,
-        embedded: true,
-        onClose: widget.onSettingsClosed,
-      ),
+      draggingFiles: widget.draggingFiles,
+      settingsOpen: widget.settingsOpen,
+      onSettingsOpened: widget.onSettingsOpened,
+      onSettingsClosed: widget.onSettingsClosed,
+      onReturnToPlayerAnimated: _returnToPlayerAnimated,
     );
   }
 
@@ -408,7 +383,10 @@ class _PlayerContentState extends State<PlayerContent>
         final totalWidth = constraints.maxWidth;
         final totalHeight = constraints.maxHeight;
 
-        if (widget.isShowingLibrary) {
+        // While the library is showing, the stage is mini or hidden and these
+        // full-area constraints do not describe the video viewport; the
+        // layout manager's own policy handles that case.
+        if (!widget.isShowingLibrary) {
           widget.layoutManager.updateViewportDimensions(context, constraints);
         }
 

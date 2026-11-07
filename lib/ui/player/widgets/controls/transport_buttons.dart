@@ -17,8 +17,9 @@ class TransportButtons extends StatelessWidget {
     this.showShuffleRepeat = false,
   });
 
-  /// Width of the control row, measured from the same extents the buttons are
-  /// built with so surrounding layout can reserve the right amount of space.
+  /// Width of the control row, measured from the same extents and gaps the
+  /// buttons are built with so surrounding layout can reserve the right
+  /// amount of space.
   static double preferredWidth({
     required bool compact,
     bool showStop = true,
@@ -27,7 +28,7 @@ class TransportButtons extends StatelessWidget {
     final extent = compact
         ? PlayerControlStyle.compactControlExtent
         : PlayerControlStyle.controlExtent;
-    final gap = compact ? 2.0 : 4.0;
+    final gap = _gapBetween(compact: compact);
     var count = 3;
     if (showStop) count++;
     if (showShuffleRepeat) count += 2;
@@ -51,7 +52,7 @@ class TransportButtons extends StatelessWidget {
     final extent = compact
         ? PlayerControlStyle.compactControlExtent
         : PlayerControlStyle.controlExtent;
-    final gap = compact ? 2.0 : 4.0;
+    final gap = _gapBetween(compact: compact);
     return preferredWidth(
               compact: compact,
               showStop: showStop,
@@ -61,90 +62,98 @@ class TransportButtons extends StatelessWidget {
         (extent + gap + extent / 2);
   }
 
+  /// Gap between transport buttons: the same token sizes the [SizedBox]es in
+  /// [build], so the math and the rendered row cannot drift apart.
+  static double _gapBetween({required bool compact}) =>
+      compact ? AppSpace.xxs : AppSpace.xs;
+
   final PlayerController controller;
   final bool compact;
   final bool showStop;
   final bool showShuffleRepeat;
 
   @override
-  Widget build(BuildContext context) => PlayerControlStyle(
-    compact: compact,
-    child: Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (showShuffleRepeat) ...[
-          ListenableBuilder(
-            listenable: controller,
-            builder: (context, _) => ControlToggleButton(
-              tooltip: controller.shuffle
-                  ? 'Turn shuffle off'
-                  : 'Turn shuffle on',
-              icon: Icons.shuffle_rounded,
-              active: controller.shuffle,
-              onPressed: controller.toggleShuffle,
+  Widget build(BuildContext context) {
+    final gap = _gapBetween(compact: compact);
+    return PlayerControlStyle(
+      compact: compact,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (showShuffleRepeat) ...[
+            ListenableBuilder(
+              listenable: controller,
+              builder: (context, _) => ControlToggleButton(
+                tooltip: controller.shuffle
+                    ? 'Turn shuffle off'
+                    : 'Turn shuffle on',
+                icon: Icons.shuffle_rounded,
+                active: controller.shuffle,
+                onPressed: controller.toggleShuffle,
+              ),
+            ),
+            SizedBox(width: gap),
+          ],
+          _TransportButton(
+            tooltip: 'Previous',
+            icon: Icons.skip_previous_rounded,
+            onPressed: controller.current == null ? null : controller.previous,
+          ),
+          SizedBox(width: gap),
+          // The glyph follows the transport listenable rather than this widget's
+          // own rebuilds: views that deliberately skip rebuilds while a track
+          // plays (Now Playing) would otherwise strand it on a stale shape.
+          ValueListenableBuilder<TransportState>(
+            valueListenable: controller.transportListenable,
+            builder: (context, transport, _) => _PlayPauseButton(
+              isPlaying: transport.isPlaying,
+              isBuffering: transport.isBuffering,
+              onPressed: controller.current == null
+                  ? null
+                  : controller.togglePlayPause,
             ),
           ),
-          SizedBox(width: compact ? 4 : 8),
-        ],
-        _TransportButton(
-          tooltip: 'Previous',
-          icon: Icons.skip_previous_rounded,
-          onPressed: controller.current == null ? null : controller.previous,
-        ),
-        SizedBox(width: compact ? 4 : 8),
-        // The glyph follows the transport listenable rather than this widget's
-        // own rebuilds: views that deliberately skip rebuilds while a track
-        // plays (Now Playing) would otherwise strand it on a stale shape.
-        ValueListenableBuilder<TransportState>(
-          valueListenable: controller.transportListenable,
-          builder: (context, transport, _) => _PlayPauseButton(
-            isPlaying: transport.isPlaying,
-            isBuffering: transport.isBuffering,
-            onPressed: controller.current == null
-                ? null
-                : controller.togglePlayPause,
-          ),
-        ),
-        SizedBox(width: compact ? 4 : 8),
-        _TransportButton(
-          tooltip: 'Next',
-          icon: Icons.skip_next_rounded,
-          onPressed: controller.current == null ? null : controller.next,
-        ),
-        if (showShuffleRepeat) ...[
-          SizedBox(width: compact ? 4 : 8),
-          ListenableBuilder(
-            listenable: controller,
-            builder: (context, _) {
-              final mode = controller.repeatMode;
-              final icon = mode == 'one'
-                  ? Icons.repeat_one_rounded
-                  : Icons.repeat_rounded;
-              final tip = mode == 'off'
-                  ? 'Enable repeat'
-                  : mode == 'all'
-                  ? 'Repeat current'
-                  : 'Disable repeat';
-              return ControlToggleButton(
-                tooltip: tip,
-                icon: icon,
-                active: mode != 'off',
-                onPressed: controller.cycleRepeat,
-              );
-            },
-          ),
-        ],
-        if (showStop) ...[
-          SizedBox(width: compact ? 4 : 8),
+          SizedBox(width: gap),
           _TransportButton(
-            tooltip: 'Stop',
-            icon: Icons.stop_rounded,
-            onPressed: controller.current == null ? null : controller.stop,
+            tooltip: 'Next',
+            icon: Icons.skip_next_rounded,
+            onPressed: controller.current == null ? null : controller.next,
           ),
+          if (showShuffleRepeat) ...[
+            SizedBox(width: gap),
+            ListenableBuilder(
+              listenable: controller,
+              builder: (context, _) {
+                final mode = controller.repeatMode;
+                final icon = mode == 'one'
+                    ? Icons.repeat_one_rounded
+                    : Icons.repeat_rounded;
+                final tip = mode == 'off'
+                    ? 'Enable repeat'
+                    : mode == 'all'
+                    ? 'Repeat current'
+                    : 'Disable repeat';
+                return ControlToggleButton(
+                  tooltip: tip,
+                  icon: icon,
+                  active: mode != 'off',
+                  onPressed: controller.cycleRepeat,
+                );
+              },
+            ),
+          ],
+          if (showStop) ...[
+            SizedBox(width: gap),
+            _TransportButton(
+              tooltip: 'Stop',
+              icon: Icons.stop_rounded,
+              onPressed: controller.current == null ? null : controller.stop,
+            ),
+          ],
         ],
-      ],
-    ),
-  );
+      ),
+    );
+  }
 }
 
 class _TransportButton extends StatefulWidget {
@@ -299,7 +308,7 @@ class _PlayPauseButtonState extends State<_PlayPauseButton>
     duration: AppMotion.standard,
     value: widget.isPlaying ? 1 : 0,
   );
-  late final Animation<double> _playPauseProgress = CurvedAnimation(
+  late final CurvedAnimation _playPauseProgress = CurvedAnimation(
     parent: _playPauseController,
     curve: AppMotion.standardCurve,
   );
@@ -337,6 +346,7 @@ class _PlayPauseButtonState extends State<_PlayPauseButton>
 
   @override
   void dispose() {
+    _playPauseProgress.dispose();
     _playPauseController.dispose();
     super.dispose();
   }
@@ -424,70 +434,4 @@ class _PlayPauseButtonState extends State<_PlayPauseButton>
       ),
     );
   }
-}
-
-class PlaybackRateMenu extends StatelessWidget {
-  const PlaybackRateMenu({
-    super.key,
-    required this.controller,
-    required this.onMenuVisibilityChanged,
-  });
-
-  final PlayerController controller;
-  final ValueChanged<bool>? onMenuVisibilityChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final speedText =
-        '${controller.rate.toStringAsFixed(controller.rate == controller.rate.roundToDouble() ? 0 : 2)}×';
-    return Semantics(
-      label: 'Playback speed, selected $speedText',
-      button: true,
-      child: PopupMenuButton<double>(
-        tooltip: 'Playback speed',
-        initialValue: _nearestRate(controller.rate),
-        onOpened: () => onMenuVisibilityChanged?.call(true),
-        onCanceled: () => onMenuVisibilityChanged?.call(false),
-        onSelected: (rate) {
-          onMenuVisibilityChanged?.call(false);
-          unawaited(controller.setRate(rate));
-        },
-        itemBuilder: (context) =>
-            const <double>[0.5, 0.75, 1, 1.25, 1.5, 2].map((rate) {
-              final isSelected = (controller.rate - rate).abs() < 0.01;
-              final label = rate == 1 ? 'Normal speed' : '$rate×';
-              return PopupMenuItem<double>(
-                value: rate,
-                child: Semantics(
-                  selected: isSelected,
-                  label: isSelected ? '$label, selected' : label,
-                  child: Text(label),
-                ),
-              );
-            }).toList(),
-        child: SizedBox(
-          width: PlayerControlStyle.of(context).compact ? 40 : 52,
-          height: PlayerControlStyle.of(context).buttonExtent,
-          child: Center(
-            child: Text(
-              speedText,
-              style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                color: context.palette.secondaryText,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  static double _nearestRate(double rate) => const [
-    0.5,
-    0.75,
-    1.0,
-    1.25,
-    1.5,
-    2.0,
-  ].reduce((a, b) => (a - rate).abs() <= (b - rate).abs() ? a : b);
 }

@@ -250,7 +250,7 @@ class VolumeMenu extends StatelessWidget {
       onPressed: () {
         onMenuVisibilityChanged?.call(true);
         unawaited(
-          showDialog<void>(
+          AppDialog.show<void>(
             context: context,
             builder: (_) => VolumeDialog(
               controller: controller,

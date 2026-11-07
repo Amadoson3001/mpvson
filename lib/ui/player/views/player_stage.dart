@@ -265,10 +265,10 @@ class PlayerStage extends StatelessWidget {
                     if (AppMotion.reduce(context)) {
                       return FadeTransition(opacity: animation, child: child);
                     }
-                    final transition = CurvedAnimation(
-                      parent: animation,
-                      curve: AppMotion.enter,
-                      reverseCurve: AppMotion.exit,
+                    // CurveTween keeps this transient: no CurvedAnimation to
+                    // outlive the switcher.
+                    final transition = animation.drive(
+                      CurveTween(curve: AppMotion.enter),
                     );
                     return FadeTransition(opacity: transition, child: child);
                   },
@@ -350,44 +350,58 @@ class PlayerStage extends StatelessWidget {
                     curve: AppMotion.standardCurve,
                     child: IgnorePointer(
                       ignoring: !controlsVisible || fullControlsOpacity < 0.8,
-                      child: ToastRegion(
-                        child: AnimatedBuilder(
-                          animation: controller,
-                          builder: (context, _) => PlayerControls(
-                            controller: controller,
-                            onMenuVisibilityChanged: onMenuVisibilityChanged,
-                            onInteractionChanged: onControlInteractionChanged,
-                            onVolumeChanged: onVolumeChanged,
-                            showPlaybackControls: controller.hasMedia,
-                            actions: isMiniPlayer
-                                ? null
-                                : PlayerActions(
-                                    controller: controller,
-                                    onOpenFiles: onOpenFiles,
-                                    onOpenUrl: onOpenUrl,
-                                    onOpenRecent: onOpenRecent,
-                                    onToggleQueue: onToggleQueue,
-                                    onSettings: onSettings,
-                                    onPlaybackInfo: onPlaybackInfo,
-                                    onOpenLibrary: onOpenLibrary,
-                                    onMenuVisibilityChanged:
-                                        onMenuVisibilityChanged,
-                                    queueOpen: queueOpen,
-                                    isFullscreen: isFullscreen,
-                                    onFullscreen: desktopWindow
-                                        ? onFullscreen
-                                        : null,
-                                    onToggleMiniPlayer: nativeWindow
-                                        ? onToggleMiniPlayer
-                                        : null,
-                                    isMiniPlayer: isMiniPlayer,
-                                    miniPlayerShortcut: hotkeys
-                                        .bindingFor(PlayerAction.miniPlayer)
-                                        .label,
-                                    playbackInfoShortcut: hotkeys
-                                        .bindingFor(PlayerAction.playbackInfo)
-                                        .label,
-                                  ),
+                      // Hidden chrome must not steal focus or reach screen
+                      // readers while it fades out.
+                      child: ExcludeFocus(
+                        excluding:
+                            !controlsVisible || fullControlsOpacity < 0.8,
+                        child: ExcludeSemantics(
+                          excluding:
+                              !controlsVisible || fullControlsOpacity < 0.8,
+                          child: ToastRegion(
+                            child: AnimatedBuilder(
+                              animation: controller,
+                              builder: (context, _) => PlayerControls(
+                                controller: controller,
+                                onMenuVisibilityChanged:
+                                    onMenuVisibilityChanged,
+                                onInteractionChanged:
+                                    onControlInteractionChanged,
+                                onVolumeChanged: onVolumeChanged,
+                                showPlaybackControls: controller.hasMedia,
+                                actions: isMiniPlayer
+                                    ? null
+                                    : PlayerActions(
+                                        controller: controller,
+                                        onOpenFiles: onOpenFiles,
+                                        onOpenUrl: onOpenUrl,
+                                        onOpenRecent: onOpenRecent,
+                                        onToggleQueue: onToggleQueue,
+                                        onSettings: onSettings,
+                                        onPlaybackInfo: onPlaybackInfo,
+                                        onOpenLibrary: onOpenLibrary,
+                                        onMenuVisibilityChanged:
+                                            onMenuVisibilityChanged,
+                                        queueOpen: queueOpen,
+                                        isFullscreen: isFullscreen,
+                                        onFullscreen: desktopWindow
+                                            ? onFullscreen
+                                            : null,
+                                        onToggleMiniPlayer: nativeWindow
+                                            ? onToggleMiniPlayer
+                                            : null,
+                                        isMiniPlayer: isMiniPlayer,
+                                        miniPlayerShortcut: hotkeys
+                                            .bindingFor(PlayerAction.miniPlayer)
+                                            .label,
+                                        playbackInfoShortcut: hotkeys
+                                            .bindingFor(
+                                              PlayerAction.playbackInfo,
+                                            )
+                                            .label,
+                                      ),
+                              ),
+                            ),
                           ),
                         ),
                       ),

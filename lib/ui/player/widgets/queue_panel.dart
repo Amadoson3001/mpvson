@@ -335,7 +335,7 @@ class _QueuePanelState extends State<QueuePanel> {
 
   Future<void> _confirmClear(BuildContext context) async {
     if (widget.controller.queue.isEmpty) return;
-    final confirmed = await showDialog<bool>(
+    final confirmed = await AppDialog.show<bool>(
       context: context,
       builder: (context) => AppDialog(
         maxWidth: 420,

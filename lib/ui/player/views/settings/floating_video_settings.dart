@@ -44,10 +44,46 @@ class _FloatingVideoSettingsState extends State<FloatingVideoSettings> {
   VideoSettingsTab _currentTab = VideoSettingsTab.audioSubs;
   late PlaybackSettings _draft = widget.controller.playbackSettings;
 
+  /// The last value this panel pushed to the controller, so an echo of our
+  /// own commit is not mistaken for an external edit.
+  PlaybackSettings? _lastSent;
+
   @override
   void initState() {
     super.initState();
+    widget.controller.addListener(_handleControllerChanged);
     _draft = widget.controller.playbackSettings;
+  }
+
+  @override
+  void didUpdateWidget(covariant FloatingVideoSettings oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller == widget.controller) return;
+    oldWidget.controller.removeListener(_handleControllerChanged);
+    widget.controller.addListener(_handleControllerChanged);
+    _adoptControllerSettings();
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_handleControllerChanged);
+    super.dispose();
+  }
+
+  /// Keeps the draft in step with edits made elsewhere (full settings,
+  /// hotkeys) so sliders never show stale values.
+  void _handleControllerChanged() {
+    if (!mounted) return;
+    _adoptControllerSettings();
+  }
+
+  void _adoptControllerSettings() {
+    final current = widget.controller.playbackSettings;
+    if (current == _lastSent || current == _draft) return;
+    setState(() {
+      _draft = current;
+      _lastSent = current;
+    });
   }
 
   void _changeDraft(PlaybackSettings value) {
@@ -56,7 +92,10 @@ class _FloatingVideoSettingsState extends State<FloatingVideoSettings> {
 
   void _commit(PlaybackSettings value) {
     final normalized = value.normalized();
-    setState(() => _draft = normalized);
+    setState(() {
+      _draft = normalized;
+      _lastSent = normalized;
+    });
     unawaited(widget.controller.setPlaybackSettings(normalized));
   }
 
@@ -200,7 +239,7 @@ class _FloatingVideoSettingsState extends State<FloatingVideoSettings> {
           IconButton(
             tooltip: 'Close settings (Esc)',
             iconSize: 18,
-            constraints: const BoxConstraints.tightFor(width: 32, height: 32),
+            constraints: const BoxConstraints.tightFor(width: 44, height: 44),
             padding: EdgeInsets.zero,
             style: IconButton.styleFrom(
               shape: RoundedRectangleBorder(
@@ -351,40 +390,44 @@ class _TabPill extends StatelessWidget {
     final foreground = selected ? accent : theme.colorScheme.onSurfaceVariant;
     final bg = selected ? accent.withValues(alpha: 0.16) : Colors.transparent;
 
-    return Material(
-      color: bg,
-      borderRadius: BorderRadius.circular(AppRadii.control),
-      child: InkWell(
-        onTap: onTap,
+    return Semantics(
+      button: true,
+      selected: selected,
+      child: Material(
+        color: bg,
         borderRadius: BorderRadius.circular(AppRadii.control),
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 2),
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(AppRadii.control),
-            border: Border.all(
-              color: selected
-                  ? accent.withValues(alpha: 0.45)
-                  : Colors.transparent,
-              width: 1,
-            ),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 16, color: foreground),
-              const SizedBox(height: 3),
-              Text(
-                label,
-                style: theme.textTheme.labelSmall?.copyWith(
-                  fontSize: 11,
-                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                  color: foreground,
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(AppRadii.control),
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 2),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(AppRadii.control),
+              border: Border.all(
+                color: selected
+                    ? accent.withValues(alpha: 0.45)
+                    : Colors.transparent,
+                width: 1,
               ),
-            ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: 16, color: foreground),
+                const SizedBox(height: 3),
+                Text(
+                  label,
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    fontSize: 11,
+                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                    color: foreground,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
           ),
         ),
       ),
