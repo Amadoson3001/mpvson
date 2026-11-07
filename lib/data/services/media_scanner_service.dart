@@ -247,6 +247,20 @@ class MediaScannerService {
       for (final f in dbFolders) {
         registerFolder(f.path);
       }
+      // A folder removed while the read was in flight must not be resurrected
+      // by this scan (D-4): re-validate every root against a fresh database
+      // snapshot before scanning it.
+      final fresh = await _getRegisteredFolders();
+      if (_isDisposed) return;
+      final freshPaths = fresh
+          .map((f) => MediaEntry.canonicalSource(f.path))
+          .toSet();
+      for (final f in dbFolders) {
+        final key = MediaEntry.canonicalSource(f.path);
+        if (!freshPaths.contains(key)) {
+          unregisterFolder(key);
+        }
+      }
     }
     await _runScanRoots(
       deduplicateFolderRoots(_explicitFolders, pathContext: _pathContext),

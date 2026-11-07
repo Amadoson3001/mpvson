@@ -135,6 +135,66 @@ void main() {
     expect(a!.metadata.artist, 'Fake Artist');
   });
 
+  test(
+    'a folder removed while the registered-folder read is in flight is not resurrected',
+    () async {
+      final root = await _createTempFolder();
+      final aPath = p.join(root.path, 'a.mp3');
+      await File(aPath).writeAsBytes(List<int>.filled(16, 7));
+      final db = await _openDb();
+
+      final rootKey = MediaEntry.canonicalSource(root.path);
+      await db.insertFolder(
+        LibraryFolderRecord(
+          path: rootKey,
+          addedAt: DateTime.now(),
+          isAvailable: true,
+        ),
+      );
+      await db.batchUpsertDiscoveredFiles(<String>[aPath]);
+      // The user removes the folder: the watcher stops and the files are
+      // untracked (soft-deleted) in the database.
+      await db.deleteFolder(rootKey);
+      expect(await db.queryMedia(), isEmpty);
+
+      // The scanner reads the registered folders; the removal completes after
+      // the first (stale) read, so only the second read reflects it.
+      var reads = 0;
+      final scanner = MediaScannerService(
+        probeService: _FakeProbeService(),
+        database: db,
+        getRegisteredFolders: () async {
+          reads++;
+          if (reads == 1) {
+            return <LibraryFolderRecord>[
+              LibraryFolderRecord(
+                path: rootKey,
+                addedAt: DateTime.now(),
+                isAvailable: true,
+              ),
+            ];
+          }
+          return const <LibraryFolderRecord>[];
+        },
+      );
+
+      await scanner.scanAll();
+
+      expect(
+        scanner.registeredFolders,
+        isEmpty,
+        reason:
+            'the removed folder must not be re-registered from a stale read',
+      );
+      expect(
+        await db.queryMedia(),
+        isEmpty,
+        reason:
+            'scanning a removed folder would resurrect its files in the library',
+      );
+    },
+  );
+
   test('mid-scan watcher additions survive the stale reconcile', () async {
     final root = await _createTempFolder();
     final db = await _openDb();
