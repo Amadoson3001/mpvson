@@ -604,6 +604,102 @@ class MediaKitPlaybackService
   /// The load attempt of the most recent [open] or [stop] request.
   int get requestedBoundary => _identity.boundaryCounter;
 
+  /// Serializes engine opens so a rapid next/previous can never attach a stale
+  /// source. Each queued open re-checks that it is still the newest request
+  /// immediately before the engine is told to load anything; a superseded open
+  /// completes without touching the engine.
+  Future<void>? _openTail;
+
+  @override
+  Future<void> open(String path, {bool play = true}) async {
+    // Registering the request with the identity tracker must stay synchronous:
+    // it assigns the boundary later opens use to detect they were superseded.
+    final boundary = _identity.beginOpen(path);
+    _diagnostics?.record(
+      'playback.open',
+      sourceId: MediaSource.redact(path),
+      message: 'boundary $boundary, play $play',
+    );
+    unawaited(_startNativeObservation());
+    _emit(
+      _state.copyWith(
+        sourceStart: boundary,
+        isPlaying: play,
+        isBuffering: true,
+        completed: false,
+        position: Duration.zero,
+        duration: Duration.zero,
+        chapters: const <PlaybackChapter>[],
+        clearError: true,
+        clearNativeSource: true,
+        sourceLoaded: false,
+      ),
+    );
+    _lastAppliedWidth = null;
+    _lastAppliedHeight = null;
+    final previous = _openTail;
+    final done = Completer<void>();
+    _openTail = done.future;
+    unawaited(_runQueuedOpen(path, play, boundary, previous, done));
+    return done.future;
+  }
+
+  Future<void> _runQueuedOpen(
+    String path,
+    bool play,
+    int boundary,
+    Future<void>? previous,
+    Completer<void> done,
+  ) async {
+    try {
+      // One open reaches the engine at a time; the newest request always wins.
+      try {
+        await previous;
+      } on Object {
+        // A failed earlier open must not stop the newest request.
+      }
+      if (done.isCompleted || _disposed) return;
+      if (_identity.boundaryCounter != boundary) {
+        _diagnostics?.record(
+          'playback.open',
+          sourceId: MediaSource.redact(path),
+          message: 'boundary $boundary superseded before the engine open',
+        );
+        return;
+      }
+      if (MediaCatalog.kindFromExtension(path) != MediaKind.audio) {
+        // Attach the video output before opening so video sources keep their
+        // first-frame path. Known audio sources never allocate it.
+        videoController;
+      }
+      _scheduleResize(force: true);
+      await _applyBufferingPolicy(isNetwork: MediaEntry.isNetworkUrl(path));
+      if (done.isCompleted || _disposed) return;
+      // The policy writes above can be slow; re-check staleness immediately
+      // before the engine open so a rapid next/previous never races this load.
+      if (_identity.boundaryCounter != boundary) {
+        _diagnostics?.record(
+          'playback.open',
+          sourceId: MediaSource.redact(path),
+          message: 'boundary $boundary superseded before the engine open',
+        );
+        return;
+      }
+      _syncVideoDecoding(_videoOutputPolicy.visible);
+      await _player.open(Media(path), play: play);
+      if (!_identity.observationActive && !_disposed) {
+        _emit(_stamped(_state.copyWith(isBuffering: _player.state.buffering)));
+      }
+    } on Object catch (error, stackTrace) {
+      if (!done.isCompleted) {
+        done.completeError(error, stackTrace);
+      }
+      return;
+    } finally {
+      if (!done.isCompleted) done.complete();
+    }
+  }
+
   @override
   Future<void> prepare() {
     final existing = _prepareFuture;
@@ -760,45 +856,6 @@ class MediaKitPlaybackService
       _appliedBufferingPolicyLimitCache = _limitDemuxerCache;
     } on Object catch (error) {
       _diagnostics?.record('playback.buffering_policy', error: error);
-    }
-  }
-
-  @override
-  Future<void> open(String path, {bool play = true}) async {
-    final boundary = _identity.beginOpen(path);
-    _diagnostics?.record(
-      'playback.open',
-      sourceId: MediaSource.redact(path),
-      message: 'boundary $boundary, play $play',
-    );
-    unawaited(_startNativeObservation());
-    _emit(
-      _state.copyWith(
-        sourceStart: boundary,
-        isPlaying: play,
-        isBuffering: true,
-        completed: false,
-        position: Duration.zero,
-        duration: Duration.zero,
-        chapters: const <PlaybackChapter>[],
-        clearError: true,
-        clearNativeSource: true,
-        sourceLoaded: false,
-      ),
-    );
-    _lastAppliedWidth = null;
-    _lastAppliedHeight = null;
-    if (MediaCatalog.kindFromExtension(path) != MediaKind.audio) {
-      // Attach the video output before opening so video sources keep their
-      // first-frame path. Known audio sources never allocate it.
-      videoController;
-    }
-    _scheduleResize(force: true);
-    await _applyBufferingPolicy(isNetwork: MediaEntry.isNetworkUrl(path));
-    _syncVideoDecoding(_videoOutputPolicy.visible);
-    await _player.open(Media(path), play: play);
-    if (!_identity.observationActive && !_disposed) {
-      _emit(_stamped(_state.copyWith(isBuffering: _player.state.buffering)));
     }
   }
 
