@@ -8,8 +8,6 @@ import 'package:mpvson/data/services/media_scanner_service.dart';
 import 'package:mpvson/domain/models/library_models.dart';
 import 'package:mpvson/domain/models/media_catalog.dart';
 import 'package:mpvson/domain/models/media_entry.dart';
-import 'package:mpvson/domain/models/media_kind.dart';
-import 'package:mpvson/domain/models/media_metadata.dart';
 import 'package:path/path.dart' as p;
 
 /// Probe service stub that returns cheap synthetic metadata and can block
