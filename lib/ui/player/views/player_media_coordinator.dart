@@ -141,10 +141,13 @@ class PlayerMediaCoordinator {
       );
       if (result.status == OpenStatus.rejected) {
         showMessage(
-          'Could not open the selected media. Check the source and try again.',
+          result.message ??
+              'Could not open the selected media. Check the source and try again.',
         );
       } else if (result.rejectedCount > 0) {
-        showMessage('Some selected sources could not be opened.');
+        showMessage(
+          result.message ?? 'Some selected sources could not be opened.',
+        );
       }
     } catch (_) {
       showMessage('Mpvson could not open that media.');
