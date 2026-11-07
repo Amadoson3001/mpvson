@@ -44,10 +44,46 @@ class _FloatingVideoSettingsState extends State<FloatingVideoSettings> {
   VideoSettingsTab _currentTab = VideoSettingsTab.audioSubs;
   late PlaybackSettings _draft = widget.controller.playbackSettings;
 
+  /// The last value this panel pushed to the controller, so an echo of our
+  /// own commit is not mistaken for an external edit.
+  PlaybackSettings? _lastSent;
+
   @override
   void initState() {
     super.initState();
+    widget.controller.addListener(_handleControllerChanged);
     _draft = widget.controller.playbackSettings;
+  }
+
+  @override
+  void didUpdateWidget(covariant FloatingVideoSettings oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller == widget.controller) return;
+    oldWidget.controller.removeListener(_handleControllerChanged);
+    widget.controller.addListener(_handleControllerChanged);
+    _adoptControllerSettings();
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_handleControllerChanged);
+    super.dispose();
+  }
+
+  /// Keeps the draft in step with edits made elsewhere (full settings,
+  /// hotkeys) so sliders never show stale values.
+  void _handleControllerChanged() {
+    if (!mounted) return;
+    _adoptControllerSettings();
+  }
+
+  void _adoptControllerSettings() {
+    final current = widget.controller.playbackSettings;
+    if (current == _lastSent || current == _draft) return;
+    setState(() {
+      _draft = current;
+      _lastSent = current;
+    });
   }
 
   void _changeDraft(PlaybackSettings value) {
@@ -56,7 +92,10 @@ class _FloatingVideoSettingsState extends State<FloatingVideoSettings> {
 
   void _commit(PlaybackSettings value) {
     final normalized = value.normalized();
-    setState(() => _draft = normalized);
+    setState(() {
+      _draft = normalized;
+      _lastSent = normalized;
+    });
     unawaited(widget.controller.setPlaybackSettings(normalized));
   }
 

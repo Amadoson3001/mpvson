@@ -85,10 +85,10 @@ class FloatingAudioSubsTab extends StatelessWidget {
             ModernSliderTile(
               key: const ValueKey('video-subtitle-delay'),
               label: 'Subtitle sync offset',
-              value: draft.subtitleDelaySeconds,
-              min: -5,
-              max: 5,
-              divisions: 100,
+              value: draft.subtitleDelaySeconds.clamp(-10, 10),
+              min: -10,
+              max: 10,
+              divisions: 200,
               formatValue: formatSecondsValue,
               onChanged: (val) =>
                   onChangeDraft(draft.copyWith(subtitleDelaySeconds: val)),
@@ -111,10 +111,10 @@ class FloatingAudioSubsTab extends StatelessWidget {
             ModernSliderTile(
               key: const ValueKey('video-audio-delay'),
               label: 'Audio sync offset',
-              value: draft.audioDelaySeconds,
-              min: -5,
-              max: 5,
-              divisions: 100,
+              value: draft.audioDelaySeconds.clamp(-10, 10),
+              min: -10,
+              max: 10,
+              divisions: 200,
               formatValue: formatSecondsValue,
               onChanged: (val) =>
                   onChangeDraft(draft.copyWith(audioDelaySeconds: val)),

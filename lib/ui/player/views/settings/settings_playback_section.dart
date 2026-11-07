@@ -194,13 +194,57 @@ class VideoAudioSettingsSection extends StatefulWidget {
 class _VideoAudioSettingsSectionState extends State<VideoAudioSettingsSection> {
   late PlaybackSettings _draft = widget.controller.playbackSettings;
 
+  /// The last value this section pushed to the controller, so an echo of our
+  /// own commit is not mistaken for an external edit.
+  PlaybackSettings? _lastSent;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_handleControllerChanged);
+  }
+
+  @override
+  void didUpdateWidget(covariant VideoAudioSettingsSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller == widget.controller) return;
+    oldWidget.controller.removeListener(_handleControllerChanged);
+    widget.controller.addListener(_handleControllerChanged);
+    _adoptControllerSettings();
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_handleControllerChanged);
+    super.dispose();
+  }
+
+  /// Keeps the draft in step with edits made elsewhere (floating panel,
+  /// hotkeys, another settings surface).
+  void _handleControllerChanged() {
+    if (!mounted) return;
+    _adoptControllerSettings();
+  }
+
+  void _adoptControllerSettings() {
+    final current = widget.controller.playbackSettings;
+    if (current == _lastSent || current == _draft) return;
+    setState(() {
+      _draft = current;
+      _lastSent = current;
+    });
+  }
+
   void _changeDraft(PlaybackSettings value) {
     setState(() => _draft = value.normalized());
   }
 
   void _commit(PlaybackSettings value) {
     final normalized = value.normalized();
-    setState(() => _draft = normalized);
+    setState(() {
+      _draft = normalized;
+      _lastSent = normalized;
+    });
     unawaited(widget.controller.setPlaybackSettings(normalized));
   }
 
@@ -311,7 +355,7 @@ class _VideoAudioSettingsSectionState extends State<VideoAudioSettingsSection> {
               ModernSliderTile(
                 key: const ValueKey('playback-audio-delay'),
                 label: 'Audio delay',
-                value: _draft.audioDelaySeconds,
+                value: _draft.audioDelaySeconds.clamp(-10, 10),
                 min: -10,
                 max: 10,
                 divisions: 200,
@@ -324,7 +368,7 @@ class _VideoAudioSettingsSectionState extends State<VideoAudioSettingsSection> {
               ModernSliderTile(
                 key: const ValueKey('playback-subtitle-delay'),
                 label: 'Subtitle delay',
-                value: _draft.subtitleDelaySeconds,
+                value: _draft.subtitleDelaySeconds.clamp(-10, 10),
                 min: -10,
                 max: 10,
                 divisions: 200,
