@@ -4,7 +4,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mpvson/data/repositories/database/library_database.dart';
 import 'package:mpvson/domain/models/library_models.dart';
 import 'package:mpvson/domain/models/media_entry.dart';
-import 'package:mpvson/domain/models/media_kind.dart';
 
 LibraryFolderRecord _folder(String path) =>
     LibraryFolderRecord(path: path, addedAt: DateTime.now(), isAvailable: true);
