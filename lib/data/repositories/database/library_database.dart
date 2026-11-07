@@ -1048,6 +1048,47 @@ String _canonicalFolderKey(String path) => MediaEntry.canonicalSource(path);
 /// UNIQUE(canonical_source) constraint dedupes case-variant duplicates.
 String _canonicalMediaKey(String source) => MediaEntry.canonicalSource(source);
 
+/// Builds a SQL predicate matching every canonical_source at or below [root].
+///
+/// The predicate is a half-open BINARY range per separator —
+/// `[prefix, prefix-with-last-byte-incremented)` — instead of a `substr()`
+/// comparison, so SQLite can seek the implicit UNIQUE(canonical_source) index
+/// rather than evaluate an expression against every row. A range whose lower
+/// bound is `root + separator` matches the root itself plus every key beginning
+/// with that prefix, which is exactly the `p.equals(root, path) ||
+/// p.isWithin(root, path)` behavior it replaces. On POSIX only `/` separates
+/// paths; Windows additionally matches the same root spelled with `\`.
+(String, List<Object?>) _canonicalSourceUnderRoot(String root) {
+  void addRange(String prefix, List<String> conditions, List<Object?> args) {
+    final lastUnit = prefix.codeUnitAt(prefix.length - 1);
+    final upper =
+        '${prefix.substring(0, prefix.length - 1)}'
+        '${String.fromCharCode(lastUnit + 1)}';
+    conditions.add('(canonical_source >= ? AND canonical_source < ?)');
+    args
+      ..add(prefix)
+      ..add(upper);
+  }
+
+  final conditions = <String>[];
+  final args = <Object?>[];
+  final rootSlash = root.replaceAll(r'\', '/');
+  addRange(
+    rootSlash.endsWith('/') ? rootSlash : '$rootSlash/',
+    conditions,
+    args,
+  );
+  if (Platform.isWindows) {
+    final rootBackslash = root.replaceAll('/', r'\');
+    addRange(
+      rootBackslash.endsWith(r'\') ? rootBackslash : '$rootBackslash\\',
+      conditions,
+      args,
+    );
+  }
+  return ('(${conditions.join(' OR ')})', args);
+}
+
 Object? _dispatchAction(Database db, String action, Object? params) {
   switch (action) {
     case 'optimize':
@@ -1828,8 +1869,17 @@ void _untrackRemovedFolder(Database db, String folderPath) {
       .select('SELECT path FROM folders')
       .map((row) => MediaEntry.canonicalSource(row['path'] as String))
       .toList();
+  // Only rows at or below the removed root can lose library membership. The
+  // indexed prefix seek keeps that candidate set bounded by the removed
+  // folder's size instead of scanning the whole media table; the still-covered
+  // check stays in Dart because the remaining roots are few.
+  final (coveredPredicate, coveredArgs) = _canonicalSourceUnderRoot(
+    removedRoot,
+  );
   final rows = db.select(
-    'SELECT canonical_source, path FROM media WHERE is_in_library = 1',
+    'SELECT canonical_source, path FROM media '
+    'WHERE is_in_library = 1 AND $coveredPredicate',
+    coveredArgs,
   );
   final update = db.prepare(
     'UPDATE media SET is_in_library = 0 WHERE canonical_source = ?',
@@ -1839,10 +1889,11 @@ void _untrackRemovedFolder(Database db, String folderPath) {
       final path = MediaEntry.canonicalSource(row['path'] as String);
       final wasCovered =
           p.equals(removedRoot, path) || p.isWithin(removedRoot, path);
+      if (!wasCovered) continue;
       final stillCovered = remainingRoots.any(
         (root) => p.equals(root, path) || p.isWithin(root, path),
       );
-      if (wasCovered && !stillCovered) {
+      if (!stillCovered) {
         update.execute([row['canonical_source']]);
       }
     }
@@ -1857,8 +1908,14 @@ void _markMissingFilesInFolder(
   Set<String> discovered,
 ) {
   final root = MediaEntry.canonicalSource(folderPath);
+  // Restrict the stale-file candidates with an indexed prefix seek over
+  // canonical_source so a watcher batch costs one bounded scan instead of a
+  // whole-library Dart loop over every row.
+  final (withinPredicate, withinArgs) = _canonicalSourceUnderRoot(root);
   final rows = db.select(
-    'SELECT canonical_source, path FROM media WHERE is_available = 1',
+    'SELECT canonical_source, path FROM media '
+    'WHERE is_available = 1 AND $withinPredicate',
+    withinArgs,
   );
   // A watcher add that lands while a scan is in flight can be missing from the
   // discovered snapshot; re-stating each candidate keeps mid-scan additions
