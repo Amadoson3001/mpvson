@@ -139,6 +139,11 @@ class MediaScannerService {
   LibraryScanStatus _status = const LibraryScanStatus();
   bool _isCancelled = false;
   bool _isDisposed = false;
+
+  /// Bumped on every cancellation and scan replacement. Enrichment batches
+  /// capture the value at start; a mismatch means their probes may have failed
+  /// because of the cancellation, so destructive fallback writes are skipped.
+  int _cancellationEpoch = 0;
   Future<void>? _currentScanFuture;
   Future<void> _scanTransitionTail = Future<void>.value();
   DateTime? _lastStatusEmission;
@@ -279,6 +284,7 @@ class MediaScannerService {
   /// Cancels any in-progress scan and enrichment.
   void cancelScan() {
     _isCancelled = true;
+    _cancellationEpoch++;
     _probeService.cancelAll();
     _updateStatus(_status.copyWith(phase: ScanPhase.idle, errorMessage: null));
   }
@@ -334,6 +340,9 @@ class MediaScannerService {
       if (scanRoots.isEmpty) return;
 
       _isCancelled = false;
+      // Invalidate any still-running enrichment batch from a previous
+      // generation so a reset of _isCancelled cannot resurrect its workers.
+      _cancellationEpoch++;
       final scanCompleter = Completer<void>();
       scan = scanCompleter.future;
       _currentScanFuture = scan;
@@ -585,7 +594,13 @@ class MediaScannerService {
     bool ignoreScanCancellation = false,
     bool skipUnchanged = false,
   }) async {
-    bool stopped() => _isDisposed || (_isCancelled && !ignoreScanCancellation);
+    final epoch = _cancellationEpoch;
+    bool stopped() {
+      if (_isDisposed) return true;
+      if (ignoreScanCancellation) return false;
+      return _isCancelled || _cancellationEpoch != epoch;
+    }
+
     if (filePaths.isEmpty || stopped()) return;
 
     final queue = Queue<String>.from(filePaths);
@@ -625,10 +640,20 @@ class MediaScannerService {
           if (stopped() || !(shouldContinue?.call(path) ?? true)) {
             break;
           }
+          if (_cancellationEpoch != epoch) {
+            // The batch was cancelled (or replaced) after this probe started:
+            // the failure is likely the cancellation itself, and a fallback
+            // write would null richer watcher-enriched metadata (D-5). Skip
+            // the write; watcher-driven batches keep processing other files.
+            continue;
+          }
           // Probe error or unreadable file: do NOT fail scan, fall back to basic file stats
           try {
             final file = File(path);
             final stat = await file.stat();
+            if (_cancellationEpoch != epoch) {
+              continue;
+            }
             final kind = MediaCatalog.kindFromExtension(path);
             final title = _pathContext.basenameWithoutExtension(path);
             await _onUpdateMetadata?.call(
@@ -640,8 +665,10 @@ class MediaScannerService {
             );
           } catch (_) {}
         } finally {
-          completed++;
-          _updateStatus(_status.copyWith(enrichedCount: completed));
+          if (!ignoreScanCancellation) {
+            completed++;
+            _updateStatus(_status.copyWith(enrichedCount: completed));
+          }
         }
       }
     }
@@ -920,6 +947,10 @@ class MediaScannerService {
   Future<void> dispose() async {
     _isDisposed = true;
     cancelScan();
+
+    // A scan transition may still be starting or finishing a scan; wait for it
+    // so no scan outlives dispose().
+    await _scanTransitionTail;
 
     final activeScan = _currentScanFuture;
     if (activeScan != null) {

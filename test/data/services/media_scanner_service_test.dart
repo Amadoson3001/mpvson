@@ -9,19 +9,66 @@ import 'package:mpvson/domain/models/library_models.dart';
 import 'package:mpvson/domain/models/media_catalog.dart';
 import 'package:mpvson/domain/models/media_entry.dart';
 import 'package:path/path.dart' as p;
+import 'package:watcher/watcher.dart';
+
+/// Deterministic in-memory directory watcher used to drive watcher events.
+class _FakeWatcher implements DirectoryWatcher {
+  _FakeWatcher(this._path);
+
+  final String _path;
+  final StreamController<WatchEvent> _controller =
+      StreamController<WatchEvent>.broadcast();
+
+  @override
+  String get path => _path;
+
+  @override
+  String get directory => _path;
+
+  @override
+  Stream<WatchEvent> get events => _controller.stream;
+
+  @override
+  bool get isReady => true;
+
+  @override
+  Future<void> get ready => Future<void>.value();
+
+  void emit(ChangeType type, String path) {
+    _controller.add(WatchEvent(type, path));
+  }
+
+  Future<void> close() => _controller.close();
+}
 
 /// Probe service stub that returns cheap synthetic metadata and can block
 /// probes on test-controlled gates.
 class _FakeProbeService implements MediaProbeService {
-  _FakeProbeService({this.gates = const <String, Completer<void>>{}});
+  _FakeProbeService({
+    this.gates = const <String, Completer<void>>{},
+    this.errorGates = const <String, Completer<void>>{},
+  });
 
   /// Probes whose canonical source has an entry here block until the gate is
-  /// completed by the test.
+  /// completed by the test, then succeed.
   final Map<String, Completer<void>> gates;
+
+  /// Probes whose canonical source has an entry here block until the gate is
+  /// completed by the test, then fail (as a cancelled probe would).
+  final Map<String, Completer<void>> errorGates;
+
+  final List<String> probeCalls = <String>[];
 
   @override
   Future<ProbeResult> probe(String filePath, {int? priority}) async {
-    final gate = gates[MediaEntry.canonicalSource(filePath)];
+    final key = MediaEntry.canonicalSource(filePath);
+    probeCalls.add(key);
+    final errorGate = errorGates[key];
+    if (errorGate != null) {
+      await errorGate.future;
+      throw StateError('probe cancelled for $filePath');
+    }
+    final gate = gates[key];
     if (gate != null) {
       await gate.future;
     }
@@ -192,6 +239,111 @@ void main() {
         reason:
             'scanning a removed folder would resurrect its files in the library',
       );
+    },
+  );
+
+  test(
+    'cancelling while a watcher enrichment fails preserves the rich metadata',
+    () async {
+      final root = await _createTempFolder();
+      final db = await _openDb();
+      final aPath = p.join(root.path, 'a.mp3');
+
+      // Rich metadata as a previous watcher enrichment would have written it.
+      await db.insertMedia(
+        MediaItemRecord(
+          id: MediaEntry.canonicalSource(aPath),
+          canonicalSource: MediaEntry.canonicalSource(aPath),
+          path: aPath,
+          kind: MediaKind.audio,
+          metadata: const MediaMetadata(
+            title: 'Rich Title',
+            artist: 'Rich Artist',
+            album: 'Rich Album',
+          ),
+          fileSize: 16,
+          addedAt: DateTime.now(),
+        ),
+      );
+
+      // The probe blocks until the test releases it, then fails (a cancelled
+      // probe surfaces as a failure).
+      final errorGate = Completer<void>();
+      final fallbackWrites = <String>[];
+      final probeService = _FakeProbeService(
+        errorGates: <String, Completer<void>>{
+          MediaEntry.canonicalSource(aPath): errorGate,
+        },
+      );
+      final watchers = <String, _FakeWatcher>{};
+      final scanner = MediaScannerService(
+        probeService: probeService,
+        watcherFactory: (path) =>
+            watchers.putIfAbsent(path, () => _FakeWatcher(path)),
+        database: db,
+        onUpdateMetadata:
+            (
+              source, {
+              required kind,
+              required metadata,
+              required fileSize,
+              required modifiedAt,
+            }) async {
+          fallbackWrites.add(MediaEntry.canonicalSource(source));
+          await db.updateMediaMetadata(
+            source,
+            kind: kind,
+            metadata: metadata,
+            fileSize: fileSize,
+            modifiedAt: modifiedAt,
+          );
+        },
+      );
+      addTearDown(db.close);
+
+      // Registering arms the (fake) watcher; creating the file and emitting an
+      // ADD event triggers the watcher drain into a watcher-driven enrichment
+      // (ignoreScanCancellation: true).
+      scanner.registerFolder(root.path);
+      expect(watchers, isNotEmpty);
+      await File(aPath).writeAsBytes(List<int>.filled(16, 7));
+      watchers.values.first.emit(ChangeType.ADD, aPath);
+
+      final deadline = DateTime.now().add(const Duration(seconds: 10));
+      final watchKey = MediaEntry.canonicalSource(aPath);
+      while (!probeService.probeCalls.contains(watchKey)) {
+        if (DateTime.now().isAfter(deadline)) {
+          fail('watcher enrichment never probed the added file');
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+
+      // The user cancels while the watcher-driven enrichment is in flight,
+      // then the probe fails like a cancelled probe would.
+      scanner.cancelScan();
+      errorGate.complete();
+
+      // dispose() awaits the in-flight watcher drain before returning.
+      await scanner.dispose().timeout(const Duration(seconds: 10));
+
+      expect(
+        fallbackWrites,
+        isEmpty,
+        reason:
+            'the fallback write must be skipped for a batch invalidated by a '
+            'cancellation',
+      );
+      final row = await db.getMediaByCanonicalSource(aPath);
+      expect(row, isNotNull);
+      expect(
+        row!.metadata.artist,
+        'Rich Artist',
+        reason:
+            'cancelling must not null watcher-enriched metadata via the '
+            'fallback write',
+      );
+      expect(row.metadata.album, 'Rich Album');
+      expect(row.metadata.title, 'Rich Title');
     },
   );
 
