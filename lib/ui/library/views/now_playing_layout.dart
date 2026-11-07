@@ -3,10 +3,8 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../../core/app_theme.dart';
-import '../../core/components/seek_bar.dart';
 import '../../library/widgets/audio_volume_control.dart';
 import '../../player/widgets/player_control_style.dart';
-import '../../player/widgets/player_controls.dart';
 
 /// Sizing rules for the Now Playing stage.
 ///
@@ -47,6 +45,10 @@ class NowPlayingLayout {
   /// Spacer that balances the favorite button beside the title.
   static const double titleBalanceWidth = 48;
 
+  /// Gap between the transport row and the volume row. The volume control
+  /// always sits under the transport, so this is a fixed part of the column.
+  static const double transportVolumeGap = AppSpace.sm;
+
   /// Smallest the artwork may shrink on spacious viewports before the stage scrolls.
   static const double minArtworkSize = 140;
 
@@ -61,8 +63,35 @@ class NowPlayingLayout {
   /// Stage width below which the narrower artwork maximum applies.
   static const double narrowBreakpoint = 820;
 
-  /// Space kept between the transport row and the volume control.
-  static const double minControlGap = 16;
+  /// Viewport height below which the stage switches to its compact gaps.
+  static const double compactHeightBreakpoint = 640;
+
+  /// Vertical scroll padding of the stage column.
+  static double stageVerticalPadding({required bool isCompactHeight}) =>
+      isCompactHeight ? AppSpace.sm : AppSpace.md;
+
+  /// Gap between the top bar and the artwork.
+  static double gapAboveArtwork({required bool isCompactHeight}) =>
+      isCompactHeight ? AppSpace.xxs : AppSpace.xs;
+
+  /// Gap between the artwork and the title row.
+  static double gapBelowArtwork({required bool isCompactHeight}) =>
+      isCompactHeight ? AppSpace.xs : AppSpace.sm;
+
+  /// Gap between the title row and the artist line.
+  static double gapBelowTitle({required bool isCompactHeight}) => AppSpace.xxs;
+
+  /// Gap between the artist line and the album line.
+  static double gapBelowArtist({required bool isCompactHeight}) =>
+      isCompactHeight ? AppSpace.micro : AppSpace.xxs;
+
+  /// Gap between the album line and the transport block.
+  static double gapAboveTransport({required bool isCompactHeight}) =>
+      isCompactHeight ? AppSpace.sm : AppSpace.md;
+
+  /// Gap between the timeline and the transport row.
+  static double gapTimelineTransport({required bool isCompactHeight}) =>
+      isCompactHeight ? AppSpace.xxs : AppSpace.sm;
 
   /// Width of the stage's content column at [viewportWidth].
   ///
@@ -70,30 +99,6 @@ class NowPlayingLayout {
   /// top bar, the control band — shares the same center and edges.
   static double columnWidth(double viewportWidth) =>
       math.min(columnMaxWidth, viewportWidth - 2 * AppSpace.xl);
-
-  /// Whether the volume control can sit beside the transport on one row.
-  ///
-  /// The transport is centered in the column while the volume rides the
-  /// trailing edge, so the row only has room when the space left over after the
-  /// transport is at least the volume plus the timeline's inset. Narrower
-  /// stages drop the volume to its own row rather than crowding the transport.
-  static bool controlsShareRow({
-    required double viewportWidth,
-    required bool isCompactHeight,
-  }) {
-    final width = columnWidth(viewportWidth);
-    final gap =
-        (width - TransportButtons.preferredWidth(compact: isCompactHeight)) /
-            2 -
-        volumeControlWidth(compact: isCompactHeight) -
-        SeekBar.sideInset -
-        TransportButtons.playButtonCenterOffset(compact: isCompactHeight);
-    return gap >= minControlGap;
-  }
-
-  /// Width of the volume control in each presentation.
-  static double volumeControlWidth({required bool compact}) =>
-      AudioVolumeControl.preferredWidth(compact: compact, showPercent: true);
 
   /// Edge length for the artwork so the whole column fits the viewport.
   double artworkSize({
@@ -103,7 +108,7 @@ class NowPlayingLayout {
     required double iconButtonExtent,
     required TextScaler textScaler,
   }) {
-    final isCompactHeight = viewportHeight < 640;
+    final isCompactHeight = viewportHeight < compactHeightBreakpoint;
     final minSize = isCompactHeight ? minArtworkSizeCompact : minArtworkSize;
     final maximum = viewportWidth < narrowBreakpoint
         ? (isCompactHeight ? 200.0 : maxArtworkSizeNarrow)
@@ -125,6 +130,11 @@ class NowPlayingLayout {
   }
 
   /// Height of the column with the artwork excluded.
+  ///
+  /// Mirrors the rows the view actually builds: the fixed chrome rows, the
+  /// title/artist/album text rows, and the always-stacked control band
+  /// (timeline, transport, volume), so a change to the view's rows keeps the
+  /// artwork sizing honest.
   double contentHeight({
     required BuildContext context,
     required double viewportWidth,
@@ -132,14 +142,23 @@ class NowPlayingLayout {
     required double iconButtonExtent,
     required TextScaler textScaler,
   }) {
-    final isCompactHeight = viewportHeight != null && viewportHeight < 640;
-    final columnWidth =
-        math.min(columnMaxWidth, viewportWidth) - 2 * AppSpace.xl;
+    final isCompactHeight =
+        viewportHeight != null && viewportHeight < compactHeightBreakpoint;
+    final availableWidth = columnWidth(viewportWidth);
+    // The title row pads itself by one horizontal inset on each side, and the
+    // title text shares the row with the balance spacer, the inter-item gap,
+    // and the favorite button.
+    final titleMaxWidth =
+        availableWidth -
+        2 * AppSpace.md -
+        titleBalanceWidth -
+        AppSpace.xs -
+        iconButtonExtent;
     final titleHeight = _textHeight(
       isCompactHeight ? context.palette.albumTitle : context.palette.pageTitle,
       title,
       textScaler,
-      columnWidth - titleBalanceWidth - iconButtonExtent,
+      titleMaxWidth,
       maxLines: 2,
     );
     // The title row is as tall as its tallest member: the favorite button, or
@@ -148,70 +167,55 @@ class NowPlayingLayout {
     final titleRowHeight = math.max(iconButtonExtent, titleHeight);
     return _fixedRowsHeight(
           iconButtonExtent,
-          viewportWidth: viewportWidth,
           isCompactHeight: isCompactHeight,
         ) +
         titleRowHeight +
-        _textHeight(artistStyle(context), artist, textScaler, columnWidth) +
-        _textHeight(albumStyle(context), album, textScaler, columnWidth);
+        _textHeight(artistStyle(context), artist, textScaler, availableWidth) +
+        _textHeight(albumStyle(context), album, textScaler, availableWidth);
   }
 
   /// Height of the rows that never change with the text: the scroll padding,
-  /// the back/close row, the gaps, the timeline row and the transport row.
+  /// the back/close row, the gaps, the timeline row, and the transport and
+  /// volume rows stacked with the gap between them.
   static double _fixedRowsHeight(
     double iconButtonExtent, {
-    double? viewportWidth,
-    bool isCompactHeight = false,
+    required bool isCompactHeight,
   }) {
-    final verticalPadding = isCompactHeight ? 2 * AppSpace.sm : 2 * AppSpace.lg;
-    final gapAboveArtwork = isCompactHeight ? 8.0 : 12.0;
-    final gapBelowArtwork = isCompactHeight ? 14.0 : 28.0;
-    final gapBelowTitle = isCompactHeight ? 4.0 : 8.0;
-    final gapBelowArtist = isCompactHeight ? 2.0 : 4.0;
-    final gapAboveTransport = isCompactHeight ? 16.0 : AppSpace.xl;
-    final gapTimelineTransport = isCompactHeight ? 4.0 : AppSpace.sm;
+    final verticalPadding =
+        2 * stageVerticalPadding(isCompactHeight: isCompactHeight);
 
-    // The control band is as tall as its tallest member: the transport row, or
-    // the volume control, whose mute button stays the same size in both
-    // presentations.
-    final controlRow = math.max(
-      isCompactHeight
-          ? PlayerControlStyle.compactControlExtent
-          : PlayerControlStyle.controlExtent,
-      AudioVolumeControl.extent,
-    );
-
-    // Narrow stages stack the volume under the transport, which adds a second
-    // control row to the column.
-    final stackedVolume =
-        viewportWidth != null &&
-        !controlsShareRow(
-          viewportWidth: viewportWidth,
-          isCompactHeight: isCompactHeight,
-        );
+    // The control band always stacks: timeline, gap, transport, gap, volume.
+    final controlBand =
+        PlayerControlStyle.seekExtent +
+        gapTimelineTransport(isCompactHeight: isCompactHeight) +
+        (isCompactHeight
+            ? PlayerControlStyle.compactControlExtent
+            : PlayerControlStyle.controlExtent) +
+        transportVolumeGap +
+        AudioVolumeControl.extent;
 
     return verticalPadding +
         iconButtonExtent +
-        gapAboveArtwork +
-        gapBelowArtwork +
-        gapBelowTitle +
-        gapBelowArtist +
-        gapAboveTransport +
-        gapTimelineTransport +
-        PlayerControlStyle.seekExtent +
-        controlRow +
-        (stackedVolume ? AudioVolumeControl.extent + AppSpace.sm : 0);
+        gapAboveArtwork(isCompactHeight: isCompactHeight) +
+        gapBelowArtwork(isCompactHeight: isCompactHeight) +
+        gapBelowTitle(isCompactHeight: isCompactHeight) +
+        gapBelowArtist(isCompactHeight: isCompactHeight) +
+        gapAboveTransport(isCompactHeight: isCompactHeight) +
+        controlBand;
   }
 
+  /// Style of the artist line, mirroring the view's text row.
   static TextStyle artistStyle(BuildContext context) =>
       context.palette.sectionTitle.copyWith(
-        color: context.palette.secondaryText,
+        color: context.palette.primaryText.withValues(alpha: 0.82),
         fontWeight: FontWeight.w500,
       );
 
   /// Style of the album line, mirroring the view's text row.
-  static TextStyle albumStyle(BuildContext context) =>
-      context.palette.rowSecondary.copyWith(color: context.palette.mutedText);
+  static TextStyle albumStyle(BuildContext context) => context
+      .palette
+      .rowSecondary
+      .copyWith(color: context.palette.primaryText.withValues(alpha: 0.6));
 
   /// Measures a text row exactly as the [Text] widget will lay it out, so the
   /// artwork sizing accounts for the real rows instead of an estimate.

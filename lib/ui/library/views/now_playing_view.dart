@@ -17,6 +17,10 @@ import '../widgets/audio_volume_control.dart';
 import '../widgets/library_artwork.dart';
 import 'now_playing_layout.dart';
 
+/// Placeholder shown when a queue item has no known duration. A fabricated
+/// time would misrepresent the media, so the slot reads as unknown instead.
+const String _unknownDuration = '--:--';
+
 /// Now playing view featuring large artwork, track metadata, full transport
 /// controls, timeline scrubber, volume, favorite toggle, and queue access.
 class NowPlayingView extends StatefulWidget {
@@ -38,6 +42,16 @@ class NowPlayingView extends StatefulWidget {
 }
 
 class _NowPlayingViewState extends State<NowPlayingView> {
+  /// Minimum interactive edge for the top-bar controls. The theme already
+  /// enforces a 44px minimum, but pinning the constraints keeps the back,
+  /// queue, and close buttons at an exact 44×44 hit target.
+  static const BoxConstraints _hitTargetConstraints = BoxConstraints(
+    minWidth: 44,
+    minHeight: 44,
+    maxWidth: 44,
+    maxHeight: 44,
+  );
+
   Uint8List? _cachedArtwork;
   String? _cachedArtworkPath;
   String? _lastEntryTitle;
@@ -198,16 +212,18 @@ class _NowPlayingViewState extends State<NowPlayingView> {
         // remainder keeps the artwork from overshooting on shorter windows,
         // where it used to stay at its maximum and push the transport row
         // below the fold.
+        final isCompactHeight =
+            constraints.maxHeight < NowPlayingLayout.compactHeightBreakpoint;
+        // Unknown artist and album stay empty until real metadata arrives;
+        // inventing names would present fabricated information as fact.
         final artworkSize =
             NowPlayingLayout(
               title:
                   _currentMediaRecord?.title ??
                   entry?.title ??
                   'Nothing playing',
-              artist:
-                  _currentMediaRecord?.artist ??
-                  (entry == null ? '' : 'Celestial Soundscapes'),
-              album: _currentMediaRecord?.album ?? (entry == null ? '' : 'Cosmic Harmonies'),
+              artist: _currentMediaRecord?.artist ?? '',
+              album: _currentMediaRecord?.album ?? '',
             ).artworkSize(
               context: context,
               viewportWidth: constraints.maxWidth,
@@ -216,14 +232,9 @@ class _NowPlayingViewState extends State<NowPlayingView> {
               textScaler: MediaQuery.textScalerOf(context),
             );
 
-        final isCompactHeight = constraints.maxHeight < 640;
-        final verticalPadding = isCompactHeight ? AppSpace.sm : AppSpace.md;
-        final gapAboveArtwork = isCompactHeight ? 6.0 : 10.0;
-        final gapBelowArtwork = isCompactHeight ? 10.0 : 14.0;
-        final gapBelowTitle = isCompactHeight ? 3.0 : 6.0;
-        final gapBelowArtist = isCompactHeight ? 2.0 : 4.0;
-        final gapAboveTransport = isCompactHeight ? 12.0 : 18.0;
-        final gapTimelineTransport = isCompactHeight ? 6.0 : 12.0;
+        final verticalPadding = NowPlayingLayout.stageVerticalPadding(
+          isCompactHeight: isCompactHeight,
+        );
         final queue = widget.controller.queue;
         final showSideQueue = constraints.maxWidth >= 920 && queue.length > 1;
 
@@ -318,28 +329,27 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                                       ),
                                       tooltip: 'Back to library',
                                       color: context.palette.secondaryText,
+                                      constraints: _hitTargetConstraints,
+                                      padding: EdgeInsets.zero,
                                       onPressed: widget.onBack,
                                     )
                                   else
-                                    const SizedBox(width: 40),
+                                    const SizedBox(width: 44),
                                   const Spacer(),
-                                  if (widget.onOpenQueue != null && !showSideQueue)
-                                    Tooltip(
-                                      message: 'Open queue',
-                                      child: TextButton.icon(
-                                        icon: const Icon(
-                                          Icons.queue_music_rounded,
-                                          size: 18,
-                                        ),
-                                        label: const Text('Queue'),
-                                        style: TextButton.styleFrom(
-                                          foregroundColor:
-                                              context.palette.primaryText,
-                                        ),
-                                        onPressed: widget.onOpenQueue,
+                                  if (widget.onOpenQueue != null &&
+                                      !showSideQueue)
+                                    IconButton(
+                                      icon: const Icon(
+                                        Icons.queue_music_rounded,
+                                        size: 20,
                                       ),
+                                      tooltip: 'Open queue',
+                                      color: context.palette.primaryText,
+                                      constraints: _hitTargetConstraints,
+                                      padding: EdgeInsets.zero,
+                                      onPressed: widget.onOpenQueue,
                                     ),
-                                  const SizedBox(width: 4),
+                                  const SizedBox(width: AppSpace.xxs),
                                   IconButton(
                                     icon: const Icon(
                                       Icons.close_rounded,
@@ -347,25 +357,39 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                                     ),
                                     tooltip: 'Close player',
                                     color: context.palette.secondaryText,
+                                    constraints: _hitTargetConstraints,
+                                    padding: EdgeInsets.zero,
                                     onPressed: _closePlayer,
                                   ),
                                 ],
                               ),
-                              SizedBox(height: gapAboveArtwork),
+                              SizedBox(
+                                height: NowPlayingLayout.gapAboveArtwork(
+                                  isCompactHeight: isCompactHeight,
+                                ),
+                              ),
                               // Large square artwork
                               AudioVolumeWheel(
                                 controller: widget.controller,
                                 child: _buildArtwork(context, artworkSize),
                               ),
-                              SizedBox(height: gapBelowArtwork),
+                              SizedBox(
+                                height: NowPlayingLayout.gapBelowArtwork(
+                                  isCompactHeight: isCompactHeight,
+                                ),
+                              ),
                               // Title & Favorite row
                               Padding(
-                                padding: const EdgeInsets.symmetric(horizontal: 16),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: AppSpace.md,
+                                ),
                                 child: Row(
                                   mainAxisAlignment: MainAxisAlignment.center,
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    const SizedBox(width: 48),
+                                    const SizedBox(
+                                      width: NowPlayingLayout.titleBalanceWidth,
+                                    ),
                                     Flexible(
                                       child: Text(
                                         _currentMediaRecord?.title ??
@@ -379,10 +403,11 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                                         overflow: TextOverflow.ellipsis,
                                       ),
                                     ),
-                                    const SizedBox(width: 8),
+                                    const SizedBox(width: AppSpace.xs),
                                     IconButton(
                                       icon: Icon(
-                                        (_currentMediaRecord?.isFavorite ?? false)
+                                        (_currentMediaRecord?.isFavorite ??
+                                                false)
                                             ? Icons.favorite_rounded
                                             : Icons.favorite_border_rounded,
                                         size: 22,
@@ -392,7 +417,8 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                                             ? Theme.of(
                                                 context,
                                               ).colorScheme.primary
-                                            : context.palette.primaryText.withValues(alpha: 0.6),
+                                            : context.palette.primaryText
+                                                  .withValues(alpha: 0.6),
                                       ),
                                       tooltip:
                                           (_currentMediaRecord?.isFavorite ??
@@ -406,31 +432,37 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                                   ],
                                 ),
                               ),
-                              SizedBox(height: gapBelowTitle),
+                              SizedBox(
+                                height: NowPlayingLayout.gapBelowTitle(
+                                  isCompactHeight: isCompactHeight,
+                                ),
+                              ),
                               // Artist
                               Text(
-                                _currentMediaRecord?.artist ??
-                                    (entry == null ? '' : 'Celestial Soundscapes'),
-                                style: context.palette.sectionTitle.copyWith(
-                                  color: context.palette.primaryText.withValues(alpha: 0.82),
-                                  fontWeight: FontWeight.w500,
-                                ),
+                                _currentMediaRecord?.artist ?? '',
+                                style: NowPlayingLayout.artistStyle(context),
                                 textAlign: TextAlign.center,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                               ),
-                              SizedBox(height: gapBelowArtist),
+                              SizedBox(
+                                height: NowPlayingLayout.gapBelowArtist(
+                                  isCompactHeight: isCompactHeight,
+                                ),
+                              ),
                               // Album
                               Text(
-                                _currentMediaRecord?.album ?? (entry == null ? '' : 'Cosmic Harmonies'),
-                                style: context.palette.rowSecondary.copyWith(
-                                  color: context.palette.primaryText.withValues(alpha: 0.6),
-                                ),
+                                _currentMediaRecord?.album ?? '',
+                                style: NowPlayingLayout.albumStyle(context),
                                 textAlign: TextAlign.center,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                               ),
-                              SizedBox(height: gapAboveTransport),
+                              SizedBox(
+                                height: NowPlayingLayout.gapAboveTransport(
+                                  isCompactHeight: isCompactHeight,
+                                ),
+                              ),
                               // Transport, timeline and volume, so this screen
                               // can drive playback on its own.
                               AudioVolumeWheel(
@@ -440,7 +472,12 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                                   child: Column(
                                     children: [
                                       SeekBar(controller: widget.controller),
-                                      SizedBox(height: gapTimelineTransport),
+                                      SizedBox(
+                                        height:
+                                            NowPlayingLayout.gapTimelineTransport(
+                                              isCompactHeight: isCompactHeight,
+                                            ),
+                                      ),
                                       _buildControls(isCompactHeight),
                                     ],
                                   ),
@@ -453,10 +490,7 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                     ),
                   ),
                   if (showSideQueue) ...[
-                    VerticalDivider(
-                      width: 1,
-                      color: context.palette.border,
-                    ),
+                    VerticalDivider(width: 1, color: context.palette.border),
                     SizedBox(
                       width: 320,
                       child: _NowPlayingQueuePanel(
@@ -486,7 +520,7 @@ class _NowPlayingViewState extends State<NowPlayingView> {
             showShuffleRepeat: true,
           ),
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: NowPlayingLayout.transportVolumeGap),
         Center(
           child: AudioVolumeControl(
             controller: widget.controller,
@@ -516,10 +550,7 @@ class _NowPlayingViewState extends State<NowPlayingView> {
           stops: const [0.0, 0.6, 1.0],
         ),
         borderRadius: BorderRadius.circular(AppRadii.artworkHero),
-        border: Border.all(
-          color: primary.withValues(alpha: 0.38),
-          width: 1.5,
-        ),
+        border: Border.all(color: primary.withValues(alpha: 0.38), width: 1.5),
         boxShadow: [
           BoxShadow(
             color: primary.withValues(alpha: 0.35),
@@ -577,10 +608,7 @@ class _NowPlayingViewState extends State<NowPlayingView> {
         gradient: RadialGradient(
           center: Alignment.center,
           radius: 0.95,
-          colors: [
-            primary.withValues(alpha: 0.25),
-            card,
-          ],
+          colors: [primary.withValues(alpha: 0.25), card],
         ),
       ),
       child: Center(
@@ -621,11 +649,7 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                 ),
               ),
               child: Center(
-                child: Icon(
-                  Icons.music_note_rounded,
-                  size: 42,
-                  color: primary,
-                ),
+                child: Icon(Icons.music_note_rounded, size: 42, color: primary),
               ),
             ),
           ],
@@ -732,7 +756,11 @@ class _NowPlayingQueuePanel extends StatelessWidget {
                   itemBuilder: (context, index) {
                     final item = queue[index];
                     final isCurrent = item.id == current?.id;
-                    final durationText = item.duration > Duration.zero ? formatTime(item.duration, compactMinutes: true) : formatTime(Duration(seconds: 195 + (item.title.hashCode.abs() % 75)), compactMinutes: true);
+                    // An unknown duration must read as unknown, never as an
+                    // invented time.
+                    final durationText = item.duration > Duration.zero
+                        ? formatTime(item.duration, compactMinutes: true)
+                        : _unknownDuration;
                     return Material(
                       color: isCurrent
                           ? primary.withValues(alpha: 0.14)
@@ -774,16 +802,16 @@ class _NowPlayingQueuePanel extends StatelessWidget {
                                   item.title,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .bodyMedium
+                                  style: Theme.of(context).textTheme.bodyMedium
                                       ?.copyWith(
                                         fontWeight: isCurrent
                                             ? FontWeight.w600
                                             : FontWeight.w400,
                                         color: isCurrent
                                             ? palette.primaryText
-                                            : palette.primaryText.withValues(alpha: 0.82),
+                                            : palette.primaryText.withValues(
+                                                alpha: 0.82,
+                                              ),
                                       ),
                                 ),
                               ),
@@ -813,7 +841,10 @@ class _NowPlayingQueuePanel extends StatelessWidget {
                 ),
               ),
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
