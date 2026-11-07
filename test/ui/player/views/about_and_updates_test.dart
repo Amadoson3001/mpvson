@@ -25,33 +25,34 @@ void main() {
     home: Scaffold(body: Center(child: child)),
   );
 
-  testWidgets('AboutSettingsSection renders brand header and status cards cleanly', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(1280, 800);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(() => tester.view.resetPhysicalSize());
+  testWidgets(
+    'AboutSettingsSection renders brand header and status cards cleanly',
+    (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() => tester.view.resetPhysicalSize());
 
-    await tester.pumpWidget(
-      buildTestWidget(
-        AboutSettingsSection(
-          updates: updates,
-          engineUpdates: engineUpdates,
-          engineVersion: 'v0.42.0-dev',
+      await tester.pumpWidget(
+        buildTestWidget(
+          AboutSettingsSection(
+            updates: updates,
+            engineUpdates: engineUpdates,
+            engineVersion: 'v0.42.0-dev',
+          ),
         ),
-      ),
-    );
-    await tester.pumpAndSettle();
+      );
+      await tester.pumpAndSettle();
 
-    expect(find.text('Mpvson'), findsOneWidget);
-    expect(find.text('v1.2.0'), findsOneWidget);
-    expect(find.text('Update center'), findsOneWidget);
-    expect(find.text('Application updates'), findsOneWidget);
-    expect(find.text('Playback engine'), findsOneWidget);
-    expect(find.text('libmpv v0.42.0-dev'), findsOneWidget);
-    expect(find.text('Rendering pipeline'), findsOneWidget);
-    expect(find.text('Open source & license'), findsOneWidget);
-  });
+      expect(find.text('Mpvson'), findsOneWidget);
+      expect(find.text('v1.2.0'), findsOneWidget);
+      expect(find.text('Update center'), findsOneWidget);
+      expect(find.text('Application updates'), findsOneWidget);
+      expect(find.text('Playback engine'), findsOneWidget);
+      expect(find.text('libmpv v0.42.0-dev'), findsOneWidget);
+      expect(find.text('Rendering pipeline'), findsOneWidget);
+      expect(find.text('Open source & license'), findsOneWidget);
+    },
+  );
 
   testWidgets('AboutSettingsSection opens UpdateCenterDialog on tap', (
     tester,
@@ -86,66 +87,72 @@ void main() {
     expect(find.text('Application'), findsOneWidget);
   });
 
-  testWidgets('Status tiles are informational and do not open UpdateCenterDialog', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(1280, 800);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(() => tester.view.resetPhysicalSize());
+  testWidgets(
+    'Status tiles are informational and do not open UpdateCenterDialog',
+    (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() => tester.view.resetPhysicalSize());
 
-    await tester.pumpWidget(
-      buildTestWidget(
-        AboutSettingsSection(
-          updates: updates,
-          engineUpdates: engineUpdates,
-          engineVersion: 'v0.42.0',
+      await tester.pumpWidget(
+        buildTestWidget(
+          AboutSettingsSection(
+            updates: updates,
+            engineUpdates: engineUpdates,
+            engineVersion: 'v0.42.0',
+          ),
         ),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    for (final tile in ['Application updates', 'Playback engine', 'Engine channel & distribution']) {
-      await tester.tap(find.text(tile), warnIfMissed: false);
+      );
       await tester.pumpAndSettle();
-    }
 
-    expect(find.byType(UpdateCenterDialog), findsNothing);
-  });
+      for (final tile in [
+        'Application updates',
+        'Playback engine',
+        'Engine channel & distribution',
+      ]) {
+        await tester.tap(find.text(tile), warnIfMissed: false);
+        await tester.pumpAndSettle();
+      }
 
-  testWidgets('UpdateCenterDialog renders without overflows at standard dialog size', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(800, 700);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(() => tester.view.resetPhysicalSize());
+      expect(find.byType(UpdateCenterDialog), findsNothing);
+    },
+  );
 
-    await tester.pumpWidget(
-      buildTestWidget(
-        UpdateCenterDialog(
-          updates: updates,
-          engineUpdates: engineUpdates,
-          engineVersion: 'v0.42.0-dev-g3138fc8ee',
+  testWidgets(
+    'UpdateCenterDialog renders without overflows at standard dialog size',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 700);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() => tester.view.resetPhysicalSize());
+
+      await tester.pumpWidget(
+        buildTestWidget(
+          UpdateCenterDialog(
+            updates: updates,
+            engineUpdates: engineUpdates,
+            engineVersion: 'v0.42.0-dev-g3138fc8ee',
+          ),
         ),
-      ),
-    );
-    await tester.pumpAndSettle();
+      );
+      await tester.pumpAndSettle();
 
-    expect(find.byType(UpdateCenterDialog), findsOneWidget);
-    expect(find.text('Updates & about'), findsOneWidget);
-    expect(find.text('Update channel'), findsOneWidget);
-    expect(find.text('Check engine updates'), findsOneWidget);
-    expect(find.text('Check for updates'), findsOneWidget);
-    expect(find.text('Close'), findsOneWidget);
-  });
+      expect(find.byType(UpdateCenterDialog), findsOneWidget);
+      expect(find.text('Updates & about'), findsOneWidget);
+      expect(find.text('Update channel'), findsOneWidget);
+      expect(find.text('Check engine updates'), findsOneWidget);
+      expect(find.text('Check for updates'), findsOneWidget);
+      expect(find.text('Close'), findsOneWidget);
+    },
+  );
 
-  testWidgets('Release highlights parses clean bullets and avoids wall of text', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(800, 700);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(() => tester.view.resetPhysicalSize());
+  testWidgets(
+    'Release highlights parses clean bullets and avoids wall of text',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 700);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() => tester.view.resetPhysicalSize());
 
-    const longAssNotes = '''
+      const longAssNotes = '''
 # mpv v0.39.0 Release Notes
 ============================
 Automated Windows build artifacts generated from commit abc1234.
@@ -162,38 +169,71 @@ Full changelog: https://github.com/mpv-player/mpv/releases/tag/v0.39.0
 Build commit: 849a37bc89d201e74a
 ''';
 
+      await tester.pumpWidget(
+        buildTestWidget(
+          const Column(children: [_TestNotesHost(notes: longAssNotes)]),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Verify highlights are displayed concisely
+      expect(find.text('Highlights'), findsOneWidget);
+      expect(find.text('View full notes'), findsOneWidget);
+
+      // Only clean highlight lines are rendered, not the header or URLs
+      expect(
+        find.textContaining('Added support for new Vulkan presentation modes'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('# mpv v0.39.0 Release Notes'), findsNothing);
+      expect(find.textContaining('Full changelog: https://'), findsNothing);
+
+      // Tap to expand
+      await tester.tap(find.text('View full notes'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Show less'), findsOneWidget);
+      expect(
+        find.textContaining('Automated Windows build artifacts'),
+        findsOneWidget,
+      );
+
+      // Tap to collapse
+      await tester.tap(find.text('Show less'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('View full notes'), findsOneWidget);
+    },
+  );
+
+  testWidgets('Release notes containing only a link do not crash the preview', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 700);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(() => tester.view.resetPhysicalSize());
+
+    // Every line of these notes is filtered out (links / rules), so the
+    // internal `lines` list is empty. This used to crash on `lines.first`.
+    const linkOnlyNotes = '''
+https://github.com/mpvson/mpvson/releases/tag/v1.3.0
+---
+
+''';
+
     await tester.pumpWidget(
       buildTestWidget(
-        const Column(
-          children: [
-            _TestNotesHost(notes: longAssNotes),
-          ],
-        ),
+        const Column(children: [_TestNotesHost(notes: linkOnlyNotes)]),
       ),
     );
     await tester.pumpAndSettle();
 
-    // Verify highlights are displayed concisely
     expect(find.text('Highlights'), findsOneWidget);
-    expect(find.text('View full notes'), findsOneWidget);
-
-    // Only clean highlight lines are rendered, not the header or URLs
-    expect(find.textContaining('Added support for new Vulkan presentation modes'), findsOneWidget);
-    expect(find.textContaining('# mpv v0.39.0 Release Notes'), findsNothing);
-    expect(find.textContaining('Full changelog: https://'), findsNothing);
-
-    // Tap to expand
-    await tester.tap(find.text('View full notes'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Show less'), findsOneWidget);
-    expect(find.textContaining('Automated Windows build artifacts'), findsOneWidget);
-
-    // Tap to collapse
-    await tester.tap(find.text('Show less'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('View full notes'), findsOneWidget);
+    // The raw notes are surfaced as the fallback highlight line.
+    expect(
+      find.textContaining('https://github.com/mpvson/mpvson/releases'),
+      findsOneWidget,
+    );
   });
 }
 
@@ -206,4 +246,3 @@ class _TestNotesHost extends StatelessWidget {
     return ReleaseNotesPreview(notes: notes);
   }
 }
-
