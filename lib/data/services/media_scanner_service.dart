@@ -10,6 +10,7 @@ import 'package:watcher/watcher.dart';
 
 import '../../domain/models/library_models.dart';
 import '../../domain/models/media_catalog.dart';
+import '../../domain/models/media_entry.dart';
 import '../repositories/database/library_database.dart';
 import 'media_probe_service.dart';
 
@@ -197,9 +198,12 @@ class MediaScannerService {
   }
 
   /// Registers a folder to be scanned and watched.
+  ///
+  /// The registration key is the canonical source path so `C:\Music` and
+  /// `c:\music` share one watcher and one scan root.
   void registerFolder(String path) {
     if (_isDisposed) return;
-    final norm = _pathContext.normalize(_pathContext.absolute(path));
+    final norm = MediaEntry.canonicalSource(path);
     if (_explicitFolders.add(norm)) {
       _startWatching(norm);
     }
@@ -208,7 +212,7 @@ class MediaScannerService {
   /// Unregisters a folder, stopping its watcher and removing it from registered folders.
   void unregisterFolder(String path) {
     if (_isDisposed) return;
-    final norm = _pathContext.normalize(_pathContext.absolute(path));
+    final norm = MediaEntry.canonicalSource(path);
     _explicitFolders.remove(norm);
     _stopWatching(norm);
     _knownDirectories.remove(norm);
@@ -218,7 +222,7 @@ class MediaScannerService {
   /// Scans a specific folder.
   Future<void> scanFolder(String folderPath) async {
     if (_isDisposed) return;
-    final norm = _pathContext.normalize(_pathContext.absolute(folderPath));
+    final norm = MediaEntry.canonicalSource(folderPath);
     registerFolder(norm);
     await _runScanRoots(<String>[norm]);
   }
@@ -586,7 +590,7 @@ class MediaScannerService {
   // ---------------------------------------------------------------------------
 
   void _startWatching(String folderPath) {
-    final norm = _pathContext.normalize(_pathContext.absolute(folderPath));
+    final norm = MediaEntry.canonicalSource(folderPath);
     if (_watchers.containsKey(norm)) return;
 
     try {
@@ -651,7 +655,7 @@ class MediaScannerService {
   }
 
   void _stopWatching(String folderPath) {
-    final norm = _pathContext.normalize(_pathContext.absolute(folderPath));
+    final norm = MediaEntry.canonicalSource(folderPath);
     _debounceTimers[norm]?.cancel();
     _debounceTimers.remove(norm);
     _pendingEvents.remove(norm);

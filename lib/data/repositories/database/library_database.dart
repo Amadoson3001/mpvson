@@ -973,6 +973,16 @@ void _initializeSchema(Database db) {
   }
 }
 
+/// Canonical key for folder rows so `C:\Music` and `c:\music` share one record.
+///
+/// [MediaEntry.canonicalSource] lowercases paths on Windows and keeps the
+/// original casing on POSIX, matching the media table's canonical_source keys.
+String _canonicalFolderKey(String path) => MediaEntry.canonicalSource(path);
+
+/// Canonical identity for a media source, applied at every write/lookup so the
+/// UNIQUE(canonical_source) constraint dedupes case-variant duplicates.
+String _canonicalMediaKey(String source) => MediaEntry.canonicalSource(source);
+
 Object? _dispatchAction(Database db, String action, Object? params) {
   switch (action) {
     case 'optimize':
@@ -1010,7 +1020,7 @@ Object? _dispatchAction(Database db, String action, Object? params) {
           file_count = excluded.file_count
         ''',
         [
-          f['path'],
+          _canonicalFolderKey(f['path'] as String),
           f['added_at'],
           f['last_scanned_at'],
           (f['is_available'] as bool? ?? true) ? 1 : 0,
@@ -1035,13 +1045,13 @@ Object? _dispatchAction(Database db, String action, Object? params) {
           f['last_scanned_at'],
           (f['is_available'] as bool? ?? true) ? 1 : 0,
           f['file_count'] ?? 0,
-          f['path'],
+          _canonicalFolderKey(f['path'] as String),
         ],
       );
       return null;
 
     case 'deleteFolder':
-      final path = params as String;
+      final path = _canonicalFolderKey(params as String);
       db.execute('BEGIN TRANSACTION');
       try {
         db.execute('DELETE FROM folders WHERE path = ?', [path]);
@@ -1054,7 +1064,7 @@ Object? _dispatchAction(Database db, String action, Object? params) {
       return null;
 
     case 'getFolder':
-      final path = params as String;
+      final path = _canonicalFolderKey(params as String);
       final rows = db.select('SELECT * FROM folders WHERE path = ?', [path]);
       if (rows.isEmpty) return null;
       return Map<String, Object?>.from(rows.first);
@@ -1065,7 +1075,7 @@ Object? _dispatchAction(Database db, String action, Object? params) {
 
     case 'markFolderAvailability':
       final map = (params as Map).cast<String, Object?>();
-      final folderPath = map['folderPath'] as String;
+      final folderPath = _canonicalFolderKey(map['folderPath'] as String);
       final isAvailable = map['isAvailable'] as bool;
       final availInt = isAvailable ? 1 : 0;
 
@@ -1101,7 +1111,7 @@ Object? _dispatchAction(Database db, String action, Object? params) {
       return null;
 
     case 'refreshFolderFileCount':
-      final folderPath = params as String;
+      final folderPath = _canonicalFolderKey(params as String);
       final root = MediaEntry.canonicalSource(folderPath);
       final rootSlash = root.replaceAll(r'\', '/');
       final rootBackslash = root.replaceAll('/', r'\');
@@ -1138,7 +1148,7 @@ Object? _dispatchAction(Database db, String action, Object? params) {
 
     case 'updateFolderScanStats':
       final map = (params as Map).cast<String, Object?>();
-      final path = map['path'] as String;
+      final path = _canonicalFolderKey(map['path'] as String);
       final fileCount = map['fileCount'] as int?;
       final lastScannedAt = map['lastScannedAt'] as int?;
 
@@ -1646,7 +1656,7 @@ void _executeInsertMediaRowStmt(
 ) {
   stmt.execute([
     m['id'],
-    m['canonical_source'],
+    _canonicalMediaKey(m['canonical_source'] as String),
     m['path'],
     m['kind'] ?? 'unknown',
     m['title'],
@@ -1718,7 +1728,7 @@ void _insertOrUpdateMediaRow(Database db, Map<String, Object?> m) {
     ''',
     [
       m['id'],
-      m['canonical_source'],
+      _canonicalMediaKey(m['canonical_source'] as String),
       m['path'],
       m['kind'] ?? 'unknown',
       m['title'],
