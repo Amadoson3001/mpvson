@@ -102,9 +102,10 @@ class EngineInstallationRepository {
   /// must stay creatable by every contender and must keep existing between
   /// operations — deleting it on release would pair a new file with waiters
   /// still locked on the unlinked one. Exclusivity is provided exclusively by
-  /// [RandomAccessFile.lock]; the mode only has to yield a writable handle.
+  /// [RandomAccessFile.lock]; FileMode.append yields a writable handle while
+  /// avoiding O_TRUNC on open prior to lock acquisition.
   Future<RandomAccessFile> _openLockMarker(File file) {
-    return file.open(mode: FileMode.write);
+    return file.open(mode: FileMode.append);
   }
 
   Future<T> _withStoreLock<T>(Future<T> Function() action) async {

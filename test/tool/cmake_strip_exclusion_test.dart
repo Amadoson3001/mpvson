@@ -17,6 +17,8 @@ const List<String> signedDlls = <String>[
   'flutter_windows.dll',
   'd3dcompiler_47.dll',
   'vulkan-1.dll',
+  'libEGL.dll',
+  'libGLESv2.dll',
 ];
 
 /// DLLs a Release bundle contains after the CMake install step.
@@ -106,7 +108,7 @@ void main() {
         signed,
       );
       expect(stripped, contains('libmpv-2.dll'));
-      expect(stripped, contains('libEGL.dll'));
+      expect(stripped, contains('zlib.dll'));
       expect(stripped, contains('media_kit_native_event_loop.dll'));
     });
 

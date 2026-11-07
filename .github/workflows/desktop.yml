@@ -66,7 +66,7 @@ jobs:
           # llvm-strip rewrites the binary and invalidates Authenticode
           # signatures, so signed DLLs ship untouched (mirrors the skip list
           # in windows/CMakeLists.txt). -notcontains is case-insensitive.
-          $signedDlls = @('flutter_windows.dll', 'd3dcompiler_47.dll', 'vulkan-1.dll')
+          $signedDlls = @('flutter_windows.dll', 'd3dcompiler_47.dll', 'vulkan-1.dll', 'libEGL.dll', 'libGLESv2.dll')
           $stripDlls = Get-ChildItem build/windows/x64/runner/Release/*.dll -ErrorAction SilentlyContinue |
             Where-Object { $signedDlls -notcontains $_.Name }
           foreach ($dll in $stripDlls) {

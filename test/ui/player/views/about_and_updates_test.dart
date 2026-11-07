@@ -235,6 +235,31 @@ https://github.com/mpvson/mpvson/releases/tag/v1.3.0
       findsOneWidget,
     );
   });
+
+  testWidgets(
+    'P0-5: Release notes containing markdown link-only notes render cleanly',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 700);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() => tester.view.resetPhysicalSize());
+
+      const markdownLinkNotes = '''
+[Full Changelog](https://github.com/mpvson/mpvson/compare/v1.2.0...v1.3.0)
+---
+''';
+
+      await tester.pumpWidget(
+        buildTestWidget(
+          const Column(children: [_TestNotesHost(notes: markdownLinkNotes)]),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Highlights'), findsOneWidget);
+      // Strips markdown link syntax to display the link text as highlight.
+      expect(find.textContaining('Full Changelog'), findsOneWidget);
+    },
+  );
 }
 
 class _TestNotesHost extends StatelessWidget {

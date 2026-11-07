@@ -304,15 +304,16 @@ install(FILES "${AOT_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"
 
 # Strip symbols from bundled DLLs (e.g. libmpv-2.dll) to accelerate launch and minimize bundle size.
 # DLLs that carry an Authenticode signature (flutter_windows.dll from the
-# Flutter SDK and the ANGLE companions d3dcompiler_47.dll and vulkan-1.dll from
-# media_kit_libs_windows_video) are skipped: llvm-strip rewrites the binary and
-# invalidates its signature, so these files ship untouched and the coordinator's
-# release check (Get-AuthenticodeSignature) keeps reporting Valid.
-set(MPVSON_SIGNED_DLLS flutter_windows.dll d3dcompiler_47.dll vulkan-1.dll)
+# Flutter SDK and the ANGLE companions d3dcompiler_47.dll, vulkan-1.dll, libEGL.dll,
+# and libGLESv2.dll from media_kit_libs_windows_video) are skipped: llvm-strip rewrites
+# the binary and invalidates its signature, so these files ship untouched and the
+# coordinator's release check (Get-AuthenticodeSignature) keeps reporting Valid.
+set(MPVSON_SIGNED_DLLS flutter_windows.dll d3dcompiler_47.dll vulkan-1.dll libEGL.dll libGLESv2.dll)
 find_program(LLVM_STRIP_TOOL NAMES llvm-strip strip PATHS "C:/Program Files/LLVM/bin")
 if(LLVM_STRIP_TOOL)
   install(CODE "
     set(_mpvson_signed_dlls \"${MPVSON_SIGNED_DLLS}\")
+    string(TOLOWER \"\${_mpvson_signed_dlls}\" _mpvson_signed_dlls)
     file(GLOB _bundled_dlls \"\${CMAKE_INSTALL_PREFIX}/*.dll\")
     foreach(_dll IN LISTS _bundled_dlls)
       get_filename_component(_dll_name \"\${_dll}\" NAME)
