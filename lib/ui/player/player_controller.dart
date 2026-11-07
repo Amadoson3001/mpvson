@@ -1866,13 +1866,15 @@ class PlayerController extends ChangeNotifier {
       clearNativeSource: true,
       sourceLoaded: false,
     );
-    final stopping = _playback.stop();
+    final stopping = _ignorePlaybackFailure(_playback.stop);
     _seekPreview.setSource(null);
     _publishTransport();
     _notifyIfOpen();
     _scheduleSave();
     await stopping;
-    trimMemory();
+    // The engine may have been released while the stop drained; touching the
+    // thumbnail caches afterwards would use torn-down services.
+    if (_acceptsCommands) trimMemory();
   }
 
   /// Stops playback and dismisses the now-playing item.
@@ -3270,7 +3272,7 @@ class PlayerController extends ChangeNotifier {
     final removed = _recent.removeAt(index);
     _unmodifiableRecent = List<MediaEntry>.unmodifiable(_recent);
     _scheduleSave();
-    notifyListeners();
+    _notifyIfOpen();
     return (index, removed);
   }
 
@@ -3289,7 +3291,7 @@ class PlayerController extends ChangeNotifier {
     final removed = _recent.removeAt(index);
     _unmodifiableRecent = List<MediaEntry>.unmodifiable(_recent);
     _scheduleSave();
-    notifyListeners();
+    _notifyIfOpen();
     return (index, removed);
   }
 
@@ -3306,7 +3308,7 @@ class PlayerController extends ChangeNotifier {
     }
     _unmodifiableRecent = List<MediaEntry>.unmodifiable(_recent);
     _scheduleSave();
-    notifyListeners();
+    _notifyIfOpen();
   }
 
   /// Clears all entries from the recently played history.
@@ -3316,7 +3318,7 @@ class PlayerController extends ChangeNotifier {
     _recent.clear();
     _unmodifiableRecent = const <MediaEntry>[];
     _scheduleSave();
-    notifyListeners();
+    _notifyIfOpen();
     return cleared;
   }
 
@@ -3328,7 +3330,7 @@ class PlayerController extends ChangeNotifier {
       ..addAll(_canonicalizeRecent(entries));
     _unmodifiableRecent = List<MediaEntry>.unmodifiable(_recent);
     _scheduleSave();
-    notifyListeners();
+    _notifyIfOpen();
   }
 
   List<MediaEntry> _canonicalizeRecent(List<MediaEntry> entries) {
@@ -3569,6 +3571,12 @@ class PlayerController extends ChangeNotifier {
   bool get _isClosed => _closingState == ControllerClosingState.closed;
 
   Future<void> _cancelAndDisposePlayback() async {
+    try {
+      await _thumbnails?.dispose();
+    } on Object {
+      // The native thumbnail extractor must still be released even if its
+      // teardown reports a problem; playback disposal continues below.
+    }
     try {
       await _seekPreview.dispose();
     } on Object {

@@ -192,7 +192,8 @@ class EngineUpdateService extends ChangeNotifier {
   bool _disposed = false;
   bool _initialized = false;
   bool _initializing = false;
-  bool _failedDuringDownload = false;
+  String? _failureKind;
+  String _failurePhase = 'check';
   EngineUpdateChannel _channel = EngineUpdateChannel.stable;
   String? _stableReleaseVersion;
 
@@ -215,9 +216,14 @@ class EngineUpdateService extends ChangeNotifier {
   double get progress => _progress;
   String? get error => _error;
 
+  /// What the updater was doing when the current 'error' state was recorded:
+  /// 'check', 'download', or 'apply' (staging the package into the store).
+  String? get failureKind => _failureKind;
+
   /// True when the current 'error' state came from a failed download or
   /// staging run rather than a failed update check.
-  bool get failedDuringDownload => _failedDuringDownload;
+  bool get failedDuringDownload =>
+      _failureKind == 'download' || _failureKind == 'apply';
 
   /// Explains why a partial custom engine feed was ignored and the official
   /// source kept, or null when nothing needs explaining.
@@ -373,6 +379,7 @@ class EngineUpdateService extends ChangeNotifier {
 
     _busy = true;
     _stableReleaseVersion = null;
+    _failurePhase = 'check';
     final abort = Completer<void>();
     _activeRequests.add(abort);
     _setState(status: 'checking', progress: 0, error: null, clearRelease: true);
@@ -515,10 +522,14 @@ class EngineUpdateService extends ChangeNotifier {
       _setState(status: 'systemManaged', progress: 0, error: null);
       return;
     }
+    // A failed download or staging run keeps the selected release, so a
+    // retry can pick it straight back up without a fresh check.
     final selectedRelease = _release;
-    if (selectedRelease == null || _status != 'available') return;
+    if (selectedRelease == null) return;
+    if (_status != 'available' && _status != 'error') return;
 
     _busy = true;
+    _failurePhase = 'download';
     final abort = Completer<void>();
     _activeRequests.add(abort);
     Directory? temporaryDirectory;
@@ -538,6 +549,7 @@ class EngineUpdateService extends ChangeNotifier {
       );
       if (_disposed) return;
 
+      _failurePhase = 'apply';
       _setState(status: 'staging', progress: 1, error: null);
       if (_disposed) return;
       await _repository.stagePackage(
@@ -1307,7 +1319,7 @@ class EngineUpdateService extends ChangeNotifier {
         ? null
         : error.toString();
     if (message == null) return;
-    _failedDuringDownload = _status == 'downloading' || _status == 'staging';
+    _failureKind = _failurePhase;
     _setState(status: 'error', progress: 0, error: message);
   }
 

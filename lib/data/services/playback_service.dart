@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
@@ -254,6 +255,11 @@ class MediaKitPlaybackService
     VideoController? videoController,
     NativeMediaEvents? nativeEvents,
     DiagnosticSink? diagnostics,
+    @visibleForTesting
+    Future<void> Function(String property, String value)?
+    propertyWriterForTesting,
+    @visibleForTesting
+    Future<String?> Function(String property)? propertyReaderForTesting,
   }) : _player =
            player ??
            Player(
@@ -269,6 +275,10 @@ class MediaKitPlaybackService
     // name stays `diagnostics`; named parameters cannot be private.
     _diagnostics = diagnostics;
     _videoController = videoController;
+    _propertyWriter = propertyWriterForTesting ?? _writeNativeProperty;
+    _propertyReader = propertyReaderForTesting ?? _readNativeProperty;
+    _hasRuntimePropertyBridge =
+        propertyWriterForTesting != null || _player.platform is NativePlayer;
     _state = _snapshotFrom(
       _player.state,
     ).copyWith(sourceStart: 0, clearNativeSource: true);
@@ -350,6 +360,22 @@ class MediaKitPlaybackService
   final bool _ownsNativeEvents;
   DiagnosticSink? _diagnostics;
   VideoController? _videoController;
+
+  /// Runtime mpv property bridge.
+  ///
+  /// Production resolves writes and reads against the native engine handle;
+  /// engines without mpv properties (and tests without libmpv) route through
+  /// the same seam so the suspension and hwdec confirmation logic behaves
+  /// identically everywhere.
+  late final Future<void> Function(String property, String value)
+  _propertyWriter;
+  late final Future<String?> Function(String property) _propertyReader;
+
+  /// Whether property writes can reach an engine at all. Engines without mpv
+  /// properties skip the runtime confirmation paths instead of reporting
+  /// mismatches against writes that were never delivered.
+  late final bool _hasRuntimePropertyBridge;
+
   bool _preferHardwareDecoding = true;
   VideoMemoryMode _videoMemoryMode = VideoMemoryMode.zeroCopy;
   bool _limitDemuxerCache = GraphicsSettings.defaults.limitDemuxerCache;
@@ -405,7 +431,9 @@ class MediaKitPlaybackService
 
     if (modeChanged) {
       _confirmedPlaybackProperties.remove('hwdec');
-      if (_videoController != null) unawaited(_pushRuntimeHwdec());
+      // The decoder mode is an engine-level property, so it is pushed even
+      // while no video output exists; a later video open inherits it.
+      if (_hasRuntimePropertyBridge) unawaited(_pushRuntimeHwdec());
     }
     final isNetwork = _appliedBufferingPolicyNetwork;
     if (limitChanged && isNetwork != null) {
@@ -413,24 +441,44 @@ class MediaKitPlaybackService
     }
   }
 
-  Future<void> _pushRuntimeHwdec() async {
+  Future<void> _writeNativeProperty(String property, String value) async {
     final native = _player.platform;
     if (native is! NativePlayer) return;
+    await native.setProperty(property, value, waitForInitialization: false);
+  }
+
+  Future<String?> _readNativeProperty(String property) async {
+    final native = _player.platform;
+    if (native is! NativePlayer) return null;
+    return native.getProperty(property, waitForInitialization: false);
+  }
+
+  Future<void> _pushRuntimeHwdec() async {
+    if (!_hasRuntimePropertyBridge) return;
     final value = _resolveHwdec(_preferHardwareDecoding);
     try {
-      await native
-          .setProperty('hwdec', value, waitForInitialization: false)
-          .timeout(const Duration(seconds: 2));
-      final actual = await native
-          .getProperty('hwdec', waitForInitialization: false)
-          .timeout(const Duration(seconds: 2));
-      if (_propertyMatches(actual, value)) {
+      await _propertyWriter('hwdec', value).timeout(const Duration(seconds: 2));
+      final actual = await _propertyReader(
+        'hwdec',
+      ).timeout(const Duration(seconds: 2));
+      if (actual != null && _propertyMatches(actual, value)) {
         _confirmedPlaybackProperties['hwdec'] = value;
       } else {
         _confirmedPlaybackProperties.remove('hwdec');
+        // The engine kept or fell back to a decoder other than the requested
+        // one; without this record a silent software fallback is invisible.
+        _diagnostics?.record(
+          'playback.hwdec',
+          message: 'engine reports ${actual ?? 'nothing'} instead of $value',
+        );
       }
-    } on Object {
+    } on Object catch (error) {
       _confirmedPlaybackProperties.remove('hwdec');
+      _diagnostics?.record(
+        'playback.hwdec',
+        message: 'runtime write failed',
+        error: error,
+      );
     }
   }
 
@@ -451,6 +499,21 @@ class MediaKitPlaybackService
     );
     _videoController = controller;
     _applyStoredVideoPolicy(controller);
+    // A failed native attachment (platform channel error, missing decoder,
+    // disposed engine) must not be cached: drop the broken controller so the
+    // next video open or rendered frame recreates it.
+    unawaited(
+      controller.platform.future.then<void>(
+        (_) {},
+        onError: (Object _) {
+          if (identical(_videoController, controller)) {
+            _videoController = null;
+            _lastAppliedWidth = null;
+            _lastAppliedHeight = null;
+          }
+        },
+      ),
+    );
     return controller;
   }
 
@@ -486,7 +549,13 @@ class MediaKitPlaybackService
     final controller = _videoController;
     if (visibilityChanged && controller != null) {
       _lastAppliedVisibility = policy.visible;
-      unawaited(controller.setRenderVisibility(policy.visible));
+      // Best-effort: a platform channel failure must not become an unhandled
+      // async error; the next policy application retries the visibility.
+      unawaited(
+        controller
+            .setRenderVisibility(policy.visible)
+            .catchError((Object _) {}),
+      );
     }
     _syncVideoDecoding(policy.visible);
     _scheduleResize();
@@ -528,19 +597,35 @@ class MediaKitPlaybackService
     });
   }
 
-  Future<void> _setVideoTrackEnabled(bool enabled) async {
-    final native = _player.platform;
-    if (native is! NativePlayer) return;
+  /// Reconciles the hidden-video suspension with a freshly loaded source.
+  ///
+  /// A file load resets mpv's file-local `vid` selection, so a suspension that
+  /// described the previous source no longer holds and the next track would
+  /// keep decoding behind a hidden output. The suspension is re-applied
+  /// immediately for the new source; the visibility grace period only exists
+  /// to keep quick hide/show hops from churning the track selection.
+  void _reconcileVideoSuspensionAfterLoad() {
+    if (_disposed || _videoOutputPolicy.visible) return;
+    if (!_videoTrackSuspended) return;
+    _hiddenVideoSuspendTimer?.cancel();
+    _hiddenVideoSuspendTimer = null;
+    // The new file reset the engine's track selection, so the suspension
+    // applies to it again from this point on.
+    _videoTrackSuspended = true;
+    unawaited(_setVideoTrackEnabled(false, note: 're-applied for new source'));
+  }
+
+  Future<void> _setVideoTrackEnabled(bool enabled, {String? note}) async {
+    // The suspension decision is recorded at the point it is made; engines
+    // without mpv properties report the intent without a native write.
+    _diagnostics?.record(
+      'playback.video_track',
+      message: note == null
+          ? (enabled ? 'resumed' : 'suspended')
+          : '${enabled ? 'resumed' : 'suspended'} ($note)',
+    );
     try {
-      await native.setProperty(
-        'vid',
-        enabled ? 'auto' : 'no',
-        waitForInitialization: false,
-      );
-      _diagnostics?.record(
-        'playback.video_track',
-        message: enabled ? 'resumed' : 'suspended',
-      );
+      await _propertyWriter('vid', enabled ? 'auto' : 'no');
     } on Object catch (error) {
       _diagnostics?.record('playback.video_track', error: error);
     }
@@ -603,6 +688,103 @@ class MediaKitPlaybackService
 
   /// The load attempt of the most recent [open] or [stop] request.
   int get requestedBoundary => _identity.boundaryCounter;
+
+  /// Serializes engine opens so a rapid next/previous can never attach a stale
+  /// source. Each queued open re-checks that it is still the newest request
+  /// immediately before the engine is told to load anything; a superseded open
+  /// completes without touching the engine.
+  Future<void>? _openTail;
+
+  @override
+  Future<void> open(String path, {bool play = true}) async {
+    // Registering the request with the identity tracker must stay synchronous:
+    // it assigns the boundary later opens use to detect they were superseded.
+    final boundary = _identity.beginOpen(path);
+    _diagnostics?.record(
+      'playback.open',
+      sourceId: MediaSource.redact(path),
+      message: 'boundary $boundary, play $play',
+    );
+    unawaited(_startNativeObservation());
+    _emit(
+      _state.copyWith(
+        sourceStart: boundary,
+        isPlaying: play,
+        isBuffering: true,
+        completed: false,
+        position: Duration.zero,
+        duration: Duration.zero,
+        chapters: const <PlaybackChapter>[],
+        clearError: true,
+        clearNativeSource: true,
+        sourceLoaded: false,
+      ),
+    );
+    _lastAppliedWidth = null;
+    _lastAppliedHeight = null;
+    final previous = _openTail;
+    final done = Completer<void>();
+    _openTail = done.future;
+    unawaited(_runQueuedOpen(path, play, boundary, previous, done));
+    return done.future;
+  }
+
+  Future<void> _runQueuedOpen(
+    String path,
+    bool play,
+    int boundary,
+    Future<void>? previous,
+    Completer<void> done,
+  ) async {
+    try {
+      // One open reaches the engine at a time; the newest request always wins.
+      try {
+        await previous;
+      } on Object {
+        // A failed earlier open must not stop the newest request.
+      }
+      if (done.isCompleted || _disposed) return;
+      if (_identity.boundaryCounter != boundary) {
+        _diagnostics?.record(
+          'playback.open',
+          sourceId: MediaSource.redact(path),
+          message: 'boundary $boundary superseded before the engine open',
+        );
+        return;
+      }
+      if (MediaCatalog.kindFromExtension(path) != MediaKind.audio) {
+        // Attach the video output before opening so video sources keep their
+        // first-frame path. Known audio sources never allocate it.
+        videoController;
+      }
+      _scheduleResize(force: true);
+      await _applyBufferingPolicy(isNetwork: MediaEntry.isNetworkUrl(path));
+      if (done.isCompleted || _disposed) return;
+      // The policy writes above can be slow; re-check staleness immediately
+      // before the engine open so a rapid next/previous never races this load.
+      if (_identity.boundaryCounter != boundary) {
+        _diagnostics?.record(
+          'playback.open',
+          sourceId: MediaSource.redact(path),
+          message: 'boundary $boundary superseded before the engine open',
+        );
+        return;
+      }
+      _syncVideoDecoding(_videoOutputPolicy.visible);
+      await _player.open(Media(path), play: play);
+      _reconcileVideoSuspensionAfterLoad();
+      if (!_identity.observationActive && !_disposed) {
+        _emit(_stamped(_state.copyWith(isBuffering: _player.state.buffering)));
+      }
+    } on Object catch (error, stackTrace) {
+      if (!done.isCompleted) {
+        done.completeError(error, stackTrace);
+      }
+      return;
+    } finally {
+      if (!done.isCompleted) done.complete();
+    }
+  }
 
   @override
   Future<void> prepare() {
@@ -760,45 +942,6 @@ class MediaKitPlaybackService
       _appliedBufferingPolicyLimitCache = _limitDemuxerCache;
     } on Object catch (error) {
       _diagnostics?.record('playback.buffering_policy', error: error);
-    }
-  }
-
-  @override
-  Future<void> open(String path, {bool play = true}) async {
-    final boundary = _identity.beginOpen(path);
-    _diagnostics?.record(
-      'playback.open',
-      sourceId: MediaSource.redact(path),
-      message: 'boundary $boundary, play $play',
-    );
-    unawaited(_startNativeObservation());
-    _emit(
-      _state.copyWith(
-        sourceStart: boundary,
-        isPlaying: play,
-        isBuffering: true,
-        completed: false,
-        position: Duration.zero,
-        duration: Duration.zero,
-        chapters: const <PlaybackChapter>[],
-        clearError: true,
-        clearNativeSource: true,
-        sourceLoaded: false,
-      ),
-    );
-    _lastAppliedWidth = null;
-    _lastAppliedHeight = null;
-    if (MediaCatalog.kindFromExtension(path) != MediaKind.audio) {
-      // Attach the video output before opening so video sources keep their
-      // first-frame path. Known audio sources never allocate it.
-      videoController;
-    }
-    _scheduleResize(force: true);
-    await _applyBufferingPolicy(isNetwork: MediaEntry.isNetworkUrl(path));
-    _syncVideoDecoding(_videoOutputPolicy.visible);
-    await _player.open(Media(path), play: play);
-    if (!_identity.observationActive && !_disposed) {
-      _emit(_stamped(_state.copyWith(isBuffering: _player.state.buffering)));
     }
   }
 
@@ -1137,6 +1280,10 @@ class MediaKitPlaybackService
         _lastAppliedWidth = null;
         _lastAppliedHeight = null;
         _scheduleResize(force: true);
+        // The started event is the point where the new file's own `vid`
+        // selection is definitely in effect; make sure a hidden output is not
+        // decoding it.
+        _reconcileVideoSuspensionAfterLoad();
         _emit(_stamped(applyNativeEvent(_state, event)));
       case NativeMediaEventKind.loaded:
         final attachment = _identity.attachLoaded();
