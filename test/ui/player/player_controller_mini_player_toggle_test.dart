@@ -1,13 +1,11 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mpvson/data/repositories/session_repository.dart';
 import 'package:mpvson/domain/models/media_entry.dart';
 import 'package:mpvson/ui/player/player_controller.dart';
 import 'package:mpvson/ui/player/views/player_layout_manager.dart';
-import 'package:window_manager/window_manager.dart';
 
 import '../../support/app_harness.dart';
 
