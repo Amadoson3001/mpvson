@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
@@ -254,6 +255,9 @@ class MediaKitPlaybackService
     VideoController? videoController,
     NativeMediaEvents? nativeEvents,
     DiagnosticSink? diagnostics,
+    @visibleForTesting
+    Future<void> Function(String property, String value)?
+    propertyWriterForTesting,
   }) : _player =
            player ??
            Player(
@@ -269,6 +273,7 @@ class MediaKitPlaybackService
     // name stays `diagnostics`; named parameters cannot be private.
     _diagnostics = diagnostics;
     _videoController = videoController;
+    _propertyWriter = propertyWriterForTesting ?? _writeNativeProperty;
     _state = _snapshotFrom(
       _player.state,
     ).copyWith(sourceStart: 0, clearNativeSource: true);
@@ -350,6 +355,16 @@ class MediaKitPlaybackService
   final bool _ownsNativeEvents;
   DiagnosticSink? _diagnostics;
   VideoController? _videoController;
+
+  /// Runtime mpv property bridge.
+  ///
+  /// Production resolves writes and reads against the native engine handle;
+  /// engines without mpv properties (and tests without libmpv) route through
+  /// the same seam so the video-track suspension logic behaves identically
+  /// everywhere.
+  late final Future<void> Function(String property, String value)
+  _propertyWriter;
+
   bool _preferHardwareDecoding = true;
   VideoMemoryMode _videoMemoryMode = VideoMemoryMode.zeroCopy;
   bool _limitDemuxerCache = GraphicsSettings.defaults.limitDemuxerCache;
@@ -411,6 +426,12 @@ class MediaKitPlaybackService
     if (limitChanged && isNetwork != null) {
       unawaited(_applyBufferingPolicy(isNetwork: isNetwork, force: true));
     }
+  }
+
+  Future<void> _writeNativeProperty(String property, String value) async {
+    final native = _player.platform;
+    if (native is! NativePlayer) return;
+    await native.setProperty(property, value, waitForInitialization: false);
   }
 
   Future<void> _pushRuntimeHwdec() async {
@@ -549,19 +570,35 @@ class MediaKitPlaybackService
     });
   }
 
-  Future<void> _setVideoTrackEnabled(bool enabled) async {
-    final native = _player.platform;
-    if (native is! NativePlayer) return;
+  /// Reconciles the hidden-video suspension with a freshly loaded source.
+  ///
+  /// A file load resets mpv's file-local `vid` selection, so a suspension that
+  /// described the previous source no longer holds and the next track would
+  /// keep decoding behind a hidden output. The suspension is re-applied
+  /// immediately for the new source; the visibility grace period only exists
+  /// to keep quick hide/show hops from churning the track selection.
+  void _reconcileVideoSuspensionAfterLoad() {
+    if (_disposed || _videoOutputPolicy.visible) return;
+    if (!_videoTrackSuspended) return;
+    _hiddenVideoSuspendTimer?.cancel();
+    _hiddenVideoSuspendTimer = null;
+    // The new file reset the engine's track selection, so the suspension
+    // applies to it again from this point on.
+    _videoTrackSuspended = true;
+    unawaited(_setVideoTrackEnabled(false, note: 're-applied for new source'));
+  }
+
+  Future<void> _setVideoTrackEnabled(bool enabled, {String? note}) async {
+    // The suspension decision is recorded at the point it is made; engines
+    // without mpv properties report the intent without a native write.
+    _diagnostics?.record(
+      'playback.video_track',
+      message: note == null
+          ? (enabled ? 'resumed' : 'suspended')
+          : '${enabled ? 'resumed' : 'suspended'} ($note)',
+    );
     try {
-      await native.setProperty(
-        'vid',
-        enabled ? 'auto' : 'no',
-        waitForInitialization: false,
-      );
-      _diagnostics?.record(
-        'playback.video_track',
-        message: enabled ? 'resumed' : 'suspended',
-      );
+      await _propertyWriter('vid', enabled ? 'auto' : 'no');
     } on Object catch (error) {
       _diagnostics?.record('playback.video_track', error: error);
     }
@@ -708,6 +745,7 @@ class MediaKitPlaybackService
       }
       _syncVideoDecoding(_videoOutputPolicy.visible);
       await _player.open(Media(path), play: play);
+      _reconcileVideoSuspensionAfterLoad();
       if (!_identity.observationActive && !_disposed) {
         _emit(_stamped(_state.copyWith(isBuffering: _player.state.buffering)));
       }
@@ -1215,6 +1253,10 @@ class MediaKitPlaybackService
         _lastAppliedWidth = null;
         _lastAppliedHeight = null;
         _scheduleResize(force: true);
+        // The started event is the point where the new file's own `vid`
+        // selection is definitely in effect; make sure a hidden output is not
+        // decoding it.
+        _reconcileVideoSuspensionAfterLoad();
         _emit(_stamped(applyNativeEvent(_state, event)));
       case NativeMediaEventKind.loaded:
         final attachment = _identity.attachLoaded();
