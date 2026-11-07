@@ -21,11 +21,13 @@ bool engineSystemManaged(EngineUpdateService updates) =>
   'downloading' => ('Downloading', context.palette.warning),
   'ready' => ('Downloaded', context.palette.success),
   'upToDate' => ('Up to date', context.palette.success),
-  // A failed check means the current version could not be verified; only a
-  // failed download is an actual update failure.
-  'error' => updates.failedDuringDownload
-      ? ('Update failed', context.palette.danger)
-      : ('Check failed', context.palette.danger),
+  // The failure kind separates a check the app could not verify from a
+  // download that broke mid-flight and an apply step that could not run.
+  'error' => switch (updates.failureKind) {
+    'download' => ('Update failed', context.palette.danger),
+    'apply' => ('Apply failed', context.palette.danger),
+    _ => ('Check failed', context.palette.danger),
+  },
   'unconfigured' => ('Not configured', context.palette.muted),
   _ => ('Not checked', context.palette.muted),
 };
@@ -47,11 +49,13 @@ bool engineSystemManaged(EngineUpdateService updates) =>
     'upToDate' => ('Up to date', context.palette.success),
     'newerInstalled' => ('Installed is newer', context.palette.secondaryText),
     'stableUnavailable' => ('Channel fallback', context.palette.muted),
-    // A failed check leaves the loaded engine untouched; only a download or
-    // staging failure is an actual update failure.
-    'error' => updates.failedDuringDownload
-        ? ('Update failed', context.palette.danger)
-        : ('Check failed', context.palette.danger),
+    // The failure kind separates a check the updater could not verify from a
+    // download that broke mid-flight and a staging (apply) run that failed.
+    'error' => switch (updates.failureKind) {
+      'download' => ('Update failed', context.palette.danger),
+      'apply' => ('Apply failed', context.palette.danger),
+      _ => ('Check failed', context.palette.danger),
+    },
     'unconfigured' => ('Not configured', context.palette.muted),
     _ => ('Ready', context.palette.success),
   };
