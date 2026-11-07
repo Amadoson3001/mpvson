@@ -241,6 +241,78 @@ int _requireInt(Map<String, Object?> json, String key, {String? section}) {
 String _sha256OfFile(String path) =>
     sha256.convert(File(path).readAsBytesSync()).toString();
 
+final RegExp _sha256Pattern = RegExp(r'^[0-9a-f]{64}$');
+
+/// The SHA-256 digests the pinned record accepts for the bundled engine
+/// module: the upstream `artifact.memberSha256` and, when recorded, the
+/// digest of the locally stripped module (`strippedMemberSha256`, either at
+/// the top level or inside the artifact section). `llvm-strip --strip-all`
+/// rewrites the module, so a release bundle legitimately differs from the
+/// upstream member digest and must be validated against both.
+List<String> pinnedModuleDigests(Map<String, Object?> record) {
+  final Object? artifact = record['artifact'];
+  final List<String> digests = <String>[];
+  void accept(Object? value) {
+    if (value is String &&
+        _sha256Pattern.hasMatch(value) &&
+        !digests.contains(value)) {
+      digests.add(value);
+    }
+  }
+
+  if (artifact is Map<String, Object?>) accept(artifact['memberSha256']);
+  accept(record['strippedMemberSha256']);
+  if (artifact is Map<String, Object?>) {
+    accept(artifact['strippedMemberSha256']);
+  }
+  return digests;
+}
+
+/// Whether [actualSha256] is a digest the pinned record accepts for the
+/// bundled engine module (upstream member digest or recorded stripped digest).
+bool bundleMatchesPinnedEngine(
+  Map<String, Object?> record,
+  String actualSha256,
+) => pinnedModuleDigests(record).contains(actualSha256);
+
+/// Whether a built-bundle file inventory (as written by `inventory`) matches
+/// the pinned engine record.
+bool inventoryMatchesPinnedEngine(
+  Map<String, Object?> record,
+  List<Map<String, Object?>> files,
+) {
+  final List<String> accepted = pinnedModuleDigests(record);
+  return files.any(
+    (Map<String, Object?> file) => accepted.contains(file['sha256']),
+  );
+}
+
+/// Removes recorded stripped-module digests after the pinned member digest
+/// changed.
+///
+/// `refresh` recomputes the upstream member digest from the freshly inspected
+/// package, but it cannot know the digest of a future locally stripped
+/// module, so stale `strippedMemberSha256` entries are cleared instead of
+/// being carried over into the new pin. When the member digest is unchanged,
+/// the recorded stripped digest still describes the same module and is kept.
+///
+/// Returns how many stale entries were removed.
+int clearStaleStrippedDigests(
+  Map<String, Object?> record, {
+  String? previousMemberSha256,
+  required String newMemberSha256,
+}) {
+  if (previousMemberSha256 == newMemberSha256) return 0;
+  var removed = 0;
+  if (record.remove('strippedMemberSha256') != null) removed++;
+  final Object? artifact = record['artifact'];
+  if (artifact is Map<String, Object?> &&
+      artifact.remove('strippedMemberSha256') != null) {
+    removed++;
+  }
+  return removed;
+}
+
 /// Runs [body] on every recorded digest pair and reports mismatches.
 bool _verifyRecordShape(Map<String, Object?> record, List<String> problems) {
   void checkDigest(String value, String label) {
@@ -262,6 +334,16 @@ bool _verifyRecordShape(Map<String, Object?> record, List<String> problems) {
     _requireString(record, 'licenseSha256', section: 'artifact'),
     'artifact.licenseSha256',
   );
+  // A stripped-module digest is optional, but when present it must be valid.
+  final Object? strippedTopLevel = record['strippedMemberSha256'];
+  if (strippedTopLevel is String) {
+    checkDigest(strippedTopLevel, 'strippedMemberSha256');
+  }
+  final Object? strippedArtifactLevel =
+      (record['artifact'] as Map<String, Object?>?)?['strippedMemberSha256'];
+  if (strippedArtifactLevel is String) {
+    checkDigest(strippedArtifactLevel, 'artifact.strippedMemberSha256');
+  }
   final String url = _requireString(record, 'url', section: 'artifact');
   if (!url.startsWith('https://github.com/mpv-player/mpv/releases/download/')) {
     problems.add(
@@ -465,12 +547,7 @@ Future<bool> _verify(String root) async {
   final File bundled = File(p.join(root, _bundleRelative, member));
   if (bundled.existsSync()) {
     final String actual = _sha256OfFile(bundled.path);
-    final String? strippedSha =
-        (record['strippedMemberSha256'] ??
-                (record['artifact']
-                    as Map<String, Object?>?)?['strippedMemberSha256'])
-            as String?;
-    if (actual != memberSha && actual != strippedSha) {
+    if (!bundleMatchesPinnedEngine(record, actual)) {
       problems.add(
         'The built bundle ships the wrong engine: ${bundled.path} has SHA-256 $actual '
         'instead of the pinned $memberSha.',
@@ -687,6 +764,29 @@ Future<bool> _refresh(String root, _Options options) async {
       }
       ..['artifact'] = artifact;
 
+    // The upstream member digest changed, so any recorded digest of a locally
+    // stripped module from the previous pin is stale and must not validate a
+    // future bundle. Refresh cannot recompute it (stripping happens during
+    // the release build), so it is cleared instead.
+    final Object? previousMemberSha = _section(
+      record,
+      'artifact',
+    )['memberSha256'];
+    final int clearedDigests = clearStaleStrippedDigests(
+      output,
+      previousMemberSha256: previousMemberSha is String
+          ? previousMemberSha
+          : null,
+      newMemberSha256: artifact['memberSha256']! as String,
+    );
+    if (clearedDigests > 0) {
+      stdout.writeln(
+        '  cleared $clearedDigests stale strippedMemberSha256 entry/entries '
+        '(member digest changed; recompute after the next stripped release '
+        'build)',
+      );
+    }
+
     stdout.writeln('');
     stdout.writeln('Refreshed pin:');
     stdout.writeln('  engine.version        $version');
@@ -872,11 +972,7 @@ Future<bool> _inventory(String root, _Options options) async {
     problems.forEach(stderr.writeln);
     return false;
   }
-  final String engineSha = _requireString(
-    record,
-    'memberSha256',
-    section: 'artifact',
-  );
+  final List<String> acceptedModuleDigests = pinnedModuleDigests(record);
   final Map<String, Object?> inventory = <String, Object?>{
     'schemaVersion': 1,
     'generatedAt': DateTime.now().toUtc().toIso8601String(),
@@ -889,9 +985,8 @@ Future<bool> _inventory(String root, _Options options) async {
       'artifactSha256': _requireString(record, 'sha256', section: 'artifact'),
     },
     'files': files,
-    'matchesPinnedEngine': files.any(
-      (Map<String, Object?> file) => file['sha256'] == engineSha,
-    ),
+    'acceptedModuleDigests': acceptedModuleDigests,
+    'matchesPinnedEngine': inventoryMatchesPinnedEngine(record, files),
   };
   final Directory outDirectory = Directory(p.join(root, _cacheRelative))
     ..createSync(recursive: true);
