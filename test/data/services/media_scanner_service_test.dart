@@ -270,6 +270,7 @@ void main() {
       // probe surfaces as a failure).
       final errorGate = Completer<void>();
       final fallbackWrites = <String>[];
+      final fallbackWriteAttempted = Completer<void>();
       final probeService = _FakeProbeService(
         errorGates: <String, Completer<void>>{
           MediaEntry.canonicalSource(aPath): errorGate,
@@ -289,15 +290,18 @@ void main() {
               required fileSize,
               required modifiedAt,
             }) async {
-          fallbackWrites.add(MediaEntry.canonicalSource(source));
-          await db.updateMediaMetadata(
-            source,
-            kind: kind,
-            metadata: metadata,
-            fileSize: fileSize,
-            modifiedAt: modifiedAt,
-          );
-        },
+              fallbackWrites.add(MediaEntry.canonicalSource(source));
+              if (!fallbackWriteAttempted.isCompleted) {
+                fallbackWriteAttempted.complete();
+              }
+              await db.updateMediaMetadata(
+                source,
+                kind: kind,
+                metadata: metadata,
+                fileSize: fileSize,
+                modifiedAt: modifiedAt,
+              );
+            },
       );
       addTearDown(db.close);
 
@@ -322,6 +326,14 @@ void main() {
       // then the probe fails like a cancelled probe would.
       scanner.cancelScan();
       errorGate.complete();
+
+      // Give the enrichment worker a bounded chance to process the failed
+      // probe: a correct implementation never attempts the fallback write, so
+      // waiting on the attempt signal simply settles.
+      await fallbackWriteAttempted.future.timeout(
+        const Duration(milliseconds: 500),
+        onTimeout: () {},
+      );
 
       // dispose() awaits the in-flight watcher drain before returning.
       await scanner.dispose().timeout(const Duration(seconds: 10));
