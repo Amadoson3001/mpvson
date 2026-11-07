@@ -123,11 +123,11 @@ class LibraryDatabase {
         _failAllPending(error, stackTrace);
       },
       onDone: () {
-        _failAllPending(StateError('Database isolate connection closed.'));
+        _handleIsolateGone('Database isolate connection closed.');
       },
     );
     _exitSubscription = _exitPort.listen((_) {
-      _failAllPending(StateError('Database isolate exited unexpectedly.'));
+      _handleIsolateGone('Database isolate exited unexpectedly.');
     });
   }
 
@@ -147,6 +147,18 @@ class LibraryDatabase {
 
   /// Whether the database isolate connection is closed.
   bool get isClosed => _isClosed;
+
+  /// The underlying database isolate, exposed so tests can simulate an
+  /// unexpected isolate death.
+  @visibleForTesting
+  Isolate get debugIsolate => _isolate;
+
+  /// Marks the connection as closed after the isolate died or its ports closed,
+  /// so pending and future calls fail fast instead of hanging forever.
+  void _handleIsolateGone(String message) {
+    _isClosed = true;
+    _failAllPending(StateError(message));
+  }
 
   /// Opens or initializes the SQLite database at [path], or in-memory when
   /// [inMemory] is true or [path] is ':memory:'.
@@ -657,9 +669,13 @@ class LibraryDatabase {
     _isClosing = true;
 
     try {
-      await _send<dynamic>('close');
+      // The isolate usually answers the handshake promptly. If it died or is
+      // stuck mid-query, do not wait forever: after a bounded grace period the
+      // isolate is killed below, which also fails every pending request.
+      await _send<dynamic>('close').timeout(const Duration(seconds: 5));
     } catch (_) {
-      // Isolate may have already exited.
+      // Isolate may have already exited or the handshake stalled; the kill in
+      // the finally block is the authoritative shutdown path.
     } finally {
       _isClosed = true;
       _isClosing = false;
