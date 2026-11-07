@@ -88,6 +88,10 @@ class ANGLESurfaceManager {
   EGLDisplay display_ = EGL_NO_DISPLAY;
   EGLContext context_ = nullptr;
   EGLConfig config_ = nullptr;
+  // GL texture object bound to the pbuffer surface via eglBindTexImage. Kept
+  // so it can be deleted when the surface is destroyed (|CleanUp|), otherwise
+  // it leaks on every resize and on teardown.
+  GLuint tex_id_ = 0;
 
   static constexpr EGLint kEGLConfigurationAttributes[] = {
       EGL_RED_SIZE,   8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE,    8,
