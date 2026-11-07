@@ -230,6 +230,58 @@ void main() {
         expect(removedEntry!.id, 'vid-solo');
       },
     );
+
+    testWidgets('recent tiles expose button semantics and 44×44 controls', (
+      tester,
+    ) async {
+      final semantics = tester.ensureSemantics();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: HomeView(
+              recent: [videoEntry],
+              repository: repository,
+              controller: controller,
+              onOpenFiles: () {},
+              onOpenUrl: () {},
+              onOpenRecent: (_) {},
+              onRemoveRecent: (_) {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // The tile announces itself as an actionable media button.
+      expect(
+        find.bySemanticsLabel(RegExp('Video: Solo Feature Film')),
+        findsOneWidget,
+      );
+
+      // The overflow control is a full-size hit target.
+      final actionsButton = find.byTooltip('Actions');
+      final actionsSize = tester.getSize(actionsButton);
+      expect(actionsSize.width, greaterThanOrEqualTo(44));
+      expect(actionsSize.height, greaterThanOrEqualTo(44));
+
+      // Hovering reveals the quick-remove control, also 44×44.
+      final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await gesture.addPointer(location: Offset.zero);
+      addTearDown(gesture.removePointer);
+      await gesture.moveTo(tester.getCenter(find.text('Solo Feature Film')));
+      await tester.pumpAndSettle();
+
+      final removeButton = find.byTooltip('Remove from recently played');
+      expect(removeButton, findsOneWidget);
+      final removeSize = tester.getSize(removeButton);
+      expect(removeSize.width, greaterThanOrEqualTo(44));
+      expect(removeSize.height, greaterThanOrEqualTo(44));
+
+      // The framework verifies handle disposal before teardowns run, so the
+      // handle is released here at the end of the body.
+      semantics.dispose();
+    });
   });
 
   group('EmptyLibrary recently played UI', () {

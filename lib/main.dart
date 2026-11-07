@@ -66,8 +66,8 @@ Future<EngineBootSelection> _initializeMediaKitWithFallbacks(
         MediaKit.ensureInitialized(libmpv: loadedPath);
         final loadedVersion =
             bundledEnginePath != null && p.equals(loadedPath, bundledEnginePath)
-                ? bundledEngineVersion
-                : p.basename(p.dirname(loadedPath));
+            ? bundledEngineVersion
+            : p.basename(p.dirname(loadedPath));
         return EngineBootSelection(
           libraryPath: loadedPath,
           version: loadedVersion,
@@ -458,6 +458,7 @@ class _DesktopLifecycle extends WindowListener {
   final MediaProbeService? mediaProbeService;
   final DesktopIntegrationService? desktopIntegration;
   bool _closing = false;
+  bool _servicesReleased = false;
 
   @override
   void onWindowClose() {
@@ -528,6 +529,8 @@ class _DesktopLifecycle extends WindowListener {
   }
 
   Future<void> _releaseServices({bool discard = false}) async {
+    if (_servicesReleased) return;
+    _servicesReleased = true;
     windowManager.removeListener(this);
     libraryPlaybackTracker?.dispose();
     try {
@@ -544,6 +547,14 @@ class _DesktopLifecycle extends WindowListener {
       mediaProbeService?.dispose();
     } on Object {
       // Best-effort probe service release.
+    }
+    // The preferences repository is a ChangeNotifier; releasing it here
+    // detaches the app's listeners. The guard above keeps a retry or a
+    // re-entered close path from disposing it twice.
+    try {
+      appPreferences?.dispose();
+    } on Object {
+      // Best-effort preferences release.
     }
     try {
       await controller.close(discard: discard);
