@@ -101,9 +101,7 @@ class HomeView extends StatelessWidget {
                                   'Recently played',
                                   overflow: TextOverflow.ellipsis,
                                   maxLines: 1,
-                                  style: Theme.of(
-                                    context,
-                                  ).textTheme.titleLarge,
+                                  style: Theme.of(context).textTheme.titleLarge,
                                 ),
                               ),
                               const SizedBox(width: 12),

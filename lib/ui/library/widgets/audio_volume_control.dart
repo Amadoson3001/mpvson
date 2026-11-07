@@ -165,13 +165,17 @@ class _AudioVolumeControlState extends State<AudioVolumeControl> {
                 width: widget.showPercent ? 52 : AudioVolumeControl.muteExtent,
                 height: AudioVolumeControl.muteExtent,
                 child: Align(
-                  alignment: widget.showPercent ? Alignment.centerRight : Alignment.center,
+                  alignment: widget.showPercent
+                      ? Alignment.centerRight
+                      : Alignment.center,
                   child: IconButton(
-                  icon: Icon(icon, size: widget.compact ? 17 : 20),
-                  tooltip: volume <= 0 ? 'Unmute' : 'Mute (${volume.round()}%)',
-                  visualDensity: VisualDensity.compact,
-                  color: context.palette.secondaryText,
-                  onPressed: _toggleMute,
+                    icon: Icon(icon, size: widget.compact ? 17 : 20),
+                    tooltip: volume <= 0
+                        ? 'Unmute'
+                        : 'Mute (${volume.round()}%)',
+                    visualDensity: VisualDensity.compact,
+                    color: context.palette.secondaryText,
+                    onPressed: _toggleMute,
                   ),
                 ),
               ),
@@ -222,7 +226,9 @@ class _AudioVolumeControlState extends State<AudioVolumeControl> {
                     '${volume.round()}%',
                     textAlign: TextAlign.right,
                     style: context.palette.metadata.copyWith(
-                      color: context.palette.primaryText.withValues(alpha: 0.85),
+                      color: context.palette.primaryText.withValues(
+                        alpha: 0.85,
+                      ),
                       fontWeight: FontWeight.w500,
                       fontFeatures: const [FontFeature.tabularFigures()],
                     ),

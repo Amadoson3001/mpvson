@@ -183,8 +183,10 @@ Future<T?> showMorphDialog<T>({
     barrierDismissible: barrierDismissible,
     barrierColor: barrierColor,
     barrierLabel:
-        Localizations.of<MaterialLocalizations>(context, MaterialLocalizations)
-            ?.modalBarrierDismissLabel ??
+        Localizations.of<MaterialLocalizations>(
+          context,
+          MaterialLocalizations,
+        )?.modalBarrierDismissLabel ??
         'Close dialog',
     transitionDuration: AppMotion.emphasized,
     pageBuilder: (context, animation, secondaryAnimation) => builder(context),
@@ -211,8 +213,7 @@ class _MorphDialogTransition extends StatefulWidget {
   final Widget child;
 
   @override
-  State<_MorphDialogTransition> createState() =>
-      _MorphDialogTransitionState();
+  State<_MorphDialogTransition> createState() => _MorphDialogTransitionState();
 }
 
 class _MorphDialogTransitionState extends State<_MorphDialogTransition> {

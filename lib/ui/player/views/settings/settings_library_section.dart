@@ -164,7 +164,8 @@ class MediaLibrarySettingsSection extends StatelessWidget {
                                       style: theme.textTheme.bodySmall
                                           ?.copyWith(
                                             color: theme
-                                                .colorScheme.onSurfaceVariant,
+                                                .colorScheme
+                                                .onSurfaceVariant,
                                           ),
                                     ),
                                   ),

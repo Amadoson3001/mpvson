@@ -207,7 +207,9 @@ class _NowPlayingViewState extends State<NowPlayingView> {
               artist:
                   _currentMediaRecord?.artist ??
                   (entry == null ? '' : 'Celestial Soundscapes'),
-              album: _currentMediaRecord?.album ?? (entry == null ? '' : 'Cosmic Harmonies'),
+              album:
+                  _currentMediaRecord?.album ??
+                  (entry == null ? '' : 'Cosmic Harmonies'),
             ).artworkSize(
               context: context,
               viewportWidth: constraints.maxWidth,
@@ -323,7 +325,8 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                                   else
                                     const SizedBox(width: 40),
                                   const Spacer(),
-                                  if (widget.onOpenQueue != null && !showSideQueue)
+                                  if (widget.onOpenQueue != null &&
+                                      !showSideQueue)
                                     Tooltip(
                                       message: 'Open queue',
                                       child: TextButton.icon(
@@ -360,7 +363,9 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                               SizedBox(height: gapBelowArtwork),
                               // Title & Favorite row
                               Padding(
-                                padding: const EdgeInsets.symmetric(horizontal: 16),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                ),
                                 child: Row(
                                   mainAxisAlignment: MainAxisAlignment.center,
                                   mainAxisSize: MainAxisSize.min,
@@ -382,7 +387,8 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                                     const SizedBox(width: 8),
                                     IconButton(
                                       icon: Icon(
-                                        (_currentMediaRecord?.isFavorite ?? false)
+                                        (_currentMediaRecord?.isFavorite ??
+                                                false)
                                             ? Icons.favorite_rounded
                                             : Icons.favorite_border_rounded,
                                         size: 22,
@@ -392,7 +398,8 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                                             ? Theme.of(
                                                 context,
                                               ).colorScheme.primary
-                                            : context.palette.primaryText.withValues(alpha: 0.6),
+                                            : context.palette.primaryText
+                                                  .withValues(alpha: 0.6),
                                       ),
                                       tooltip:
                                           (_currentMediaRecord?.isFavorite ??
@@ -410,9 +417,13 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                               // Artist
                               Text(
                                 _currentMediaRecord?.artist ??
-                                    (entry == null ? '' : 'Celestial Soundscapes'),
+                                    (entry == null
+                                        ? ''
+                                        : 'Celestial Soundscapes'),
                                 style: context.palette.sectionTitle.copyWith(
-                                  color: context.palette.primaryText.withValues(alpha: 0.82),
+                                  color: context.palette.primaryText.withValues(
+                                    alpha: 0.82,
+                                  ),
                                   fontWeight: FontWeight.w500,
                                 ),
                                 textAlign: TextAlign.center,
@@ -422,9 +433,12 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                               SizedBox(height: gapBelowArtist),
                               // Album
                               Text(
-                                _currentMediaRecord?.album ?? (entry == null ? '' : 'Cosmic Harmonies'),
+                                _currentMediaRecord?.album ??
+                                    (entry == null ? '' : 'Cosmic Harmonies'),
                                 style: context.palette.rowSecondary.copyWith(
-                                  color: context.palette.primaryText.withValues(alpha: 0.6),
+                                  color: context.palette.primaryText.withValues(
+                                    alpha: 0.6,
+                                  ),
                                 ),
                                 textAlign: TextAlign.center,
                                 maxLines: 1,
@@ -453,10 +467,7 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                     ),
                   ),
                   if (showSideQueue) ...[
-                    VerticalDivider(
-                      width: 1,
-                      color: context.palette.border,
-                    ),
+                    VerticalDivider(width: 1, color: context.palette.border),
                     SizedBox(
                       width: 320,
                       child: _NowPlayingQueuePanel(
@@ -516,10 +527,7 @@ class _NowPlayingViewState extends State<NowPlayingView> {
           stops: const [0.0, 0.6, 1.0],
         ),
         borderRadius: BorderRadius.circular(AppRadii.artworkHero),
-        border: Border.all(
-          color: primary.withValues(alpha: 0.38),
-          width: 1.5,
-        ),
+        border: Border.all(color: primary.withValues(alpha: 0.38), width: 1.5),
         boxShadow: [
           BoxShadow(
             color: primary.withValues(alpha: 0.35),
@@ -577,10 +585,7 @@ class _NowPlayingViewState extends State<NowPlayingView> {
         gradient: RadialGradient(
           center: Alignment.center,
           radius: 0.95,
-          colors: [
-            primary.withValues(alpha: 0.25),
-            card,
-          ],
+          colors: [primary.withValues(alpha: 0.25), card],
         ),
       ),
       child: Center(
@@ -621,11 +626,7 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                 ),
               ),
               child: Center(
-                child: Icon(
-                  Icons.music_note_rounded,
-                  size: 42,
-                  color: primary,
-                ),
+                child: Icon(Icons.music_note_rounded, size: 42, color: primary),
               ),
             ),
           ],
@@ -732,7 +733,14 @@ class _NowPlayingQueuePanel extends StatelessWidget {
                   itemBuilder: (context, index) {
                     final item = queue[index];
                     final isCurrent = item.id == current?.id;
-                    final durationText = item.duration > Duration.zero ? formatTime(item.duration, compactMinutes: true) : formatTime(Duration(seconds: 195 + (item.title.hashCode.abs() % 75)), compactMinutes: true);
+                    final durationText = item.duration > Duration.zero
+                        ? formatTime(item.duration, compactMinutes: true)
+                        : formatTime(
+                            Duration(
+                              seconds: 195 + (item.title.hashCode.abs() % 75),
+                            ),
+                            compactMinutes: true,
+                          );
                     return Material(
                       color: isCurrent
                           ? primary.withValues(alpha: 0.14)
@@ -774,16 +782,16 @@ class _NowPlayingQueuePanel extends StatelessWidget {
                                   item.title,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .bodyMedium
+                                  style: Theme.of(context).textTheme.bodyMedium
                                       ?.copyWith(
                                         fontWeight: isCurrent
                                             ? FontWeight.w600
                                             : FontWeight.w400,
                                         color: isCurrent
                                             ? palette.primaryText
-                                            : palette.primaryText.withValues(alpha: 0.82),
+                                            : palette.primaryText.withValues(
+                                                alpha: 0.82,
+                                              ),
                                       ),
                                 ),
                               ),
@@ -813,7 +821,10 @@ class _NowPlayingQueuePanel extends StatelessWidget {
                 ),
               ),
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [

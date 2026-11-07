@@ -23,9 +23,10 @@ bool engineSystemManaged(EngineUpdateService updates) =>
   'upToDate' => ('Up to date', context.palette.success),
   // A failed check means the current version could not be verified; only a
   // failed download is an actual update failure.
-  'error' => updates.failedDuringDownload
-      ? ('Update failed', context.palette.danger)
-      : ('Check failed', context.palette.danger),
+  'error' =>
+    updates.failedDuringDownload
+        ? ('Update failed', context.palette.danger)
+        : ('Check failed', context.palette.danger),
   'unconfigured' => ('Not configured', context.palette.muted),
   _ => ('Not checked', context.palette.muted),
 };
@@ -49,9 +50,10 @@ bool engineSystemManaged(EngineUpdateService updates) =>
     'stableUnavailable' => ('Channel fallback', context.palette.muted),
     // A failed check leaves the loaded engine untouched; only a download or
     // staging failure is an actual update failure.
-    'error' => updates.failedDuringDownload
-        ? ('Update failed', context.palette.danger)
-        : ('Check failed', context.palette.danger),
+    'error' =>
+      updates.failedDuringDownload
+          ? ('Update failed', context.palette.danger)
+          : ('Check failed', context.palette.danger),
     'unconfigured' => ('Not configured', context.palette.muted),
     _ => ('Ready', context.palette.success),
   };

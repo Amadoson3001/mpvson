@@ -255,12 +255,7 @@ class _ApplicationTrack extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _applicationStatusContent(
-                  context,
-                  updates,
-                  release,
-                  accent,
-                ),
+                _applicationStatusContent(context, updates, release, accent),
                 if (updates.error != null && updates.status != 'error') ...[
                   const SizedBox(height: 8),
                   _TrackNotice(

@@ -66,8 +66,8 @@ Future<EngineBootSelection> _initializeMediaKitWithFallbacks(
         MediaKit.ensureInitialized(libmpv: loadedPath);
         final loadedVersion =
             bundledEnginePath != null && p.equals(loadedPath, bundledEnginePath)
-                ? bundledEngineVersion
-                : p.basename(p.dirname(loadedPath));
+            ? bundledEngineVersion
+            : p.basename(p.dirname(loadedPath));
         return EngineBootSelection(
           libraryPath: loadedPath,
           version: loadedVersion,

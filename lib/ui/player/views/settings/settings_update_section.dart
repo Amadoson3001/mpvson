@@ -174,8 +174,10 @@ class AboutSettingsSection extends StatelessWidget {
               AnimatedBuilder(
                 animation: updates,
                 builder: (context, _) {
-                  final (statusText, statusColor) =
-                      appUpdateStatusPresentation(context, updates);
+                  final (statusText, statusColor) = appUpdateStatusPresentation(
+                    context,
+                    updates,
+                  );
                   return _AboutTile(
                     icon: Icons.desktop_windows_outlined,
                     title: 'Application updates',
