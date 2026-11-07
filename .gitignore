@@ -114,6 +114,12 @@ libmpv-2.dll
 mpv-*.dll
 mpv-*.zip
 
+# --- Local machine engine overrides -------------------------------------------
+# tool/engine_provenance.dart sync-active records the active in-app engine in
+# this untracked override instead of writing machine-local digests into the
+# tracked packaging/windows/engine-provenance.json record.
+/windows/libmpv/
+
 # --- Secrets and signing material --------------------------------------------
 # Never publish environment files, engine signing seeds or release keys.
 .env

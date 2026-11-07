@@ -4,9 +4,12 @@
 # Installs Mpvson for the current user without requiring root privileges.
 # Targets:
 #   - Binary symlink: ~/.local/bin/mpvson
-#   - Desktop entry:  ~/.local/share/applications/mpvson.desktop
-#   - Scalable icon:  ~/.local/share/icons/hicolor/scalable/apps/mpvson.svg
+#   - Desktop entry:  ~/.local/share/applications/dev.mpvson.mpvson.desktop
+#   - Scalable icon:  ~/.local/share/icons/hicolor/scalable/apps/dev.mpvson.mpvson.svg
 #   - App bundle:     ~/.local/opt/mpvson
+#
+# Exactly one launcher entry (dev.mpvson.mpvson.desktop) is installed; the
+# legacy mpvson.desktop / mpvson.svg files from earlier installers are removed.
 # ==============================================================================
 
 set -euo pipefail
@@ -53,33 +56,29 @@ else
   echo "    (Place your Mpvson bundle files in ${OPT_DIR})"
 fi
 
-# 3. Install desktop entries
-echo "--> Installing desktop entries..."
-if [[ -f "${SCRIPT_DIR}/mpvson.desktop" ]]; then
-  cp "${SCRIPT_DIR}/mpvson.desktop" "${APP_DIR}/mpvson.desktop"
-  chmod 644 "${APP_DIR}/mpvson.desktop"
-  echo "    Installed ${APP_DIR}/mpvson.desktop"
-fi
-
+# 3. Install the single desktop entry and clear the legacy one
+echo "--> Installing desktop entry..."
 if [[ -f "${SCRIPT_DIR}/dev.mpvson.mpvson.desktop" ]]; then
   cp "${SCRIPT_DIR}/dev.mpvson.mpvson.desktop" "${APP_DIR}/dev.mpvson.mpvson.desktop"
   chmod 644 "${APP_DIR}/dev.mpvson.mpvson.desktop"
   echo "    Installed ${APP_DIR}/dev.mpvson.mpvson.desktop"
+else
+  echo "    WARNING: ${SCRIPT_DIR}/dev.mpvson.mpvson.desktop not found; launcher entry not installed."
 fi
 
-# 4. Install scalable vector icons
-echo "--> Installing application icons..."
-if [[ -f "${SCRIPT_DIR}/mpvson.svg" ]]; then
-  cp "${SCRIPT_DIR}/mpvson.svg" "${ICON_DIR}/mpvson.svg"
-  chmod 644 "${ICON_DIR}/mpvson.svg"
-  echo "    Installed ${ICON_DIR}/mpvson.svg"
-fi
+# Remove the legacy launcher entry copied by older installers so exactly one
+# desktop entry remains after install.
+rm -f "${APP_DIR}/mpvson.desktop"
 
+# 4. Install the scalable vector icon and clear the legacy one
+echo "--> Installing application icon..."
 if [[ -f "${SCRIPT_DIR}/dev.mpvson.mpvson.svg" ]]; then
   cp "${SCRIPT_DIR}/dev.mpvson.mpvson.svg" "${ICON_DIR}/dev.mpvson.mpvson.svg"
   chmod 644 "${ICON_DIR}/dev.mpvson.mpvson.svg"
   echo "    Installed ${ICON_DIR}/dev.mpvson.mpvson.svg"
 fi
+
+rm -f "${ICON_DIR}/mpvson.svg"
 
 # 5. Refresh FreeDesktop caches
 echo "--> Updating desktop database and icon caches..."
