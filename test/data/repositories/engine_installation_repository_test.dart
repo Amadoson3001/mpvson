@@ -133,4 +133,103 @@ void main() {
     expect(boot.isPending, isTrue);
     expect(boot.version, _version);
   });
+
+  group('store lock contention', () {
+    /// True when two handles inside this process can contend for the same
+    /// lock file.
+    ///
+    /// On Windows the OS lock (LockFileEx) belongs to the handle, so a second
+    /// open in this test process contends exactly like a second process. POSIX
+    /// record locks (fcntl) belong to the process, so in-process simulation is
+    /// impossible there and the tests below are Windows-only.
+    final bool canSimulateForeignHolder = Platform.isWindows;
+
+    Future<Directory> createEmptyStore() async {
+      final root = await Directory.systemTemp.createTemp('mpvson-engine-lock-');
+      addTearDown(() {
+        try {
+          root.deleteSync(recursive: true);
+        } on Object {
+          // A still-open handle may keep the directory alive on Windows.
+        }
+      });
+      return root;
+    }
+
+    File lockMarkerFor(Directory root) =>
+        File(p.join(root.path, EngineInstallationRepository.storeLockFileName));
+
+    test(
+      'a foreign holder keeps the store busy instead of sharing the lock',
+      () async {
+        if (!canSimulateForeignHolder) return;
+        final root = await createEmptyStore();
+        final lockMarker = lockMarkerFor(root);
+        final foreign = await lockMarker.open(mode: FileMode.write);
+        await foreign.lock(FileLock.exclusive);
+
+        final repository = EngineInstallationRepository(
+          enginesDirectory: root,
+          storeLockTimeout: const Duration(milliseconds: 200),
+        );
+        await expectLater(
+          repository.discardPending(),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              contains('Engine store is busy'),
+            ),
+          ),
+        );
+
+        expect(
+          lockMarker.existsSync(),
+          isTrue,
+          reason:
+              'the failed acquisition must not remove the shared lock marker',
+        );
+        await foreign.unlock();
+        await foreign.close();
+      },
+    );
+
+    test('the operation proceeds once the foreign holder releases', () async {
+      if (!canSimulateForeignHolder) return;
+      final root = await createEmptyStore();
+      final lockMarker = lockMarkerFor(root);
+      final foreign = await lockMarker.open(mode: FileMode.write);
+      await foreign.lock(FileLock.exclusive);
+
+      final repository = EngineInstallationRepository(enginesDirectory: root);
+      final operation = repository.discardPending();
+      // Give the repository time to reach the contended acquisition before the
+      // foreign holder lets go.
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      await foreign.unlock();
+      await foreign.close();
+
+      await operation.timeout(const Duration(seconds: 5));
+
+      expect(
+        lockMarker.existsSync(),
+        isTrue,
+        reason: 'the release flow must never delete the lock marker',
+      );
+    });
+
+    test('completed operations leave the lock marker in place', () async {
+      final root = await createEmptyStore();
+      final repository = EngineInstallationRepository(enginesDirectory: root);
+      await repository.discardPending();
+
+      expect(
+        lockMarkerFor(root).existsSync(),
+        isTrue,
+        reason:
+            'the lock marker is long-lived; deleting it on release would '
+            'break mutual exclusion with waiters on the old inode',
+      );
+    });
+  });
 }

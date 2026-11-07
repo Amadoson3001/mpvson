@@ -29,6 +29,7 @@ class EngineInstallationRepository {
     this.maxArchiveEntries = 4096,
     this.maxUncompressedBytes = 2 * 1024 * 1024 * 1024,
     this.bootLeaseTimeout = const Duration(seconds: 3),
+    this.storeLockTimeout = const Duration(seconds: 3),
   }) : _providedEnginesDirectory = enginesDirectory,
        _beforeSelectionWriteForTesting = beforeSelectionWriteForTesting,
        _beforeExtractionForTesting = beforeExtractionForTesting,
@@ -38,6 +39,11 @@ class EngineInstallationRepository {
            supportDirectoryProvider ?? getApplicationSupportDirectory;
 
   static const String selectionFileName = 'engine-selection.json';
+
+  /// Long-lived store lock marker. Mutual exclusion comes solely from the OS
+  /// advisory lock taken on it — the marker itself is never deleted, because
+  /// unlinking a lock file lets a new contender create a fresh file while a
+  /// waiter still holds a handle (and the lock) to the unlinked inode.
   static const String storeLockFileName = '.engine-store.lock';
   static const String bootLeaseFileName = '.engine-boot.lease';
   static const String bootLeaseOwnerFileName = '.engine-boot.owner';
@@ -76,12 +82,30 @@ class EngineInstallationRepository {
   final int maxArchiveEntries;
   final int maxUncompressedBytes;
   final Duration bootLeaseTimeout;
+
+  /// How long a store transaction may wait for the OS store lock before the
+  /// operation fails with a busy error. Covers both the process-local tail and
+  /// the cross-process lock acquisition.
+  final Duration storeLockTimeout;
   Future<Directory>? _enginesDirectoryFuture;
   final Random _random = Random.secure();
   RandomAccessFile? _currentBootLeaseHandle;
   String? _currentBootAttemptToken;
 
   Future<Directory> get enginesDirectory => _resolveEnginesDirectory();
+
+  /// Opens a zero-content engine lock marker (store lock, boot lease, stage
+  /// lease) so an OS advisory lock can be taken on it.
+  ///
+  /// The open deliberately does not create the file exclusively and does not
+  /// lock anything: neither is a property any FileMode can provide. The marker
+  /// must stay creatable by every contender and must keep existing between
+  /// operations — deleting it on release would pair a new file with waiters
+  /// still locked on the unlinked one. Exclusivity is provided exclusively by
+  /// [RandomAccessFile.lock]; the mode only has to yield a writable handle.
+  Future<RandomAccessFile> _openLockMarker(File file) {
+    return file.open(mode: FileMode.write);
+  }
 
   Future<T> _withStoreLock<T>(Future<T> Function() action) async {
     await initialize();
@@ -102,7 +126,7 @@ class EngineInstallationRepository {
     }
 
     try {
-      await predecessor.timeout(const Duration(seconds: 3));
+      await predecessor.timeout(storeLockTimeout);
     } on TimeoutException {
       predecessor.whenComplete(releaseProcessGate);
       throw StateError('Engine store is busy; retry the operation shortly.');
@@ -119,14 +143,14 @@ class EngineInstallationRepository {
           lockFile.path,
         );
       }
-      lockHandle = await lockFile.open(mode: FileMode.append);
+      lockHandle = await _openLockMarker(lockFile);
       final stopwatch = Stopwatch()..start();
       while (!locked) {
         try {
           await lockHandle.lock(FileLock.exclusive);
           locked = true;
         } on FileSystemException {
-          if (stopwatch.elapsed >= const Duration(seconds: 3)) {
+          if (stopwatch.elapsed >= storeLockTimeout) {
             throw StateError(
               'Engine store is busy; retry the operation shortly.',
             );
@@ -136,6 +160,9 @@ class EngineInstallationRepository {
       }
       return await action();
     } finally {
+      // Release the OS lock and the handle, but never remove the marker: a
+      // fresh file would no longer be mutually exclusive with waiters that are
+      // still contending for the old inode.
       try {
         if (locked && lockHandle != null) {
           try {
@@ -190,7 +217,7 @@ class EngineInstallationRepository {
         leaseFile.path,
       );
     }
-    final handle = await leaseFile.open(mode: FileMode.append);
+    final handle = await _openLockMarker(leaseFile);
     try {
       await handle.lock(FileLock.exclusive);
       return handle;
@@ -1244,7 +1271,7 @@ class EngineInstallationRepository {
         flush: true,
       );
       final leaseFile = File(p.join(directory.path, stageLeaseFileName));
-      leaseHandle = await leaseFile.open(mode: FileMode.append);
+      leaseHandle = await _openLockMarker(leaseFile);
       await leaseHandle.lock(FileLock.exclusive);
       if (shouldCancel?.call() == true) {
         throw const _EngineStageCancelled();
@@ -1379,7 +1406,7 @@ class EngineInstallationRepository {
         FileSystemEntityType.file) {
       return null;
     }
-    final handle = await leaseFile.open(mode: FileMode.append);
+    final handle = await _openLockMarker(leaseFile);
     try {
       await handle.lock(FileLock.exclusive);
       return handle;

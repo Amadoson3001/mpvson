@@ -193,16 +193,29 @@ class AppPreferencesRepository extends ChangeNotifier {
         return DesktopPreferences.fromJson(json);
       }
 
+      // Snapshot the write pipeline before reading so we can tell whether a
+      // preference update raced with the read. If anything changed (or a save
+      // is still pending), the in-memory value is newer than whatever is on
+      // disk and must win.
+      final revisionBefore = _revision;
+      final savedRevisionBefore = _savedRevision;
+      DesktopPreferences? loaded;
       if (await file.exists()) {
         try {
-          _preferences = await read(file);
+          loaded = await read(file);
         } on Object {
           _primaryInvalid = true;
-          if (await backup.exists()) _preferences = await read(backup);
+          if (await backup.exists()) loaded = await read(backup);
         }
       } else if (await backup.exists()) {
         _primaryInvalid = true;
-        _preferences = await read(backup);
+        loaded = await read(backup);
+      }
+      if (loaded != null &&
+          _revision == revisionBefore &&
+          _savedRevision == savedRevisionBefore &&
+          _revision == _savedRevision) {
+        _preferences = loaded;
       }
     } on Object {
       // Keep defaults if neither copy can be read. Do not overwrite the backup.
@@ -273,8 +286,16 @@ class AppPreferencesRepository extends ChangeNotifier {
   }
 
   /// Retry unsaved changes and report a failure to the caller.
+  ///
+  /// A revision queued while the previous write was completing (e.g. by a
+  /// listener reacting to the save-finished notification) is drained here too:
+  /// flush only returns once every revision issued so far is on disk.
   Future<void> flush() async {
-    await _drain();
+    while (true) {
+      await _drain();
+      if (_saveError != null) break;
+      if (_revision == _savedRevision) break;
+    }
     if (_saveError != null) throw _saveError!;
   }
 
