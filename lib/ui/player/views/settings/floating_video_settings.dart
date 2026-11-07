@@ -239,7 +239,7 @@ class _FloatingVideoSettingsState extends State<FloatingVideoSettings> {
           IconButton(
             tooltip: 'Close settings (Esc)',
             iconSize: 18,
-            constraints: const BoxConstraints.tightFor(width: 32, height: 32),
+            constraints: const BoxConstraints.tightFor(width: 44, height: 44),
             padding: EdgeInsets.zero,
             style: IconButton.styleFrom(
               shape: RoundedRectangleBorder(
@@ -390,40 +390,44 @@ class _TabPill extends StatelessWidget {
     final foreground = selected ? accent : theme.colorScheme.onSurfaceVariant;
     final bg = selected ? accent.withValues(alpha: 0.16) : Colors.transparent;
 
-    return Material(
-      color: bg,
-      borderRadius: BorderRadius.circular(AppRadii.control),
-      child: InkWell(
-        onTap: onTap,
+    return Semantics(
+      button: true,
+      selected: selected,
+      child: Material(
+        color: bg,
         borderRadius: BorderRadius.circular(AppRadii.control),
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 2),
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(AppRadii.control),
-            border: Border.all(
-              color: selected
-                  ? accent.withValues(alpha: 0.45)
-                  : Colors.transparent,
-              width: 1,
-            ),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 16, color: foreground),
-              const SizedBox(height: 3),
-              Text(
-                label,
-                style: theme.textTheme.labelSmall?.copyWith(
-                  fontSize: 11,
-                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                  color: foreground,
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(AppRadii.control),
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 2),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(AppRadii.control),
+              border: Border.all(
+                color: selected
+                    ? accent.withValues(alpha: 0.45)
+                    : Colors.transparent,
+                width: 1,
               ),
-            ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: 16, color: foreground),
+                const SizedBox(height: 3),
+                Text(
+                  label,
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    fontSize: 11,
+                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                    color: foreground,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
           ),
         ),
       ),

@@ -45,7 +45,7 @@ class FloatingAudioSubsTab extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
               child: OutlinedButton.icon(
                 style: OutlinedButton.styleFrom(
-                  minimumSize: const Size(0, 34),
+                  minimumSize: const Size(0, 44),
                   padding: const EdgeInsets.symmetric(horizontal: 12),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(AppRadii.control),
@@ -379,35 +379,39 @@ class _SpeedPill extends StatelessWidget {
     final theme = Theme.of(context);
     final label = speed == 1.0 ? '1.0× (Normal)' : '$speed×';
 
-    return Material(
-      color: selected
-          ? accent.withValues(alpha: 0.16)
-          : theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
-      borderRadius: BorderRadius.circular(AppRadii.control),
-      child: InkWell(
-        onTap: onTap,
+    return Semantics(
+      button: true,
+      selected: selected,
+      child: Material(
+        color: selected
+            ? accent.withValues(alpha: 0.16)
+            : theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
         borderRadius: BorderRadius.circular(AppRadii.control),
-        child: Container(
-          height: 34,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(AppRadii.control),
-            border: Border.all(
-              color: selected
-                  ? accent
-                  : theme.colorScheme.outlineVariant.withValues(alpha: 0.4),
-              width: selected ? 1.4 : 1,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(AppRadii.control),
+          child: Container(
+            height: 44,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(AppRadii.control),
+              border: Border.all(
+                color: selected
+                    ? accent
+                    : theme.colorScheme.outlineVariant.withValues(alpha: 0.4),
+                width: selected ? 1.4 : 1,
+              ),
             ),
-          ),
-          child: Text(
-            label,
-            style: theme.textTheme.bodySmall?.copyWith(
-              fontSize: 12,
-              fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-              color: selected ? accent : theme.colorScheme.onSurface,
+            child: Text(
+              label,
+              style: theme.textTheme.bodySmall?.copyWith(
+                fontSize: 12,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                color: selected ? accent : theme.colorScheme.onSurface,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
           ),
         ),
       ),

@@ -175,43 +175,48 @@ class _ThemeChip extends StatelessWidget {
     final theme = Theme.of(context);
     final accent = theme.colorScheme.primary;
 
-    return Material(
-      color: selected
-          ? accent.withValues(alpha: 0.12)
-          : theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
-      borderRadius: BorderRadius.circular(AppRadii.control),
-      child: InkWell(
-        onTap: onTap,
+    return Semantics(
+      button: true,
+      selected: selected,
+      child: Material(
+        color: selected
+            ? accent.withValues(alpha: 0.12)
+            : theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
         borderRadius: BorderRadius.circular(AppRadii.control),
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(AppRadii.control),
-            border: Border.all(
-              color: selected
-                  ? accent
-                  : theme.colorScheme.outlineVariant.withValues(alpha: 0.4),
-              width: selected ? 1.4 : 1,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(AppRadii.control),
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 44),
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(AppRadii.control),
+              border: Border.all(
+                color: selected
+                    ? accent
+                    : theme.colorScheme.outlineVariant.withValues(alpha: 0.4),
+                width: selected ? 1.4 : 1,
+              ),
             ),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                icon,
-                size: 15,
-                color: selected ? accent : theme.colorScheme.onSurfaceVariant,
-              ),
-              const SizedBox(width: 5),
-              Text(
-                label,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                  color: selected ? accent : theme.colorScheme.onSurface,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  icon,
+                  size: 15,
+                  color: selected ? accent : theme.colorScheme.onSurfaceVariant,
                 ),
-              ),
-            ],
+                const SizedBox(width: 5),
+                Text(
+                  label,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                    color: selected ? accent : theme.colorScheme.onSurface,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

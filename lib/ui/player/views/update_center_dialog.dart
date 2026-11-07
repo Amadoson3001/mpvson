@@ -9,6 +9,7 @@ import '../../../domain/updates/engine_update_channel.dart';
 import '../../../domain/updates/release_info.dart';
 import '../../core/app_motion.dart';
 import '../../core/app_theme.dart';
+import '../../core/components/app_dialog.dart';
 import 'update_status.dart';
 
 class UpdateCenterDialog extends StatelessWidget {
@@ -33,19 +34,14 @@ class UpdateCenterDialog extends StatelessWidget {
       final engineBusy = engineUpdates.busy;
       final theme = Theme.of(context);
 
-      return Dialog(
+      return AppDialog(
         backgroundColor: theme.colorScheme.surface,
-        surfaceTintColor: Colors.transparent,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppRadii.artwork),
-          side: BorderSide(
-            color: theme.colorScheme.outlineVariant.withValues(alpha: 0.8),
-          ),
-        ),
+        borderColor: theme.colorScheme.outlineVariant.withValues(alpha: 0.8),
         insetPadding: const EdgeInsets.symmetric(
           horizontal: AppSpace.xl,
           vertical: AppSpace.lg,
         ),
+        constraints: BoxConstraints(maxWidth: 580, maxHeight: dialogHeight),
         child: SizedBox(
           width: 580,
           height: dialogHeight,
@@ -98,8 +94,8 @@ class UpdateCenterDialog extends StatelessWidget {
                     IconButton(
                       tooltip: 'Close dialog',
                       constraints: const BoxConstraints.tightFor(
-                        width: 36,
-                        height: 36,
+                        width: 44,
+                        height: 44,
                       ),
                       onPressed: () => Navigator.of(context).pop(),
                       icon: const Icon(Icons.close_rounded, size: 20),
@@ -1019,32 +1015,35 @@ class _ReleaseNotesPreviewState extends State<ReleaseNotesPreview> {
               ),
               const Spacer(),
               if (hasMore)
-                InkWell(
-                  onTap: () => setState(() => _expanded = !_expanded),
-                  borderRadius: BorderRadius.circular(4),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 4,
-                      vertical: 2,
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          _expanded ? 'Show less' : 'View full notes',
-                          style: theme.textTheme.labelSmall?.copyWith(
-                            color: theme.colorScheme.primary,
-                            fontSize: 11,
+                Semantics(
+                  button: true,
+                  selected: _expanded,
+                  child: InkWell(
+                    onTap: () => setState(() => _expanded = !_expanded),
+                    borderRadius: BorderRadius.circular(4),
+                    child: Container(
+                      constraints: const BoxConstraints(minHeight: 44),
+                      alignment: Alignment.center,
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            _expanded ? 'Show less' : 'View full notes',
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: theme.colorScheme.primary,
+                              fontSize: 11,
+                            ),
                           ),
-                        ),
-                        Icon(
-                          _expanded
-                              ? Icons.keyboard_arrow_up_rounded
-                              : Icons.keyboard_arrow_down_rounded,
-                          size: 14,
-                          color: theme.colorScheme.primary,
-                        ),
-                      ],
+                          Icon(
+                            _expanded
+                                ? Icons.keyboard_arrow_up_rounded
+                                : Icons.keyboard_arrow_down_rounded,
+                            size: 14,
+                            color: theme.colorScheme.primary,
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),

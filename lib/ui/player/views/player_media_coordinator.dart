@@ -14,6 +14,7 @@ import '../../../data/services/update_service.dart';
 import '../../../domain/models/media_catalog.dart';
 import '../../../domain/models/media_entry.dart';
 import '../../../domain/models/open_request.dart';
+import '../../core/components/app_dialog.dart';
 import '../../core/toast/app_toast.dart';
 import '../player_controller.dart';
 import '../widgets/open_url_dialog.dart';
@@ -154,7 +155,7 @@ class PlayerMediaCoordinator {
     onCloseContextMenu();
     final url = await withControlsVisible(
       () => urlPrompt == null
-          ? showDialog<String>(
+          ? AppDialog.show<String>(
               context: context,
               builder: (_) => const OpenUrlDialog(),
             )
@@ -294,7 +295,7 @@ class PlayerMediaCoordinator {
       return;
     }
     await withControlsVisible(
-      () => showDialog<void>(
+      () => AppDialog.show<void>(
         context: context,
         builder: (_) => SettingsDialog(
           controller: controller,
@@ -314,7 +315,7 @@ class PlayerMediaCoordinator {
     onCloseContextMenu();
     final gpuInfo = GpuInfoService();
     await withControlsVisible(
-      () => showDialog<void>(
+      () => AppDialog.show<void>(
         context: context,
         builder: (_) => PlaybackInfoDialog(
           readStatistics: () =>

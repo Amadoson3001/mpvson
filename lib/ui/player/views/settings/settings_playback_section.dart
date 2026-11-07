@@ -135,12 +135,17 @@ class PlaybackSettingsSection extends StatelessWidget {
                   onTap: () async {
                     final route = ModalRoute.of(context);
                     final navigator = Navigator.maybeOf(context);
+                    // The navigator's context outlives this sheet, so toasts
+                    // fired after a pick (or after the sheet pops) still have
+                    // a mounted element to attach to.
+                    final toastContext = navigator?.context ?? context;
                     String? path;
                     try {
                       path = await pickSubtitle();
                     } catch (_) {
+                      if (!toastContext.mounted) return;
                       AppToast.show(
-                        navigator?.context ?? context,
+                        toastContext,
                         'The file picker could not be opened.',
                         tone: AppToastTone.danger,
                       );
@@ -158,8 +163,9 @@ class PlaybackSettingsSection extends StatelessWidget {
                     try {
                       await controller.loadSubtitle(path);
                     } catch (_) {
+                      if (!toastContext.mounted) return;
                       AppToast.show(
-                        navigator?.context ?? context,
+                        toastContext,
                         'Mpvson could not load that subtitle file.',
                         tone: AppToastTone.danger,
                       );

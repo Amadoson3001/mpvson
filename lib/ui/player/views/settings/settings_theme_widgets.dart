@@ -205,81 +205,86 @@ class AccentColorChip extends StatelessWidget {
           ? '${preset.label} (Overridden by active artwork)'
           : '${preset.label} — ${preset.description}',
       waitDuration: const Duration(milliseconds: 300),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(22),
-          hoverColor: displayColor.withValues(alpha: 0.1),
-          child: AnimatedContainer(
-            duration: AppMotion.duration(context, AppMotion.quick),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-            decoration: BoxDecoration(
-              color: selected
-                  ? (isOverridden
-                        ? displayColor.withValues(alpha: 0.08)
-                        : displayColor.withValues(alpha: 0.16))
-                  : theme.colorScheme.surfaceContainerHighest.withValues(
-                      alpha: 0.35,
-                    ),
-              borderRadius: BorderRadius.circular(22),
-              border: Border.all(
+      child: Semantics(
+        button: true,
+        selected: selected,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(22),
+            hoverColor: displayColor.withValues(alpha: 0.1),
+            child: AnimatedContainer(
+              duration: AppMotion.duration(context, AppMotion.quick),
+              constraints: const BoxConstraints(minHeight: 44),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+              decoration: BoxDecoration(
                 color: selected
                     ? (isOverridden
-                          ? displayColor.withValues(alpha: 0.4)
-                          : displayColor)
-                    : theme.colorScheme.outlineVariant.withValues(alpha: 0.4),
-                width: selected ? (isOverridden ? 1.2 : 1.6) : 1,
-              ),
-              boxShadow: selected && !isOverridden
-                  ? [
-                      BoxShadow(
-                        color: displayColor.withValues(alpha: 0.22),
-                        blurRadius: 6,
-                        offset: const Offset(0, 1),
+                          ? displayColor.withValues(alpha: 0.08)
+                          : displayColor.withValues(alpha: 0.16))
+                    : theme.colorScheme.surfaceContainerHighest.withValues(
+                        alpha: 0.35,
                       ),
-                    ]
-                  : null,
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 18,
-                  height: 18,
-                  decoration: BoxDecoration(
-                    color: effectiveColor,
-                    shape: BoxShape.circle,
-                    boxShadow: !isOverridden
-                        ? [
-                            BoxShadow(
-                              color: displayColor.withValues(alpha: 0.35),
-                              blurRadius: 3,
-                              offset: const Offset(0, 1),
-                            ),
-                          ]
+                borderRadius: BorderRadius.circular(22),
+                border: Border.all(
+                  color: selected
+                      ? (isOverridden
+                            ? displayColor.withValues(alpha: 0.4)
+                            : displayColor)
+                      : theme.colorScheme.outlineVariant.withValues(alpha: 0.4),
+                  width: selected ? (isOverridden ? 1.2 : 1.6) : 1,
+                ),
+                boxShadow: selected && !isOverridden
+                    ? [
+                        BoxShadow(
+                          color: displayColor.withValues(alpha: 0.22),
+                          blurRadius: 6,
+                          offset: const Offset(0, 1),
+                        ),
+                      ]
+                    : null,
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 18,
+                    height: 18,
+                    decoration: BoxDecoration(
+                      color: effectiveColor,
+                      shape: BoxShape.circle,
+                      boxShadow: !isOverridden
+                          ? [
+                              BoxShadow(
+                                color: displayColor.withValues(alpha: 0.35),
+                                blurRadius: 3,
+                                offset: const Offset(0, 1),
+                              ),
+                            ]
+                          : null,
+                    ),
+                    alignment: Alignment.center,
+                    child: selected
+                        ? Icon(
+                            Icons.check_rounded,
+                            size: 13,
+                            color: isColorDark ? Colors.white : Colors.black87,
+                          )
                         : null,
                   ),
-                  alignment: Alignment.center,
-                  child: selected
-                      ? Icon(
-                          Icons.check_rounded,
-                          size: 13,
-                          color: isColorDark ? Colors.white : Colors.black87,
-                        )
-                      : null,
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  preset.label,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-                    color: selected && !isOverridden
-                        ? displayColor
-                        : theme.colorScheme.onSurface,
+                  const SizedBox(width: 8),
+                  Text(
+                    preset.label,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                      color: selected && !isOverridden
+                          ? displayColor
+                          : theme.colorScheme.onSurface,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
