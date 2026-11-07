@@ -59,13 +59,18 @@ abstract final class AppMotion {
       reduce(context) ? instant : preferred;
 
   /// Composited shared-axis transition (fade + micro vertical glide) for stage/view swaps.
+  ///
+  /// The curve is applied with a [CurveTween], which wraps the incoming route
+  /// animation without registering listeners on it. Building a
+  /// [CurvedAnimation] here instead would attach one that nothing ever
+  /// detaches, leaking a listener per stage change.
   static Widget stageTransition(
     BuildContext context,
     Widget child,
     Animation<double> animation,
   ) {
     if (lowPower(context)) return child;
-    final curved = CurvedAnimation(parent: animation, curve: enter);
+    final curved = CurveTween(curve: enter).animate(animation);
     return FadeTransition(
       opacity: curved,
       child: SlideTransition(
@@ -106,7 +111,7 @@ class _AppMotionRevealState extends State<AppMotionReveal>
     vsync: this,
     duration: widget.duration,
   );
-  late final Animation<double> _curved = CurvedAnimation(
+  late final CurvedAnimation _curved = CurvedAnimation(
     parent: _controller,
     curve: AppMotion.enter,
   );
@@ -139,6 +144,7 @@ class _AppMotionRevealState extends State<AppMotionReveal>
 
   @override
   void dispose() {
+    _curved.dispose();
     _controller.dispose();
     super.dispose();
   }
@@ -183,8 +189,10 @@ Future<T?> showMorphDialog<T>({
     barrierDismissible: barrierDismissible,
     barrierColor: barrierColor,
     barrierLabel:
-        Localizations.of<MaterialLocalizations>(context, MaterialLocalizations)
-            ?.modalBarrierDismissLabel ??
+        Localizations.of<MaterialLocalizations>(
+          context,
+          MaterialLocalizations,
+        )?.modalBarrierDismissLabel ??
         'Close dialog',
     transitionDuration: AppMotion.emphasized,
     pageBuilder: (context, animation, secondaryAnimation) => builder(context),
@@ -211,8 +219,7 @@ class _MorphDialogTransition extends StatefulWidget {
   final Widget child;
 
   @override
-  State<_MorphDialogTransition> createState() =>
-      _MorphDialogTransitionState();
+  State<_MorphDialogTransition> createState() => _MorphDialogTransitionState();
 }
 
 class _MorphDialogTransitionState extends State<_MorphDialogTransition> {

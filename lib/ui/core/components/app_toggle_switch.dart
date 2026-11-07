@@ -23,7 +23,7 @@ class AppToggleSwitch extends StatefulWidget {
 class _AppToggleSwitchState extends State<AppToggleSwitch>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
-  late final Animation<double> _animation;
+  late final CurvedAnimation _animation;
   bool _hovered = false;
   bool _focused = false;
   bool _pressed = false;
@@ -66,6 +66,7 @@ class _AppToggleSwitchState extends State<AppToggleSwitch>
 
   @override
   void dispose() {
+    _animation.dispose();
     _controller.dispose();
     super.dispose();
   }
