@@ -237,7 +237,15 @@ class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
     this.videoControllerFactory,
     this.diagnostics,
     this.hlsSourceResolver,
+    this.platformInitTimeout = defaultPlatformInitTimeout,
   });
+
+  /// How long the preview worker waits for the video output's platform
+  /// initialization before giving up. Without this bound a stalled platform
+  /// channel leaves the backend queue wedged forever, which in turn hangs
+  /// [dispose] behind the stuck open.
+  static const Duration defaultPlatformInitTimeout = Duration(seconds: 10);
+  final Duration platformInitTimeout;
 
   final Player Function()? playerFactory;
   final VideoController Function(Player player)? videoControllerFactory;
@@ -334,7 +342,23 @@ class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
     // VideoController schedules native setup from a post-frame callback. A
     // paused main player may have no later frame to trigger that callback.
     WidgetsBinding.instance.ensureVisualUpdate();
-    await _videoController!.platform.future;
+    try {
+      await _videoController!.platform.future.timeout(platformInitTimeout);
+    } on TimeoutException catch (error) {
+      _record(
+        'preview.video_output',
+        message: 'Preview video output did not initialize in time',
+        error: error,
+      );
+      // The player's engine gate waits for this same initialization; release
+      // it so later engine commands (and player disposal) cannot hang on a
+      // video output that will never arrive.
+      final platform = player.platform;
+      if (platform != null && !platform.videoControllerCompleter.isCompleted) {
+        platform.videoControllerCompleter.complete();
+      }
+      rethrow;
+    }
 
     return player;
   }
