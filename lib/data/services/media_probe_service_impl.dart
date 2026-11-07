@@ -1158,6 +1158,17 @@ class MediaProbeServiceImpl implements MediaProbeService {
       <String, Future<File?>>{};
   static const int _maximumNearbyArtworkDirectories = 128;
 
+  /// Negative (failure) cache for artwork lookups, keyed by
+  /// `'<contentKey>|<embeddedOnly>'` so a failure while resolving
+  /// embedded-only artwork never poisons the full lookup and vice versa.
+  final Map<String, DateTime> _artworkFailures = <String, DateTime>{};
+  static const int _maximumArtworkFailureEntries = 512;
+  static const Duration _artworkFailureTtl = Duration(minutes: 10);
+
+  /// How old an on-disk artwork cache file may become before the startup
+  /// prune removes it.
+  static const Duration _startupArtworkPruneAge = Duration(days: 30);
+
   final LinkedHashMap<String, _ArtworkCacheRecord> _artworkCache =
       LinkedHashMap<String, _ArtworkCacheRecord>();
   int _currentCacheBytes = 0;
@@ -1551,29 +1562,37 @@ class MediaProbeServiceImpl implements MediaProbeService {
     final stat = await file.stat();
     final cacheDir = await _getArtworkCacheDirectory();
 
-    // Cache key derived from file path and modification timestamp
+    // Cache key derived from file path and modification timestamp. The
+    // effective key carries the lookup mode so embedded-only and full
+    // lookups never share cache entries, failure records, or temp files.
     final rawKey =
         'art:$filePath:${stat.modified.millisecondsSinceEpoch}:${stat.size}';
     final key = sha256.convert(utf8.encode(rawKey)).toString();
+    final effectiveKey = '$key|$embeddedOnly';
+
+    // 0. Skip probing when this mode failed recently.
+    if (_hasRecentArtworkFailure(effectiveKey)) return null;
 
     // 1. Check existing bounded cache record
-    final cachedRecord = _artworkCache[key];
+    final cachedRecord = _artworkCache[effectiveKey];
     if (cachedRecord != null) {
       final cachedFile = File(cachedRecord.path);
       if (await cachedFile.exists()) {
-        _touchCacheRecord(key);
+        _touchCacheRecord(effectiveKey);
         return cachedRecord.path;
       } else {
-        _artworkCache.remove(key);
+        _artworkCache.remove(effectiveKey);
         _currentCacheBytes -= cachedRecord.bytes;
       }
     }
 
     // Check disk directly in case record wasn't in memory
-    final diskFile = File(p.join(cacheDir.path, '$key.png'));
+    final diskFile = File(
+      p.join(cacheDir.path, '${_diskKeyFor(effectiveKey)}.png'),
+    );
     if (await diskFile.exists()) {
       final diskStat = await diskFile.stat();
-      _recordCacheEntry(key, diskFile.path, diskStat.size);
+      _recordCacheEntry(effectiveKey, diskFile.path, diskStat.size);
       return diskFile.path;
     }
 
@@ -1595,10 +1614,9 @@ class MediaProbeServiceImpl implements MediaProbeService {
         }
       }
 
-      if (rawBytes == null ||
-          rawBytes.isEmpty ||
-          token.isCancelled ||
-          _disposed) {
+      if (token.isCancelled || _disposed) return null;
+      if (rawBytes == null || rawBytes.isEmpty) {
+        _recordArtworkFailure(effectiveKey);
         return null;
       }
 
@@ -1609,17 +1627,27 @@ class MediaProbeServiceImpl implements MediaProbeService {
       );
 
       if (token.isCancelled || _disposed) return null;
+      if (normalizedBytes.isEmpty) {
+        _recordArtworkFailure(effectiveKey);
+        return null;
+      }
 
-      // 5. Save normalized artwork in application-cache directory
-      final tempFile = File(p.join(cacheDir.path, '$key.tmp'));
+      // 5. Save normalized artwork in application-cache directory. The temp
+      // name is mode-specific so concurrent embedded-only and full lookups
+      // cannot clobber each other's temp file.
+      final tempFile = File(
+        p.join(cacheDir.path, '${_diskKeyFor(effectiveKey)}.tmp'),
+      );
       await tempFile.writeAsBytes(normalizedBytes, flush: true);
       final finalFile = await tempFile.rename(diskFile.path);
 
-      _recordCacheEntry(key, finalFile.path, normalizedBytes.length);
+      _clearArtworkFailure(effectiveKey);
+      _recordCacheEntry(effectiveKey, finalFile.path, normalizedBytes.length);
       _pruneCache();
 
       return finalFile.path;
     } catch (_) {
+      _recordArtworkFailure(effectiveKey);
       return null;
     } finally {
       _activeArtworkTokens.remove(token);
@@ -1687,6 +1715,61 @@ class MediaProbeServiceImpl implements MediaProbeService {
     }
   }
 
+  /// Filesystem-safe disk key for an artwork cache entry. `|` is not valid in
+  /// Windows file names, so the effective key is hashed again for disk use.
+  static String _diskKeyFor(String effectiveKey) =>
+      sha256.convert(utf8.encode(effectiveKey)).toString();
+
+  bool _hasRecentArtworkFailure(String effectiveKey) {
+    final failedAt = _artworkFailures[effectiveKey];
+    if (failedAt == null) return false;
+    if (DateTime.now().isBefore(failedAt.add(_artworkFailureTtl))) return true;
+    _artworkFailures.remove(effectiveKey);
+    return false;
+  }
+
+  void _recordArtworkFailure(String effectiveKey) {
+    if (_artworkFailures.length >= _maximumArtworkFailureEntries) {
+      _artworkFailures.remove(_artworkFailures.keys.first);
+    }
+    _artworkFailures[effectiveKey] = DateTime.now();
+  }
+
+  void _clearArtworkFailure(String effectiveKey) {
+    _artworkFailures.remove(effectiveKey);
+  }
+
+  /// One-time LRU-style prune run when the artwork cache directory is first
+  /// resolved: removes orphaned `.tmp` files left by previous sessions and
+  /// cache entries that have not been touched within
+  /// [_startupArtworkPruneAge].
+  Future<void> _pruneStartupCache(Directory directory) async {
+    try {
+      final cutoff = DateTime.now().subtract(_startupArtworkPruneAge);
+      await for (final entity in directory.list(followLinks: false)) {
+        if (entity is! File) continue;
+        final name = p.basename(entity.path).toLowerCase();
+        final isTemp = name.endsWith('.tmp');
+        if (!isTemp && !name.endsWith('.png')) continue;
+        try {
+          if (isTemp) {
+            await entity.delete();
+            continue;
+          }
+          final stat = await entity.stat();
+          if (stat.type == FileSystemEntityType.file &&
+              stat.modified.isBefore(cutoff)) {
+            await entity.delete();
+          }
+        } on FileSystemException {
+          // Pruning must never fail an artwork lookup.
+        }
+      }
+    } on Object {
+      // Startup pruning is best-effort.
+    }
+  }
+
   Future<Directory> _getArtworkCacheDirectory() async {
     if (_resolvedCacheDir != null) return _resolvedCacheDir!;
 
@@ -1705,6 +1788,7 @@ class MediaProbeServiceImpl implements MediaProbeService {
 
     final artworkDir = Directory(p.join(baseDir.path, 'artwork_cache'));
     await artworkDir.create(recursive: true);
+    await _pruneStartupCache(artworkDir);
     return _resolvedCacheDir = artworkDir;
   }
 
