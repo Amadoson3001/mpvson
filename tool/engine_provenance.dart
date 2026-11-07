@@ -17,6 +17,14 @@
 //   dart run tool/engine_provenance.dart inventory
 //     Writes build/windows/x64/engine/engine-inventory.json for release provenance.
 //
+//   dart run tool/engine_provenance.dart sync-active
+//     Copies the active in-app engine update into the local build cache and
+//     records it in the untracked windows/libmpv/engine-provenance.local.json
+//     override. The tracked provenance record is never touched: a locally
+//     installed module carries no verifiable upstream provenance (it may even
+//     be a stripped build), so writing its digests into the pinned record
+//     would break both the CMake verification and `verify`.
+//
 // mpv publishes Windows libmpv modules only under the rolling git-release tag,
 // so the pinned version changes whenever upstream rebuilds. Refreshing is a
 // deliberate, reviewable step: the record always states the exact version, the
@@ -34,6 +42,16 @@ import 'verified_artifact_download.dart';
 
 const String _recordRelative = 'packaging/windows/engine-provenance.json';
 const String _licenseRelative = 'packaging/windows/LICENSE.libmpv-GPL.txt';
+
+/// Machine-local, untracked override record written by `sync-active`.
+///
+/// It captures which in-app engine update is active on this machine so local
+/// builds and release tooling can inspect it, without ever modifying the
+/// tracked [recordRelative] file. That file must only ever describe a fully
+/// verified upstream release artifact, so machine-local module digests (which
+/// may describe a stripped or otherwise tailored build) belong here instead.
+const String localEngineOverrideRelative =
+    'windows/libmpv/engine-provenance.local.json';
 const String _cacheRelative = 'build/windows/x64/engine';
 const String _bundleRelative = 'build/windows/x64/runner/Release';
 const String _releaseApi =
@@ -93,7 +111,10 @@ Usage: dart run tool/engine_provenance.dart <command> [options]
 Commands:
   verify                              Verify the record, license, cache and bundle.
   refresh --accept <version>          Re-pin the engine from upstream metadata.
-  sync-active                         Sync the active in-app engine update into the build pin.
+  sync-active                         Sync the active in-app engine into the local
+                                      build cache and the untracked
+                                      windows/libmpv/engine-provenance.local.json
+                                      override; tracked files stay untouched.
   inventory                           Write build/engine/engine-inventory.json.
 
 Options:
@@ -136,6 +157,47 @@ Future<void> writeEngineFileAtomically(
     }
     rethrow;
   }
+}
+
+/// Builds the machine-local override record that `sync-active` writes to
+/// [localEngineOverrideRelative].
+///
+/// The record deliberately carries no artifact URL, archive digest or license
+/// digest: a locally installed engine module has no verifiable upstream
+/// provenance, and earlier revisions that fabricated those fields directly
+/// into the tracked provenance record broke both the CMake verification and
+/// `verify`. Those workflows keep reading the pinned record; this override is
+/// documentation for the local machine only.
+Map<String, Object?> buildLocalEngineOverride({
+  required String version,
+  required String member,
+  required String memberSha256,
+  required int memberSize,
+  DateTime? generatedAt,
+}) {
+  return <String, Object?>{
+    'schemaVersion': 1,
+    'source': 'sync-active',
+    'generatedAt': (generatedAt ?? DateTime.now()).toUtc().toIso8601String(),
+    'purpose':
+        'Machine-local record of the active in-app engine. Never commit this '
+        'file. To ship a different engine officially, re-pin the tracked '
+        'record with: dart run tool/engine_provenance.dart refresh --accept '
+        '<version>',
+    'engine': <String, Object?>{
+      'version': 'v$version',
+      'describeVersion': 'v$version',
+      'runtimeVersion': version,
+      'baseVersion': version,
+      'channel': 'mpv-upstream-stable',
+    },
+    'artifact': <String, Object?>{
+      'member': member,
+      'memberSize': memberSize,
+      'memberSha256': memberSha256,
+    },
+    'bundledEngineVersion': version,
+  };
 }
 
 Map<String, Object?> _section(Map<String, Object?> json, String key) {
@@ -744,41 +806,35 @@ Future<bool> _syncActive(String root, _Options options) async {
     }
   }
 
-  // 3. Update lib/domain/updates/bundled_engine.dart
-  final bundledFile = File(
-    p.join(root, 'lib/domain/updates/bundled_engine.dart'),
+  // 3. Record the machine-local override. The tracked provenance record
+  //    (packaging/windows/engine-provenance.json) and the tracked
+  //    lib/domain/updates/bundled_engine.dart are never written here: the
+  //    locally installed module carries no verifiable upstream provenance —
+  //    it may even be a locally stripped build — so writing its digests into
+  //    the pinned record would fail the CMake verification and `verify`, and
+  //    any source edit would silently leak into git status.
+  final Map<String, Object?> override = buildLocalEngineOverride(
+    version: version,
+    member: 'libmpv-2.dll',
+    memberSha256: activeSha,
+    memberSize: activeDll.lengthSync(),
   );
-  if (bundledFile.existsSync()) {
-    final content = bundledFile.readAsStringSync();
-    final updated = content.replaceAll(
-      RegExp(r"defaultValue:\s*'[^']+'"),
-      "defaultValue: '$version'",
-    );
-    await bundledFile.writeAsString(updated);
-    stdout.writeln(
-      'Updated bundledEngineVersion to "$version" in bundled_engine.dart',
-    );
-  }
-
-  // 4. Update packaging/windows/engine-provenance.json
-  final recordPath = p.join(root, _recordRelative);
-  final Map<String, Object?> record = _readJson(recordPath);
-  final Map<String, Object?> engine = _section(record, 'engine');
-  final Map<String, Object?> artifact = _section(record, 'artifact');
-  engine['version'] = 'v$version';
-  engine['describeVersion'] = 'v$version';
-  engine['runtimeVersion'] = version;
-  engine['baseVersion'] = version;
-  engine['channel'] = 'mpv-upstream-stable';
-  artifact['assetName'] = 'libmpv-v$version-x86_64-w64-mingw32-gpl.zip';
-  artifact['url'] =
-      'https://github.com/mpv-player/mpv/releases/download/v$version/libmpv-v$version-x86_64-w64-mingw32-gpl.zip';
-  artifact['memberSha256'] = activeSha;
-  artifact['memberSize'] = activeDll.lengthSync();
-  await File(
-    recordPath,
-  ).writeAsString(const JsonEncoder.withIndent('  ').convert(record) + '\n');
-  stdout.writeln('Updated engine-provenance.json with active engine v$version');
+  final File overrideFile = File(p.join(root, localEngineOverrideRelative));
+  await writeEngineFileAtomically(
+    overrideFile,
+    utf8.encode('${const JsonEncoder.withIndent('  ').convert(override)}\n'),
+  );
+  stdout.writeln('Wrote local engine override: ${overrideFile.path}');
+  stdout.writeln(
+    '  (untracked machine-local file; the tracked engine record is unchanged)',
+  );
+  stdout.writeln(
+    '  NOTE: the in-app default engine version lives in '
+    'lib/domain/updates/bundled_engine.dart; update it deliberately instead '
+    'of relying on sync-active to edit sources. To re-pin the shipped engine '
+    'from verified upstream metadata, run: '
+    'dart run tool/engine_provenance.dart refresh --accept <version>',
+  );
   return true;
 }
 
