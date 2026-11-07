@@ -56,6 +56,7 @@ class FakePlaybackService implements PlaybackService {
   void applyVideoOutputPolicy(VideoOutputPolicy policy) {
     _videoOutputPolicy = policy;
   }
+
   @override
   Future<void> prepare() async {}
   @override
