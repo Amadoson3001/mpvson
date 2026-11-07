@@ -97,9 +97,17 @@ MenuButtonThemeData menuButtonTheme(AppChrome c) {
         EdgeInsets.symmetric(horizontal: AppSpace.sm),
       ),
       shape: WidgetStatePropertyAll(_controlShape()),
+      side: const WidgetStatePropertyAll(BorderSide.none),
       splashFactory: NoSplash.splashFactory,
-      overlayColor: const WidgetStatePropertyAll(Colors.transparent),
-      iconColor: WidgetStatePropertyAll(c.secondaryText),
+      overlayColor: WidgetStatePropertyAll(c.accent.withValues(alpha: 0.08)),
+      iconColor: WidgetStateProperty.resolveWith(
+        (states) => states.contains(WidgetState.disabled)
+            ? c.disabledForeground
+            : states.contains(WidgetState.hovered) ||
+                  states.contains(WidgetState.focused)
+            ? c.text
+            : c.secondaryText,
+      ),
       foregroundColor: WidgetStateProperty.resolveWith(
         (states) => states.contains(WidgetState.disabled)
             ? c.disabledForeground
@@ -109,7 +117,7 @@ MenuButtonThemeData menuButtonTheme(AppChrome c) {
         (states) =>
             states.contains(WidgetState.hovered) ||
                 states.contains(WidgetState.focused)
-            ? c.hover
+            ? c.accent.withValues(alpha: 0.14)
             : Colors.transparent,
       ),
     ),
