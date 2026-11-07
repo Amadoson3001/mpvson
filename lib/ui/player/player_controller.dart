@@ -3570,6 +3570,12 @@ class PlayerController extends ChangeNotifier {
 
   Future<void> _cancelAndDisposePlayback() async {
     try {
+      await _thumbnails?.dispose();
+    } on Object {
+      // The native thumbnail extractor must still be released even if its
+      // teardown reports a problem; playback disposal continues below.
+    }
+    try {
       await _seekPreview.dispose();
     } on Object {
       // Continue disposing playback if preview teardown fails.
