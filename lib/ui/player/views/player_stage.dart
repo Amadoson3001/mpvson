@@ -265,10 +265,10 @@ class PlayerStage extends StatelessWidget {
                     if (AppMotion.reduce(context)) {
                       return FadeTransition(opacity: animation, child: child);
                     }
-                    final transition = CurvedAnimation(
-                      parent: animation,
-                      curve: AppMotion.enter,
-                      reverseCurve: AppMotion.exit,
+                    // CurveTween keeps this transient: no CurvedAnimation to
+                    // outlive the switcher.
+                    final transition = animation.drive(
+                      CurveTween(curve: AppMotion.enter),
                     );
                     return FadeTransition(opacity: transition, child: child);
                   },

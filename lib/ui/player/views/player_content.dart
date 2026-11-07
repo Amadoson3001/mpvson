@@ -116,7 +116,7 @@ class _PlayerContentState extends State<PlayerContent>
         : 0.0,
   );
 
-  late final Animation<double> _miniPlayerCurved = CurvedAnimation(
+  late final CurvedAnimation _miniPlayerCurved = CurvedAnimation(
     parent: _miniPlayerController,
     curve: Curves.easeInOutCubic,
     reverseCurve: Curves.easeInOutCubic,
@@ -196,6 +196,7 @@ class _PlayerContentState extends State<PlayerContent>
 
   @override
   void dispose() {
+    _miniPlayerCurved.dispose();
     _miniPlayerController.dispose();
     widget.controller.removeListener(_handlePlaybackChanges);
     _wheelResetTimer?.cancel();
@@ -408,7 +409,10 @@ class _PlayerContentState extends State<PlayerContent>
         final totalWidth = constraints.maxWidth;
         final totalHeight = constraints.maxHeight;
 
-        if (widget.isShowingLibrary) {
+        // While the library is showing, the stage is mini or hidden and these
+        // full-area constraints do not describe the video viewport; the
+        // layout manager's own policy handles that case.
+        if (!widget.isShowingLibrary) {
           widget.layoutManager.updateViewportDimensions(context, constraints);
         }
 

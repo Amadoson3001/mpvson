@@ -53,11 +53,11 @@ class TransportButtons extends StatelessWidget {
         : PlayerControlStyle.controlExtent;
     final gap = compact ? 2.0 : 4.0;
     return preferredWidth(
-          compact: compact,
-          showStop: showStop,
-          showShuffleRepeat: showShuffleRepeat,
-        ) /
-        2 -
+              compact: compact,
+              showStop: showStop,
+              showShuffleRepeat: showShuffleRepeat,
+            ) /
+            2 -
         (extent + gap + extent / 2);
   }
 
@@ -198,7 +198,13 @@ class _TransportButtonState extends State<_TransportButton> {
                 return context.palette.primaryText.withValues(alpha: 0.88);
               }),
             ),
-            icon: Icon(widget.icon, size: style.compact ? 18 : 22, color: widget.onPressed == null ? context.palette.faint : context.palette.primaryText.withValues(alpha: 0.9)),
+            icon: Icon(
+              widget.icon,
+              size: style.compact ? 18 : 22,
+              color: widget.onPressed == null
+                  ? context.palette.faint
+                  : context.palette.primaryText.withValues(alpha: 0.9),
+            ),
             padding: EdgeInsets.zero,
           ),
         ),
@@ -259,7 +265,10 @@ class ControlToggleButton extends StatelessWidget {
           child: Icon(
             icon,
             key: ValueKey<IconData>(icon),
-            size: style.iconSize, color: active ? Theme.of(context).colorScheme.primary : context.palette.primaryText.withValues(alpha: 0.9),
+            size: style.iconSize,
+            color: active
+                ? Theme.of(context).colorScheme.primary
+                : context.palette.primaryText.withValues(alpha: 0.9),
           ),
         ),
         padding: EdgeInsets.zero,
@@ -290,7 +299,7 @@ class _PlayPauseButtonState extends State<_PlayPauseButton>
     duration: AppMotion.standard,
     value: widget.isPlaying ? 1 : 0,
   );
-  late final Animation<double> _playPauseProgress = CurvedAnimation(
+  late final CurvedAnimation _playPauseProgress = CurvedAnimation(
     parent: _playPauseController,
     curve: AppMotion.standardCurve,
   );
@@ -328,6 +337,7 @@ class _PlayPauseButtonState extends State<_PlayPauseButton>
 
   @override
   void dispose() {
+    _playPauseProgress.dispose();
     _playPauseController.dispose();
     super.dispose();
   }

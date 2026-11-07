@@ -418,10 +418,10 @@ class SharedSeekBarState extends State<SharedSeekBar> {
                         switchOutCurve: AppMotion.exit,
                         transitionBuilder: (child, animation) {
                           if (AppMotion.reduce(context)) return child;
-                          final curved = CurvedAnimation(
-                            parent: animation,
-                            curve: AppMotion.enter,
-                            reverseCurve: AppMotion.exit,
+                          // CurveTween keeps this transient: no
+                          // CurvedAnimation to outlive the switcher.
+                          final curved = animation.drive(
+                            CurveTween(curve: AppMotion.enter),
                           );
                           return FadeTransition(
                             opacity: curved,
