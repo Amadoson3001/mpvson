@@ -1795,6 +1795,13 @@ void _markMissingFilesInFolder(
   final rows = db.select(
     'SELECT canonical_source, path FROM media WHERE is_available = 1',
   );
+  // A watcher add that lands while a scan is in flight can be missing from the
+  // discovered snapshot; re-stating each candidate keeps mid-scan additions
+  // from being marked unavailable. The re-stat is skipped when the folder root
+  // itself is gone, because stats against a disconnected drive can block for
+  // seconds per file.
+  final revalidateWithStat =
+      discovered.isNotEmpty && Directory(root).existsSync();
   db.execute('BEGIN TRANSACTION');
   try {
     final statement = db.prepare(
@@ -1806,6 +1813,10 @@ void _markMissingFilesInFolder(
         final path = MediaEntry.canonicalSource(row['path'] as String);
         if ((p.equals(root, path) || p.isWithin(root, path)) &&
             !discovered.contains(source)) {
+          if (revalidateWithStat &&
+              File(row['path'] as String).existsSync()) {
+            continue;
+          }
           statement.execute([source]);
         }
       }
