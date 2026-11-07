@@ -42,6 +42,46 @@ class _PlaylistsViewState extends State<PlaylistsView> {
   Timer? _reloadThrottle;
   Timer? _searchReload;
 
+  /// One in-flight (or completed) preview request per playlist, keyed by id.
+  ///
+  /// Grid cards render their cover from the playlist's first entry. Issuing
+  /// that lookup inside every card's build turned one view opening into an
+  /// unbounded stream of `getPlaylistEntries` queries — one per rebuild per
+  /// card. Caching the futures makes each playlist's preview cost exactly one
+  /// query until its record changes.
+  final Map<String, Future<List<PlaylistEntryRecord>>> _previewFutures = {};
+
+  /// The playlist record each cached preview was created from, so a changed
+  /// `updatedAt`, title, or entry count can invalidate the stale preview.
+  final Map<String, PlaylistRecord> _previewRecords = {};
+
+  /// Returns the cached preview request for [pl], starting one if needed.
+  Future<List<PlaylistEntryRecord>> _previewEntries(PlaylistRecord pl) {
+    final cached = _previewFutures[pl.id];
+    if (cached != null) return cached;
+    final future = widget.repository.getPlaylistEntries(pl.id);
+    _previewFutures[pl.id] = future;
+    _previewRecords[pl.id] = pl;
+    return future;
+  }
+
+  /// Drops previews that no longer match the freshly loaded playlist list.
+  void _syncPreviewCache(List<PlaylistRecord> playlists) {
+    final current = {for (final pl in playlists) pl.id: pl};
+    _previewFutures.removeWhere((id, _) {
+      final record = _previewRecords[id];
+      final live = current[id];
+      final stale =
+          live == null ||
+          record == null ||
+          record.title != live.title ||
+          record.entryCount != live.entryCount ||
+          record.updatedAt != live.updatedAt;
+      if (stale) _previewRecords.remove(id);
+      return stale;
+    });
+  }
+
   @override
   void initState() {
     super.initState();
@@ -120,6 +160,7 @@ class _PlaylistsViewState extends State<PlaylistsView> {
           final playlists = await widget.repository.getPlaylists();
           if (!mounted) return;
           if (_reloadAgain) continue;
+          _syncPreviewCache(playlists);
           setState(() => _playlists = playlists);
         }
       } while (_reloadAgain && mounted);
@@ -179,13 +220,16 @@ class _PlaylistsViewState extends State<PlaylistsView> {
   }
 
   Future<void> _renamePlaylist(PlaylistRecord playlist) async {
-    final title = await showDialog<String>(
+    final title = await AppDialog.show<String>(
       context: context,
       builder: (_) => _RenamePlaylistDialog(initialTitle: playlist.title),
     );
     if (title != null && title.isNotEmpty && mounted) {
       try {
         await widget.repository.renamePlaylist(playlist.id, title);
+        // The cover preview may change if the playlist was empty.
+        _previewFutures.remove(playlist.id);
+        _previewRecords.remove(playlist.id);
       } catch (_) {
         if (mounted) {
           AppToast.show(
@@ -196,6 +240,41 @@ class _PlaylistsViewState extends State<PlaylistsView> {
         }
       }
     }
+  }
+
+  /// Applies the drag result to the visible list immediately, then persists.
+  ///
+  /// Waiting on the repository round-trip left the row snapping back before it
+  /// slid into place, so the reorder lands optimistically and a failed write
+  /// reloads the stored order.
+  void _reorderEntries(PlaylistRecord pl, int oldIndex, int newIndex) {
+    final current = _entries;
+    if (current == null ||
+        oldIndex < 0 ||
+        oldIndex >= current.length ||
+        newIndex < 0 ||
+        newIndex > current.length) {
+      return;
+    }
+    // Material reports the drop slot before the dragged item leaves its
+    // position; the repository expects that same unadjusted convention.
+    final insertAt = newIndex > oldIndex ? newIndex - 1 : newIndex;
+    final reordered = List<PlaylistEntryRecord>.of(current)
+      ..removeAt(oldIndex)
+      ..insert(insertAt, current[oldIndex]);
+    setState(() => _entries = reordered);
+    // A successful persist refreshes the cover cache; the repository's change
+    // notification coalesces the follow-up reload.
+    widget.repository
+        .reorderPlaylist(pl.id, oldIndex, newIndex)
+        .then((_) {
+          _previewFutures.remove(pl.id);
+          _previewRecords.remove(pl.id);
+        })
+        .catchError((Object error) {
+          debugPrint('Playlist reorder could not persist: $error');
+          if (mounted) _reload();
+        });
   }
 
   Future<void> _playPlaylist(
@@ -349,7 +428,7 @@ class _PlaylistsViewState extends State<PlaylistsView> {
   Widget _buildPlaylistCard(PlaylistRecord pl) {
     return MediaTile(
       artwork: FutureBuilder<List<PlaylistEntryRecord>>(
-        future: widget.repository.getPlaylistEntries(pl.id),
+        future: _previewEntries(pl),
         builder: (context, snapshot) {
           final entries = snapshot.data;
           final media = entries == null || entries.isEmpty
@@ -561,14 +640,11 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                         vertical: AppSpace.md,
                       ),
                       itemCount: entries.length,
+                      // `onReorderItem` reports an already-adjusted index,
+                      // which the repository contract does not expect.
                       // ignore: deprecated_member_use
-                      onReorder: (oldIndex, newIndex) async {
-                        await widget.repository.reorderPlaylist(
-                          pl.id,
-                          oldIndex,
-                          newIndex,
-                        );
-                      },
+                      onReorder: (oldIndex, newIndex) =>
+                          _reorderEntries(pl, oldIndex, newIndex),
                       itemBuilder: (context, index) {
                         final entry = entries[index];
                         final item = entry.mediaItem;
