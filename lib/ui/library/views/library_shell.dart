@@ -88,6 +88,12 @@ class _LibraryShellState extends State<LibraryShell>
   String _searchQuery = '';
   bool _isOnDemandQueueOpen = false;
 
+  /// Bumped on every explicit section change. Async section restores (the
+  /// delayed [AnimationController.reverse] callback) capture the value when
+  /// they start and discard themselves when it has moved on, so a restore
+  /// that races a user click can never clobber the clicked section.
+  int _sectionGeneration = 0;
+
   /// Transport row (60) + seek strip (24) + the bar's 1px top border.
   static const double _miniBarHeight = 85;
 
@@ -96,7 +102,11 @@ class _LibraryShellState extends State<LibraryShell>
         vsync: this,
         duration: AppMotion.sheetEnter,
         reverseDuration: AppMotion.sheetExit,
-        value: widget.initialSection == LibrarySection.nowPlaying ? 1.0 : 0.0,
+        value:
+            widget.initialSection == LibrarySection.nowPlaying &&
+                !widget.showSettings
+            ? 1.0
+            : 0.0,
       );
 
   late final Animation<double> _nowPlayingMorphCurve = CurvedAnimation(
@@ -134,6 +144,7 @@ class _LibraryShellState extends State<LibraryShell>
     _currentSection = widget.showSettings
         ? LibrarySection.settings
         : widget.initialSection;
+    _previousSection = widget.initialSection;
     _isOnDemandQueueOpen = widget.queueOpen ?? false;
     _lastDisplayEntry = widget.controller.current;
     _searchController.addListener(_onSearchChanged);
@@ -152,13 +163,27 @@ class _LibraryShellState extends State<LibraryShell>
     }
     if (widget.showSettings != oldWidget.showSettings) {
       if (widget.showSettings) {
+        _sectionGeneration++;
+        // Opening Settings over the Now Playing sheet: dismiss the sheet
+        // immediately (no delayed restore) and show the real pre-sheet
+        // section behind Settings, so closing Settings cannot land on a
+        // stale one and Esc never races the morph animation.
+        if (_currentSection == LibrarySection.nowPlaying ||
+            _nowPlayingMorphController.value > 0) {
+          _nowPlayingMorphController
+            ..stop()
+            ..value = 0.0;
+          _currentSection = _previousSection;
+        }
         _previousSection = _currentSection;
         _currentSection = LibrarySection.settings;
       } else if (_currentSection == LibrarySection.settings) {
+        _sectionGeneration++;
         _currentSection = _previousSection;
       }
     }
     if (widget.homeNavigationRequest != oldWidget.homeNavigationRequest) {
+      _sectionGeneration++;
       _searchController.removeListener(_onSearchChanged);
       _searchController.clear();
       _searchController.addListener(_onSearchChanged);
@@ -167,7 +192,9 @@ class _LibraryShellState extends State<LibraryShell>
       _previousSection = LibrarySection.home;
       _isOnDemandQueueOpen = false;
       if (_nowPlayingMorphController.value > 0) {
-        _nowPlayingMorphController.value = 0.0;
+        _nowPlayingMorphController
+          ..stop()
+          ..value = 0.0;
       }
     }
   }
@@ -234,10 +261,19 @@ class _LibraryShellState extends State<LibraryShell>
   }
 
   void _openNowPlaying() {
-    if (_currentSection != LibrarySection.nowPlaying) {
-      _previousSection = _currentSection;
-      _currentSection = LibrarySection.nowPlaying;
+    if (_currentSection == LibrarySection.nowPlaying &&
+        _nowPlayingMorphController.value > 0) {
+      return;
     }
+    _sectionGeneration++;
+    if (_currentSection == LibrarySection.settings) {
+      // Now Playing replaces the embedded Settings; leave Settings in this
+      // frame so the parent's later didUpdateWidget pass cannot restore it.
+      widget.onCloseSettings?.call();
+      _currentSection = _previousSection;
+    }
+    _previousSection = _currentSection;
+    _currentSection = LibrarySection.nowPlaying;
     if (AppMotion.reduce(context)) {
       _nowPlayingMorphController.value = 1.0;
       if (mounted) setState(() {});
@@ -248,21 +284,25 @@ class _LibraryShellState extends State<LibraryShell>
   }
 
   void _closeNowPlaying() {
+    if (_nowPlayingMorphController.status == AnimationStatus.dismissed) {
+      return;
+    }
+    final token = _sectionGeneration;
+    void restore() {
+      if (!mounted) return;
+      // Stale restore: the user picked another section (or opened Settings)
+      // while the sheet was animating out, so that interaction already owns
+      // the stage. Discard instead of clobbering the clicked section.
+      if (token != _sectionGeneration) return;
+      if (_currentSection != LibrarySection.nowPlaying) return;
+      setState(() => _currentSection = _previousSection);
+    }
+
     if (AppMotion.reduce(context)) {
       _nowPlayingMorphController.value = 0.0;
-      if (mounted) {
-        setState(() {
-          _currentSection = _previousSection;
-        });
-      }
+      restore();
     } else {
-      _nowPlayingMorphController.reverse().then((_) {
-        if (mounted) {
-          setState(() {
-            _currentSection = _previousSection;
-          });
-        }
-      });
+      _nowPlayingMorphController.reverse().then((_) => restore());
     }
   }
 
@@ -274,8 +314,12 @@ class _LibraryShellState extends State<LibraryShell>
     if (_currentSection == section) return;
     if (_currentSection == LibrarySection.settings) {
       widget.onCloseSettings?.call();
+      // Leave Settings in this frame; the parent's onCloseSettings only
+      // confirms it and its didUpdateWidget pass must not re-restore.
+      setState(() => _currentSection = _previousSection);
     }
     _searchController.clear();
+    _sectionGeneration++;
 
     if (section == LibrarySection.nowPlaying) {
       _openNowPlaying();
@@ -324,7 +368,11 @@ class _LibraryShellState extends State<LibraryShell>
               ): () =>
                   _searchFocus.requestFocus(),
               const SingleActivator(LogicalKeyboardKey.escape): () {
-                if (_nowPlayingMorphController.value > 0) {
+                if (_currentSection == LibrarySection.settings) {
+                  // Esc closes the embedded Settings first so it can never
+                  // race the Now Playing morph for the same keypress.
+                  widget.onCloseSettings?.call();
+                } else if (_nowPlayingMorphController.value > 0) {
                   _closeNowPlaying();
                 }
               },
