@@ -5,6 +5,7 @@ import 'package:media_kit/media_kit.dart';
 
 import '../../../../domain/models/playback_settings.dart';
 import '../../../core/app_theme.dart';
+import '../../../core/toast/app_toast.dart';
 import '../../player_controller.dart';
 import 'settings_shared_widgets.dart';
 
@@ -53,11 +54,30 @@ class FloatingAudioSubsTab extends StatelessWidget {
                 icon: const Icon(Icons.file_open_rounded, size: 16),
                 label: const Text('Load external subtitle...'),
                 onPressed: () async {
-                  final path = await pickSubtitle();
-                  if (path != null && path.isNotEmpty) {
-                    try {
-                      await controller.loadSubtitle(path);
-                    } catch (_) {}
+                  String? path;
+                  try {
+                    path = await pickSubtitle();
+                  } catch (_) {
+                    if (context.mounted) {
+                      AppToast.show(
+                        context,
+                        'The file picker could not be opened.',
+                        tone: AppToastTone.danger,
+                      );
+                    }
+                    return;
+                  }
+                  if (path == null || path.isEmpty) return;
+                  try {
+                    await controller.loadSubtitle(path);
+                  } catch (_) {
+                    if (context.mounted) {
+                      AppToast.show(
+                        context,
+                        'Mpvson could not load that subtitle file.',
+                        tone: AppToastTone.danger,
+                      );
+                    }
                   }
                 },
               ),

@@ -212,9 +212,25 @@ class PlayerMediaCoordinator {
   });
 
   Future<void> loadSubtitle() async {
-    final path = await pickSubtitle();
-    if (path == null) return;
-    await controller.loadSubtitle(path);
+    final ctx = context;
+    final String? path;
+    try {
+      path = await pickSubtitle();
+    } catch (_) {
+      showMessage('The file picker could not be opened.');
+      return;
+    }
+    if (path == null || path.isEmpty) return;
+    try {
+      await controller.loadSubtitle(path);
+    } catch (_) {
+      if (!ctx.mounted) return;
+      AppToast.show(
+        ctx,
+        'Mpvson could not load that subtitle file.',
+        tone: AppToastTone.danger,
+      );
+    }
   }
 
   Future<void> removeQueueEntryById(String id) async {

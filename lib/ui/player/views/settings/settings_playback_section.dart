@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 
 import '../../../core/app_theme.dart';
+import '../../../core/toast/app_toast.dart';
 import '../../../../domain/models/playback_settings.dart';
 import '../../player_controller.dart';
 import 'settings_shared_widgets.dart';
@@ -132,12 +133,37 @@ class PlaybackSettingsSection extends StatelessWidget {
                   ),
                   trailing: const Icon(Icons.chevron_right_rounded, size: 20),
                   onTap: () async {
-                    Navigator.of(context).pop();
-                    final path = await pickSubtitle();
+                    final route = ModalRoute.of(context);
+                    final navigator = Navigator.maybeOf(context);
+                    String? path;
+                    try {
+                      path = await pickSubtitle();
+                    } catch (_) {
+                      AppToast.show(
+                        navigator?.context ?? context,
+                        'The file picker could not be opened.',
+                        tone: AppToastTone.danger,
+                      );
+                      return;
+                    }
                     if (path == null || path.isEmpty) return;
+                    // Close the settings sheet only after a successful pick,
+                    // and only while this route is still the current one and
+                    // can actually be popped.
+                    if (navigator != null &&
+                        (route?.isCurrent ?? false) &&
+                        navigator.canPop()) {
+                      navigator.pop();
+                    }
                     try {
                       await controller.loadSubtitle(path);
-                    } catch (_) {}
+                    } catch (_) {
+                      AppToast.show(
+                        navigator?.context ?? context,
+                        'Mpvson could not load that subtitle file.',
+                        tone: AppToastTone.danger,
+                      );
+                    }
                   },
                 ),
               ],
