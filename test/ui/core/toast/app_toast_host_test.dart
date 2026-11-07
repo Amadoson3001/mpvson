@@ -46,4 +46,42 @@ void main() {
       expect(find.text('Dismiss'), findsOneWidget);
     },
   );
+
+  testWidgets('toast dismiss control is a 44×44 hit target', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (context, child) => AppToastHost(child: child!),
+        home: Builder(
+          builder: (context) => Center(
+            child: FilledButton(
+              onPressed: () => AppToast.show(
+                context,
+                'Dismissable',
+                duration: const Duration(minutes: 1),
+              ),
+              child: const Text('show'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('show'));
+    await tester.pump();
+
+    final closeButton = find
+        .ancestor(
+          of: find.byIcon(Icons.close_rounded),
+          matching: find.byType(IconButton),
+        )
+        .first;
+    final closeButtonSize = tester.getSize(closeButton);
+    expect(closeButtonSize.width, 44);
+    expect(closeButtonSize.height, 44);
+
+    // Tapping the dismiss control removes the card once its exit finishes.
+    await tester.tap(find.byIcon(Icons.close_rounded));
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.text('Dismissable'), findsNothing);
+  });
 }

@@ -48,8 +48,12 @@ class MpvsonApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // `Listenable.merge` folds the nullable preference repository into a
+    // single listenable and returns a shared const no-op listenable when no
+    // repository is provided. A `ValueNotifier` stand-in here would allocate
+    // (and leak) a fresh notifier on every build.
     return ListenableBuilder(
-      listenable: appPreferences ?? ValueNotifier<void>(null),
+      listenable: Listenable.merge(<Listenable?>[appPreferences]),
       builder: (context, _) {
         final prefs = appPreferences?.preferences;
         final themeMode = prefs?.themeMode ?? ThemeMode.dark;
