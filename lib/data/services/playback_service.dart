@@ -258,6 +258,8 @@ class MediaKitPlaybackService
     @visibleForTesting
     Future<void> Function(String property, String value)?
     propertyWriterForTesting,
+    @visibleForTesting
+    Future<String?> Function(String property)? propertyReaderForTesting,
   }) : _player =
            player ??
            Player(
@@ -274,6 +276,9 @@ class MediaKitPlaybackService
     _diagnostics = diagnostics;
     _videoController = videoController;
     _propertyWriter = propertyWriterForTesting ?? _writeNativeProperty;
+    _propertyReader = propertyReaderForTesting ?? _readNativeProperty;
+    _hasRuntimePropertyBridge =
+        propertyWriterForTesting != null || _player.platform is NativePlayer;
     _state = _snapshotFrom(
       _player.state,
     ).copyWith(sourceStart: 0, clearNativeSource: true);
@@ -360,10 +365,16 @@ class MediaKitPlaybackService
   ///
   /// Production resolves writes and reads against the native engine handle;
   /// engines without mpv properties (and tests without libmpv) route through
-  /// the same seam so the video-track suspension logic behaves identically
-  /// everywhere.
+  /// the same seam so the suspension and hwdec confirmation logic behaves
+  /// identically everywhere.
   late final Future<void> Function(String property, String value)
   _propertyWriter;
+  late final Future<String?> Function(String property) _propertyReader;
+
+  /// Whether property writes can reach an engine at all. Engines without mpv
+  /// properties skip the runtime confirmation paths instead of reporting
+  /// mismatches against writes that were never delivered.
+  late final bool _hasRuntimePropertyBridge;
 
   bool _preferHardwareDecoding = true;
   VideoMemoryMode _videoMemoryMode = VideoMemoryMode.zeroCopy;
@@ -420,7 +431,9 @@ class MediaKitPlaybackService
 
     if (modeChanged) {
       _confirmedPlaybackProperties.remove('hwdec');
-      if (_videoController != null) unawaited(_pushRuntimeHwdec());
+      // The decoder mode is an engine-level property, so it is pushed even
+      // while no video output exists; a later video open inherits it.
+      if (_hasRuntimePropertyBridge) unawaited(_pushRuntimeHwdec());
     }
     final isNetwork = _appliedBufferingPolicyNetwork;
     if (limitChanged && isNetwork != null) {
@@ -434,24 +447,38 @@ class MediaKitPlaybackService
     await native.setProperty(property, value, waitForInitialization: false);
   }
 
-  Future<void> _pushRuntimeHwdec() async {
+  Future<String?> _readNativeProperty(String property) async {
     final native = _player.platform;
-    if (native is! NativePlayer) return;
+    if (native is! NativePlayer) return null;
+    return native.getProperty(property, waitForInitialization: false);
+  }
+
+  Future<void> _pushRuntimeHwdec() async {
+    if (!_hasRuntimePropertyBridge) return;
     final value = _resolveHwdec(_preferHardwareDecoding);
     try {
-      await native
-          .setProperty('hwdec', value, waitForInitialization: false)
-          .timeout(const Duration(seconds: 2));
-      final actual = await native
-          .getProperty('hwdec', waitForInitialization: false)
-          .timeout(const Duration(seconds: 2));
-      if (_propertyMatches(actual, value)) {
+      await _propertyWriter('hwdec', value).timeout(const Duration(seconds: 2));
+      final actual = await _propertyReader(
+        'hwdec',
+      ).timeout(const Duration(seconds: 2));
+      if (actual != null && _propertyMatches(actual, value)) {
         _confirmedPlaybackProperties['hwdec'] = value;
       } else {
         _confirmedPlaybackProperties.remove('hwdec');
+        // The engine kept or fell back to a decoder other than the requested
+        // one; without this record a silent software fallback is invisible.
+        _diagnostics?.record(
+          'playback.hwdec',
+          message: 'engine reports ${actual ?? 'nothing'} instead of $value',
+        );
       }
-    } on Object {
+    } on Object catch (error) {
       _confirmedPlaybackProperties.remove('hwdec');
+      _diagnostics?.record(
+        'playback.hwdec',
+        message: 'runtime write failed',
+        error: error,
+      );
     }
   }
 
