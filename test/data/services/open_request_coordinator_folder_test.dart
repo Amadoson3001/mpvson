@@ -49,7 +49,7 @@ void main() {
     }
   });
 
-  File _file(String relativePath) {
+  File createFile(String relativePath) {
     final file = File(p.join(root.path, relativePath));
     file.createSync(recursive: true);
     file.writeAsStringSync('data');
@@ -58,9 +58,9 @@ void main() {
 
   group('dropped folder expansion', () {
     test('expands a folder into its supported media files', () async {
-      final a = _file('a.mp3');
-      _file('notes.txt');
-      final c = _file(p.join('nested', 'c.mkv'));
+      final a = createFile('a.mp3');
+      createFile('notes.txt');
+      final c = createFile(p.join('nested', 'c.mkv'));
       final harness = _Harness();
 
       final result = await harness.open([root.path]);
@@ -76,7 +76,7 @@ void main() {
     test(
       'reports the settings guidance when a folder holds no media',
       () async {
-        _file('only-a-document.txt');
+        createFile('only-a-document.txt');
         final harness = _Harness();
 
         final result = await harness.open([root.path]);
@@ -90,7 +90,7 @@ void main() {
     test(
       'mixing an empty folder with valid files still plays the files',
       () async {
-        final media = _file('song.flac');
+        final media = createFile('song.flac');
         final emptyFolder = Directory(
           '${root.path}${Platform.pathSeparator}empty',
         )..createSync(recursive: true);
@@ -108,7 +108,7 @@ void main() {
     test(
       'does not queue a file twice when dropped next to its folder',
       () async {
-        final media = _file('song.flac');
+        final media = createFile('song.flac');
         final harness = _Harness();
 
         final result = await harness.open([media.path, root.path]);
