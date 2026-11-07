@@ -1290,9 +1290,10 @@ Object? _dispatchAction(Database db, String action, Object? params) {
             file_size = excluded.file_size,
             modified_at = excluded.modified_at,
             is_available = excluded.is_available,
-            is_favorite = excluded.is_favorite,
-            last_played_at = excluded.last_played_at,
-            play_count = excluded.play_count
+            is_in_library = 1,
+            is_favorite = media.is_favorite,
+            last_played_at = media.last_played_at,
+            play_count = media.play_count
         ''');
         try {
           for (final item in list) {
@@ -1710,9 +1711,10 @@ void _insertOrUpdateMediaRow(Database db, Map<String, Object?> m) {
       file_size = excluded.file_size,
       modified_at = excluded.modified_at,
       is_available = excluded.is_available,
-      is_favorite = excluded.is_favorite,
-      last_played_at = excluded.last_played_at,
-      play_count = excluded.play_count
+      is_in_library = 1,
+      is_favorite = media.is_favorite,
+      last_played_at = media.last_played_at,
+      play_count = media.play_count
     ''',
     [
       m['id'],
