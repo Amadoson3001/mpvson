@@ -5,7 +5,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mpvson/data/repositories/app_preferences_repository.dart';
 import 'package:mpvson/data/services/desktop_integration_service_impl.dart';
 import 'package:mpvson/data/services/open_request_coordinator.dart';
-import 'package:mpvson/domain/models/open_request.dart';
 
 MethodChannel _controlsChannel() =>
     const MethodChannel('mpvson/media_controls');
