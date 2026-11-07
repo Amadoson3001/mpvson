@@ -113,6 +113,9 @@ class ThumbnailImagePoller {
           lastSizes[entity.path] = before.size;
           if (previousSize != before.size) continue;
 
+          // Read while the handle is open, then close it BEFORE decoding so
+          // the writer's output is never held open across the decode step.
+          Uint8List? bytes;
           RandomAccessFile? handle;
           try {
             handle = await entity.open(mode: FileMode.read);
@@ -123,82 +126,13 @@ class ThumbnailImagePoller {
                 lastSeenSize: readSize,
               );
             }
-            final bytes = await handle.read(readSize);
+            bytes = await handle.read(readSize);
             final after = await entity.stat();
             if (bytes.length != readSize ||
                 after.type != FileSystemEntityType.file ||
                 after.size != before.size) {
               lastSizes.remove(entity.path);
-              continue;
-            }
-            if (bytes.isEmpty || !hasImageHeader(bytes)) continue;
-
-            final decodeResult = Completer<bool>();
-            try {
-              unawaited(
-                decodes(bytes).then(
-                  (value) {
-                    if (!decodeResult.isCompleted) {
-                      decodeResult.complete(value);
-                    }
-                  },
-                  onError: (Object _, StackTrace _) {
-                    if (!decodeResult.isCompleted) {
-                      decodeResult.complete(false);
-                    }
-                  },
-                ),
-              );
-            } on Object {
-              decodeResult.complete(false);
-            }
-            while (!decodeResult.isCompleted) {
-              if (isCancelled?.call() ?? false) {
-                return ThumbnailImagePollResult(
-                  failure: ThumbnailImagePollFailure.cancelled,
-                  lastSeenSize: lastSeenSize,
-                );
-              }
-              final timeoutRemaining = timeout - watch.elapsed;
-              final deadlineRemaining = deadline.difference(DateTime.now());
-              if (timeoutRemaining <= Duration.zero ||
-                  deadlineRemaining <= Duration.zero) {
-                return ThumbnailImagePollResult(
-                  failure: ThumbnailImagePollFailure.deadline,
-                  lastSeenSize: lastSeenSize,
-                );
-              }
-              final remaining = timeoutRemaining < deadlineRemaining
-                  ? timeoutRemaining
-                  : deadlineRemaining;
-              final pause = remaining < pollInterval ? remaining : pollInterval;
-              await Future<void>.delayed(pause);
-            }
-            final isDecodable = await decodeResult.future;
-            if (isCancelled?.call() ?? false) {
-              return ThumbnailImagePollResult(
-                failure: ThumbnailImagePollFailure.cancelled,
-                lastSeenSize: lastSeenSize,
-              );
-            }
-            if (watch.elapsed >= timeout ||
-                !DateTime.now().isBefore(deadline)) {
-              return ThumbnailImagePollResult(
-                failure: ThumbnailImagePollFailure.deadline,
-                lastSeenSize: lastSeenSize,
-              );
-            }
-            if (isDecodable) {
-              lastFailedSizes.remove(entity.path);
-              lastFailedMtimes.remove(entity.path);
-              return ThumbnailImagePollResult(
-                failure: ThumbnailImagePollFailure.none,
-                bytes: bytes,
-                lastSeenSize: bytes.length,
-              );
-            } else {
-              lastFailedSizes[entity.path] = before.size;
-              lastFailedMtimes[entity.path] = before.modified;
+              bytes = null;
             }
           } on FileSystemException {
             // Windows may briefly deny reads while libmpv closes the file.
@@ -208,6 +142,75 @@ class ThumbnailImagePoller {
             } on Object {
               // A failed close does not make the image usable.
             }
+          }
+          if (bytes == null) continue;
+          if (bytes.isEmpty || !hasImageHeader(bytes)) continue;
+
+          final decodeResult = Completer<bool>();
+          try {
+            unawaited(
+              decodes(bytes).then(
+                (value) {
+                  if (!decodeResult.isCompleted) {
+                    decodeResult.complete(value);
+                  }
+                },
+                onError: (Object _, StackTrace _) {
+                  if (!decodeResult.isCompleted) {
+                    decodeResult.complete(false);
+                  }
+                },
+              ),
+            );
+          } on Object {
+            decodeResult.complete(false);
+          }
+          while (!decodeResult.isCompleted) {
+            if (isCancelled?.call() ?? false) {
+              return ThumbnailImagePollResult(
+                failure: ThumbnailImagePollFailure.cancelled,
+                lastSeenSize: lastSeenSize,
+              );
+            }
+            final timeoutRemaining = timeout - watch.elapsed;
+            final deadlineRemaining = deadline.difference(DateTime.now());
+            if (timeoutRemaining <= Duration.zero ||
+                deadlineRemaining <= Duration.zero) {
+              return ThumbnailImagePollResult(
+                failure: ThumbnailImagePollFailure.deadline,
+                lastSeenSize: lastSeenSize,
+              );
+            }
+            final remaining = timeoutRemaining < deadlineRemaining
+                ? timeoutRemaining
+                : deadlineRemaining;
+            final pause = remaining < pollInterval ? remaining : pollInterval;
+            await Future<void>.delayed(pause);
+          }
+          final isDecodable = await decodeResult.future;
+          if (isCancelled?.call() ?? false) {
+            return ThumbnailImagePollResult(
+              failure: ThumbnailImagePollFailure.cancelled,
+              lastSeenSize: lastSeenSize,
+            );
+          }
+          if (watch.elapsed >= timeout || !DateTime.now().isBefore(deadline)) {
+            return ThumbnailImagePollResult(
+              failure: ThumbnailImagePollFailure.deadline,
+              lastSeenSize: lastSeenSize,
+            );
+          }
+          if (isDecodable) {
+            lastFailedSizes.remove(entity.path);
+            lastFailedMtimes.remove(entity.path);
+            return ThumbnailImagePollResult(
+              failure: ThumbnailImagePollFailure.none,
+              bytes: bytes,
+              lastSeenSize: bytes.length,
+            );
+          } else {
+            lastFailedSizes[entity.path] = before.size;
+            lastFailedMtimes[entity.path] = before.modified;
           }
         }
       } on FileSystemException {
