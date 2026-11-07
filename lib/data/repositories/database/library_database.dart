@@ -837,27 +837,105 @@ void _databaseIsolateEntryPoint(_DbInitParams params) {
   });
 }
 
-void _initializeSchema(Database db) {
-  var needsRebuild = false;
-  final ftsCheck = db.select(
-    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'media_fts'",
-  );
-  if (ftsCheck.isNotEmpty) {
-    final ftsCols = db.select("PRAGMA table_info('media_fts')");
-    final hasFilename = ftsCols.any((c) => c['name'] == 'filename');
-    final hasAlbumArtist = ftsCols.any((c) => c['name'] == 'album_artist');
-    final hasPath = ftsCols.any((c) => c['name'] == 'path');
-    if (hasFilename || !hasAlbumArtist || !hasPath) {
-      db.execute('DROP TRIGGER IF EXISTS media_ai');
-      db.execute('DROP TRIGGER IF EXISTS media_ad');
-      db.execute('DROP TRIGGER IF EXISTS media_au');
-      db.execute('DROP TABLE IF EXISTS media_fts');
-      needsRebuild = true;
-    }
-  } else {
-    needsRebuild = true;
+/// Schema version tracked in PRAGMA user_version.
+///
+/// Version 2 describes the FTS5 external-content search table with
+/// album_artist and path columns; version 0 (or 1) marks a database that still
+/// needs the migration (or was left mid-migration by a crash).
+const int _currentSchemaVersion = 2;
+
+int _readUserVersion(Database db) {
+  final rows = db.select('PRAGMA user_version;');
+  return (rows.first.values.first as int?) ?? 0;
+}
+
+void _initializeSchema(
+  Database db, {
+  void Function(Database db)? midMigrationFaultForTesting,
+}) {
+  if (_readUserVersion(db) >= _currentSchemaVersion) {
+    _createSchema(db);
+    return;
   }
 
+  // The migration runs as a single transaction (D-6): a crash part-way rolls
+  // back to the previous consistent state, is tracked by user_version, and is
+  // retried whole on the next open instead of leaving a half-built search
+  // index (an external-content FTS table committed without its rebuild stays
+  // empty forever).
+  db.execute('BEGIN IMMEDIATE;');
+  try {
+    var rebuildFts = false;
+    final ftsCheck = db.select(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'media_fts'",
+    );
+    if (ftsCheck.isNotEmpty) {
+      final ftsCols = db.select("PRAGMA table_info('media_fts')");
+      final hasFilename = ftsCols.any((c) => c['name'] == 'filename');
+      final hasAlbumArtist = ftsCols.any((c) => c['name'] == 'album_artist');
+      final hasPath = ftsCols.any((c) => c['name'] == 'path');
+      if (hasFilename || !hasAlbumArtist || !hasPath) {
+        db.execute('DROP TRIGGER IF EXISTS media_ai');
+        db.execute('DROP TRIGGER IF EXISTS media_ad');
+        db.execute('DROP TRIGGER IF EXISTS media_au');
+        db.execute('DROP TABLE IF EXISTS media_fts');
+        rebuildFts = true;
+      }
+    } else {
+      rebuildFts = true;
+    }
+
+    // Pre-migration media tables may lack is_in_library; add it before the
+    // schema script creates the index that references the column. A fresh
+    // database gets the column from the CREATE TABLE below.
+    final mediaTableExists = db
+        .select(
+          "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'media'",
+        )
+        .isNotEmpty;
+    if (mediaTableExists) {
+      final columns = db.select('PRAGMA table_info(media)');
+      if (!columns.any((column) => column['name'] == 'is_in_library')) {
+        db.execute(
+          'ALTER TABLE media ADD COLUMN is_in_library INTEGER NOT NULL DEFAULT 1',
+        );
+      }
+    }
+
+    _createSchema(db);
+
+    if (rebuildFts) {
+      final mediaCount =
+          db.select('SELECT count(*) AS c FROM media').first['c'] as int;
+      if (mediaCount > 0) {
+        db.execute("INSERT INTO media_fts(media_fts) VALUES('rebuild');");
+      }
+    }
+
+    midMigrationFaultForTesting?.call(db);
+
+    db.execute('PRAGMA user_version = $_currentSchemaVersion;');
+    db.execute('COMMIT;');
+  } catch (_) {
+    db.execute('ROLLBACK;');
+    rethrow;
+  }
+}
+
+/// Runs the schema migration against a raw database handle so tests can
+/// simulate a crash between migration steps.
+@visibleForTesting
+void debugRunSchemaMigrationForTesting(
+  Database db, {
+  void Function(Database db)? midMigrationFaultForTesting,
+}) {
+  _initializeSchema(
+    db,
+    midMigrationFaultForTesting: midMigrationFaultForTesting,
+  );
+}
+
+void _createSchema(Database db) {
   db.execute('''
     CREATE TABLE IF NOT EXISTS folders (
       path TEXT PRIMARY KEY,
@@ -958,19 +1036,6 @@ void _initializeSchema(Database db) {
       VALUES (new.rowid, new.title, new.artist, new.album_artist, new.album, new.path);
     END;
   ''');
-  final columns = db.select('PRAGMA table_info(media)');
-  if (!columns.any((column) => column['name'] == 'is_in_library')) {
-    db.execute(
-      'ALTER TABLE media ADD COLUMN is_in_library INTEGER NOT NULL DEFAULT 1',
-    );
-  }
-  if (needsRebuild) {
-    final mediaCount =
-        db.select('SELECT count(*) AS c FROM media').first['c'] as int;
-    if (mediaCount > 0) {
-      db.execute("INSERT INTO media_fts(media_fts) VALUES('rebuild');");
-    }
-  }
 }
 
 /// Canonical key for folder rows so `C:\Music` and `c:\music` share one record.
@@ -1813,8 +1878,7 @@ void _markMissingFilesInFolder(
         final path = MediaEntry.canonicalSource(row['path'] as String);
         if ((p.equals(root, path) || p.isWithin(root, path)) &&
             !discovered.contains(source)) {
-          if (revalidateWithStat &&
-              File(row['path'] as String).existsSync()) {
+          if (revalidateWithStat && File(row['path'] as String).existsSync()) {
             continue;
           }
           statement.execute([source]);
