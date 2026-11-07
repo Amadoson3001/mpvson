@@ -2,7 +2,9 @@
 
 #include <flutter/standard_method_codec.h>
 
+#include <algorithm>
 #include <chrono>
+#include <cstring>
 
 namespace {
 
@@ -20,6 +22,64 @@ bool ReadString(const flutter::EncodableMap& map, const char* key,
   }
   out = *value;
   return true;
+}
+
+// Decodes a single hexadecimal digit. Returns -1 when |c| is not hexadecimal.
+int HexDigit(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  return -1;
+}
+
+// Decodes percent-encoded octets ("%20" -> ' ') in |input|.
+std::string UrlUnescape(const std::string& input) {
+  std::string output;
+  output.reserve(input.size());
+  for (size_t i = 0; i < input.size(); ++i) {
+    if (input[i] == '%' && i + 2 < input.size()) {
+      const int hi = HexDigit(input[i + 1]);
+      const int lo = HexDigit(input[i + 2]);
+      if (hi >= 0 && lo >= 0) {
+        output.push_back(static_cast<char>((hi << 4) | lo));
+        i += 2;
+        continue;
+      }
+    }
+    output.push_back(input[i]);
+  }
+  return output;
+}
+
+// Converts an artwork reference into a local path that can be handed to
+// GetFileFromPathAsync. file:// URLs are turned into Windows paths: the scheme
+// and authority are stripped (file://server/share becomes \\server\share),
+// percent-encoded octets are decoded and forward slashes become backslashes.
+// Anything else is returned unchanged, because percent-decoding a plain path
+// could corrupt legitimate '%' characters in a file name.
+std::string NormalizeLocalPath(const std::string& artwork) {
+  constexpr const char kFileTriple[] = "file:///";
+  constexpr const char kFileDouble[] = "file://";
+  std::string path;
+  if (artwork.rfind(kFileTriple, 0) == 0) {
+    // Local drive path: file:///C:/dir/song.flac
+    path = artwork.substr(sizeof(kFileTriple) - 1);
+  } else if (artwork.rfind(kFileDouble, 0) == 0) {
+    path = artwork.substr(sizeof(kFileDouble) - 1);
+    if (path.rfind("localhost/", 0) == 0) {
+      // Local drive path: file://localhost/C:/dir/song.flac
+      path = path.substr(sizeof("localhost/") - 1);
+    } else {
+      // UNC path: file://server/share/song.flac -> \\server\share\song.flac
+      path = "\\\\" + path;
+    }
+  } else {
+    // Already a plain local path.
+    return artwork;
+  }
+  path = UrlUnescape(path);
+  std::replace(path.begin(), path.end(), '/', '\\');
+  return path;
 }
 
 // Reads |key| from |map| as a boolean, falling back to |default_value| when the
@@ -214,12 +274,7 @@ void SystemMediaTransport::SetMetadata(const std::string& title,
       return;
     }
 
-    std::string path = artwork;
-    if (path.rfind("file:///", 0) == 0) {
-      path = path.substr(8);
-    } else if (path.rfind("file://", 0) == 0) {
-      path = path.substr(7);
-    }
+    std::string path = NormalizeLocalPath(artwork);
 
     // Publish the metadata right away; the thumbnail follows once the file has
     // been resolved.
@@ -331,6 +386,18 @@ void SystemMediaTransport::SetEnabled(bool enabled) {
 void SystemMediaTransport::CleanUp() {
   // Discard any thumbnail that is still being resolved.
   ++metadata_sequence_;
+  // Drain thumbnail messages that are already queued for this window. Each one
+  // carries an owned RandomAccessStreamReference in its LPARAM, and the
+  // sequence bump above means none of them can be applied anymore, so the
+  // references are released here instead of letting a queued message poke this
+  // object after it has been destroyed.
+  if (window_handle_ != nullptr) {
+    MSG pending = {};
+    while (::PeekMessageW(&pending, window_handle_, WM_SMTC_THUMBNAIL,
+                          WM_SMTC_THUMBNAIL, PM_REMOVE)) {
+      ReleaseThumbnail(reinterpret_cast<void*>(pending.lParam));
+    }
+  }
   updater_ = nullptr;
   if (smtc_ != nullptr) {
     try {
