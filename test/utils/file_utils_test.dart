@@ -1,61 +1,160 @@
 import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mpvson/utils/file_utils.dart';
 
+class _FakeRunner {
+  _FakeRunner({this._exitCode = 0, this._throwOnCall = false});
+
+  final List<({String executable, List<String> arguments})> calls = [];
+  final int _exitCode;
+  final bool _throwOnCall;
+
+  ProcessRunner get run => (executable, arguments) async {
+    calls.add((executable: executable, arguments: arguments));
+    if (_throwOnCall) {
+      throw const FileSystemException('launcher unavailable');
+    }
+    return ProcessResult(0, _exitCode, '', '');
+  };
+
+  bool get neverCalled => calls.isEmpty;
+}
+
 void main() {
-  group('showInFolder', () {
-    test('empty string returns false immediately', () async {
-      final result = await showInFolder('');
-      expect(result, isFalse);
+  group('showInFolder (fake process runner)', () {
+    test('empty path returns false without launching anything', () async {
+      final runner = _FakeRunner();
+      expect(await showInFolder('', processRunner: runner.run), isFalse);
+      expect(runner.neverCalled, isTrue);
     });
 
-    test('existing file on Windows executes and returns true', () async {
-      // Use an existing file in the project
-      final existingFile = File('pubspec.yaml').absolute.path;
-      expect(File(existingFile).existsSync(), isTrue);
+    test(
+      'whitespace-only path returns false without launching anything',
+      () async {
+        final runner = _FakeRunner();
+        expect(await showInFolder('   ', processRunner: runner.run), isFalse);
+        expect(runner.neverCalled, isTrue);
+      },
+    );
 
-      final result = await showInFolder(existingFile);
-      expect(result, isTrue);
+    test('runner failure is swallowed and reported as false', () async {
+      final runner = _FakeRunner(throwOnCall: true);
+      expect(
+        await showInFolder(r'C:\media\clip.mkv', processRunner: runner.run),
+        isFalse,
+      );
+      expect(runner.calls, hasLength(1));
     });
 
-    test('forward-slash path is normalized and executes', () async {
-      final forwardSlashPath = File(
-        'pubspec.yaml',
-      ).absolute.path.replaceAll(r'\', '/');
-      expect(forwardSlashPath.contains('/'), isTrue);
+    test(
+      'windows reveal passes /select,<path> as a single argument',
+      skip: Platform.isWindows ? false : 'Windows-only behavior',
+      () async {
+        final runner = _FakeRunner();
+        final result = await showInFolder(
+          r'C:\media folder\clip.mkv',
+          processRunner: runner.run,
+        );
 
-      final result = await showInFolder(forwardSlashPath);
-      expect(result, isTrue);
-    });
+        expect(result, isTrue);
+        expect(runner.calls, hasLength(1));
+        expect(runner.calls.single.executable, 'explorer.exe');
+        expect(runner.calls.single.arguments, <String>[
+          r'/select,C:\media folder\clip.mkv',
+        ]);
+        expect(
+          runner.calls.single.arguments.single.contains(','),
+          isTrue,
+          reason: 'the select verb and path must be one argument',
+        );
+      },
+    );
 
-    test('path with spaces does not throw error and executes', () async {
-      // Create a temporary file in a directory with spaces
-      final tempDir = Directory.systemTemp.createTempSync('mpvson test space ');
-      final tempFile = File('${tempDir.path}\\test file.txt');
-      tempFile.writeAsStringSync('sample content');
-      addTearDown(() {
-        try {
-          tempDir.deleteSync(recursive: true);
-        } catch (_) {}
-      });
+    test(
+      'windows normalizes forward slashes before invoking explorer',
+      skip: Platform.isWindows ? false : 'Windows-only behavior',
+      () async {
+        final runner = _FakeRunner();
+        await showInFolder(
+          'C:/media folder/clip.mkv',
+          processRunner: runner.run,
+        );
+        expect(runner.calls.single.arguments, <String>[
+          r'/select,C:\media folder\clip.mkv',
+        ]);
+      },
+    );
 
-      final result = await showInFolder(tempFile.path);
-      expect(result, isTrue);
-    });
+    test(
+      'windows exit code 1 still counts as revealed',
+      skip: Platform.isWindows ? false : 'Windows-only behavior',
+      () async {
+        final runner = _FakeRunner(exitCode: 1);
+        expect(
+          await showInFolder(r'C:\media\clip.mkv', processRunner: runner.run),
+          isTrue,
+        );
+      },
+    );
 
-    test('non-existent path does not throw exception', () async {
-      final nonExistent =
-          'Z:\\non_existent_folder_xyz_123\\non_existent_file.mkv';
-      expect(() async => await showInFolder(nonExistent), returnsNormally);
-      final result = await showInFolder(nonExistent);
-      // Process should return exitCode (which explorer returns without throwing unhandled exception)
-      expect(result, isA<bool>());
-    });
+    test(
+      'windows exit code 2 is reported as failure',
+      skip: Platform.isWindows ? false : 'Windows-only behavior',
+      () async {
+        final runner = _FakeRunner(exitCode: 2);
+        expect(
+          await showInFolder(r'C:\media\clip.mkv', processRunner: runner.run),
+          isFalse,
+        );
+      },
+    );
 
-    test('whitespace string does not throw exception', () async {
-      expect(() async => await showInFolder('   '), returnsNormally);
-      final result = await showInFolder('   ');
-      expect(result, isA<bool>());
-    });
+    test(
+      'macos reveal calls open -R with the path',
+      skip: Platform.isMacOS ? false : 'macOS-only behavior',
+      () async {
+        final runner = _FakeRunner();
+        final result = await showInFolder(
+          '/media/clip.mkv',
+          processRunner: runner.run,
+        );
+
+        expect(result, isTrue);
+        expect(runner.calls.single.executable, 'open');
+        expect(runner.calls.single.arguments, <String>[
+          '-R',
+          '/media/clip.mkv',
+        ]);
+      },
+    );
+
+    test(
+      'linux reveal calls xdg-open on the parent directory',
+      skip: Platform.isLinux ? false : 'Linux-only behavior',
+      () async {
+        final runner = _FakeRunner();
+        final result = await showInFolder(
+          '/media/clip.mkv',
+          processRunner: runner.run,
+        );
+
+        expect(result, isTrue);
+        expect(runner.calls.single.executable, 'xdg-open');
+        expect(runner.calls.single.arguments, <String>['/media']);
+      },
+    );
+
+    test(
+      'unsupported platform returns false without launching anything',
+      () async {
+        if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+          return;
+        }
+        final runner = _FakeRunner();
+        expect(await showInFolder('/x', processRunner: runner.run), isFalse);
+        expect(runner.neverCalled, isTrue);
+      },
+    );
   });
 }

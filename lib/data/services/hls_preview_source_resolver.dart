@@ -24,14 +24,14 @@ class HlsPreviewSourceResolver {
   /// supported master manifest. Network failures are reported to the caller.
   Future<Uri?> resolve(String source, {required Duration timeout}) async {
     final master = Uri.tryParse(source);
-    if (!_isSupportedMasterUrl(master)) return null;
+    if (master == null || !_isSupportedMasterUrl(master)) return null;
     if (timeout <= Duration.zero) {
       throw TimeoutException('No time remains to resolve the HLS master');
     }
 
     final client = _clientFactory();
     try {
-      return await _resolveWithClient(client, master!).timeout(
+      return await _resolveWithClient(client, master).timeout(
         timeout,
         onTimeout: () {
           client.close(force: true);
@@ -137,7 +137,9 @@ class HlsPreviewSourceResolver {
       final hasVideoCodec = codecs?.any(_videoCodec.hasMatch) ?? false;
       if (resolution == null && !hasVideoCodec) continue;
 
-      final uri = baseUri.resolveUri(Uri.parse(variantLine));
+      final relative = Uri.tryParse(variantLine);
+      if (relative == null) continue;
+      final uri = baseUri.resolveUri(relative);
       if (!_isHttpUrl(uri)) continue;
       final bitrate = _positiveInt(
         attributes['AVERAGE-BANDWIDTH'] ?? attributes['BANDWIDTH'],
