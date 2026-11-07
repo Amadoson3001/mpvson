@@ -123,7 +123,7 @@ static void media_kit_video_plugin_handle_method_call(
               g_free(data);
             },
             &error)) {
-      FlValue* result = fl_value_new_null();
+      g_autoptr(FlValue) result = fl_value_new_null();
       response = FL_METHOD_RESPONSE(fl_method_success_response_new(result));
     } else {
       response = FL_METHOD_RESPONSE(fl_method_error_response_new(
@@ -149,7 +149,7 @@ static void media_kit_video_plugin_handle_method_call(
     }
     video_output_manager_set_size(self->video_output_manager, handle_value,
                                   width_value, height_value);
-    FlValue* result = fl_value_new_null();
+    g_autoptr(FlValue) result = fl_value_new_null();
     response = FL_METHOD_RESPONSE(fl_method_success_response_new(result));
   } else if (g_strcmp0(method, "VideoOutputManager.SetVisibility") == 0) {
     FlValue* arguments = fl_method_call_get_args(method_call);
@@ -160,7 +160,7 @@ static void media_kit_video_plugin_handle_method_call(
     gboolean visible_value = fl_value_get_bool(visible);
     video_output_manager_set_visibility(self->video_output_manager, handle_value,
                                         visible_value);
-    FlValue* result = fl_value_new_null();
+    g_autoptr(FlValue) result = fl_value_new_null();
     response = FL_METHOD_RESPONSE(fl_method_success_response_new(result));
   } else if (g_strcmp0(method, "VideoOutputManager.Dispose") == 0) {
     FlValue* arguments = fl_method_call_get_args(method_call);
@@ -168,18 +168,18 @@ static void media_kit_video_plugin_handle_method_call(
     gint64 handle_value =
         g_ascii_strtoll(fl_value_get_string(handle), NULL, 10);
     video_output_manager_dispose(self->video_output_manager, handle_value);
-    FlValue* result = fl_value_new_null();
+    g_autoptr(FlValue) result = fl_value_new_null();
     response = FL_METHOD_RESPONSE(fl_method_success_response_new(result));
 
   } else if (g_strcmp0(method, "Utils.EnterNativeFullscreen") == 0) {
     utils_enter_native_fullscreen(
         gtk_widget_get_toplevel(GTK_WIDGET(self->view)));
-    FlValue* result = fl_value_new_null();
+    g_autoptr(FlValue) result = fl_value_new_null();
     response = FL_METHOD_RESPONSE(fl_method_success_response_new(result));
   } else if (g_strcmp0(method, "Utils.ExitNativeFullscreen") == 0) {
     utils_exit_native_fullscreen(
         gtk_widget_get_toplevel(GTK_WIDGET(self->view)));
-    FlValue* result = fl_value_new_null();
+    g_autoptr(FlValue) result = fl_value_new_null();
     response = FL_METHOD_RESPONSE(fl_method_success_response_new(result));
   } else {
     response = FL_METHOD_RESPONSE(fl_method_not_implemented_response_new());
@@ -188,6 +188,15 @@ static void media_kit_video_plugin_handle_method_call(
 }
 
 static void media_kit_video_plugin_dispose(GObject* object) {
+  MediaKitVideoPlugin* self = MEDIA_KIT_VIDEO_PLUGIN(object);
+  // The method channel holds a reference back on this plugin through the
+  // method call handler user data; clearing it here breaks the cycle and
+  // releases the channel. |view| and the texture registrar are borrowed, so
+  // they are not touched.
+  g_clear_object(&self->channel);
+  // The video output manager is a GObject whose dispose shuts down every
+  // remaining video output.
+  g_clear_object(&self->video_output_manager);
   G_OBJECT_CLASS(media_kit_video_plugin_parent_class)->dispose(object);
 }
 
