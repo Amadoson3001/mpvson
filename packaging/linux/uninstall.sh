@@ -19,7 +19,8 @@ if [[ -L "${BIN_DIR}/mpvson" || -f "${BIN_DIR}/mpvson" ]]; then
   rm -f "${BIN_DIR}/mpvson"
 fi
 
-# 2. Remove desktop entries
+# 2. Remove desktop entries (both the current dev.mpvson.mpvson.desktop and
+#    the legacy mpvson.desktop copied by older installers)
 for desktop_file in "${APP_DIR}/mpvson.desktop" "${APP_DIR}/dev.mpvson.mpvson.desktop"; do
   if [[ -f "${desktop_file}" ]]; then
     echo "--> Removing desktop entry: ${desktop_file}"
@@ -27,7 +28,7 @@ for desktop_file in "${APP_DIR}/mpvson.desktop" "${APP_DIR}/dev.mpvson.mpvson.de
   fi
 done
 
-# 3. Remove scalable icons
+# 3. Remove scalable icons (current dev.mpvson.mpvson.svg and legacy mpvson.svg)
 for icon_file in "${ICON_DIR}/mpvson.svg" "${ICON_DIR}/dev.mpvson.mpvson.svg"; do
   if [[ -f "${icon_file}" ]]; then
     echo "--> Removing icon: ${icon_file}"
