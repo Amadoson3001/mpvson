@@ -422,19 +422,28 @@ class _RecentEntryState extends State<_RecentEntry> {
                 ),
               ),
               const SizedBox(width: 8),
-              if (widget.onRemove != null && (_isHovered || _hasFocus))
-                Tooltip(
-                  message: 'Remove from recently played',
-                  child: IconButton(
-                    icon: const Icon(Icons.close_rounded, size: 16),
-                    onPressed: widget.onRemove,
-                    style: IconButton.styleFrom(
-                      foregroundColor: context.palette.secondaryText,
-                      hoverColor: context.palette.danger.withValues(
-                        alpha: 0.12,
+              if (widget.onRemove != null)
+                // Stay mounted so the control is reachable by assistive tech
+                // and tests from the first frame; only its visibility animates.
+                AnimatedOpacity(
+                  opacity: _isHovered || _hasFocus ? 1 : 0,
+                  duration: AppMotion.duration(context, AppMotion.quick),
+                  child: IgnorePointer(
+                    ignoring: !_isHovered && !_hasFocus,
+                    child: Tooltip(
+                      message: 'Remove from recently played',
+                      child: IconButton(
+                        icon: const Icon(Icons.close_rounded, size: 16),
+                        onPressed: widget.onRemove,
+                        style: IconButton.styleFrom(
+                          foregroundColor: context.palette.secondaryText,
+                          hoverColor: context.palette.danger.withValues(
+                            alpha: 0.12,
+                          ),
+                          minimumSize: const Size(28, 28),
+                          padding: EdgeInsets.zero,
+                        ),
                       ),
-                      minimumSize: const Size(28, 28),
-                      padding: EdgeInsets.zero,
                     ),
                   ),
                 )
@@ -449,7 +458,6 @@ class _RecentEntryState extends State<_RecentEntry> {
     return Semantics(
       button: true,
       label: label,
-      excludeSemantics: true,
       child: AppMotion.reduce(context)
           ? row
           : AnimatedScale(
