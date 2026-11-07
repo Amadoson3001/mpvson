@@ -42,8 +42,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libmpv-dev libasound2-dev libepoxy-dev liblzma-dev jq
       - run: flutter pub get --enforce-lockfile
-      - run: dart format --output=none --set-exit-if-changed lib tool
+      - run: dart format --output=none --set-exit-if-changed lib tool test
       - run: flutter analyze
+      - run: flutter test --no-pub --exclude-tags=golden
       - name: Build Windows release
         if: runner.os == 'Windows'
         shell: pwsh
@@ -62,10 +63,18 @@ jobs:
         shell: pwsh
         run: |
           dart run tool/engine_provenance.dart verify
-          if (Get-Command llvm-strip -ErrorAction SilentlyContinue) {
-            llvm-strip --strip-all build/windows/x64/runner/Release/libmpv-2.dll
-          } elseif (Get-Command strip -ErrorAction SilentlyContinue) {
-            strip --strip-all build/windows/x64/runner/Release/libmpv-2.dll
+          # llvm-strip rewrites the binary and invalidates Authenticode
+          # signatures, so signed DLLs ship untouched (mirrors the skip list
+          # in windows/CMakeLists.txt). -notcontains is case-insensitive.
+          $signedDlls = @('flutter_windows.dll', 'd3dcompiler_47.dll', 'vulkan-1.dll')
+          $stripDlls = Get-ChildItem build/windows/x64/runner/Release/*.dll -ErrorAction SilentlyContinue |
+            Where-Object { $signedDlls -notcontains $_.Name }
+          foreach ($dll in $stripDlls) {
+            if (Get-Command llvm-strip -ErrorAction SilentlyContinue) {
+              llvm-strip --strip-all $dll.FullName
+            } elseif (Get-Command strip -ErrorAction SilentlyContinue) {
+              strip --strip-all $dll.FullName
+            }
           }
           if (Test-Path build/windows/x64/runner/Release/vk_swiftshader.dll) {
             Remove-Item build/windows/x64/runner/Release/vk_swiftshader.dll -Force
