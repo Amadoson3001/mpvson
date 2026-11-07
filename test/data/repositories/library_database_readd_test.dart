@@ -2,8 +2,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mpvson/data/repositories/database/library_database.dart';
 import 'package:mpvson/domain/models/library_models.dart';
 import 'package:mpvson/domain/models/media_entry.dart';
-import 'package:mpvson/domain/models/media_kind.dart';
-import 'package:mpvson/domain/models/media_metadata.dart';
 
 MediaItemRecord _record(
   String path, {
@@ -13,7 +11,7 @@ MediaItemRecord _record(
 }) {
   final canonical = MediaEntry.canonicalSource(path);
   return MediaItemRecord(
-    id: MediaEntry.canonicalSource('$path-${playCount}-${isFavorite}'),
+    id: MediaEntry.canonicalSource('$path-$playCount-$isFavorite'),
     canonicalSource: canonical,
     path: path,
     kind: MediaKind.audio,
