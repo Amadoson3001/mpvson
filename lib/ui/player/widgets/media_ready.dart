@@ -178,8 +178,9 @@ class _ReadyContent extends StatelessWidget {
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
             Tooltip(
-              message:
-                  hasResumePosition ? 'Resume this video' : 'Play this video',
+              message: hasResumePosition
+                  ? 'Resume this video'
+                  : 'Play this video',
               child: FilledButton.icon(
                 key: const ValueKey('resume-current'),
                 onPressed: isOpening ? null : onPlay,

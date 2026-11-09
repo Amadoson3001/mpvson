@@ -49,7 +49,12 @@ abstract class MediaLibraryRepository extends ChangeNotifier {
   Future<void> addToPlaylist(String playlistId, List<String> mediaIds);
   Future<void> addPathsToPlaylist(String playlistId, List<String> paths);
   Future<void> removeFromPlaylist(String playlistId, String playlistEntryId);
-  Future<void> reorderPlaylist(String playlistId, int oldIndex, int newIndex);
+  Future<void> reorderPlaylist(
+    String playlistId,
+    int oldIndex,
+    int newIndex, {
+    String? entryId,
+  });
   Future<void> clearPlaylist(String playlistId);
   Future<List<PlaylistEntryRecord>> getPlaylistEntries(String playlistId);
 

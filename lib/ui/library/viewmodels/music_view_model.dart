@@ -578,9 +578,15 @@ class MusicViewModel extends ChangeNotifier {
   Future<void> reorderPlaylist(
     String playlistId,
     int oldIndex,
-    int newIndex,
-  ) async {
-    await repository.reorderPlaylist(playlistId, oldIndex, newIndex);
+    int newIndex, {
+    String? entryId,
+  }) async {
+    await repository.reorderPlaylist(
+      playlistId,
+      oldIndex,
+      newIndex,
+      entryId: entryId,
+    );
     if (_selectedPlaylist?.id == playlistId) {
       _playlistEntries = await repository.getPlaylistEntries(playlistId);
     }

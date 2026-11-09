@@ -256,9 +256,9 @@ class ControlToggleButton extends StatelessWidget {
           animationDuration: AppMotion.duration(context, AppMotion.quick),
           backgroundColor: WidgetStateProperty.resolveWith((states) {
             if (active) {
-              return Theme.of(context).colorScheme.primary.withValues(
-                alpha: 0.18,
-              );
+              return Theme.of(
+                context,
+              ).colorScheme.primary.withValues(alpha: 0.18);
             }
             if (states.contains(WidgetState.hovered)) {
               return Colors.white.withValues(alpha: 0.08);

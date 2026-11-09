@@ -251,7 +251,8 @@ class _ShellSideNavState extends State<ShellSideNav>
                 AnimatedBuilder(
                   animation: _curve,
                   builder: (context, _) {
-                    final rect = _interpolatedRect ??
+                    final rect =
+                        _interpolatedRect ??
                         _estimateRect(
                           widget.section,
                           widget.collapsed,
@@ -292,8 +293,9 @@ class _ShellSideNavState extends State<ShellSideNav>
                   ),
                   if (widget.showSettings) ...[
                     Padding(
-                      padding:
-                          const EdgeInsets.symmetric(horizontal: AppSpace.xs),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpace.xs,
+                      ),
                       child: Divider(height: 1, color: palette.border),
                     ),
                     const SizedBox(height: AppSpace.xs),
@@ -317,34 +319,31 @@ class _ShellSideNavState extends State<ShellSideNav>
   }
 
   Widget _items(BuildContext context) => Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          for (final d in _mainDestinations) _item(d),
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: AppSpace.xs),
-            child: Divider(height: 1, color: context.palette.border),
-          ),
-          _item(_folders),
-        ],
-      );
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      for (final d in _mainDestinations) _item(d),
+      Padding(
+        padding: const EdgeInsets.symmetric(vertical: AppSpace.xs),
+        child: Divider(height: 1, color: context.palette.border),
+      ),
+      _item(_folders),
+    ],
+  );
 
   Widget _item(_Destination d) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: AppSpace.micro),
-        child: _NavItem(
-          key: _itemKeys[d.section],
-          destination: d,
-          selected: widget.section == d.section,
-          collapsed: widget.collapsed,
-          onTap: () => widget.onSelect(d.section),
-        ),
-      );
+    padding: const EdgeInsets.symmetric(vertical: AppSpace.micro),
+    child: _NavItem(
+      key: _itemKeys[d.section],
+      destination: d,
+      selected: widget.section == d.section,
+      collapsed: widget.collapsed,
+      onTap: () => widget.onSelect(d.section),
+    ),
+  );
 }
 
 class _SlidingNavIndicator extends StatelessWidget {
-  const _SlidingNavIndicator({
-    required this.accent,
-    required this.collapsed,
-  });
+  const _SlidingNavIndicator({required this.accent, required this.collapsed});
 
   final Color accent;
   final bool collapsed;
@@ -356,12 +355,7 @@ class _SlidingNavIndicator extends StatelessWidget {
       decoration: BoxDecoration(
         color: accent.withValues(alpha: 0.14),
         borderRadius: radius,
-        border: Border(
-          left: BorderSide(
-            color: accent,
-            width: 3.0,
-          ),
-        ),
+        border: Border(left: BorderSide(color: accent, width: 3.0)),
         boxShadow: [
           BoxShadow(
             color: accent.withValues(alpha: 0.12),
@@ -412,9 +406,9 @@ class ShellNavigationDrawer extends StatelessWidget {
                     child: Text(
                       'Mpvson',
                       style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                            fontWeight: FontWeight.w700,
-                            color: palette.primaryText,
-                          ),
+                        fontWeight: FontWeight.w700,
+                        color: palette.primaryText,
+                      ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -504,10 +498,7 @@ class _NavItemState extends State<_NavItem> {
                 child: TweenAnimationBuilder<Color?>(
                   duration: const Duration(milliseconds: 180),
                   curve: Curves.easeOutCubic,
-                  tween: ColorTween(
-                    begin: targetColor,
-                    end: targetColor,
-                  ),
+                  tween: ColorTween(begin: targetColor, end: targetColor),
                   builder: (context, iconColor, _) {
                     final effectiveIconColor = iconColor ?? targetColor;
                     final icon = Icon(
@@ -528,9 +519,7 @@ class _NavItemState extends State<_NavItem> {
                           child: AnimatedDefaultTextStyle(
                             duration: const Duration(milliseconds: 180),
                             curve: Curves.easeOutCubic,
-                            style: Theme.of(context)
-                                .textTheme
-                                .titleSmall!
+                            style: Theme.of(context).textTheme.titleSmall!
                                 .copyWith(
                                   fontWeight: selected
                                       ? FontWeight.w600

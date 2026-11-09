@@ -141,10 +141,7 @@ void main() {
       await tester.scrollUntilVisible(find.text('Show remaining time'), 100);
       await tester.tap(find.text('Show remaining time'));
       await tester.pumpAndSettle();
-      expect(
-        preferences.preferences.playerControls.showRemainingTime,
-        isTrue,
-      );
+      expect(preferences.preferences.playerControls.showRemainingTime, isTrue);
 
       // Auto-hide delay selector exists
       expect(
@@ -154,10 +151,7 @@ void main() {
       await tester.scrollUntilVisible(find.text('Fast (1.5s)'), 100);
       await tester.tap(find.text('Fast (1.5s)'));
       await tester.pumpAndSettle();
-      expect(
-        preferences.preferences.playerControls.autoHideDelaySeconds,
-        1.5,
-      );
+      expect(preferences.preferences.playerControls.autoHideDelaySeconds, 1.5);
 
       // Reset button resets to defaults
       await tester.scrollUntilVisible(
@@ -232,7 +226,10 @@ void main() {
       await tester.pumpAndSettle();
 
       // Strip is still rendered with new style
-      expect(find.byKey(const ValueKey('player-control-strip')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('player-control-strip')),
+        findsOneWidget,
+      );
 
       controller.dispose();
       preferences.dispose();

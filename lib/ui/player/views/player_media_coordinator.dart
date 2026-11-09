@@ -65,6 +65,35 @@ class PlayerMediaCoordinator {
 
   BuildContext get context => getContext();
 
+  Future<void> adjustPlaybackDelay({
+    required bool audio,
+    required bool later,
+    required void Function(IconData icon, String message, {bool centered})
+    showFeedback,
+  }) async {
+    final settings = controller.playbackSettings;
+    final stepMs = appPreferences?.preferences.syncStepMs ?? 50;
+    final step = later ? stepMs : -stepMs;
+    final current = audio
+        ? settings.audioDelaySeconds
+        : settings.subtitleDelaySeconds;
+    final boundedMs = ((current * 1000).round() + step).clamp(-10000, 10000);
+    final next = boundedMs / 1000;
+    final updated = audio
+        ? settings.copyWith(audioDelaySeconds: next)
+        : settings.copyWith(subtitleDelaySeconds: next);
+    final suffix = boundedMs > 0 ? '+' : '';
+    showFeedback(
+      audio ? Icons.graphic_eq_rounded : Icons.closed_caption_rounded,
+      '${audio ? 'Audio' : 'Subtitle'} delay $suffix$boundedMs ms',
+      centered: true,
+    );
+    await controller.setPlaybackSettings(updated);
+    if (controller.playbackSettingsError != null) {
+      showMessage('The playback engine did not accept the delay change.');
+    }
+  }
+
   Future<void> addQueueFiles() async {
     onCloseContextMenu();
     try {

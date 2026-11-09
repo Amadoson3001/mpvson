@@ -358,8 +358,8 @@ class SharedSeekBarState extends State<SharedSeekBar> {
                             ? RoundSliderThumbShape(
                                 enabledThumbRadius: thumbVisible
                                     ? ((_pointerInside || _dragging || _focused)
-                                        ? widget.thickness.hoverThumbRadius
-                                        : widget.thickness.restingThumbRadius)
+                                          ? widget.thickness.hoverThumbRadius
+                                          : widget.thickness.restingThumbRadius)
                                     : 0,
                                 disabledThumbRadius: 3,
                                 elevation: 2,
@@ -370,7 +370,9 @@ class SharedSeekBarState extends State<SharedSeekBar> {
                           overlayRadius: 14,
                         ),
                         activeTrackColor: Theme.of(context).colorScheme.primary,
-                        inactiveTrackColor: Colors.white.withValues(alpha: 0.25),
+                        inactiveTrackColor: Colors.white.withValues(
+                          alpha: 0.25,
+                        ),
                         disabledActiveTrackColor: context.palette.muted,
                         disabledInactiveTrackColor: context.palette.border,
                         overlayColor: Theme.of(

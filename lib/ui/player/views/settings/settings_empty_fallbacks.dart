@@ -121,8 +121,9 @@ class EmptyMediaLibraryRepository extends MediaLibraryRepository {
   Future<void> reorderPlaylist(
     String playlistId,
     int oldIndex,
-    int newIndex,
-  ) async {}
+    int newIndex, {
+    String? entryId,
+  }) async {}
   @override
   Future<void> clearPlaylist(String playlistId) async {}
   @override

@@ -187,11 +187,20 @@ extension ThumbnailServiceRequests on ThumbnailService {
   }
 }
 
+/// Optional interface for [ThumbnailService] implementations that support
+/// synchronous, in-memory thumbnail peeking.
+abstract interface class ThumbnailPeeker {
+  MediaThumbnail? peekThumbnail(MediaEntry entry);
+}
+
 /// Provides a synchronous, provisional thumbnail read without changing the
 /// [ThumbnailService] contract for test doubles and alternate implementations.
 extension ThumbnailServicePeek on ThumbnailService {
   MediaThumbnail? peek(MediaEntry entry) {
     final service = this;
+    if (service is ThumbnailPeeker) {
+      return (service as ThumbnailPeeker).peekThumbnail(entry);
+    }
     if (service is MediaKitThumbnailService) return service.peek(entry);
     return null;
   }
@@ -205,7 +214,7 @@ typedef ThumbnailImageValidator = Future<bool> Function(Uint8List bytes);
 /// [cacheDirectory] or [cacheDirectoryProvider] is useful for tests and tools
 /// that need an isolated cache. The provided directory is the exact thumbnail
 /// cache directory, not a parent directory.
-class MediaKitThumbnailService implements ThumbnailService {
+class MediaKitThumbnailService implements ThumbnailService, ThumbnailPeeker {
   MediaKitThumbnailService({
     ThumbnailExtractor? extractor,
     ThumbnailImageValidator? imageValidator,
@@ -372,6 +381,9 @@ class MediaKitThumbnailService implements ThumbnailService {
   /// This is only a provisional read. Callers must still start [load] or
   /// [request], which asynchronously validates the source and sidecars before
   /// returning cached artwork as current.
+  @override
+  MediaThumbnail? peekThumbnail(MediaEntry entry) => peek(entry);
+
   MediaThumbnail? peek(MediaEntry entry) {
     final key = MediaEntry.canonicalSource(entry.path);
     final memory = _memory[key];

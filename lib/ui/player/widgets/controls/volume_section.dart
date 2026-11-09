@@ -207,9 +207,7 @@ class _InlineVolumeControlState extends State<InlineVolumeControl> {
                     elevation: 1,
                     pressedElevation: 2.5,
                   ),
-                  overlayShape: const RoundSliderOverlayShape(
-                    overlayRadius: 9,
-                  ),
+                  overlayShape: const RoundSliderOverlayShape(overlayRadius: 9),
                   activeTrackColor: Theme.of(context).colorScheme.primary,
                   inactiveTrackColor: Colors.white.withValues(alpha: 0.22),
                   thumbColor: Colors.white,

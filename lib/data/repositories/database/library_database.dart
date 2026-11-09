@@ -641,10 +641,7 @@ class LibraryDatabase {
   }
 
   /// Adds media files by disk path to a playlist, discovering/indexing them if needed.
-  Future<void> addPathsToPlaylist(
-    String playlistId,
-    List<String> paths,
-  ) async {
+  Future<void> addPathsToPlaylist(String playlistId, List<String> paths) async {
     await _send<dynamic>('addPathsToPlaylist', <String, Object?>{
       'playlistId': playlistId,
       'paths': paths,
@@ -661,16 +658,18 @@ class LibraryDatabase {
     await _send<dynamic>('removePlaylistEntry', entryId);
   }
 
-  /// Reorders playlist entries so that entry at [oldIndex] moves to [newIndex].
+  /// Reorders playlist entries so that entry at [oldIndex] (or [entryId]) moves to [newIndex].
   Future<void> reorderPlaylistEntries(
     String playlistId,
     int oldIndex,
-    int newIndex,
-  ) async {
+    int newIndex, {
+    String? entryId,
+  }) async {
     await _send<dynamic>('reorderPlaylistEntries', <String, Object?>{
       'playlistId': playlistId,
       'oldIndex': oldIndex,
       'newIndex': newIndex,
+      'entryId': entryId,
     });
   }
 
@@ -1589,10 +1588,9 @@ Object? _dispatchAction(Database db, String action, Object? params) {
       final playlistId = params as String;
       db.execute('BEGIN TRANSACTION;');
       try {
-        db.execute(
-          'DELETE FROM playlist_entries WHERE playlist_id = ?',
-          [playlistId],
-        );
+        db.execute('DELETE FROM playlist_entries WHERE playlist_id = ?', [
+          playlistId,
+        ]);
         db.execute('UPDATE playlists SET updated_at = ? WHERE id = ?', [
           DateTime.now().millisecondsSinceEpoch,
           playlistId,
@@ -1635,7 +1633,13 @@ Object? _dispatchAction(Database db, String action, Object? params) {
             if (rows.isNotEmpty) {
               final mediaId = rows.first['id'] as String;
               final entryId = _generateId('$playlistId-$mediaId-$nextPos');
-              insertStmt.execute([entryId, playlistId, mediaId, nextPos++, now]);
+              insertStmt.execute([
+                entryId,
+                playlistId,
+                mediaId,
+                nextPos++,
+                now,
+              ]);
             }
           }
         } finally {
@@ -1730,8 +1734,9 @@ Object? _dispatchAction(Database db, String action, Object? params) {
       final playlistId = map['playlistId'] as String;
       final oldIndex = map['oldIndex'] as int;
       final newIndex = map['newIndex'] as int;
+      final entryId = map['entryId'] as String?;
 
-      if (oldIndex == newIndex) return null;
+      if (entryId == null && oldIndex == newIndex) return null;
 
       db.execute('BEGIN TRANSACTION;');
       try {
@@ -1740,13 +1745,21 @@ Object? _dispatchAction(Database db, String action, Object? params) {
           [playlistId],
         );
 
-        if (oldIndex >= 0 &&
-            oldIndex < entries.length &&
+        final idList = entries.map((r) => r['id'] as String).toList();
+        final actualOldIndex = entryId != null
+            ? idList.indexOf(entryId)
+            : oldIndex;
+
+        if (actualOldIndex >= 0 &&
+            actualOldIndex < idList.length &&
             newIndex >= 0 &&
-            newIndex <= entries.length) {
-          final idList = entries.map((r) => r['id'] as String).toList();
-          final movedId = idList.removeAt(oldIndex);
-          final insertionIndex = newIndex > oldIndex ? newIndex - 1 : newIndex;
+            newIndex <= idList.length) {
+          final movedId = idList.removeAt(actualOldIndex);
+          final insertionIndex =
+              (newIndex > actualOldIndex ? newIndex - 1 : newIndex).clamp(
+                0,
+                idList.length,
+              );
           idList.insert(insertionIndex, movedId);
 
           final stmt = db.prepare(

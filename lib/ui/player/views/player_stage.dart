@@ -287,7 +287,8 @@ class PlayerStage extends StatelessWidget {
             current != null)
           PlayerTopBar(
             currentTitle: current.title,
-            controlsVisible: (contentState == 'ready' ||
+            controlsVisible:
+                (contentState == 'ready' ||
                     !controller.hasMedia ||
                     controller.isStopped)
                 ? true

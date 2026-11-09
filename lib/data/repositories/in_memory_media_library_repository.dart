@@ -354,7 +354,9 @@ class InMemoryMediaLibraryRepository extends MediaLibraryRepository {
     final mediaIds = <String>[];
     for (final p in paths) {
       final canonical = MediaEntry.canonicalSource(p);
-      final item = _items.firstWhereOrNull((i) => i.canonicalSource == canonical);
+      final item = _items.firstWhereOrNull(
+        (i) => i.canonicalSource == canonical,
+      );
       if (item != null) {
         mediaIds.add(item.id);
       }
@@ -432,21 +434,27 @@ class InMemoryMediaLibraryRepository extends MediaLibraryRepository {
   Future<void> reorderPlaylist(
     String playlistId,
     int oldIndex,
-    int newIndex,
-  ) async {
+    int newIndex, {
+    String? entryId,
+  }) async {
     final list = _playlistEntries[playlistId];
-    if (list != null &&
-        oldIndex >= 0 &&
-        oldIndex < list.length &&
-        newIndex >= 0 &&
-        newIndex <= list.length) {
-      if (newIndex > oldIndex) newIndex--;
-      final item = list.removeAt(oldIndex);
-      list.insert(newIndex, item);
-      for (var i = 0; i < list.length; i++) {
-        list[i] = list[i].copyWith(position: i);
+    if (list != null) {
+      final actualOldIndex = entryId != null
+          ? list.indexWhere((e) => e.id == entryId)
+          : oldIndex;
+      if (actualOldIndex >= 0 &&
+          actualOldIndex < list.length &&
+          newIndex >= 0 &&
+          newIndex <= list.length) {
+        var targetIndex = newIndex;
+        if (targetIndex > actualOldIndex) targetIndex--;
+        final item = list.removeAt(actualOldIndex);
+        list.insert(targetIndex.clamp(0, list.length), item);
+        for (var i = 0; i < list.length; i++) {
+          list[i] = list[i].copyWith(position: i);
+        }
+        notifyListeners();
       }
-      notifyListeners();
     }
   }
 

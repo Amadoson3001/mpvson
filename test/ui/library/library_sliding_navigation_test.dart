@@ -8,86 +8,88 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('ShellSideNav sliding indicator', () {
-    testWidgets('renders sliding indicator and animates smoothly between sections', (
-      tester,
-    ) async {
-      LibrarySection selectedSection = LibrarySection.home;
+    testWidgets(
+      'renders sliding indicator and animates smoothly between sections',
+      (tester) async {
+        LibrarySection selectedSection = LibrarySection.home;
 
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: AppTheme.dark,
-          home: Scaffold(
-            body: StatefulBuilder(
-              builder: (context, setState) {
-                return SizedBox(
-                  width: 208,
-                  height: 700,
-                  child: ShellSideNav(
-                    section: selectedSection,
-                    onSelect: (next) => setState(() => selectedSection = next),
-                    collapsed: false,
-                    showSettings: true,
-                  ),
-                );
-              },
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: AppTheme.dark,
+            home: Scaffold(
+              body: StatefulBuilder(
+                builder: (context, setState) {
+                  return SizedBox(
+                    width: 208,
+                    height: 700,
+                    child: ShellSideNav(
+                      section: selectedSection,
+                      onSelect: (next) =>
+                          setState(() => selectedSection = next),
+                      collapsed: false,
+                      showSettings: true,
+                    ),
+                  );
+                },
+              ),
             ),
           ),
-        ),
-      );
+        );
 
-      await tester.pumpAndSettle();
+        await tester.pumpAndSettle();
 
-      // Find the sliding indicator by Type
-      final indicatorFinder = find.byWidgetPredicate(
-        (widget) => widget.runtimeType.toString() == '_SlidingNavIndicator',
-      );
-      expect(indicatorFinder, findsOneWidget);
+        // Find the sliding indicator by Type
+        final indicatorFinder = find.byWidgetPredicate(
+          (widget) => widget.runtimeType.toString() == '_SlidingNavIndicator',
+        );
+        expect(indicatorFinder, findsOneWidget);
 
-      final initialRect = tester.getRect(indicatorFinder);
-      expect(initialRect.width, 208 - 16); // 192px width
-      expect(initialRect.height, 40);
+        final initialRect = tester.getRect(indicatorFinder);
+        expect(initialRect.width, 208 - 16); // 192px width
+        expect(initialRect.height, 40);
 
-      // Tap on 'Videos'
-      await tester.tap(find.text('Videos'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 110));
+        // Tap on 'Videos'
+        await tester.tap(find.text('Videos'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 110));
 
-      // Indicator is in motion (intermediate position between Home and Videos)
-      final midRect = tester.getRect(indicatorFinder);
-      expect(midRect.top, greaterThan(initialRect.top));
+        // Indicator is in motion (intermediate position between Home and Videos)
+        final midRect = tester.getRect(indicatorFinder);
+        expect(midRect.top, greaterThan(initialRect.top));
 
-      // Let animation finish
-      await tester.pumpAndSettle();
-      final videosRect = tester.getRect(indicatorFinder);
-      expect(videosRect.top, greaterThan(midRect.top));
-      expect(selectedSection, LibrarySection.videos);
+        // Let animation finish
+        await tester.pumpAndSettle();
+        final videosRect = tester.getRect(indicatorFinder);
+        expect(videosRect.top, greaterThan(midRect.top));
+        expect(selectedSection, LibrarySection.videos);
 
-      // Tap on 'Settings' at the bottom
-      await tester.tap(find.text('Settings'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 110));
+        // Tap on 'Settings' at the bottom
+        await tester.tap(find.text('Settings'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 110));
 
-      final midSettingsRect = tester.getRect(indicatorFinder);
-      expect(midSettingsRect.top, greaterThan(videosRect.top));
+        final midSettingsRect = tester.getRect(indicatorFinder);
+        expect(midSettingsRect.top, greaterThan(videosRect.top));
 
-      await tester.pumpAndSettle();
-      final settingsRect = tester.getRect(indicatorFinder);
-      expect(settingsRect.top, greaterThan(midSettingsRect.top));
-      expect(selectedSection, LibrarySection.settings);
+        await tester.pumpAndSettle();
+        final settingsRect = tester.getRect(indicatorFinder);
+        expect(settingsRect.top, greaterThan(midSettingsRect.top));
+        expect(selectedSection, LibrarySection.settings);
 
-      // Tap on 'Home' to slide back up
-      await tester.tap(find.text('Home'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 110));
+        // Tap on 'Home' to slide back up
+        await tester.tap(find.text('Home'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 110));
 
-      final midHomeRect = tester.getRect(indicatorFinder);
-      expect(midHomeRect.top, lessThan(settingsRect.top));
+        final midHomeRect = tester.getRect(indicatorFinder);
+        expect(midHomeRect.top, lessThan(settingsRect.top));
 
-      await tester.pumpAndSettle();
-      final finalHomeRect = tester.getRect(indicatorFinder);
-      expect(finalHomeRect.top, initialRect.top);
-      expect(selectedSection, LibrarySection.home);
-    });
+        await tester.pumpAndSettle();
+        final finalHomeRect = tester.getRect(indicatorFinder);
+        expect(finalHomeRect.top, initialRect.top);
+        expect(selectedSection, LibrarySection.home);
+      },
+    );
 
     testWidgets('adapts smoothly when collapsed rail mode is active', (
       tester,

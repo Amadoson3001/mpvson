@@ -144,7 +144,9 @@ class SeekPreview extends StatelessWidget {
     final isUpdating = previewState?.isUpdating == true;
     final showLoadingIndicator = isUpdating || (isLoading && frame == null);
 
-    const topRadius = BorderRadius.vertical(top: Radius.circular(AppRadii.control));
+    const topRadius = BorderRadius.vertical(
+      top: Radius.circular(AppRadii.control),
+    );
     Widget imageSurface;
     if (frame != null && frame.bytes.isNotEmpty) {
       imageSurface = ClipRRect(

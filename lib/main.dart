@@ -256,158 +256,168 @@ Future<void> main(List<String> arguments) async {
   final readyUpdates = updates;
   final selectedEngine = engineSelection;
 
-  final appPreferences = AppPreferencesRepository();
-  await appPreferences.load();
-  final graphicsSettings = appPreferences.graphicsSettings;
-  readyController.applyGraphicsSettings(graphicsSettings);
+  try {
+    final appPreferences = AppPreferencesRepository();
+    await appPreferences.load();
+    final graphicsSettings = appPreferences.graphicsSettings;
+    readyController.applyGraphicsSettings(graphicsSettings);
 
-  final mediaProbeService = MediaProbeServiceImpl();
-  final supportDir = await getApplicationSupportDirectory();
-  final dbFile = File(p.join(supportDir.path, 'media_library.db'));
-  final libraryRepository = MediaLibraryRepositoryImpl(
-    databasePath: dbFile.path,
-    probeService: mediaProbeService,
-  );
-  final libraryPlaybackTracker = LibraryPlaybackTracker(
-    controller: readyController,
-    repository: libraryRepository,
-  );
-  unawaited(
-    _initializeBackgroundService('media library', () async {
-      await libraryRepository.initialize();
-    }),
-  );
-
-  final navigatorKey = GlobalKey<NavigatorState>();
-
-  Future<void>? initialization;
-  Future<void> waitUntilReady() {
-    final active = initialization;
-    if (active != null) return active;
-    late final Future<void> attempt;
-    attempt =
-        (() async {
-          await readyController.initialize();
-          await WidgetsBinding.instance.endOfFrame;
-        })().catchError((Object error, StackTrace stack) {
-          if (identical(initialization, attempt)) initialization = null;
-          Error.throwWithStackTrace(error, stack);
-        });
-    initialization = attempt;
-    return attempt;
-  }
-
-  final openCoordinator = OpenRequestCoordinator(
-    ready: waitUntilReady,
-    preferences: appPreferences,
-    isPlaybackActive: () =>
-        readyController.isPlaying ||
-        readyController.hasMedia ||
-        readyController.current != null,
-    executePlaybackCommand:
-        ({required List<String> paths, required bool playNow}) async {
-          await readyController.openPaths(paths, append: !playNow);
-        },
-    showPreferenceDialog: () async {
-      final context = navigatorKey.currentState?.context;
-      if (context == null || !context.mounted) return null;
-      return OpenPreferenceDialog.show(context);
-    },
-  );
-
-  final desktopIntegration = DesktopIntegrationServiceImpl(
-    controller: readyController,
-    openRequestCoordinator: openCoordinator,
-    preferences: appPreferences,
-    mediaProbeService: mediaProbeService,
-    libraryRepository: libraryRepository,
-  );
-  if (graphicsSettings.preferredGpu == GpuPreferenceMode.automatic) {
+    final mediaProbeService = MediaProbeServiceImpl();
+    final supportDir = await getApplicationSupportDirectory();
+    final dbFile = File(p.join(supportDir.path, 'media_library.db'));
+    final libraryRepository = MediaLibraryRepositoryImpl(
+      databasePath: dbFile.path,
+      probeService: mediaProbeService,
+    );
+    final libraryPlaybackTracker = LibraryPlaybackTracker(
+      controller: readyController,
+      repository: libraryRepository,
+    );
     unawaited(
-      desktopIntegration.isOnAcPower().then((onAcPower) {
-        diagnostics.record(
-          'gpu.preference',
-          message: graphicsSettings
-              .resolvePreferredGpu(onAcPower: onAcPower)
-              .name,
-        );
+      _initializeBackgroundService('media library', () async {
+        await libraryRepository.initialize();
       }),
     );
-  }
-  unawaited(
-    _initializeBackgroundService('desktop integration', () async {
-      await desktopIntegration.initialize();
-    }),
-  );
 
-  final lifecycle = _DesktopLifecycle(
-    controller: readyController,
-    updates: readyUpdates,
-    engineUpdates: engineUpdates,
-    engineLibraryPath: engineSelection?.libraryPath,
-    navigatorKey: navigatorKey,
-    appPreferences: appPreferences,
-    libraryRepository: libraryRepository,
-    libraryPlaybackTracker: libraryPlaybackTracker,
-    mediaProbeService: mediaProbeService,
-    desktopIntegration: desktopIntegration,
-  );
-  await windowManager.setPreventClose(true);
-  windowManager.addListener(lifecycle);
+    final navigatorKey = GlobalKey<NavigatorState>();
 
-  // Mount the real UI frame instantly
-  runApp(
-    MpvsonApp(
-      navigatorKey: navigatorKey,
-      openCoordinator: openCoordinator,
+    Future<void>? initialization;
+    Future<void> waitUntilReady() {
+      final active = initialization;
+      if (active != null) return active;
+      late final Future<void> attempt;
+      attempt =
+          (() async {
+            await readyController.initialize();
+            await WidgetsBinding.instance.endOfFrame;
+          })().catchError((Object error, StackTrace stack) {
+            if (identical(initialization, attempt)) initialization = null;
+            Error.throwWithStackTrace(error, stack);
+          });
+      initialization = attempt;
+      return attempt;
+    }
+
+    final openCoordinator = OpenRequestCoordinator(
+      ready: waitUntilReady,
+      preferences: appPreferences,
+      isPlaybackActive: () =>
+          readyController.isPlaying ||
+          readyController.hasMedia ||
+          readyController.current != null,
+      executePlaybackCommand:
+          ({required List<String> paths, required bool playNow}) async {
+            await readyController.openPaths(paths, append: !playNow);
+          },
+      showPreferenceDialog: () async {
+        final context = navigatorKey.currentState?.context;
+        if (context == null || !context.mounted) return null;
+        return OpenPreferenceDialog.show(context);
+      },
+    );
+
+    final desktopIntegration = DesktopIntegrationServiceImpl(
+      controller: readyController,
+      openRequestCoordinator: openCoordinator,
+      preferences: appPreferences,
+      mediaProbeService: mediaProbeService,
+      libraryRepository: libraryRepository,
+    );
+    if (graphicsSettings.preferredGpu == GpuPreferenceMode.automatic) {
+      unawaited(
+        desktopIntegration.isOnAcPower().then((onAcPower) {
+          diagnostics.record(
+            'gpu.preference',
+            message: graphicsSettings
+                .resolvePreferredGpu(onAcPower: onAcPower)
+                .name,
+          );
+        }),
+      );
+    }
+    unawaited(
+      _initializeBackgroundService('desktop integration', () async {
+        await desktopIntegration.initialize();
+      }),
+    );
+
+    final lifecycle = _DesktopLifecycle(
       controller: readyController,
       updates: readyUpdates,
       engineUpdates: engineUpdates,
-      desktopWindow: true,
+      engineLibraryPath: engineSelection?.libraryPath,
+      navigatorKey: navigatorKey,
       appPreferences: appPreferences,
       libraryRepository: libraryRepository,
+      libraryPlaybackTracker: libraryPlaybackTracker,
+      mediaProbeService: mediaProbeService,
       desktopIntegration: desktopIntegration,
-    ),
-  );
-  await windowManager.show();
-  await windowManager.focus();
+    );
+    await windowManager.setPreventClose(true);
+    windowManager.addListener(lifecycle);
 
-  // The adapter probe creates a D3D11 device; keep it off the startup path.
-  unawaited(GpuInfoService().recordSnapshot(diagnostics));
-
-  // Engine staging confirmation, native event observation, and update initialization
-  // run concurrently without delaying the initial UI frame.
-  if (selectedEngine?.isPending ?? false) {
-    try {
-      await engineUpdates.confirmPendingBoot();
-    } on Object catch (error) {
-      stderr.writeln('Could not commit the staged playback engine: $error');
-    }
-  }
-  unawaited(engineUpdates.initialize());
-  unawaited(readyPlayback.prepare());
-
-  unawaited(
-    waitUntilReady().catchError((Object error, StackTrace stack) {
-      stderr.writeln('Could not restore the playback session: $error');
-    }),
-  );
-
-  final isEnqueue = arguments.contains('--enqueue');
-  final paths = arguments.where((argument) => !argument.startsWith('--'));
-  if (paths.isNotEmpty) {
-    final origin = OpenOrigin.startupArgs;
-    final intent = isEnqueue ? OpenIntent.enqueue : OpenIntent.normal;
-    unawaited(
-      openCoordinator.handleOpenRequest(
-        OpenRequest(
-          id: DateTime.now().microsecondsSinceEpoch.toString(),
-          sources: paths.toList(growable: false),
-          intent: intent,
-          origin: origin,
-        ),
+    // Mount the real UI frame instantly
+    runApp(
+      MpvsonApp(
+        navigatorKey: navigatorKey,
+        openCoordinator: openCoordinator,
+        controller: readyController,
+        updates: readyUpdates,
+        engineUpdates: engineUpdates,
+        desktopWindow: true,
+        appPreferences: appPreferences,
+        libraryRepository: libraryRepository,
+        desktopIntegration: desktopIntegration,
       ),
     );
+    await windowManager.show();
+    await windowManager.focus();
+
+    // The adapter probe creates a D3D11 device; keep it off the startup path.
+    unawaited(GpuInfoService().recordSnapshot(diagnostics));
+
+    // Engine staging confirmation, native event observation, and update initialization
+    // run concurrently without delaying the initial UI frame.
+    if (selectedEngine?.isPending ?? false) {
+      try {
+        await engineUpdates.confirmPendingBoot();
+      } on Object catch (error) {
+        stderr.writeln('Could not commit the staged playback engine: $error');
+      }
+    }
+    unawaited(engineUpdates.initialize());
+    unawaited(readyPlayback.prepare());
+
+    unawaited(
+      waitUntilReady().catchError((Object error, StackTrace stack) {
+        stderr.writeln('Could not restore the playback session: $error');
+      }),
+    );
+
+    final isEnqueue = arguments.contains('--enqueue');
+    final paths = arguments.where((argument) => !argument.startsWith('--'));
+    if (paths.isNotEmpty) {
+      final origin = OpenOrigin.startupArgs;
+      final intent = isEnqueue ? OpenIntent.enqueue : OpenIntent.normal;
+      unawaited(
+        openCoordinator.handleOpenRequest(
+          OpenRequest(
+            id: DateTime.now().microsecondsSinceEpoch.toString(),
+            sources: paths.toList(growable: false),
+            intent: intent,
+            origin: origin,
+          ),
+        ),
+      );
+    }
+  } catch (error, stack) {
+    debugPrint('Fatal error during app startup: $error\n$stack');
+    readyUpdates.dispose();
+    engineUpdates.dispose();
+    readyController.dispose();
+    runApp(_StartupFailureApp(error: error.toString()));
+    await _showFallbackWindow();
+    return;
   }
 }
 
@@ -532,7 +542,11 @@ class _DesktopLifecycle extends WindowListener {
     if (_servicesReleased) return;
     _servicesReleased = true;
     windowManager.removeListener(this);
-    libraryPlaybackTracker?.dispose();
+    try {
+      libraryPlaybackTracker?.dispose();
+    } on Object {
+      // Best-effort playback tracker release.
+    }
     try {
       desktopIntegration?.dispose();
     } on Object {
@@ -561,8 +575,16 @@ class _DesktopLifecycle extends WindowListener {
     } on Object {
       // Preserve the window-close path even if a platform teardown fails.
     }
-    updates.dispose();
-    engineUpdates.dispose();
+    try {
+      updates.dispose();
+    } on Object {
+      // Best-effort updates release.
+    }
+    try {
+      engineUpdates.dispose();
+    } on Object {
+      // Best-effort engine updates release.
+    }
   }
 
   Future<void> _finishWindowClose() async {

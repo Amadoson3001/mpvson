@@ -29,12 +29,11 @@ export 'player_layout_manager.dart';
 export 'player_queue_layout.dart';
 export 'player_stage.dart';
 export 'player_top_bar.dart';
+export 'player_media_coordinator.dart'
+    show MediaFilePicker, SubtitleFilePicker, UrlPrompt;
 
 typedef PlayerVideoBuilder =
     Widget Function(BuildContext context, PlayerController controller);
-typedef MediaFilePicker = Future<List<String>> Function();
-typedef SubtitleFilePicker = Future<String?> Function();
-typedef UrlPrompt = Future<String?> Function(BuildContext context);
 
 class PlayerScreen extends StatefulWidget {
   const PlayerScreen({
@@ -110,7 +109,12 @@ class _PlayerScreenState extends State<PlayerScreen>
       isFullscreen: () => _layoutManager.isFullscreen,
       reduceMotion: () => AppMotion.reduce(context),
       getAutoHideDelaySeconds: () =>
-          widget.appPreferences?.preferences.playerControls.autoHideDelaySeconds ?? 2.8,
+          widget
+              .appPreferences
+              ?.preferences
+              .playerControls
+              .autoHideDelaySeconds ??
+          2.8,
     )..addListener(_onVisualStateChanged);
 
     _navigation = PlayerLibraryNavigation(
@@ -372,29 +376,11 @@ class _PlayerScreenState extends State<PlayerScreen>
   Future<void> _adjustPlaybackDelay({
     required bool audio,
     required bool later,
-  }) async {
-    final settings = widget.controller.playbackSettings;
-    final stepMs = widget.appPreferences?.preferences.syncStepMs ?? 50;
-    final step = later ? stepMs : -stepMs;
-    final current = audio
-        ? settings.audioDelaySeconds
-        : settings.subtitleDelaySeconds;
-    final boundedMs = ((current * 1000).round() + step).clamp(-10000, 10000);
-    final next = boundedMs / 1000;
-    final updated = audio
-        ? settings.copyWith(audioDelaySeconds: next)
-        : settings.copyWith(subtitleDelaySeconds: next);
-    final suffix = boundedMs > 0 ? '+' : '';
-    _chrome.showFeedback(
-      audio ? Icons.graphic_eq_rounded : Icons.closed_caption_rounded,
-      '${audio ? 'Audio' : 'Subtitle'} delay $suffix$boundedMs ms',
-      centered: true,
-    );
-    await widget.controller.setPlaybackSettings(updated);
-    if (mounted && widget.controller.playbackSettingsError != null) {
-      _showMessage('The playback engine did not accept the delay change.');
-    }
-  }
+  }) => _media.adjustPlaybackDelay(
+    audio: audio,
+    later: later,
+    showFeedback: _chrome.showFeedback,
+  );
 
   void _toggleVideoPlayback() {
     if (_chrome.dismissedContextMenuOnPointerDown || _contextMenu.isOpen) {
@@ -482,8 +468,10 @@ class _PlayerScreenState extends State<PlayerScreen>
                         onOpenLibrary: _navigation.openLibrary,
                         onReturnToPlayer: _returnToPlayer,
                         onSettingsOpened: _navigation.openSettings,
-                        onSettingsClosed: () => _navigation.setSettingsOpen(false),
-                        onDragStateChanged: (dragging) => setState(() => _draggingFiles = dragging),
+                        onSettingsClosed: () =>
+                            _navigation.setSettingsOpen(false),
+                        onDragStateChanged: (dragging) =>
+                            setState(() => _draggingFiles = dragging),
                       ),
                     ),
                     if (widget.controller.error case final error?)

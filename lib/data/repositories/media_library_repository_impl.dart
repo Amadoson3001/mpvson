@@ -2,6 +2,7 @@
 
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
 import '../../domain/models/library_models.dart';
@@ -165,8 +166,8 @@ class MediaLibraryRepositoryImpl extends MediaLibraryRepository {
       if (_isDisposed) return;
       _folders = folders;
       notifyListeners();
-    } catch (_) {
-      if (!_isDisposed && !database.isClosed) rethrow;
+    } catch (e) {
+      debugPrint('Failed to refresh folders: $e');
     }
   }
 
@@ -393,10 +394,16 @@ class MediaLibraryRepositoryImpl extends MediaLibraryRepository {
   Future<void> reorderPlaylist(
     String playlistId,
     int oldIndex,
-    int newIndex,
-  ) async {
+    int newIndex, {
+    String? entryId,
+  }) async {
     _checkReady();
-    await _database!.reorderPlaylistEntries(playlistId, oldIndex, newIndex);
+    await _database!.reorderPlaylistEntries(
+      playlistId,
+      oldIndex,
+      newIndex,
+      entryId: entryId,
+    );
     notifyListeners();
   }
 

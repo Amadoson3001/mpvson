@@ -2760,7 +2760,10 @@ class PlayerController extends ChangeNotifier {
     if (current != null && _engineHasMedia) {
       _consumePendingResume();
     }
-    if (!_isStopped && snapshot.completed && !wasCompleted && !_completionHandled) {
+    if (!_isStopped &&
+        snapshot.completed &&
+        !wasCompleted &&
+        !_completionHandled) {
       _completionHandled = true;
       unawaited(_advance(fromCompletion: true));
     }
@@ -3471,10 +3474,21 @@ class PlayerController extends ChangeNotifier {
     }
   }
 
-  Future<void> _drainPersistence() async {
-    await _saveDrain?.future;
-    await _checkpointDrain?.future;
-    await _sessions.flush();
+  Future<void> _drainPersistence({
+    Duration timeout = const Duration(seconds: 3),
+  }) async {
+    try {
+      final drains = <Future<void>>[
+        if (_saveDrain != null) _saveDrain!.future,
+        if (_checkpointDrain != null) _checkpointDrain!.future,
+      ];
+      if (drains.isNotEmpty) {
+        await Future.wait(drains).timeout(timeout);
+      }
+    } catch (_) {}
+    try {
+      await _sessions.flush().timeout(timeout);
+    } catch (_) {}
   }
 
   void _updateProgressTimer() {

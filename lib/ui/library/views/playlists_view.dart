@@ -54,6 +54,12 @@ class _PlaylistsViewState extends State<PlaylistsView> {
   /// The playlist record each cached preview was created from.
   final Map<String, PlaylistRecord> _previewRecords = {};
 
+  /// Tracks probed paths to avoid infinite probe -> reload loops on duration-0 items.
+  final Set<String> _probedPaths = <String>{};
+
+  /// Chains asynchronous reorders to ensure serialized database application.
+  Future<void> _reorderChain = Future.value();
+
   Future<List<PlaylistEntryRecord>> _previewEntries(PlaylistRecord pl) {
     final cached = _previewFutures[pl.id];
     final record = _previewRecords[pl.id];
@@ -180,10 +186,18 @@ class _PlaylistsViewState extends State<PlaylistsView> {
           (e) =>
               e.mediaItem != null &&
               e.mediaItem!.isAvailable &&
-              e.mediaItem!.metadata.duration == Duration.zero,
+              e.mediaItem!.metadata.duration == Duration.zero &&
+              !_probedPaths.contains(e.mediaItem!.path),
         )
         .toList();
     if (missing.isEmpty) return;
+
+    for (final entry in missing) {
+      final path = entry.mediaItem?.path;
+      if (path != null) {
+        _probedPaths.add(path);
+      }
+    }
 
     unawaited(
       Future(() async {
@@ -221,7 +235,7 @@ class _PlaylistsViewState extends State<PlaylistsView> {
         title: const Text('Delete playlist'),
         content: Text(
           'Are you sure you want to delete "${pl.title}"? The media files themselves will remain on your computer.',
-          style: context.palette.rowSecondary,
+          style: ctx.palette.rowSecondary,
         ),
         actions: [
           TextButton(
@@ -229,9 +243,7 @@ class _PlaylistsViewState extends State<PlaylistsView> {
             child: const Text('Cancel'),
           ),
           FilledButton(
-            style: FilledButton.styleFrom(
-              backgroundColor: context.palette.danger,
-            ),
+            style: FilledButton.styleFrom(backgroundColor: ctx.palette.danger),
             onPressed: () => Navigator.of(ctx).pop(true),
             child: const Text('Delete'),
           ),
@@ -303,7 +315,7 @@ class _PlaylistsViewState extends State<PlaylistsView> {
         title: const Text('Clear playlist'),
         content: Text(
           'Are you sure you want to remove all tracks from "${pl.title}"? The media files themselves will remain on your computer.',
-          style: context.palette.rowSecondary,
+          style: ctx.palette.rowSecondary,
         ),
         actions: [
           TextButton(
@@ -311,9 +323,7 @@ class _PlaylistsViewState extends State<PlaylistsView> {
             child: const Text('Cancel'),
           ),
           FilledButton(
-            style: FilledButton.styleFrom(
-              backgroundColor: context.palette.danger,
-            ),
+            style: FilledButton.styleFrom(backgroundColor: ctx.palette.danger),
             onPressed: () => Navigator.of(ctx).pop(true),
             child: const Text('Clear all'),
           ),
@@ -326,15 +336,14 @@ class _PlaylistsViewState extends State<PlaylistsView> {
         await widget.repository.clearPlaylist(pl.id);
         _previewFutures.remove(pl.id);
         _previewRecords.remove(pl.id);
+        if (!mounted) return;
         setState(() => _entries = <PlaylistEntryRecord>[]);
         _reload();
-        if (mounted) {
-          AppToast.show(
-            context,
-            'Cleared all tracks from "${pl.title}"',
-            tone: AppToastTone.neutral,
-          );
-        }
+        AppToast.show(
+          context,
+          'Cleared all tracks from "${pl.title}"',
+          tone: AppToastTone.neutral,
+        );
       } catch (_) {
         if (mounted) {
           AppToast.show(
@@ -392,10 +401,8 @@ class _PlaylistsViewState extends State<PlaylistsView> {
   Future<void> _showAddFromLibrary(PlaylistRecord pl) async {
     final selectedMediaIds = await AppDialog.show<List<String>>(
       context: context,
-      builder: (_) => _AddFromLibraryDialog(
-        repository: widget.repository,
-        playlist: pl,
-      ),
+      builder: (_) =>
+          _AddFromLibraryDialog(repository: widget.repository, playlist: pl),
     );
 
     if (selectedMediaIds != null && selectedMediaIds.isNotEmpty && mounted) {
@@ -434,14 +441,20 @@ class _PlaylistsViewState extends State<PlaylistsView> {
         newIndex > current.length) {
       return;
     }
+    final movedItem = current[oldIndex];
     final insertAt = newIndex > oldIndex ? newIndex - 1 : newIndex;
     final reordered = List<PlaylistEntryRecord>.of(current)
       ..removeAt(oldIndex)
-      ..insert(insertAt, current[oldIndex]);
+      ..insert(insertAt, movedItem);
     setState(() => _entries = reordered);
-    widget.repository
-        .reorderPlaylist(pl.id, oldIndex, newIndex)
-        .then((_) {
+    _reorderChain = _reorderChain
+        .then((_) async {
+          await widget.repository.reorderPlaylist(
+            pl.id,
+            oldIndex,
+            newIndex,
+            entryId: movedItem.id,
+          );
           _previewFutures.remove(pl.id);
           _previewRecords.remove(pl.id);
         })
@@ -713,10 +726,15 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                       ),
                       const SizedBox(width: 4),
                       IconButton(
-                        icon: const Icon(Icons.delete_outline_rounded, size: 18),
+                        icon: const Icon(
+                          Icons.delete_outline_rounded,
+                          size: 18,
+                        ),
                         tooltip: 'Delete playlist',
                         color: context.palette.secondaryText,
-                        hoverColor: context.palette.danger.withValues(alpha: 0.12),
+                        hoverColor: context.palette.danger.withValues(
+                          alpha: 0.12,
+                        ),
                         onPressed: () => _deletePlaylist(pl),
                       ),
                     ],
@@ -764,7 +782,8 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                                 FilledButton.icon(
                                   style: FilledButton.styleFrom(
                                     backgroundColor: accent,
-                                    foregroundColor: context.palette.accentForeground,
+                                    foregroundColor:
+                                        context.palette.accentForeground,
                                     padding: const EdgeInsets.symmetric(
                                       horizontal: 20,
                                       vertical: AppSpace.sm,
@@ -777,20 +796,26 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                                   ),
                                   onPressed:
                                       entries.any(
-                                        (e) => e.mediaItem?.isAvailable ?? false,
+                                        (e) =>
+                                            e.mediaItem?.isAvailable ?? false,
                                       )
                                       ? () => _playPlaylist(entries)
                                       : null,
                                   icon: const Icon(Icons.play_arrow_rounded),
                                   label: const Text(
                                     'Play playlist',
-                                    style: TextStyle(fontWeight: FontWeight.w600),
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                    ),
                                   ),
                                 ),
                                 OutlinedButton.icon(
                                   style: OutlinedButton.styleFrom(
-                                    foregroundColor: context.palette.primaryText,
-                                    side: BorderSide(color: context.palette.border),
+                                    foregroundColor:
+                                        context.palette.primaryText,
+                                    side: BorderSide(
+                                      color: context.palette.border,
+                                    ),
                                     padding: const EdgeInsets.symmetric(
                                       horizontal: AppSpace.md,
                                       vertical: AppSpace.sm,
@@ -803,17 +828,27 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                                   ),
                                   onPressed:
                                       entries.any(
-                                        (e) => e.mediaItem?.isAvailable ?? false,
+                                        (e) =>
+                                            e.mediaItem?.isAvailable ?? false,
                                       )
-                                      ? () => _playPlaylist(entries, shuffle: true)
+                                      ? () => _playPlaylist(
+                                          entries,
+                                          shuffle: true,
+                                        )
                                       : null,
-                                  icon: const Icon(Icons.shuffle_rounded, size: 18),
+                                  icon: const Icon(
+                                    Icons.shuffle_rounded,
+                                    size: 18,
+                                  ),
                                   label: const Text('Shuffle'),
                                 ),
                                 OutlinedButton.icon(
                                   style: OutlinedButton.styleFrom(
-                                    foregroundColor: context.palette.primaryText,
-                                    side: BorderSide(color: context.palette.border),
+                                    foregroundColor:
+                                        context.palette.primaryText,
+                                    side: BorderSide(
+                                      color: context.palette.border,
+                                    ),
                                     padding: const EdgeInsets.symmetric(
                                       horizontal: AppSpace.md,
                                       vertical: AppSpace.sm,
@@ -830,8 +865,11 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                                 ),
                                 OutlinedButton.icon(
                                   style: OutlinedButton.styleFrom(
-                                    foregroundColor: context.palette.primaryText,
-                                    side: BorderSide(color: context.palette.border),
+                                    foregroundColor:
+                                        context.palette.primaryText,
+                                    side: BorderSide(
+                                      color: context.palette.border,
+                                    ),
                                     padding: const EdgeInsets.symmetric(
                                       horizontal: AppSpace.md,
                                       vertical: AppSpace.sm,
@@ -851,7 +889,10 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                                 ),
                                 PopupMenuButton<String>(
                                   tooltip: 'More actions',
-                                  icon: const Icon(Icons.more_horiz_rounded, size: 20),
+                                  icon: const Icon(
+                                    Icons.more_horiz_rounded,
+                                    size: 20,
+                                  ),
                                   onSelected: (val) {
                                     if (val == 'rename') _renamePlaylist(pl);
                                     if (val == 'clear') _clearPlaylist(pl);
@@ -871,7 +912,9 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                                       value: 'delete',
                                       child: Text(
                                         'Delete playlist',
-                                        style: TextStyle(color: context.palette.danger),
+                                        style: TextStyle(
+                                          color: context.palette.danger,
+                                        ),
                                       ),
                                     ),
                                   ],
@@ -917,28 +960,29 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                                   _resolveDisplayTitleAndSubtitle(item);
                               final rawDuration =
                                   item?.metadata.duration ?? Duration.zero;
-                              final peekedDuration = item != null &&
-                                      rawDuration == Duration.zero
+                              final peekedDuration =
+                                  item != null && rawDuration == Duration.zero
                                   ? (widget.controller
-                                          .peekThumbnail(
-                                            MediaEntry.fromPath(
-                                              item.path,
-                                              id: item.id,
-                                            ),
-                                          )
-                                          ?.duration ??
-                                      Duration.zero)
+                                            .peekThumbnail(
+                                              MediaEntry.fromPath(
+                                                item.path,
+                                                id: item.id,
+                                              ),
+                                            )
+                                            ?.duration ??
+                                        Duration.zero)
                                   : Duration.zero;
-                              final effectiveDuration = rawDuration > Duration.zero
+                              final effectiveDuration =
+                                  rawDuration > Duration.zero
                                   ? rawDuration
                                   : peekedDuration;
                               final isSelected = _selectedEntry == entry.id;
                               final subtitleText =
                                   item != null && !item.isAvailable
-                                      ? (displaySubtitle.isNotEmpty
-                                          ? '$displaySubtitle • Missing'
-                                          : 'Missing')
-                                      : displaySubtitle;
+                                  ? (displaySubtitle.isNotEmpty
+                                        ? '$displaySubtitle • Missing'
+                                        : 'Missing')
+                                  : displaySubtitle;
 
                               return MediaRow(
                                 key: ValueKey(entry.id),
@@ -948,11 +992,16 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                                   }
                                 },
                                 onPlay: item?.isAvailable == true
-                                    ? () => _playPlaylist(entries, startIndex: index)
+                                    ? () => _playPlaylist(
+                                        entries,
+                                        startIndex: index,
+                                      )
                                     : null,
                                 builder: (context, rowFocus) => RepaintBoundary(
                                   child: Container(
-                                    margin: const EdgeInsets.symmetric(vertical: 2),
+                                    margin: const EdgeInsets.symmetric(
+                                      vertical: 2,
+                                    ),
                                     decoration: BoxDecoration(
                                       color: isSelected
                                           ? context.palette.hover
@@ -970,7 +1019,9 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                                       canRequestFocus: false,
                                       onTap: () {
                                         rowFocus.requestFocus();
-                                        setState(() => _selectedEntry = entry.id);
+                                        setState(
+                                          () => _selectedEntry = entry.id,
+                                        );
                                       },
                                       borderRadius: BorderRadius.circular(
                                         AppRadii.control,
@@ -994,7 +1045,8 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                                                 child: Icon(
                                                   Icons.drag_indicator_rounded,
                                                   size: 18,
-                                                  color: context.palette.mutedText,
+                                                  color:
+                                                      context.palette.mutedText,
                                                 ),
                                               ),
                                             ),
@@ -1012,11 +1064,21 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                                               item: item,
                                               controller: widget.controller,
                                               repository: widget.repository,
-                                              onDurationDiscovered: (discovered) {
-                                                if (mounted && rawDuration == Duration.zero) {
-                                                  setState(() {});
-                                                }
-                                              },
+                                              onDurationDiscovered:
+                                                  (discovered) {
+                                                    if (mounted &&
+                                                        rawDuration ==
+                                                            Duration.zero) {
+                                                      WidgetsBinding.instance
+                                                          .addPostFrameCallback(
+                                                            (_) {
+                                                              if (mounted) {
+                                                                setState(() {});
+                                                              }
+                                                            },
+                                                          );
+                                                    }
+                                                  },
                                             ),
                                           ],
                                         ),
@@ -1029,7 +1091,9 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                                         subtitle: subtitleText.isNotEmpty
                                             ? Text(
                                                 subtitleText,
-                                                style: context.palette.rowSecondary,
+                                                style: context
+                                                    .palette
+                                                    .rowSecondary,
                                                 maxLines: 1,
                                                 overflow: TextOverflow.ellipsis,
                                               )
@@ -1049,8 +1113,11 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                                               ),
                                               tooltip: 'Remove from playlist',
                                               color: context.palette.mutedText,
-                                              visualDensity: VisualDensity.compact,
+                                              visualDensity:
+                                                  VisualDensity.compact,
                                               onPressed: () async {
+                                                final previousEntries =
+                                                    _entries;
                                                 setState(() {
                                                   _entries = _entries
                                                       ?.where(
@@ -1058,13 +1125,28 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                                                       )
                                                       .toList();
                                                 });
-                                                await widget.repository
-                                                    .removeFromPlaylist(
-                                                      pl.id,
-                                                      entry.id,
+                                                try {
+                                                  await widget.repository
+                                                      .removeFromPlaylist(
+                                                        pl.id,
+                                                        entry.id,
+                                                      );
+                                                  _previewFutures.remove(pl.id);
+                                                  _previewRecords.remove(pl.id);
+                                                } catch (error) {
+                                                  if (!mounted) return;
+                                                  setState(
+                                                    () => _entries =
+                                                        previousEntries,
+                                                  );
+                                                  if (this.context.mounted) {
+                                                    AppToast.show(
+                                                      this.context,
+                                                      'Could not remove track from playlist',
+                                                      tone: AppToastTone.danger,
                                                     );
-                                                _previewFutures.remove(pl.id);
-                                                _previewRecords.remove(pl.id);
+                                                  }
+                                                }
                                               },
                                             ),
                                           ],
@@ -1088,7 +1170,11 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.file_download_rounded, size: 48, color: accent),
+                      Icon(
+                        Icons.file_download_rounded,
+                        size: 48,
+                        color: accent,
+                      ),
                       const SizedBox(height: 12),
                       Text(
                         'Drop files to add to playlist',
@@ -1246,7 +1332,9 @@ class _AddFromLibraryDialogState extends State<_AddFromLibraryDialog> {
             const SizedBox(height: 12),
             Expanded(
               child: _loading
-                  ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
+                  ? const Center(
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
                   : (_allItems?.isEmpty ?? true)
                   ? Center(
                       child: Text(
@@ -1323,9 +1411,7 @@ class _AddFromLibraryDialogState extends State<_AddFromLibraryDialog> {
           onPressed: _selected.isEmpty
               ? null
               : () => Navigator.pop(context, _selected.toList()),
-          child: Text(
-            _selected.isEmpty ? 'Add' : 'Add (${_selected.length})',
-          ),
+          child: Text(_selected.isEmpty ? 'Add' : 'Add (${_selected.length})'),
         ),
       ],
     );
@@ -1337,7 +1423,8 @@ class _AddFromLibraryDialogState extends State<_AddFromLibraryDialog> {
 
   final cleanTitle = MediaCatalog.displayName(item.title);
   final rawArtist = item.metadata.artist?.trim() ?? '';
-  final hasKnownArtist = rawArtist.isNotEmpty &&
+  final hasKnownArtist =
+      rawArtist.isNotEmpty &&
       rawArtist.toLowerCase() != 'unknown artist' &&
       rawArtist.toLowerCase() != 'unknown';
 
@@ -1358,7 +1445,8 @@ class _AddFromLibraryDialogState extends State<_AddFromLibraryDialog> {
     }
   }
 
-  final isVideo = item.kind == MediaKind.video ||
+  final isVideo =
+      item.kind == MediaKind.video ||
       MediaCatalog.kindFromExtension(item.path) == MediaKind.video;
   return (cleanTitle, isVideo ? 'Video' : '');
 }
@@ -1412,7 +1500,8 @@ class _PlaylistHeroCoverState extends State<_PlaylistHeroCover> {
     if (widget.entries.isEmpty) return;
     final item = widget.entries.first.mediaItem;
     if (item == null || !item.isAvailable) return;
-    final isVideo = item.kind == MediaKind.video ||
+    final isVideo =
+        item.kind == MediaKind.video ||
         MediaCatalog.kindFromExtension(item.path) == MediaKind.video;
 
     if (isVideo) {
@@ -1422,10 +1511,12 @@ class _PlaylistHeroCoverState extends State<_PlaylistHeroCover> {
         _videoThumb = peeked;
       } else {
         _request = widget.controller.requestThumbnail(entry);
-        _request?.thumbnail.then((thumb) {
-          if (!mounted || thumb == null) return;
-          setState(() => _videoThumb = thumb);
-        }).catchError((_) {});
+        _request?.thumbnail
+            .then((thumb) {
+              if (!mounted || thumb == null) return;
+              setState(() => _videoThumb = thumb);
+            })
+            .catchError((_) {});
       }
     }
   }
@@ -1446,7 +1537,8 @@ class _PlaylistHeroCoverState extends State<_PlaylistHeroCover> {
     }
 
     final item = widget.entries.first.mediaItem;
-    final isVideo = item != null &&
+    final isVideo =
+        item != null &&
         (item.kind == MediaKind.video ||
             MediaCatalog.kindFromExtension(item.path) == MediaKind.video);
 
@@ -1512,7 +1604,8 @@ class _PlaylistTrackThumbnail extends StatefulWidget {
   final ValueChanged<Duration>? onDurationDiscovered;
 
   @override
-  State<_PlaylistTrackThumbnail> createState() => _PlaylistTrackThumbnailState();
+  State<_PlaylistTrackThumbnail> createState() =>
+      _PlaylistTrackThumbnailState();
 }
 
 class _PlaylistTrackThumbnailState extends State<_PlaylistTrackThumbnail> {
@@ -1548,7 +1641,8 @@ class _PlaylistTrackThumbnailState extends State<_PlaylistTrackThumbnail> {
     final item = widget.item;
     if (item == null || !item.isAvailable) return;
 
-    final isVideo = item.kind == MediaKind.video ||
+    final isVideo =
+        item.kind == MediaKind.video ||
         MediaCatalog.kindFromExtension(item.path) == MediaKind.video;
 
     if (isVideo) {
@@ -1557,23 +1651,29 @@ class _PlaylistTrackThumbnailState extends State<_PlaylistTrackThumbnail> {
       if (peeked != null) {
         _cachedThumbnail = peeked;
         if (peeked.duration > Duration.zero) {
-          widget.onDurationDiscovered?.call(peeked.duration);
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              widget.onDurationDiscovered?.call(peeked.duration);
+            }
+          });
         }
       } else {
         _request = widget.controller.requestThumbnail(entry);
-        _request?.thumbnail.then((thumb) {
-          if (!mounted || thumb == null) return;
-          setState(() => _cachedThumbnail = thumb);
-          if (thumb.duration > Duration.zero) {
-            widget.onDurationDiscovered?.call(thumb.duration);
-            unawaited(
-              widget.repository.updateMediaDuration(
-                item.canonicalSource,
-                thumb.duration,
-              ),
-            );
-          }
-        }).catchError((_) {});
+        _request?.thumbnail
+            .then((thumb) {
+              if (!mounted || thumb == null) return;
+              setState(() => _cachedThumbnail = thumb);
+              if (thumb.duration > Duration.zero) {
+                widget.onDurationDiscovered?.call(thumb.duration);
+                unawaited(
+                  widget.repository.updateMediaDuration(
+                    item.canonicalSource,
+                    thumb.duration,
+                  ),
+                );
+              }
+            })
+            .catchError((_) {});
       }
     }
   }
@@ -1581,7 +1681,8 @@ class _PlaylistTrackThumbnailState extends State<_PlaylistTrackThumbnail> {
   @override
   Widget build(BuildContext context) {
     final item = widget.item;
-    final isVideo = item != null &&
+    final isVideo =
+        item != null &&
         (item.kind == MediaKind.video ||
             MediaCatalog.kindFromExtension(item.path) == MediaKind.video);
 

@@ -252,15 +252,12 @@ class PlayerChromeController extends ChangeNotifier {
     final delay = isFullscreen()
         ? fullscreenHideDelay
         : Duration(milliseconds: (delaySeconds * 1000).round());
-    _controlsTimer = Timer(
-      delay,
-      () {
-        if (!hideBlocked && _controlsVisible) {
-          _controlsVisible = false;
-          notifyListeners();
-        }
-      },
-    );
+    _controlsTimer = Timer(delay, () {
+      if (!hideBlocked && _controlsVisible) {
+        _controlsVisible = false;
+        notifyListeners();
+      }
+    });
   }
 
   void handleMenuVisibility(bool open) {
