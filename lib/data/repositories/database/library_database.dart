@@ -414,6 +414,17 @@ class LibraryDatabase {
     await _send<dynamic>('deleteMediaByCanonicalSource', canonicalSource);
   }
 
+  /// Updates duration for a single media item.
+  Future<void> updateMediaDuration(
+    String canonicalSource,
+    Duration duration,
+  ) async {
+    await _send<dynamic>('updateMediaDuration', <String, Object?>{
+      'canonicalSource': canonicalSource,
+      'durationMs': duration.inMilliseconds,
+    });
+  }
+
   /// Gets a media item by ID.
   Future<MediaItemRecord?> getMediaById(String id) async {
     final res = await _send<dynamic>('getMediaById', id);
@@ -629,6 +640,22 @@ class LibraryDatabase {
     });
   }
 
+  /// Adds media files by disk path to a playlist, discovering/indexing them if needed.
+  Future<void> addPathsToPlaylist(
+    String playlistId,
+    List<String> paths,
+  ) async {
+    await _send<dynamic>('addPathsToPlaylist', <String, Object?>{
+      'playlistId': playlistId,
+      'paths': paths,
+    });
+  }
+
+  /// Clears all entries from a playlist without deleting the playlist itself.
+  Future<void> clearPlaylist(String playlistId) async {
+    await _send<dynamic>('clearPlaylist', playlistId);
+  }
+
   /// Removes a single playlist entry by entry ID.
   Future<void> removePlaylistEntry(String entryId) async {
     await _send<dynamic>('removePlaylistEntry', entryId);
@@ -766,6 +793,9 @@ void _databaseIsolateEntryPoint(_DbInitParams params) {
     db.execute('PRAGMA foreign_keys = ON;');
     db.execute('PRAGMA busy_timeout = 5000;');
     db.execute('PRAGMA synchronous = NORMAL;');
+    db.execute('PRAGMA temp_store = MEMORY;');
+    db.execute('PRAGMA cache_size = -8000;');
+    db.execute('PRAGMA mmap_size = 33554432;');
 
     db.createFunction(
       functionName: 'unicode_lower',
@@ -1294,6 +1324,17 @@ Object? _dispatchAction(Database db, String action, Object? params) {
       );
       return null;
 
+    case 'updateMediaDuration':
+      final map = (params as Map).cast<String, Object?>();
+      final canonicalSource = map['canonicalSource'] as String;
+      final durationMs = map['durationMs'] as int;
+      final canon = MediaEntry.canonicalSource(canonicalSource);
+      db.execute(
+        'UPDATE media SET duration_ms = ? WHERE canonical_source = ? OR canonical_source = ?',
+        [durationMs, canonicalSource, canon],
+      );
+      return null;
+
     case 'getMediaById':
       final id = params as String;
       final rows = db.select('SELECT * FROM media WHERE id = ?', [id]);
@@ -1542,6 +1583,75 @@ Object? _dispatchAction(Database db, String action, Object? params) {
     case 'deletePlaylist':
       final id = params as String;
       db.execute('DELETE FROM playlists WHERE id = ?', [id]);
+      return null;
+
+    case 'clearPlaylist':
+      final playlistId = params as String;
+      db.execute('BEGIN TRANSACTION;');
+      try {
+        db.execute(
+          'DELETE FROM playlist_entries WHERE playlist_id = ?',
+          [playlistId],
+        );
+        db.execute('UPDATE playlists SET updated_at = ? WHERE id = ?', [
+          DateTime.now().millisecondsSinceEpoch,
+          playlistId,
+        ]);
+        db.execute('COMMIT;');
+      } catch (_) {
+        db.execute('ROLLBACK;');
+        rethrow;
+      }
+      return null;
+
+    case 'addPathsToPlaylist':
+      final map = (params as Map).cast<String, Object?>();
+      final playlistId = map['playlistId'] as String;
+      final paths = (map['paths'] as List).cast<String>();
+
+      _batchUpsertPaths(db, paths);
+
+      db.execute('BEGIN TRANSACTION;');
+      try {
+        final posRow = db.select(
+          'SELECT COALESCE(MAX(position), -1) AS max_pos FROM playlist_entries WHERE playlist_id = ?',
+          [playlistId],
+        );
+        int nextPos = ((posRow.first['max_pos'] as int?) ?? -1) + 1;
+        final now = DateTime.now().millisecondsSinceEpoch;
+
+        final selectStmt = db.prepare(
+          'SELECT id FROM media WHERE canonical_source = ? LIMIT 1',
+        );
+        final insertStmt = db.prepare('''
+          INSERT INTO playlist_entries (id, playlist_id, media_id, position, added_at)
+          VALUES (?, ?, ?, ?, ?)
+        ''');
+
+        try {
+          for (final rawPath in paths) {
+            final canonical = MediaEntry.canonicalSource(rawPath);
+            final rows = selectStmt.select([canonical]);
+            if (rows.isNotEmpty) {
+              final mediaId = rows.first['id'] as String;
+              final entryId = _generateId('$playlistId-$mediaId-$nextPos');
+              insertStmt.execute([entryId, playlistId, mediaId, nextPos++, now]);
+            }
+          }
+        } finally {
+          selectStmt.close();
+          insertStmt.close();
+        }
+
+        db.execute('UPDATE playlists SET updated_at = ? WHERE id = ?', [
+          now,
+          playlistId,
+        ]);
+        db.execute('COMMIT;');
+      } catch (_) {
+        db.execute('ROLLBACK;');
+        rethrow;
+      }
       return null;
 
     case 'addEntriesToPlaylist':
@@ -1959,14 +2069,15 @@ void _batchUpsertPaths(Database db, List<String> paths) {
     final now = DateTime.now().millisecondsSinceEpoch;
     final stmt = db.prepare('''
       INSERT INTO media (
-        id, canonical_source, path, kind, title,
+        id, canonical_source, path, kind, title, artist,
         file_size, modified_at, is_available, is_favorite, added_at, play_count
       ) VALUES (
-        ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?,
         0, NULL, 1, 0, ?, 0
       )
       ON CONFLICT(canonical_source) DO UPDATE SET
         path = excluded.path,
+        artist = COALESCE(media.artist, excluded.artist),
         is_available = 1,
         is_in_library = 1
     ''');
@@ -1976,9 +2087,21 @@ void _batchUpsertPaths(Database db, List<String> paths) {
         final canonical = MediaEntry.canonicalSource(rawPath);
         final id = _generateId(canonical);
         final kind = MediaCatalog.kindFromExtension(normalized).name;
-        final fileName = MediaEntry.titleFromPath(normalized);
+        final rawTitle = MediaEntry.titleFromPath(normalized);
+        final displayName = MediaCatalog.displayName(rawTitle);
+        String title = displayName;
+        String? artist;
+        if (displayName.contains(' - ')) {
+          final parts = displayName.split(' - ');
+          final pArtist = parts[0].trim();
+          final pTitle = parts.sublist(1).join(' - ').trim();
+          if (pArtist.isNotEmpty && pTitle.isNotEmpty) {
+            artist = pArtist;
+            title = pTitle;
+          }
+        }
 
-        stmt.execute([id, canonical, normalized, kind, fileName, now]);
+        stmt.execute([id, canonical, normalized, kind, title, artist, now]);
       }
     } finally {
       stmt.close();

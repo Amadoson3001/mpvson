@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../../domain/models/graphics_settings.dart';
+import '../../domain/models/player_controls_preferences.dart';
 import '../../domain/models/player_hotkeys.dart';
 
 /// User preference for how to handle opening files when playback is active or paused.
@@ -17,6 +18,18 @@ enum OpenBehaviorPreference {
   askEveryTime,
 }
 
+/// Pace of UI transitions, chosen in Settings → Animation.
+enum AnimationSpeed {
+  fast(0.6),
+  normal(1.0),
+  slow(1.6);
+
+  const AnimationSpeed(this.scale);
+
+  /// Multiplier applied to motion durations.
+  final double scale;
+}
+
 /// Persistent user settings for desktop integration and opening behavior.
 @immutable
 class DesktopPreferences {
@@ -24,6 +37,7 @@ class DesktopPreferences {
     this.openBehavior,
     this.keepAwakeDuringPlayback = true,
     this.reduceMotion = false,
+    this.animationSpeed = AnimationSpeed.normal,
     this.seekStepSeconds = 5,
     this.syncStepMs = 50,
     this.hotkeyOverrides,
@@ -32,6 +46,7 @@ class DesktopPreferences {
     this.dynamicArtworkColor = true,
     this.oledBlack = false,
     this.graphics = const GraphicsSettings(),
+    this.playerControls = const PlayerControlsPreferences(),
   });
 
   static const List<int> seekStepOptions = <int>[1, 2, 5, 10, 15, 30];
@@ -41,6 +56,9 @@ class DesktopPreferences {
   final OpenBehaviorPreference? openBehavior;
   final bool keepAwakeDuringPlayback;
   final bool reduceMotion;
+
+  /// How quickly panels slide and the video resizes.
+  final AnimationSpeed animationSpeed;
 
   /// How far the seek shortcut jumps in one press.
   final int seekStepSeconds;
@@ -67,11 +85,15 @@ class DesktopPreferences {
   /// GPU, video memory, and cache tuning.
   final GraphicsSettings graphics;
 
+  /// Custom styling, seekbar thickness, and layout for the player controls.
+  final PlayerControlsPreferences playerControls;
+
   DesktopPreferences copyWith({
     OpenBehaviorPreference? openBehavior,
     bool clearOpenBehavior = false,
     bool? keepAwakeDuringPlayback,
     bool? reduceMotion,
+    AnimationSpeed? animationSpeed,
     int? seekStepSeconds,
     int? syncStepMs,
     PlayerHotkeys? hotkeyOverrides,
@@ -80,6 +102,7 @@ class DesktopPreferences {
     bool? dynamicArtworkColor,
     bool? oledBlack,
     GraphicsSettings? graphics,
+    PlayerControlsPreferences? playerControls,
   }) {
     return DesktopPreferences(
       openBehavior: clearOpenBehavior
@@ -88,6 +111,7 @@ class DesktopPreferences {
       keepAwakeDuringPlayback:
           keepAwakeDuringPlayback ?? this.keepAwakeDuringPlayback,
       reduceMotion: reduceMotion ?? this.reduceMotion,
+      animationSpeed: animationSpeed ?? this.animationSpeed,
       seekStepSeconds: seekStepSeconds ?? this.seekStepSeconds,
       syncStepMs: syncStepMs ?? this.syncStepMs,
       hotkeyOverrides: hotkeyOverrides ?? this.hotkeyOverrides,
@@ -96,6 +120,7 @@ class DesktopPreferences {
       dynamicArtworkColor: dynamicArtworkColor ?? this.dynamicArtworkColor,
       oledBlack: oledBlack ?? this.oledBlack,
       graphics: graphics ?? this.graphics,
+      playerControls: playerControls ?? this.playerControls,
     );
   }
 
@@ -120,10 +145,21 @@ class DesktopPreferences {
         }
       }
     }
+    AnimationSpeed animationSpeed = AnimationSpeed.normal;
+    final rawSpeed = json['animationSpeed'] as String?;
+    if (rawSpeed != null) {
+      for (final value in AnimationSpeed.values) {
+        if (value.name == rawSpeed) {
+          animationSpeed = value;
+          break;
+        }
+      }
+    }
     return DesktopPreferences(
       openBehavior: behavior,
       keepAwakeDuringPlayback: json['keepAwakeDuringPlayback'] as bool? ?? true,
       reduceMotion: json['reduceMotion'] as bool? ?? false,
+      animationSpeed: animationSpeed,
       seekStepSeconds: _readChoice(json['seekStepSeconds'], seekStepOptions, 5),
       syncStepMs: _readChoice(json['syncStepMs'], syncStepOptions, 50),
       hotkeyOverrides: json.containsKey('hotkeys')
@@ -134,6 +170,11 @@ class DesktopPreferences {
       dynamicArtworkColor: json['dynamicArtworkColor'] as bool? ?? true,
       oledBlack: json['oledBlack'] as bool? ?? false,
       graphics: GraphicsSettings.fromJson(json['graphics']),
+      playerControls: json.containsKey('playerControls')
+          ? PlayerControlsPreferences.fromJson(
+              json['playerControls'] as Map<String, Object?>?,
+            )
+          : const PlayerControlsPreferences(),
     );
   }
 
@@ -141,6 +182,7 @@ class DesktopPreferences {
     if (openBehavior != null) 'openBehavior': openBehavior!.name,
     'keepAwakeDuringPlayback': keepAwakeDuringPlayback,
     'reduceMotion': reduceMotion,
+    'animationSpeed': animationSpeed.name,
     'seekStepSeconds': seekStepSeconds,
     'syncStepMs': syncStepMs,
     'hotkeys': hotkeys.toJson(),
@@ -149,6 +191,7 @@ class DesktopPreferences {
     'dynamicArtworkColor': dynamicArtworkColor,
     'oledBlack': oledBlack,
     'graphics': graphics.toJson(),
+    'playerControls': playerControls.toJson(),
   };
 
   static int _readChoice(Object? value, List<int> options, int fallback) {
@@ -349,6 +392,14 @@ class AppPreferencesRepository extends ChangeNotifier {
 
   Future<void> setOledBlack(bool enabled) async {
     await updatePreferences(_preferences.copyWith(oledBlack: enabled));
+  }
+
+  Future<void> updatePlayerControls(
+    PlayerControlsPreferences playerControls,
+  ) async {
+    await updatePreferences(
+      _preferences.copyWith(playerControls: playerControls),
+    );
   }
 
   Future<void> resetHotkeys() async {

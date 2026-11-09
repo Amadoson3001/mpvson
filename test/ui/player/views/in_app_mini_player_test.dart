@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mpvson/domain/models/player_hotkeys.dart';
 import 'package:mpvson/ui/library/views/library_shell.dart';
+import 'package:mpvson/ui/library/views/mini_player_bar.dart';
 import 'package:mpvson/ui/player/views/mini_player_overlay.dart';
 import 'package:mpvson/ui/player/views/player_layout_manager.dart';
 import 'package:mpvson/ui/player/views/player_stage.dart';
@@ -190,12 +191,32 @@ void main() {
         expect(find.byType(MiniPlayerOverlay), findsOneWidget);
         expect(find.text('Return to video'), findsOneWidget);
 
-        // Verify the mini video player is docked in the bottom-left bar next to track name
+        // Verify the mini video player is docked in the bar's artwork slot
         final overlayRect = tester.getRect(find.byType(MiniPlayerOverlay));
-        expect(overlayRect.left, 16.0);
-        expect(overlayRect.top, 720.0 - 79.0);
-        expect(overlayRect.width, 88.0);
-        expect(overlayRect.height, 50.0);
+        expect(
+          overlayRect,
+          MiniPlayerBar.dockedVideoRect(720, const TextScaler.linear(1.0)),
+        );
+
+        // The seek hover preview must float above the bar without any clip
+        // truncating it (card and reveal clips only exist mid-transition).
+        await releasePlayerHover(tester);
+        final mouse = await hover(
+          tester,
+          tester.getCenter(find.byKey(const ValueKey('seek-slider'))),
+        );
+        final preview = find.byKey(const ValueKey('seek-preview-content'));
+        expect(preview, findsOneWidget);
+        expect(
+          find.ancestor(of: preview, matching: find.byType(ClipRect)),
+          findsNothing,
+        );
+        expect(
+          find.ancestor(of: preview, matching: find.byType(ClipRRect)),
+          findsNothing,
+        );
+        await mouse.removePointer();
+        await settle(tester);
 
         // Click 'Return to video' to animate back to full player
         await tester.tap(find.text('Return to video'));

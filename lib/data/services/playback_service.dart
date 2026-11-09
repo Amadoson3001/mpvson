@@ -964,6 +964,11 @@ class MediaKitPlaybackService
         sourceLoaded: false,
       ),
     );
+    try {
+      // pause() waits for video-controller initialization, which never
+      // completes for headless or audio-only players; keep it best-effort.
+      await _player.pause().timeout(const Duration(seconds: 1));
+    } catch (_) {}
     await _player.stop();
   }
 

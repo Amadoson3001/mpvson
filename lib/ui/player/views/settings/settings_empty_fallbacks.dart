@@ -108,6 +108,11 @@ class EmptyMediaLibraryRepository extends MediaLibraryRepository {
   @override
   Future<void> addToPlaylist(String playlistId, List<String> mediaIds) async {}
   @override
+  Future<void> addPathsToPlaylist(
+    String playlistId,
+    List<String> paths,
+  ) async {}
+  @override
   Future<void> removeFromPlaylist(
     String playlistId,
     String playlistEntryId,
@@ -117,6 +122,15 @@ class EmptyMediaLibraryRepository extends MediaLibraryRepository {
     String playlistId,
     int oldIndex,
     int newIndex,
+  ) async {}
+  @override
+  Future<void> clearPlaylist(String playlistId) async {}
+  @override
+  Future<void> probeMedia(String path) async {}
+  @override
+  Future<void> updateMediaDuration(
+    String canonicalSource,
+    Duration duration,
   ) async {}
   @override
   Future<List<PlaylistEntryRecord>> getPlaylistEntries(

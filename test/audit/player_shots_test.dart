@@ -81,6 +81,9 @@ void main() {
           ],
         );
         await tester.tap(find.byTooltip('Queue (4)').first);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 120));
+        await capture(tester, '${tag}_queue_push_mid');
         await settle(tester);
         await capture(tester, '${tag}_queue_open');
         await h.shutdown(tester);

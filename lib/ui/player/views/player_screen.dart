@@ -109,6 +109,8 @@ class _PlayerScreenState extends State<PlayerScreen>
       playerFocus: _playerFocus,
       isFullscreen: () => _layoutManager.isFullscreen,
       reduceMotion: () => AppMotion.reduce(context),
+      getAutoHideDelaySeconds: () =>
+          widget.appPreferences?.preferences.playerControls.autoHideDelaySeconds ?? 2.8,
     )..addListener(_onVisualStateChanged);
 
     _navigation = PlayerLibraryNavigation(
@@ -304,6 +306,7 @@ class _PlayerScreenState extends State<PlayerScreen>
         widget.controller.isVideo &&
         current.id != _lastVideoEntryId) {
       _lastVideoEntryId = current.id;
+      _preparedPausedVideoId = current.id;
       _navigation.hideLibrary();
     }
     if (_layoutManager.isMiniPlayer) {
@@ -318,7 +321,9 @@ class _PlayerScreenState extends State<PlayerScreen>
     } else {
       _chrome.scheduleHide();
     }
-    _preparePausedVideo();
+    if (!widget.controller.isStopped) {
+      _preparePausedVideo();
+    }
     _layoutManager.syncVideoVisibilityForLibrary();
   }
 
@@ -326,7 +331,12 @@ class _PlayerScreenState extends State<PlayerScreen>
     if (!mounted || _navigation.isShowingLibrary) return;
     final controller = widget.controller;
     final current = controller.current;
-    if (current == null || controller.hasMedia || controller.isLoading) return;
+    if (current == null ||
+        controller.hasMedia ||
+        controller.isLoading ||
+        controller.isStopped) {
+      return;
+    }
     if (!MediaCatalog.kindFromExtension(current.path).isVideo) return;
     if (_preparedPausedVideoId == current.id) return;
     _preparedPausedVideoId = current.id;
@@ -337,6 +347,9 @@ class _PlayerScreenState extends State<PlayerScreen>
     _closeContextMenu();
     final wasFullscreen = _layoutManager.isFullscreen;
     _chrome.dismissQueue();
+    if (widget.controller.isStopped || !widget.controller.hasMedia) {
+      unawaited(widget.controller.closePlayer());
+    }
     _navigation.backToHome();
     if (wasFullscreen) unawaited(_layoutManager.setFullscreen(false));
   }
@@ -469,10 +482,8 @@ class _PlayerScreenState extends State<PlayerScreen>
                         onOpenLibrary: _navigation.openLibrary,
                         onReturnToPlayer: _returnToPlayer,
                         onSettingsOpened: _navigation.openSettings,
-                        onSettingsClosed: () =>
-                            _navigation.setSettingsOpen(false),
-                        onDragStateChanged: (dragging) =>
-                            setState(() => _draggingFiles = dragging),
+                        onSettingsClosed: () => _navigation.setSettingsOpen(false),
+                        onDragStateChanged: (dragging) => setState(() => _draggingFiles = dragging),
                       ),
                     ),
                     if (widget.controller.error case final error?)

@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../../../../ui/core/app_theme.dart';
 import '../../player_controller.dart';
 import '../player_control_style.dart';
 
@@ -53,7 +52,7 @@ class PlaybackRateMenu extends StatelessWidget {
             child: Text(
               speedText,
               style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                color: context.palette.secondaryText,
+                color: Colors.white.withValues(alpha: 0.88),
                 fontWeight: FontWeight.w600,
               ),
             ),

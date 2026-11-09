@@ -9,6 +9,7 @@ import '../../../../ui/core/components/app_dialog.dart';
 import '../../../../ui/core/slider_overlay.dart';
 import '../../player_controller.dart';
 import '../player_control_style.dart';
+import 'seek_bar_track_shape.dart';
 
 void _notifyInteractionOnDispose(ValueChanged<bool>? callback) {
   if (callback == null) return;
@@ -196,22 +197,44 @@ class _InlineVolumeControlState extends State<InlineVolumeControl> {
             SizedBox(
               width: sliderWidth,
               height: buttonExtent,
-              child: SliderOverlay(
-                child: Slider(
-                  key: const ValueKey('volume-inline-slider'),
-                  focusNode: _focusNode,
-                  value: volume,
-                  min: 0,
-                  max: 100,
-                  divisions: 100,
-                  onChangeStart: _onChangeStart,
-                  onChanged: _onChanged,
-                  onChangeEnd: (value) {
-                    _setInteracting(false);
-                    _onChangeEnd(value);
-                  },
-                  semanticFormatterCallback: (value) =>
-                      'Volume ${value.round()} percent',
+              child: SliderTheme(
+                data: SliderTheme.of(context).copyWith(
+                  trackHeight: 3.2,
+                  trackShape: const UniformRoundedSliderTrackShape(),
+                  trackGap: 0,
+                  thumbShape: const RoundSliderThumbShape(
+                    enabledThumbRadius: 4.5,
+                    elevation: 1,
+                    pressedElevation: 2.5,
+                  ),
+                  overlayShape: const RoundSliderOverlayShape(
+                    overlayRadius: 9,
+                  ),
+                  activeTrackColor: Theme.of(context).colorScheme.primary,
+                  inactiveTrackColor: Colors.white.withValues(alpha: 0.22),
+                  thumbColor: Colors.white,
+                  overlayColor: Theme.of(
+                    context,
+                  ).colorScheme.primary.withValues(alpha: 0.16),
+                  padding: EdgeInsets.zero,
+                ),
+                child: SliderOverlay(
+                  child: Slider(
+                    key: const ValueKey('volume-inline-slider'),
+                    focusNode: _focusNode,
+                    value: volume,
+                    min: 0,
+                    max: 100,
+                    divisions: 100,
+                    onChangeStart: _onChangeStart,
+                    onChanged: _onChanged,
+                    onChangeEnd: (value) {
+                      _setInteracting(false);
+                      _onChangeEnd(value);
+                    },
+                    semanticFormatterCallback: (value) =>
+                        'Volume ${value.round()} percent',
+                  ),
                 ),
               ),
             ),

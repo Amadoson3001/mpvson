@@ -341,7 +341,9 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
       newStatus = SystemPlaybackStatus.closed;
     } else if (_controller!.isPlaying) {
       newStatus = SystemPlaybackStatus.playing;
-    } else if (_controller!.current == null || !_controller!.hasMedia) {
+    } else if (_controller!.current == null ||
+        !_controller!.hasMedia ||
+        _controller!.isStopped) {
       newStatus = SystemPlaybackStatus.stopped;
     } else {
       newStatus = SystemPlaybackStatus.paused;
@@ -368,7 +370,9 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
 
   void _syncMetadata() {
     if (_disposed) return;
-    if (_controller == null || _controller!.current == null) {
+    if (_controller == null ||
+        _controller!.current == null ||
+        _controller!.isStopped) {
       if (_currentMetadata != MediaMetadata.empty) {
         _currentTrackId = null;
         _lastSyncedEntryId = null;

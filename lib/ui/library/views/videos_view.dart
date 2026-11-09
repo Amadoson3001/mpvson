@@ -324,6 +324,7 @@ class _VideosViewState extends State<VideosView> {
             (constraints.maxWidth - 48 - (columns - 1) * 20) / columns;
         return GridView.builder(
           addAutomaticKeepAlives: false,
+          addRepaintBoundaries: true,
           padding: const EdgeInsets.all(AppSpace.lg),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: columns,

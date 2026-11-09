@@ -144,45 +144,42 @@ class SeekPreview extends StatelessWidget {
     final isUpdating = previewState?.isUpdating == true;
     final showLoadingIndicator = isUpdating || (isLoading && frame == null);
 
+    const topRadius = BorderRadius.vertical(top: Radius.circular(AppRadii.control));
     Widget imageSurface;
     if (frame != null && frame.bytes.isNotEmpty) {
       imageSurface = ClipRRect(
-        borderRadius: const BorderRadius.vertical(
-          top: Radius.circular(AppRadii.control),
-        ),
+        borderRadius: topRadius,
         child: Image.memory(
           frame.bytes,
+          cacheWidth: 320,
+          cacheHeight: 180,
+          filterQuality: FilterQuality.low,
           fit: BoxFit.cover,
           gaplessPlayback: true,
-          errorBuilder: (context, error, stackTrace) =>
-              const _PreviewPlaceholderFrame(),
+          errorBuilder: (_, _, _) => const _PreviewPlaceholderFrame(),
         ),
       );
     } else if (isFailed) {
       imageSurface = const ClipRRect(
-        borderRadius: BorderRadius.vertical(
-          top: Radius.circular(AppRadii.control),
-        ),
+        borderRadius: topRadius,
         child: _PreviewUnavailableFrame(),
       );
     } else if (thumbnail != null && thumbnail!.bytes.isNotEmpty) {
       imageSurface = ClipRRect(
-        borderRadius: const BorderRadius.vertical(
-          top: Radius.circular(AppRadii.control),
-        ),
+        borderRadius: topRadius,
         child: Image.memory(
           thumbnail!.bytes,
+          cacheWidth: 320,
+          cacheHeight: 180,
+          filterQuality: FilterQuality.low,
           fit: BoxFit.cover,
           gaplessPlayback: true,
-          errorBuilder: (context, error, stackTrace) =>
-              const _PreviewPlaceholderFrame(),
+          errorBuilder: (_, _, _) => const _PreviewPlaceholderFrame(),
         ),
       );
     } else {
       imageSurface = const ClipRRect(
-        borderRadius: BorderRadius.vertical(
-          top: Radius.circular(AppRadii.control),
-        ),
+        borderRadius: topRadius,
         child: _PreviewPlaceholderFrame(),
       );
     }
@@ -354,6 +351,9 @@ class SeekPreview extends StatelessWidget {
                     borderRadius: BorderRadius.circular(AppRadii.control),
                     child: Image.memory(
                       bytes,
+                      cacheWidth: 64,
+                      cacheHeight: 64,
+                      filterQuality: FilterQuality.low,
                       fit: BoxFit.cover,
                       gaplessPlayback: true,
                       errorBuilder: (context, error, stackTrace) => Icon(

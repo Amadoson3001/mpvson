@@ -157,7 +157,9 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   color: theme.colorScheme.surface,
                   border: Border(
                     bottom: BorderSide(
-                      color: theme.colorScheme.outline.withValues(alpha: 0.6),
+                      color: theme.colorScheme.outlineVariant.withValues(
+                        alpha: 0.35,
+                      ),
                       width: 1,
                     ),
                   ),
@@ -234,7 +236,9 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   color: theme.colorScheme.surface,
                   border: Border(
                     top: BorderSide(
-                      color: theme.colorScheme.outline.withValues(alpha: 0.6),
+                      color: theme.colorScheme.outlineVariant.withValues(
+                        alpha: 0.35,
+                      ),
                       width: 1,
                     ),
                   ),

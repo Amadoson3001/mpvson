@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -13,9 +12,9 @@ import '../../../domain/models/media_entry.dart';
 import '../../../domain/models/open_request.dart';
 import '../../../domain/models/player_hotkeys.dart';
 import '../../core/app_motion.dart';
-import '../../core/app_theme.dart';
 import '../../core/components/media_accent_scope.dart';
 import '../../core/toast/toast_layout.dart';
+import '../../library/views/mini_player_bar.dart';
 import '../player_controller.dart';
 import '../widgets/queue_panel.dart';
 import 'player_chrome_controller.dart';
@@ -378,101 +377,93 @@ class _PlayerContentState extends State<PlayerContent>
     final library = repository == null ? null : _buildLibrary(repository);
     final isVideo = widget.controller.hasMedia && widget.controller.isVideo;
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final totalWidth = constraints.maxWidth;
-        final totalHeight = constraints.maxHeight;
+    return PlayerQueueLayout(
+      playerArea: PlayerDragDrop(
+        enabled: widget.enableNativeDrop,
+        onDragStateChanged: widget.onDragStateChanged,
+        onFilesDropped: (paths) => unawaited(
+          widget.media.openPaths(paths, origin: OpenOrigin.dragAndDrop),
+        ),
+        child: MediaAccentScope(
+          controller: widget.controller,
+          // Measure inside the queue layout: when the docked queue widens,
+          // the stage must follow the shrunken area, not the window width.
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final totalWidth = constraints.maxWidth;
+              final totalHeight = constraints.maxHeight;
 
-        // While the library is showing, the stage is mini or hidden and these
-        // full-area constraints do not describe the video viewport; the
-        // layout manager's own policy handles that case.
-        if (!widget.isShowingLibrary) {
-          widget.layoutManager.updateViewportDimensions(context, constraints);
-        }
+              // While the library is showing, the stage is mini or hidden and
+              // these full-area constraints do not describe the video
+              // viewport; the layout manager's own policy handles that case.
+              if (!widget.isShowingLibrary) {
+                widget.layoutManager.updateViewportDimensions(
+                  context,
+                  constraints,
+                );
+              }
 
-        // Docked mini player rect: seated in the bottom bar next to the track name
-        const miniWidth = AppLayout.dockedMiniVideoWidth;
-        const miniHeight = AppLayout.dockedMiniVideoHeight;
-        const miniLeft = 16.0;
-        final miniTop = math.max(0.0, totalHeight - 79.0);
-
-        final fullRect = Rect.fromLTWH(0, 0, totalWidth, totalHeight);
-        final miniRect = Rect.fromLTWH(
-          miniLeft,
-          miniTop,
-          miniWidth,
-          miniHeight,
-        );
-
-        return AnimatedBuilder(
-          animation: _miniPlayerCurved,
-          builder: (context, _) {
-            final t = _miniPlayerCurved.value;
-            final currentRect = Rect.lerp(fullRect, miniRect, t)!;
-
-            final showLibraryUnderneath =
-                library != null && (widget.isShowingLibrary || t > 0.001);
-            final showVideoStage = isVideo
-                ? (!_miniPlayerDismissed || t < 0.999)
-                : !widget.isShowingLibrary;
-
-            final Widget stage = _buildStage(
-              miniProgress: t,
-              onExpandFromMini: _returnToPlayerAnimated,
-              onDismissMini: _dismissMiniPlayer,
-            );
-
-            Widget mainStack;
-            if (library == null) {
-              mainStack = stage;
-            } else {
-              mainStack = Stack(
-                fit: StackFit.expand,
-                children: [
-                  Offstage(
-                    offstage: !showLibraryUnderneath,
-                    child: TickerMode(
-                      enabled: showLibraryUnderneath,
-                      child: library,
-                    ),
-                  ),
-                  if (showVideoStage)
-                    Positioned(
-                      left: currentRect.left,
-                      top: currentRect.top,
-                      width: currentRect.width,
-                      height: currentRect.height,
-                      child: RepaintBoundary(child: stage),
-                    ),
-                ],
+              // Docked mini video seats in the transport bar's artwork slot so
+              // the live video reads as part of the bar instead of overlapping
+              // it.
+              final fullRect = Rect.fromLTWH(0, 0, totalWidth, totalHeight);
+              final miniRect = MiniPlayerBar.dockedVideoRect(
+                totalHeight,
+                MediaQuery.textScalerOf(context),
+                dense: MediaQuery.sizeOf(context).height < 600,
               );
-            }
 
-            final contentArea = MediaAccentScope(
-              controller: widget.controller,
-              child: mainStack,
-            );
+              return AnimatedBuilder(
+                animation: _miniPlayerCurved,
+                builder: (context, _) {
+                  final t = _miniPlayerCurved.value;
+                  final currentRect = Rect.lerp(fullRect, miniRect, t)!;
 
-            return PlayerQueueLayout(
-              playerArea: PlayerDragDrop(
-                enabled: widget.enableNativeDrop,
-                onDragStateChanged: widget.onDragStateChanged,
-                onFilesDropped: (paths) => unawaited(
-                  widget.media.openPaths(paths, origin: OpenOrigin.dragAndDrop),
-                ),
-                child: contentArea,
-              ),
-              queuePanel: _queuePanel(),
-              showPlayerQueue:
-                  widget.chrome.queueOpen && !widget.isShowingLibrary,
-              queueMounted: widget.chrome.queueMounted,
-              onToggleQueue: widget.chrome.toggleQueue,
-              onCloseQueue: widget.chrome.closeQueue,
-              onQueueExitEnd: widget.chrome.handleQueueExitEnd,
-            );
-          },
-        );
-      },
+                  final showLibraryUnderneath =
+                      library != null && (widget.isShowingLibrary || t > 0.001);
+                  final showVideoStage = isVideo
+                      ? (!_miniPlayerDismissed || t < 0.999)
+                      : !widget.isShowingLibrary;
+
+                  final Widget stage = _buildStage(
+                    miniProgress: t,
+                    onExpandFromMini: _returnToPlayerAnimated,
+                    onDismissMini: _dismissMiniPlayer,
+                  );
+
+                  if (library == null) return stage;
+                  return Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      Offstage(
+                        offstage: !showLibraryUnderneath,
+                        child: TickerMode(
+                          enabled: showLibraryUnderneath,
+                          child: library,
+                        ),
+                      ),
+                      if (showVideoStage)
+                        Positioned(
+                          left: currentRect.left,
+                          top: currentRect.top,
+                          width: currentRect.width,
+                          height: currentRect.height,
+                          child: RepaintBoundary(child: stage),
+                        ),
+                    ],
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      ),
+      queuePanel: _queuePanel(),
+      showPlayerQueue: widget.chrome.queueOpen && !widget.isShowingLibrary,
+      queueMounted: widget.chrome.queueMounted,
+      onToggleQueue: widget.chrome.toggleQueue,
+      onCloseQueue: widget.chrome.closeQueue,
+      onQueueExitEnd: widget.chrome.handleQueueExitEnd,
     );
   }
 }

@@ -201,18 +201,25 @@ class _TransportButtonState extends State<_TransportButton> {
             onPressed: widget.onPressed,
             style: style.buttonStyle.copyWith(
               foregroundColor: WidgetStateProperty.resolveWith((states) {
-                if (states.contains(WidgetState.disabled)) {
-                  return context.palette.faint;
+                if (widget.onPressed == null ||
+                    states.contains(WidgetState.disabled)) {
+                  return Colors.white.withValues(alpha: 0.32);
                 }
-                return context.palette.primaryText.withValues(alpha: 0.88);
+                if (states.contains(WidgetState.hovered)) {
+                  return Colors.white;
+                }
+                return Colors.white.withValues(alpha: 0.92);
               }),
+              overlayColor: WidgetStatePropertyAll(
+                Colors.white.withValues(alpha: 0.08),
+              ),
             ),
             icon: Icon(
               widget.icon,
               size: style.compact ? 18 : 22,
               color: widget.onPressed == null
-                  ? context.palette.faint
-                  : context.palette.primaryText.withValues(alpha: 0.9),
+                  ? Colors.white.withValues(alpha: 0.32)
+                  : Colors.white.withValues(alpha: 0.92),
             ),
             padding: EdgeInsets.zero,
           ),
@@ -247,14 +254,25 @@ class ControlToggleButton extends StatelessWidget {
         onPressed: onPressed,
         style: style.buttonStyle.copyWith(
           animationDuration: AppMotion.duration(context, AppMotion.quick),
+          backgroundColor: WidgetStateProperty.resolveWith((states) {
+            if (active) {
+              return Theme.of(context).colorScheme.primary.withValues(
+                alpha: 0.18,
+              );
+            }
+            if (states.contains(WidgetState.hovered)) {
+              return Colors.white.withValues(alpha: 0.08);
+            }
+            return Colors.transparent;
+          }),
           foregroundColor: WidgetStateProperty.resolveWith((states) {
             if (states.contains(WidgetState.selected)) {
               return Theme.of(context).colorScheme.primary;
             }
             if (states.contains(WidgetState.disabled)) {
-              return context.palette.faint;
+              return Colors.white.withValues(alpha: 0.32);
             }
-            return context.palette.primaryText.withValues(alpha: 0.88);
+            return Colors.white.withValues(alpha: 0.92);
           }),
         ),
         icon: AnimatedSwitcher(
@@ -277,7 +295,7 @@ class ControlToggleButton extends StatelessWidget {
             size: style.iconSize,
             color: active
                 ? Theme.of(context).colorScheme.primary
-                : context.palette.primaryText.withValues(alpha: 0.9),
+                : Colors.white.withValues(alpha: 0.90),
           ),
         ),
         padding: EdgeInsets.zero,
@@ -377,12 +395,21 @@ class _PlayPauseButtonState extends State<_PlayPauseButton>
             tooltip: widget.isPlaying ? 'Pause' : 'Play',
             onPressed: widget.onPressed,
             style: style.buttonStyle.copyWith(
-              backgroundColor: WidgetStatePropertyAll(
-                Theme.of(context).colorScheme.primary,
+              backgroundColor: WidgetStateProperty.resolveWith((states) {
+                final primary = Theme.of(context).colorScheme.primary;
+                if (states.contains(WidgetState.hovered)) {
+                  return Color.lerp(primary, Colors.white, 0.12)!;
+                }
+                return primary;
+              }),
+              foregroundColor: const WidgetStatePropertyAll(Colors.white),
+              shadowColor: WidgetStatePropertyAll(
+                Theme.of(context).colorScheme.primary.withValues(alpha: 0.45),
               ),
-              foregroundColor: WidgetStatePropertyAll(
-                context.palette.accentForeground,
-              ),
+              elevation: WidgetStateProperty.resolveWith((states) {
+                if (states.contains(WidgetState.hovered)) return 6.0;
+                return 2.5;
+              }),
               shape: const WidgetStatePropertyAll(CircleBorder()),
             ),
             icon: RepaintBoundary(

@@ -42,6 +42,27 @@ class _GatedFile extends Fake implements File {
 }
 
 void main() {
+  test('animation preferences survive a JSON round trip', () {
+    const prefs = DesktopPreferences(
+      reduceMotion: true,
+      animationSpeed: AnimationSpeed.slow,
+    );
+    final restored = DesktopPreferences.fromJson(
+      jsonDecode(jsonEncode(prefs.toJson())) as Map<String, Object?>,
+    );
+    expect(restored.reduceMotion, true);
+    expect(restored.animationSpeed, AnimationSpeed.slow);
+
+    final legacy = DesktopPreferences.fromJson(<String, Object?>{});
+    expect(legacy.reduceMotion, false);
+    expect(legacy.animationSpeed, AnimationSpeed.normal);
+
+    final unknown = DesktopPreferences.fromJson(<String, Object?>{
+      'animationSpeed': 'warp',
+    });
+    expect(unknown.animationSpeed, AnimationSpeed.normal);
+  });
+
   test(
     'flush() drains revisions queued while the previous save was completing',
     () async {

@@ -21,12 +21,6 @@ class ThemeModeCard extends StatelessWidget {
   final bool isSystem;
   final VoidCallback onTap;
 
-  static Widget _dot(Color color) => Container(
-    width: 5,
-    height: 5,
-    decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-  );
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -40,128 +34,68 @@ class ThemeModeCard extends StatelessWidget {
         color: Colors.transparent,
         child: InkWell(
           onTap: onTap,
-          borderRadius: BorderRadius.circular(AppRadii.control),
+          borderRadius: BorderRadius.circular(14),
           child: AnimatedContainer(
             duration: AppMotion.duration(context, AppMotion.quick),
-            padding: const EdgeInsets.all(8),
+            padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
               color: selected
                   ? accent.withValues(alpha: 0.08)
                   : theme.colorScheme.surfaceContainerHighest.withValues(
-                      alpha: 0.3,
+                      alpha: 0.22,
                     ),
-              borderRadius: BorderRadius.circular(AppRadii.control),
+              borderRadius: BorderRadius.circular(14),
               border: Border.all(
                 color: selected
                     ? accent
-                    : theme.colorScheme.outlineVariant.withValues(alpha: 0.45),
+                    : theme.colorScheme.outlineVariant.withValues(alpha: 0.35),
                 width: selected ? 1.8 : 1,
               ),
+              boxShadow: selected
+                  ? [
+                      BoxShadow(
+                        color: accent.withValues(alpha: 0.16),
+                        blurRadius: 10,
+                        offset: const Offset(0, 2),
+                      ),
+                    ]
+                  : null,
             ),
             child: Column(
               children: [
-                Container(
-                  height: 52,
-                  clipBehavior: Clip.antiAlias,
-                  decoration: BoxDecoration(
-                    color: isSystem
-                        ? null
-                        : (previewDark
-                              ? AppColors.layer
-                              : AppColors.lightGround),
-                    gradient: isSystem
-                        ? const LinearGradient(
-                            colors: [AppColors.layer, AppColors.lightGround],
-                            stops: [0.5, 0.5],
-                          )
-                        : null,
-                    borderRadius: BorderRadius.circular(7),
-                    border: Border.all(
-                      color: selected
-                          ? accent.withValues(alpha: 0.4)
-                          : theme.colorScheme.outlineVariant.withValues(
-                              alpha: 0.4,
-                            ),
-                      width: 1,
-                    ),
-                  ),
-                  child: Stack(
-                    children: [
-                      Positioned(
-                        top: 5,
-                        left: 7,
-                        child: Row(
-                          children: [
-                            _dot(const Color(0xFFEF4444)),
-                            const SizedBox(width: 3),
-                            _dot(const Color(0xFFF59E0B)),
-                            const SizedBox(width: 3),
-                            _dot(const Color(0xFF10B981)),
-                          ],
-                        ),
-                      ),
-                      Positioned(
-                        bottom: 7,
-                        left: 8,
-                        right: 8,
-                        child: Row(
-                          children: [
-                            Container(
-                              width: 5,
-                              height: 5,
-                              decoration: BoxDecoration(
-                                color: selected
-                                    ? accent
-                                    : const Color(0xFF888888),
-                                shape: BoxShape.circle,
-                              ),
-                            ),
-                            const SizedBox(width: 4),
-                            Expanded(
-                              child: Container(
-                                height: 2.5,
-                                decoration: BoxDecoration(
-                                  color: selected
-                                      ? accent.withValues(alpha: 0.8)
-                                      : const Color(
-                                          0xFF888888,
-                                        ).withValues(alpha: 0.35),
-                                  borderRadius: BorderRadius.circular(2),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Center(
-                        child: Icon(
-                          icon,
-                          size: 16,
-                          color: selected
-                              ? accent
-                              : (previewDark || isSystem
-                                    ? Colors.white70
-                                    : Colors.black54),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 7),
+                _buildPreview(context, accent),
+                const SizedBox(height: 10),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Text(
-                      title,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        fontWeight: selected
-                            ? FontWeight.w600
-                            : FontWeight.w500,
-                        color: selected ? accent : theme.colorScheme.onSurface,
+                    Icon(
+                      icon,
+                      size: 14,
+                      color: selected
+                          ? accent
+                          : theme.colorScheme.onSurfaceVariant,
+                    ),
+                    const SizedBox(width: 6),
+                    Flexible(
+                      child: Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          fontWeight: selected
+                              ? FontWeight.w600
+                              : FontWeight.w500,
+                          color: selected
+                              ? (theme.brightness == Brightness.dark
+                                    ? Colors.white
+                                    : accent)
+                              : theme.colorScheme.onSurface,
+                          fontSize: 12.5,
+                        ),
                       ),
                     ),
                     if (selected) ...[
-                      const SizedBox(width: 4),
+                      const SizedBox(width: 5),
                       Icon(Icons.check_rounded, size: 14, color: accent),
                     ],
                   ],
@@ -171,6 +105,245 @@ class ThemeModeCard extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildPreview(BuildContext context, Color accent) {
+    return Container(
+      height: 62,
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(9),
+        border: Border.all(
+          color: selected
+              ? accent.withValues(alpha: 0.35)
+              : Colors.white.withValues(alpha: 0.07),
+          width: 1,
+        ),
+      ),
+      child: isSystem
+          ? _buildSystemPreview(accent)
+          : (previewDark
+                ? _buildDarkPreview(accent)
+                : _buildLightPreview(accent)),
+    );
+  }
+
+  Widget _buildDarkPreview(Color accent) {
+    return Container(
+      color: const Color(0xFF13151D),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 6,
+                height: 6,
+                decoration: const BoxDecoration(
+                  color: Color(0xFF353849),
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 4),
+              Container(
+                width: 6,
+                height: 6,
+                decoration: const BoxDecoration(
+                  color: Color(0xFF353849),
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const Spacer(),
+              Container(
+                width: 10,
+                height: 10,
+                decoration: BoxDecoration(
+                  color: accent.withValues(alpha: 0.85),
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ],
+          ),
+          const Spacer(),
+          Container(
+            height: 18,
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1E212D),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.play_arrow_rounded, size: 10, color: accent),
+                const SizedBox(width: 5),
+                Expanded(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(2),
+                    child: LinearProgressIndicator(
+                      value: 0.55,
+                      minHeight: 2.5,
+                      backgroundColor: Colors.white.withValues(alpha: 0.12),
+                      valueColor: AlwaysStoppedAnimation<Color>(accent),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLightPreview(Color accent) {
+    return Container(
+      color: const Color(0xFFF8FAFC),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 6,
+                height: 6,
+                decoration: const BoxDecoration(
+                  color: Color(0xFFCBD5E1),
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 4),
+              Container(
+                width: 6,
+                height: 6,
+                decoration: const BoxDecoration(
+                  color: Color(0xFFCBD5E1),
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const Spacer(),
+              const Icon(
+                Icons.light_mode_rounded,
+                size: 12,
+                color: Color(0xFFF59E0B),
+              ),
+            ],
+          ),
+          const Spacer(),
+          Container(
+            height: 18,
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFFFFF),
+              borderRadius: BorderRadius.circular(4),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.05),
+                  blurRadius: 3,
+                  offset: const Offset(0, 1),
+                ),
+              ],
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.play_arrow_rounded, size: 10, color: accent),
+                const SizedBox(width: 5),
+                Expanded(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(2),
+                    child: LinearProgressIndicator(
+                      value: 0.55,
+                      minHeight: 2.5,
+                      backgroundColor: Colors.black.withValues(alpha: 0.08),
+                      valueColor: AlwaysStoppedAnimation<Color>(accent),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSystemPreview(Color accent) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(
+          child: Container(
+            color: const Color(0xFF13151D),
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 7),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 6,
+                  height: 6,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFF353849),
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const Spacer(),
+                Container(
+                  height: 18,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFF1E212D),
+                    borderRadius: BorderRadius.horizontal(
+                      left: Radius.circular(4),
+                    ),
+                  ),
+                  child: Center(
+                    child: Icon(
+                      Icons.dark_mode_rounded,
+                      size: 10,
+                      color: accent,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        Container(width: 1, color: Colors.white.withValues(alpha: 0.12)),
+        Expanded(
+          child: Container(
+            color: const Color(0xFFF8FAFC),
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 7),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                const Icon(
+                  Icons.brightness_auto_rounded,
+                  size: 11,
+                  color: Color(0xFF64748B),
+                ),
+                const Spacer(),
+                Container(
+                  height: 18,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFFFFFFFF),
+                    borderRadius: BorderRadius.horizontal(
+                      right: Radius.circular(4),
+                    ),
+                  ),
+                  child: const Center(
+                    child: Icon(
+                      Icons.light_mode_rounded,
+                      size: 10,
+                      color: Color(0xFFF59E0B),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -197,7 +370,7 @@ class AccentColorChip extends StatelessWidget {
     final isColorDark =
         ThemeData.estimateBrightnessForColor(displayColor) == Brightness.dark;
     final effectiveColor = isOverridden && selected
-        ? displayColor.withValues(alpha: 0.7)
+        ? displayColor.withValues(alpha: 0.65)
         : displayColor;
 
     return Tooltip(
@@ -208,79 +381,81 @@ class AccentColorChip extends StatelessWidget {
       child: Semantics(
         button: true,
         selected: selected,
+        label: preset.label,
         child: Material(
           color: Colors.transparent,
           child: InkWell(
             onTap: onTap,
-            borderRadius: BorderRadius.circular(22),
+            borderRadius: BorderRadius.circular(12),
             hoverColor: displayColor.withValues(alpha: 0.1),
             child: AnimatedContainer(
               duration: AppMotion.duration(context, AppMotion.quick),
-              constraints: const BoxConstraints(minHeight: 44),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
               decoration: BoxDecoration(
-                color: selected
-                    ? (isOverridden
-                          ? displayColor.withValues(alpha: 0.08)
-                          : displayColor.withValues(alpha: 0.16))
-                    : theme.colorScheme.surfaceContainerHighest.withValues(
-                        alpha: 0.35,
-                      ),
-                borderRadius: BorderRadius.circular(22),
+                color: selected && !isOverridden
+                    ? displayColor.withValues(alpha: 0.12)
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(12),
                 border: Border.all(
-                  color: selected
-                      ? (isOverridden
-                            ? displayColor.withValues(alpha: 0.4)
-                            : displayColor)
-                      : theme.colorScheme.outlineVariant.withValues(alpha: 0.4),
-                  width: selected ? (isOverridden ? 1.2 : 1.6) : 1,
+                  color: selected && !isOverridden
+                      ? displayColor.withValues(alpha: 0.4)
+                      : Colors.transparent,
+                  width: 1,
                 ),
-                boxShadow: selected && !isOverridden
-                    ? [
-                        BoxShadow(
-                          color: displayColor.withValues(alpha: 0.22),
-                          blurRadius: 6,
-                          offset: const Offset(0, 1),
-                        ),
-                      ]
-                    : null,
               ),
-              child: Row(
+              child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Container(
-                    width: 18,
-                    height: 18,
+                    width: 38,
+                    height: 38,
                     decoration: BoxDecoration(
                       color: effectiveColor,
                       shape: BoxShape.circle,
-                      boxShadow: !isOverridden
+                      border: Border.all(
+                        color: selected
+                            ? (isDark ? Colors.white : Colors.black87)
+                            : (isDark
+                                  ? Colors.white.withValues(alpha: 0.18)
+                                  : Colors.black.withValues(alpha: 0.12)),
+                        width: selected ? 2.5 : 1,
+                      ),
+                      boxShadow: selected && !isOverridden
                           ? [
                               BoxShadow(
-                                color: displayColor.withValues(alpha: 0.35),
+                                color: displayColor.withValues(alpha: 0.45),
+                                blurRadius: 8,
+                                offset: const Offset(0, 2),
+                              ),
+                            ]
+                          : [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.12),
                                 blurRadius: 3,
                                 offset: const Offset(0, 1),
                               ),
-                            ]
-                          : null,
+                            ],
                     ),
                     alignment: Alignment.center,
                     child: selected
                         ? Icon(
                             Icons.check_rounded,
-                            size: 13,
+                            size: 20,
                             color: isColorDark ? Colors.white : Colors.black87,
                           )
                         : null,
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(height: 6),
                   Text(
                     preset.label,
-                    style: theme.textTheme.bodySmall?.copyWith(
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.labelSmall?.copyWith(
                       fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
                       color: selected && !isOverridden
                           ? displayColor
-                          : theme.colorScheme.onSurface,
+                          : theme.colorScheme.onSurfaceVariant,
+                      fontSize: 11.5,
                     ),
                   ),
                 ],

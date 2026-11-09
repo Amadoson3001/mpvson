@@ -491,6 +491,7 @@ class _MusicViewState extends State<MusicView> {
   Widget _buildSongTableView(List<MediaItemRecord> songs) {
     return ListView.separated(
       addAutomaticKeepAlives: false,
+      addRepaintBoundaries: true,
       padding: const EdgeInsets.symmetric(
         horizontal: AppSpace.lg,
         vertical: AppSpace.md,
@@ -861,6 +862,7 @@ class _MusicViewState extends State<MusicView> {
 
         return GridView.builder(
           addAutomaticKeepAlives: false,
+          addRepaintBoundaries: true,
           padding: const EdgeInsets.all(AppSpace.lg),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: columns,
@@ -1121,6 +1123,7 @@ class _MusicViewState extends State<MusicView> {
 
         return GridView.builder(
           addAutomaticKeepAlives: false,
+          addRepaintBoundaries: true,
           padding: const EdgeInsets.all(AppSpace.lg),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: columns,

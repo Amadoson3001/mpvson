@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../../../app.dart' show AppPreferencesScope;
 import 'motion_stub.dart' if (dart.library.io) 'motion_io.dart';
 
 /// Shared timing and reduced-motion behavior for the desktop interface.
@@ -21,12 +22,20 @@ abstract final class AppMotion {
   static const Duration sheetEnter = Duration(milliseconds: 240);
   static const Duration sheetExit = Duration(milliseconds: 200);
 
+  /// Side-panel push-aside timings: the queue slides in beside the video while
+  /// the picture makes room at the same pace.
+  static const Duration panelEnter = Duration(milliseconds: 300);
+  static const Duration panelExit = Duration(milliseconds: 200);
+
   /// Start scale for the dialog morph. The surface grows from the trigger
   /// point without any cross-fade of its content.
   static const double dialogMorphBeginScale = 0.86;
 
   static const Curve enter = Cubic(0.16, 1, 0.3, 1);
   static const Curve exit = Cubic(0.4, 0, 1, 1);
+
+  /// Gentle start, long cushioned arrival for panels pushing the video aside.
+  static const Curve panelEnterCurve = Cubic(0.2, 0, 0, 1);
 
   /// Ultra-smooth sheet deceleration curve (fast start, cushioned arrival).
   static const Curve sheetEnterCurve = Cubic(0.12, 1.0, 0.24, 1.0);
@@ -55,32 +64,30 @@ abstract final class AppMotion {
   static bool lowPower(BuildContext context) =>
       reduce(context) || _constrainedHardware;
 
-  static Duration duration(BuildContext context, Duration preferred) =>
-      reduce(context) ? instant : preferred;
+  /// User-chosen pace from Settings → Animation (1.0 when unset).
+  static double speedScale(BuildContext context) =>
+      AppPreferencesScope.of(context)?.animationSpeed.scale ?? 1.0;
 
-  /// Composited shared-axis transition (fade + micro vertical glide) for stage/view swaps.
-  ///
-  /// The curve is applied with a [CurveTween], which wraps the incoming route
-  /// animation without registering listeners on it. Building a
-  /// [CurvedAnimation] here instead would attach one that nothing ever
-  /// detaches, leaking a listener per stage change.
+  static Duration _atSpeed(Duration preferred, double scale) =>
+      Duration(milliseconds: (preferred.inMilliseconds * scale).round());
+
+  /// [preferred] stretched by the user's animation speed, or instant when
+  /// animations are turned off.
+  static Duration scaled(BuildContext context, Duration preferred) =>
+      reduce(context) ? instant : _atSpeed(preferred, speedScale(context));
+
+  static Duration duration(BuildContext context, Duration preferred) =>
+      scaled(context, preferred);
+
+  /// Stage transition pass-through (stage views swap cleanly and instantly without overlapping).
   static Widget stageTransition(
     BuildContext context,
     Widget child,
-    Animation<double> animation,
-  ) {
-    if (lowPower(context)) return child;
-    final curved = CurveTween(curve: enter).animate(animation);
-    return FadeTransition(
-      opacity: curved,
-      child: SlideTransition(
-        position: Tween<Offset>(
-          begin: const Offset(0, 0.015),
-          end: Offset.zero,
-        ).animate(curved),
-        child: child,
-      ),
-    );
+    Animation<double> animation, {
+    bool forward = true,
+    bool isCurrent = true,
+  }) {
+    return child;
   }
 }
 

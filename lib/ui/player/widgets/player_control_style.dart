@@ -38,6 +38,8 @@ class PlayerControlStyle extends InheritedWidget {
     iconSize: iconSize,
     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
     visualDensity: VisualDensity.standard,
+    foregroundColor: Colors.white.withValues(alpha: 0.90),
+    hoverColor: Colors.white.withValues(alpha: 0.10),
   );
 
   @override

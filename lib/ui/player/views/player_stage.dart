@@ -282,12 +282,16 @@ class PlayerStage extends StatelessWidget {
           ),
         ),
         if (showFullControls &&
-            controller.hasMedia &&
-            controller.isVideo &&
+            (controller.hasMedia || contentState == 'ready') &&
+            (!controller.hasMedia || controller.isVideo) &&
             current != null)
           PlayerTopBar(
             currentTitle: current.title,
-            controlsVisible: controlsVisible,
+            controlsVisible: (contentState == 'ready' ||
+                    !controller.hasMedia ||
+                    controller.isStopped)
+                ? true
+                : controlsVisible,
             hasLibraryRepository: hasLibraryRepository,
             isMiniPlayer: isMiniPlayer,
             onPointerEnter: () =>

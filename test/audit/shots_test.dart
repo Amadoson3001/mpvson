@@ -38,6 +38,8 @@ void main() {
           }
           if (s == 'Settings') {
             for (final p in [
+              'Appearance',
+              'Animation',
               'Playback',
               'Video & audio',
               'Shortcuts',

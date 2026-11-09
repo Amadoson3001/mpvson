@@ -9,6 +9,7 @@ import '../../core/app_theme.dart';
 import '../../core/toast/toast_layout.dart';
 import '../../core/components/playback_pulse.dart';
 import '../../player/widgets/queue_panel.dart';
+import '../../player/views/player_queue_layout.dart';
 import '../widgets/library_status_banner.dart';
 import 'library_navigation.dart';
 import 'library_section.dart';
@@ -112,7 +113,9 @@ class _LibraryShellState extends State<LibraryShell>
         vsync: this,
         duration: const Duration(milliseconds: 260),
         reverseDuration: const Duration(milliseconds: 220),
-        value: widget.controller.hasMedia ? 1.0 : 0.0,
+        value: (widget.controller.hasMedia && !widget.controller.isStopped)
+            ? 1.0
+            : 0.0,
       );
 
   late final CurvedAnimation _miniPlayerVisibilityCurve = CurvedAnimation(
@@ -121,13 +124,38 @@ class _LibraryShellState extends State<LibraryShell>
     reverseCurve: AppMotion.exit,
   );
 
+  late final AnimationController _queueSlide;
+  late final CurvedAnimation _queueSlideCurve;
+  bool _queueMounted = false;
+
   MediaEntry? _lastDisplayEntry;
 
   bool get _isQueueOpen => widget.queueOpen ?? _isOnDemandQueueOpen;
 
   void _setQueueOpen(bool next) {
-    setState(() => _isOnDemandQueueOpen = next);
+    setState(() {
+      _isOnDemandQueueOpen = next;
+      if (next) _queueMounted = true;
+    });
     widget.onQueueOpenChanged?.call(next);
+    _driveQueueSlide();
+  }
+
+  void _driveQueueSlide() {
+    if (_isQueueOpen) {
+      _queueSlide.forward();
+    } else {
+      _queueSlide.reverse();
+    }
+  }
+
+  void _handleQueueSlideStatus(AnimationStatus status) {
+    if (status != AnimationStatus.dismissed) return;
+    // A zero-length reverse can finish inside the build phase; unmount at the
+    // end of the frame instead.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) setState(() => _queueMounted = false);
+    });
   }
 
   @override
@@ -138,9 +166,33 @@ class _LibraryShellState extends State<LibraryShell>
         : widget.initialSection;
     _previousSection = widget.initialSection;
     _isOnDemandQueueOpen = widget.queueOpen ?? false;
+    _queueMounted = _isQueueOpen;
+    _queueSlide = AnimationController(
+      vsync: this,
+      duration: AppMotion.panelEnter,
+      reverseDuration: AppMotion.panelExit,
+      value: _isQueueOpen ? 1.0 : 0.0,
+    )..addStatusListener(_handleQueueSlideStatus);
+    _queueSlideCurve = CurvedAnimation(
+      parent: _queueSlide,
+      curve: AppMotion.panelEnterCurve,
+      reverseCurve: AppMotion.exit,
+    );
     _lastDisplayEntry = widget.controller.current;
     _searchController.addListener(_onSearchChanged);
     widget.controller.addListener(_onPlaybackChanged);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final reduced = AppMotion.reduce(context);
+    _queueSlide.duration = reduced
+        ? Duration.zero
+        : AppMotion.scaled(context, AppMotion.panelEnter);
+    _queueSlide.reverseDuration = reduced
+        ? Duration.zero
+        : AppMotion.scaled(context, AppMotion.panelExit);
   }
 
   @override
@@ -152,6 +204,8 @@ class _LibraryShellState extends State<LibraryShell>
     }
     if (widget.queueOpen != oldWidget.queueOpen && widget.queueOpen != null) {
       _isOnDemandQueueOpen = widget.queueOpen!;
+      if (_isOnDemandQueueOpen) _queueMounted = true;
+      _driveQueueSlide();
     }
     if (widget.showSettings != oldWidget.showSettings) {
       if (widget.showSettings) {
@@ -193,6 +247,9 @@ class _LibraryShellState extends State<LibraryShell>
 
   @override
   void dispose() {
+    _queueSlide.removeStatusListener(_handleQueueSlideStatus);
+    _queueSlideCurve.dispose();
+    _queueSlide.dispose();
     _nowPlayingMorphCurve.dispose();
     _miniPlayerVisibilityCurve.dispose();
     _nowPlayingMorphController.dispose();
@@ -210,8 +267,10 @@ class _LibraryShellState extends State<LibraryShell>
     final current = widget.controller.current;
     final hasMedia = widget.controller.hasMedia;
 
-    if (current != null) {
-      _lastDisplayEntry = current;
+    if (current != null && current != _lastDisplayEntry) {
+      setState(() {
+        _lastDisplayEntry = current;
+      });
     }
 
     if (current == null &&
@@ -220,7 +279,7 @@ class _LibraryShellState extends State<LibraryShell>
       _closeNowPlaying();
     }
 
-    if (hasMedia) {
+    if (hasMedia && !widget.controller.isStopped) {
       if (_miniPlayerVisibilityController.value < 1.0 &&
           _miniPlayerVisibilityController.status != AnimationStatus.forward) {
         if (AppMotion.reduce(context)) {
@@ -230,22 +289,13 @@ class _LibraryShellState extends State<LibraryShell>
         }
       }
     } else {
-      if (_miniPlayerVisibilityController.value > 0.0 &&
-          _miniPlayerVisibilityController.status != AnimationStatus.reverse) {
-        if (AppMotion.reduce(context)) {
-          _miniPlayerVisibilityController.value = 0.0;
-          _lastDisplayEntry = null;
-          if (mounted) setState(() {});
-        } else {
-          _miniPlayerVisibilityController.reverse().then((_) {
-            if (mounted && !widget.controller.hasMedia) {
-              setState(() {
-                _lastDisplayEntry = null;
-              });
-            }
-          });
-        }
+      if (_miniPlayerVisibilityController.value > 0.0) {
+        _miniPlayerVisibilityController.value = 0.0;
       }
+      if (_lastDisplayEntry != null) {
+        _lastDisplayEntry = null;
+      }
+      if (mounted) setState(() {});
     }
   }
 
@@ -510,20 +560,31 @@ class _LibraryShellState extends State<LibraryShell>
         ),
 
         // 3. Docked Queue Panel
-        if (!isCompact && _isQueueOpen) ...[
-          VerticalDivider(width: 1, color: context.palette.border),
-          ToastRegion(
-            child: SizedBox(
-              width: AppLayout.queuePanelWidth,
-              child: QueuePanel(
-                controller: widget.controller,
-                onQueueFocus: (_) {},
-                onAddFiles: widget.onAddQueueFiles ?? () {},
-                onClose: () => _setQueueOpen(false),
+        if (!isCompact && (_isQueueOpen || _queueMounted))
+          QueueSlideSlot(
+            progress: _queueSlideCurve,
+            child: IgnorePointer(
+              ignoring: !_isQueueOpen,
+              child: SizedBox(
+                width: AppLayout.queuePanelWidth + 1,
+                child: Row(
+                  children: [
+                    VerticalDivider(width: 1, color: context.palette.border),
+                    Expanded(
+                      child: ToastRegion(
+                        child: QueuePanel(
+                          controller: widget.controller,
+                          onQueueFocus: (_) {},
+                          onAddFiles: widget.onAddQueueFiles ?? () {},
+                          onClose: () => _setQueueOpen(false),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
-        ],
       ],
     );
   }
@@ -569,16 +630,9 @@ class _LibraryShellState extends State<LibraryShell>
     }
 
     return RepaintBoundary(
-      child: AnimatedSwitcher(
-        duration: AppMotion.duration(context, AppMotion.stage),
-        switchInCurve: AppMotion.enter,
-        switchOutCurve: AppMotion.exit,
-        transitionBuilder: (child, animation) =>
-            AppMotion.stageTransition(context, child, animation),
-        child: KeyedSubtree(
-          key: ValueKey<LibrarySection>(effectiveSection),
-          child: stage,
-        ),
+      child: KeyedSubtree(
+        key: ValueKey<LibrarySection>(effectiveSection),
+        child: stage,
       ),
     );
   }
@@ -643,71 +697,62 @@ class _LibraryShellState extends State<LibraryShell>
   // --- Stacked Audio Layout (Bottom Mini Player) ---
 
   Widget _buildBottomMiniPlayer(bool isCompact) {
+    if (widget.controller.isStopped || !widget.controller.hasMedia) {
+      return const SizedBox.shrink();
+    }
+    final displayEntry = widget.controller.current ?? _lastDisplayEntry;
+    if (displayEntry == null) {
+      return const SizedBox.shrink();
+    }
+
+    final isVideo =
+        widget.controller.isVideo ||
+        MediaCatalog.kindFromExtension(displayEntry.path).isVideo;
+    final dense = MediaQuery.sizeOf(context).height < 600;
+    final height = MiniPlayerBar.heightFor(
+      MediaQuery.textScalerOf(context),
+      dense: dense,
+    );
+    final bar = MiniPlayerBar(
+      controller: widget.controller,
+      repository: widget.repository,
+      entry: displayEntry,
+      isVideo: isVideo,
+      compact: isCompact,
+      dense: dense,
+      openLabel: isVideo ? 'Return to video' : 'Open Now Playing',
+      // A video goes back to the player stage; audio opens Now Playing.
+      onOpen: isVideo && widget.onBackToPlayer != null
+          ? widget.onBackToPlayer!
+          : _openNowPlaying,
+      onShowQueue: _showCompactQueue,
+    );
+
+    // The bar is the AnimatedBuilder child so animation ticks only move the
+    // already-painted surface; playback ticks rebuild it via the shell's
+    // track-change listener, not per position notify.
     return AnimatedBuilder(
-      animation: Listenable.merge([
-        _miniPlayerVisibilityCurve,
-        _nowPlayingMorphCurve,
-        widget.controller,
-      ]),
-      builder: (context, _) {
+      animation: _miniPlayerVisibilityCurve,
+      child: RepaintBoundary(
+        child: SizedBox(height: height, child: bar),
+      ),
+      builder: (context, child) {
         final visibility = _miniPlayerVisibilityCurve.value;
         if (visibility <= 0.001) {
           return const SizedBox.shrink();
         }
-
-        final displayEntry = widget.controller.current ?? _lastDisplayEntry;
-        if (displayEntry == null) {
-          return const SizedBox.shrink();
+        if (AppMotion.reduce(context) || visibility >= 0.999) {
+          return child!;
         }
-
-        final isVideo =
-            widget.controller.isVideo ||
-            MediaCatalog.kindFromExtension(displayEntry.path).isVideo;
-
-        final morph = _nowPlayingMorphCurve.value;
-        // As the full sheet rises over the mini player, gently fade out the
-        // mini-player's controls so there is zero visual overlap with the
-        // rising sheet.
-        final controlsFade = (1.0 - (morph * 2.5)).clamp(0.0, 1.0);
-
-        final bar = MiniPlayerBar(
-          controller: widget.controller,
-          repository: widget.repository,
-          entry: displayEntry,
-          isVideo: isVideo,
-          compact: isCompact,
-          openLabel: isVideo ? 'Return to video' : 'Open Now Playing',
-          // A video goes back to the player stage; audio opens Now Playing.
-          onOpen: isVideo && widget.onBackToPlayer != null
-              ? widget.onBackToPlayer!
-              : _openNowPlaying,
-          onShowQueue: _showCompactQueue,
-          controlsOpacity: controlsFade,
-        );
-
-        final height = MiniPlayerBar.heightFor(
-          MediaQuery.textScalerOf(context),
-        );
-        final reduced = AppMotion.reduce(context);
-        if (reduced) {
-          return RepaintBoundary(
-            child: SizedBox(height: height, child: bar),
-          );
-        }
-
+        // Rigid slide-up: the bar translates with the growing slot and is
+        // revealed by the clip. No fade, no scale, no per-tick bar rebuild.
+        // The clip exists only during the reveal; steady state must stay
+        // unclipped so the seek preview can float above the bar.
         return ClipRect(
           child: Align(
             alignment: Alignment.topCenter,
             heightFactor: visibility,
-            child: FractionalTranslation(
-              translation: Offset(0, 0.4 * (1.0 - visibility)),
-              child: Opacity(
-                opacity: visibility.clamp(0.0, 1.0),
-                child: RepaintBoundary(
-                  child: SizedBox(height: height, child: bar),
-                ),
-              ),
-            ),
+            child: child,
           ),
         );
       },

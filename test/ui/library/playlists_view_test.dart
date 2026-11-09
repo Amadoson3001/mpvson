@@ -15,6 +15,14 @@ class _CountingRepository extends InMemoryMediaLibraryRepository {
   _CountingRepository({super.initialItems});
 
   int entryQueries = 0;
+  int probedCount = 0;
+  final List<String> probedPaths = [];
+
+  @override
+  Future<void> probeMedia(String path) async {
+    probedCount++;
+    probedPaths.add(path);
+  }
 
   @override
   Future<List<PlaylistEntryRecord>> getPlaylistEntries(
@@ -149,6 +157,172 @@ void main() {
         stored!.firstWhere((pl) => pl.id == playlist.id).title,
         'Renamed Mix',
       );
+    });
+
+    testWidgets('deletes playlist from detail view and returns to playlists list', (
+      tester,
+    ) async {
+      final playlist = await seedPlaylist(const ['id1']);
+      await pumpView(tester);
+
+      // Open detail view
+      await tester.tap(find.text('Mix'));
+      await settle(tester);
+      expect(find.text('Song 1'), findsOneWidget);
+
+      // Tap delete playlist button in header
+      await tester.tap(find.byTooltip('Delete playlist'));
+      await settle(tester);
+
+      expect(find.byType(AppDialog), findsOneWidget);
+      expect(find.text('Delete'), findsOneWidget);
+
+      await tester.tap(find.text('Delete'));
+      await settle(tester);
+
+      // Returned to playlist list / empty state
+      final stored = await tester.runAsync(() => repository.getPlaylists());
+      expect(stored!.any((pl) => pl.id == playlist.id), isFalse);
+    });
+
+    testWidgets('deletes playlist from card action menu in main view', (
+      tester,
+    ) async {
+      final playlist = await seedPlaylist(const ['id1']);
+      await pumpView(tester);
+
+      await tester.tap(find.byTooltip('Playlist actions'));
+      await settle(tester);
+
+      await tester.tap(find.text('Delete playlist'));
+      await settle(tester);
+
+      expect(find.byType(AppDialog), findsOneWidget);
+      await tester.tap(find.text('Delete'));
+      await settle(tester);
+
+      final stored = await tester.runAsync(() => repository.getPlaylists());
+      expect(stored!.any((pl) => pl.id == playlist.id), isFalse);
+    });
+
+    testWidgets('shows empty state with Add files action when playlist is empty', (
+      tester,
+    ) async {
+      repository = _CountingRepository();
+      await repository.createPlaylist('Empty Playlist');
+      await pumpView(tester);
+
+      await tester.tap(find.text('Empty Playlist'));
+      await settle(tester);
+
+      expect(find.text('This playlist is empty'), findsOneWidget);
+      expect(find.text('Add files'), findsWidgets);
+    });
+
+    testWidgets('removes entry from playlist immediately when clicking remove', (
+      tester,
+    ) async {
+      final playlist = await seedPlaylist(const ['id1', 'id2']);
+      await pumpView(tester);
+
+      await tester.tap(find.text('Mix'));
+      await settle(tester);
+
+      expect(find.text('Song 1'), findsOneWidget);
+      expect(find.text('Song 2'), findsOneWidget);
+
+      // Tap remove on Song 1
+      final btn = find.byTooltip('Remove from playlist').first;
+      await tester.tap(btn);
+      await settle(tester);
+
+      expect(find.text('Song 1'), findsNothing);
+      expect(find.text('Song 2'), findsOneWidget);
+
+      await settle(tester);
+      final entries = await tester.runAsync(
+        () => repository.getPlaylistEntries(playlist.id),
+      );
+      expect(entries!.length, 1);
+      expect(entries.first.mediaItem?.title, 'Song 2');
+    });
+
+    testWidgets('adds tracks from library dialog', (tester) async {
+      repository = _CountingRepository(
+        initialItems: [
+          track(1, title: 'Library Song A'),
+          track(2, title: 'Library Song B'),
+        ],
+      );
+      final playlist = await repository.createPlaylist('My Mix');
+      await pumpView(tester);
+
+      await tester.tap(find.text('My Mix'));
+      await settle(tester);
+
+      // Open From library dialog
+      await tester.tap(find.text('From library'));
+      await settle(tester);
+
+      expect(find.text('Add from library'), findsOneWidget);
+      expect(find.text('Library Song A'), findsOneWidget);
+
+      // Select Song A
+      await tester.tap(find.text('Library Song A'));
+      await settle(tester);
+
+      // Tap Add (1)
+      await tester.tap(find.text('Add (1)'));
+      await settle(tester);
+
+      // Song A is now in the playlist
+      expect(find.text('Library Song A'), findsOneWidget);
+      final entries = await tester.runAsync(
+        () => repository.getPlaylistEntries(playlist.id),
+      );
+      expect(entries!.length, 1);
+      expect(entries.first.mediaItem?.title, 'Library Song A');
+    });
+
+    testWidgets('formats video artist and title cleanly from filename', (tester) async {
+      repository = _CountingRepository(
+        initialItems: [
+          track(
+            1,
+            title: 'Alec Benjamin - If We Have Each Other [Official Music Video].mkv',
+            artist: null,
+          ),
+        ],
+      );
+      final playlist = await repository.createPlaylist('Music Videos');
+      await repository.addToPlaylist(playlist.id, ['id1']);
+      await pumpView(tester);
+
+      await tester.tap(find.text('Music Videos'));
+      await settle(tester);
+
+      // Verify that extension is stripped, title is song name, and artist is Alec Benjamin
+      expect(find.text('If We Have Each Other [Official Music Video]'), findsOneWidget);
+      expect(find.text('Alec Benjamin'), findsOneWidget);
+      expect(find.text('Unknown artist'), findsNothing);
+      expect(find.text('Unknown Artist'), findsNothing);
+    });
+
+    testWidgets('probes missing metadata for entries with zero duration', (tester) async {
+      repository = _CountingRepository(
+        initialItems: [
+          track(1, duration: Duration.zero),
+        ],
+      );
+      final playlist = await repository.createPlaylist('Zero Duration');
+      await repository.addToPlaylist(playlist.id, ['id1']);
+      await pumpView(tester);
+
+      await tester.tap(find.text('Zero Duration'));
+      await settle(tester);
+
+      expect(repository.probedCount, greaterThanOrEqualTo(1));
+      expect(repository.probedPaths, contains('C:\\Media\\file_1.mp3'));
     });
   });
 }

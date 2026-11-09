@@ -11,7 +11,7 @@ class SettingsContentContainer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => SingleChildScrollView(
-    padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 32),
+    padding: const EdgeInsets.fromLTRB(40, 8, 40, 36),
     child: Align(
       alignment: Alignment.topCenter,
       child: ConstrainedBox(
@@ -40,7 +40,7 @@ class SettingsCardGroup extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.only(bottom: 22),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -53,8 +53,10 @@ class SettingsCardGroup extends StatelessWidget {
               children: [
                 Text(
                   title!,
-                  style: theme.textTheme.labelLarge?.copyWith(
+                  style: theme.textTheme.titleSmall?.copyWith(
                     fontWeight: FontWeight.w600,
+                    letterSpacing: -0.1,
+                    fontSize: 13.5,
                     color: theme.colorScheme.onSurface,
                   ),
                 ),
@@ -62,22 +64,26 @@ class SettingsCardGroup extends StatelessWidget {
               ],
             ),
             if (description != null) ...[
-              const SizedBox(height: 2),
+              const SizedBox(height: 3),
               Text(
                 description!,
                 style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
+                  color: theme.colorScheme.onSurfaceVariant.withValues(
+                    alpha: 0.85,
+                  ),
+                  height: 1.35,
+                  fontSize: 12,
                 ),
               ),
             ],
             const SizedBox(height: 10),
           ],
           Material(
-            color: theme.colorScheme.surfaceContainer,
+            color: theme.colorScheme.surfaceContainer.withValues(alpha: 0.65),
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(AppRadii.artwork),
+              borderRadius: BorderRadius.circular(14),
               side: BorderSide(
-                color: theme.colorScheme.outlineVariant,
+                color: theme.colorScheme.outlineVariant.withValues(alpha: 0.35),
                 width: 1,
               ),
             ),
@@ -91,7 +97,7 @@ class SettingsCardGroup extends StatelessWidget {
                       height: 1,
                       thickness: 1,
                       color: theme.colorScheme.outlineVariant.withValues(
-                        alpha: 0.5,
+                        alpha: 0.22,
                       ),
                     ),
                   children[i],
@@ -126,9 +132,11 @@ class SettingsSwitchTile extends StatelessWidget {
     final theme = Theme.of(context);
     return InkWell(
       onTap: () => onChanged(!value),
-      borderRadius: BorderRadius.circular(AppRadii.control),
+      hoverColor: theme.colorScheme.surfaceContainerHighest.withValues(
+        alpha: 0.3,
+      ),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
@@ -138,18 +146,18 @@ class SettingsSwitchTile extends StatelessWidget {
                 height: 32,
                 decoration: BoxDecoration(
                   color: theme.colorScheme.surfaceContainerHighest.withValues(
-                    alpha: 0.5,
+                    alpha: 0.45,
                   ),
-                  borderRadius: BorderRadius.circular(AppRadii.control),
+                  borderRadius: BorderRadius.circular(8),
                 ),
                 alignment: Alignment.center,
                 child: Icon(
                   icon,
-                  size: 17,
+                  size: 16,
                   color: theme.colorScheme.onSurfaceVariant,
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 14),
             ],
             Expanded(
               child: Column(
@@ -161,6 +169,7 @@ class SettingsSwitchTile extends StatelessWidget {
                     style: theme.textTheme.bodyMedium?.copyWith(
                       fontWeight: FontWeight.w600,
                       color: theme.colorScheme.onSurface,
+                      fontSize: 13.5,
                     ),
                   ),
                   if (subtitle != null && subtitle!.isNotEmpty) ...[
@@ -168,14 +177,18 @@ class SettingsSwitchTile extends StatelessWidget {
                     Text(
                       subtitle!,
                       style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
+                        color: theme.colorScheme.onSurfaceVariant.withValues(
+                          alpha: 0.85,
+                        ),
+                        height: 1.35,
+                        fontSize: 12,
                       ),
                     ),
                   ],
                 ],
               ),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: 14),
             AppToggleSwitch(value: value, onChanged: onChanged),
           ],
         ),
@@ -213,7 +226,7 @@ class ModernSliderTile extends StatelessWidget {
     final display = formatValue(value);
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       child: Column(
         children: [
           Row(
@@ -223,17 +236,20 @@ class ModernSliderTile extends StatelessWidget {
                   label,
                   style: theme.textTheme.bodyMedium?.copyWith(
                     fontWeight: FontWeight.w600,
+                    fontSize: 13.5,
                   ),
                 ),
               ),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                 decoration: BoxDecoration(
-                  color: theme.colorScheme.surfaceContainerHighest,
-                  borderRadius: BorderRadius.circular(AppRadii.control),
+                  color: theme.colorScheme.surfaceContainerHighest.withValues(
+                    alpha: 0.5,
+                  ),
+                  borderRadius: BorderRadius.circular(6),
                   border: Border.all(
                     color: theme.colorScheme.outlineVariant.withValues(
-                      alpha: 0.5,
+                      alpha: 0.4,
                     ),
                   ),
                 ),
@@ -286,7 +302,7 @@ class DropdownSettingTile<T> extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       child: Row(
         children: [
           Container(
@@ -294,23 +310,24 @@ class DropdownSettingTile<T> extends StatelessWidget {
             height: 32,
             decoration: BoxDecoration(
               color: theme.colorScheme.surfaceContainerHighest.withValues(
-                alpha: 0.5,
+                alpha: 0.45,
               ),
-              borderRadius: BorderRadius.circular(AppRadii.control),
+              borderRadius: BorderRadius.circular(8),
             ),
             alignment: Alignment.center,
             child: Icon(
               icon,
-              size: 17,
+              size: 16,
               color: theme.colorScheme.onSurfaceVariant,
             ),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 14),
           Expanded(
             child: Text(
               label,
               style: theme.textTheme.bodyMedium?.copyWith(
                 fontWeight: FontWeight.w600,
+                fontSize: 13.5,
               ),
             ),
           ),
@@ -318,11 +335,11 @@ class DropdownSettingTile<T> extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
             decoration: BoxDecoration(
               color: theme.colorScheme.surfaceContainerHighest.withValues(
-                alpha: 0.45,
+                alpha: 0.35,
               ),
-              borderRadius: BorderRadius.circular(AppRadii.control),
+              borderRadius: BorderRadius.circular(8),
               border: Border.all(
-                color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
+                color: theme.colorScheme.outlineVariant.withValues(alpha: 0.4),
                 width: 1,
               ),
             ),
@@ -376,7 +393,7 @@ class TrackSettingTile<T> extends StatelessWidget {
     }
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       child: Row(
         children: [
           Container(
@@ -384,23 +401,24 @@ class TrackSettingTile<T> extends StatelessWidget {
             height: 32,
             decoration: BoxDecoration(
               color: theme.colorScheme.surfaceContainerHighest.withValues(
-                alpha: 0.5,
+                alpha: 0.45,
               ),
-              borderRadius: BorderRadius.circular(AppRadii.control),
+              borderRadius: BorderRadius.circular(8),
             ),
             alignment: Alignment.center,
             child: Icon(
               icon,
-              size: 17,
+              size: 16,
               color: theme.colorScheme.onSurfaceVariant,
             ),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 14),
           Expanded(
             child: Text(
               label,
               style: theme.textTheme.bodyMedium?.copyWith(
                 fontWeight: FontWeight.w600,
+                fontSize: 13.5,
               ),
             ),
           ),
@@ -408,11 +426,11 @@ class TrackSettingTile<T> extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
             decoration: BoxDecoration(
               color: theme.colorScheme.surfaceContainerHighest.withValues(
-                alpha: 0.45,
+                alpha: 0.35,
               ),
-              borderRadius: BorderRadius.circular(AppRadii.control),
+              borderRadius: BorderRadius.circular(8),
               border: Border.all(
-                color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
+                color: theme.colorScheme.outlineVariant.withValues(alpha: 0.4),
                 width: 1,
               ),
             ),

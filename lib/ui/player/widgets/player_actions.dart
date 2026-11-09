@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../app.dart' show AppPreferencesScope;
 import '../../../domain/models/media_catalog.dart';
 import '../../../domain/models/media_entry.dart';
 import '../../../utils/format.dart';
@@ -48,30 +49,34 @@ class PlayerActions extends StatelessWidget {
   final bool isMiniPlayer;
 
   @override
-  Widget build(BuildContext context) => Row(
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      Semantics(
-        label:
-            'Queue, ${controller.queue.length} ${controller.queue.length == 1 ? 'video' : 'videos'}',
-        button: true,
-        child: IconButton(
-          tooltip: 'Queue (${controller.queue.length})',
-          isSelected: queueOpen,
-          style: PlayerControlStyle.of(context).buttonStyle.copyWith(
-            animationDuration: AppMotion.duration(context, AppMotion.quick),
-          ),
-          onPressed: onToggleQueue,
-          icon: Badge(
-            isLabelVisible: controller.queue.isNotEmpty,
-            label: Text('${controller.queue.length}'),
-            child: Icon(
-              Icons.playlist_play_rounded,
-              size: PlayerControlStyle.of(context).iconSize,
+  Widget build(BuildContext context) {
+    final showQueue =
+        AppPreferencesScope.of(context)?.playerControls.showQueueButton ?? true;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (showQueue)
+          Semantics(
+            label:
+                'Queue, ${controller.queue.length} ${controller.queue.length == 1 ? 'video' : 'videos'}',
+            button: true,
+            child: IconButton(
+              tooltip: 'Queue (${controller.queue.length})',
+              isSelected: queueOpen,
+              style: PlayerControlStyle.of(context).buttonStyle.copyWith(
+                animationDuration: AppMotion.duration(context, AppMotion.quick),
+              ),
+              onPressed: onToggleQueue,
+              icon: Badge(
+                isLabelVisible: controller.queue.isNotEmpty,
+                label: Text('${controller.queue.length}'),
+                child: Icon(
+                  Icons.playlist_play_rounded,
+                  size: PlayerControlStyle.of(context).iconSize,
+                ),
+              ),
             ),
           ),
-        ),
-      ),
       PopupMenuButton<Object>(
         key: const ValueKey('player-more'),
         tooltip: 'More options',
@@ -183,8 +188,9 @@ class PlayerActions extends StatelessWidget {
             size: PlayerControlStyle.of(context).iconSize,
           ),
         ),
-    ],
-  );
+      ],
+    );
+  }
 
   void _select(Object value) {
     onMenuVisibilityChanged(false);

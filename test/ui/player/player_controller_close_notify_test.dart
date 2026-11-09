@@ -77,4 +77,39 @@ void main() {
     expect(controller.clearRecent(), isEmpty);
     expect(notifications, 0);
   });
+
+  test(
+    'stop() resets position to zero, marks isStopped, and prevents auto-reopen',
+    () async {
+      final playback = FakePlaybackService();
+      final controller = PlayerController(
+        playback: playback,
+        sessions: SessionRepository(),
+      );
+      addTearDown(controller.dispose);
+
+      final file = await makeMediaFile();
+      await controller.openPaths([file.path]);
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      expect(controller.current, isNotNull);
+
+      // Seek to some position.
+      await controller.seek(const Duration(seconds: 45));
+      expect(controller.position, const Duration(seconds: 45));
+
+      // Stop.
+      await controller.stop();
+      expect(controller.isStopped, isTrue);
+      expect(controller.position, Duration.zero);
+      expect(controller.current?.position, Duration.zero);
+
+      // Calling prepareCurrentPaused while stopped must be a no-op.
+      await controller.prepareCurrentPaused();
+      expect(controller.hasMedia, isFalse);
+
+      // Playing again clears isStopped.
+      await controller.togglePlayPause();
+      expect(controller.isStopped, isFalse);
+    },
+  );
 }

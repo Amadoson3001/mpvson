@@ -565,6 +565,7 @@ class PlayerController extends ChangeNotifier {
   int _resumeGeneration = 0;
   bool _engineHasMedia = false;
   String? _engineEntryId;
+  bool _isStopped = false;
   ControllerClosingState _closingState = ControllerClosingState.running;
   Future<void>? _closeFuture;
   Future<void>? _releaseFuture;
@@ -740,6 +741,9 @@ class PlayerController extends ChangeNotifier {
   /// A restored queue can have a [current] entry while remaining stopped, so
   /// views should use this instead of inferring media presence from the queue.
   bool get hasMedia => _engineHasMedia;
+
+  /// Whether playback has been explicitly stopped by the user.
+  bool get isStopped => _isStopped;
 
   /// Whether a load attempt is still in flight.
   ///
@@ -1529,7 +1533,7 @@ class PlayerController extends ChangeNotifier {
   /// Loads the restored current entry without starting playback so the player
   /// can present its paused frame instead of a resume placeholder.
   Future<void> prepareCurrentPaused() async {
-    if (!_acceptsCommands || _engineHasMedia || isLoading) return;
+    if (!_acceptsCommands || _engineHasMedia || isLoading || _isStopped) return;
     final entry = current;
     if (entry == null || !MediaCatalog.kindFromExtension(entry.path).isVideo) {
       return;
@@ -1543,6 +1547,7 @@ class PlayerController extends ChangeNotifier {
     bool play = true,
   }) async {
     if (!_acceptsCommands || index < 0 || index >= _queue.length) return;
+    _isStopped = false;
     _syncCurrentProgress();
     final operation = ++_operation;
     var entry = _queue[index];
@@ -1850,8 +1855,14 @@ class PlayerController extends ChangeNotifier {
 
   Future<void> stop() async {
     if (!_acceptsCommands || current == null) return;
+    _isStopped = true;
+    _completionHandled = true;
     _transportCommandRevision++;
-    _updateQueueProgress(_currentIndex, position: position, duration: duration);
+    _updateQueueProgress(
+      _currentIndex,
+      position: Duration.zero,
+      duration: duration,
+    );
     unawaited(_writeProgressCheckpoint());
     _operation++;
     _cancelPendingOpen(reason: 'playback stopped');
@@ -1863,11 +1874,13 @@ class PlayerController extends ChangeNotifier {
     _playbackState = _playbackState.copyWith(
       isPlaying: false,
       isBuffering: false,
+      position: Duration.zero,
       clearNativeSource: true,
       sourceLoaded: false,
     );
     final stopping = _ignorePlaybackFailure(_playback.stop);
     _seekPreview.setSource(null);
+    _publishPosition(Duration.zero);
     _publishTransport();
     _notifyIfOpen();
     _scheduleSave();
@@ -1926,8 +1939,10 @@ class PlayerController extends ChangeNotifier {
     if (isPlaying) {
       await _runPlaybackCommand(_playback.pause);
     } else if (!_engineHasMedia) {
+      _isStopped = false;
       await playIndex(_currentIndex);
     } else {
+      _isStopped = false;
       await _runPlaybackCommand(_playback.play);
     }
   }
@@ -2544,6 +2559,7 @@ class PlayerController extends ChangeNotifier {
   }
 
   Future<void> _stopAfterQueue() async {
+    _isStopped = true;
     _markSourceDisplaced();
     _engineHasMedia = false;
     _engineEntryId = null;
@@ -2744,7 +2760,7 @@ class PlayerController extends ChangeNotifier {
     if (current != null && _engineHasMedia) {
       _consumePendingResume();
     }
-    if (snapshot.completed && !wasCompleted && !_completionHandled) {
+    if (!_isStopped && snapshot.completed && !wasCompleted && !_completionHandled) {
       _completionHandled = true;
       unawaited(_advance(fromCompletion: true));
     }

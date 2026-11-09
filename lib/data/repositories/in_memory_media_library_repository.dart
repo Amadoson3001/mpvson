@@ -1,6 +1,7 @@
 import 'dart:async';
 import '../../domain/models/library_models.dart';
 import '../../domain/models/media_catalog.dart';
+import '../../domain/models/media_entry.dart';
 import 'media_library_repository.dart';
 
 extension _FirstWhereOrNullExt<T> on Iterable<T> {
@@ -345,6 +346,64 @@ class InMemoryMediaLibraryRepository extends MediaLibraryRepository {
       );
     }
     notifyListeners();
+  }
+
+  @override
+  Future<void> addPathsToPlaylist(String playlistId, List<String> paths) async {
+    await upsertDiscoveredFiles(paths);
+    final mediaIds = <String>[];
+    for (final p in paths) {
+      final canonical = MediaEntry.canonicalSource(p);
+      final item = _items.firstWhereOrNull((i) => i.canonicalSource == canonical);
+      if (item != null) {
+        mediaIds.add(item.id);
+      }
+    }
+    if (mediaIds.isNotEmpty) {
+      await addToPlaylist(playlistId, mediaIds);
+    }
+  }
+
+  @override
+  Future<void> clearPlaylist(String playlistId) async {
+    _playlistEntries[playlistId] = <PlaylistEntryRecord>[];
+    final plIndex = _playlists.indexWhere((p) => p.id == playlistId);
+    if (plIndex >= 0) {
+      _playlists[plIndex] = _playlists[plIndex].copyWith(
+        entryCount: 0,
+        updatedAt: DateTime.now(),
+      );
+    }
+    notifyListeners();
+  }
+
+  @override
+  Future<void> probeMedia(String path) async {}
+
+  @override
+  Future<void> updateMediaDuration(
+    String canonicalSource,
+    Duration duration,
+  ) async {
+    final canon = MediaEntry.canonicalSource(canonicalSource);
+    final index = _items.indexWhere(
+      (m) => m.canonicalSource == canonicalSource || m.canonicalSource == canon,
+    );
+    if (index >= 0) {
+      final old = _items[index];
+      final updated = old.copyWith(
+        metadata: old.metadata.copyWith(duration: duration),
+      );
+      _items[index] = updated;
+      for (final entryList in _playlistEntries.values) {
+        for (var i = 0; i < entryList.length; i++) {
+          if (entryList[i].mediaId == old.id) {
+            entryList[i] = entryList[i].copyWith(mediaItem: updated);
+          }
+        }
+      }
+      notifyListeners();
+    }
   }
 
   @override

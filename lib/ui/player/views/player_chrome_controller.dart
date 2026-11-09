@@ -16,6 +16,7 @@ class PlayerChromeController extends ChangeNotifier {
     required this.playerFocus,
     required this.isFullscreen,
     required this.reduceMotion,
+    this.getAutoHideDelaySeconds,
     FocusScopeNode? controlsFocusScope,
     FocusScopeNode? queueFocusScope,
   }) : controlsFocusScope =
@@ -33,6 +34,7 @@ class PlayerChromeController extends ChangeNotifier {
   final FocusNode playerFocus;
   final bool Function() isFullscreen;
   final bool Function() reduceMotion;
+  final double Function()? getAutoHideDelaySeconds;
   final FocusScopeNode controlsFocusScope;
   final FocusScopeNode queueFocusScope;
 
@@ -238,11 +240,20 @@ class PlayerChromeController extends ChangeNotifier {
   }
 
   void scheduleHide({bool restart = false}) {
+    final delaySeconds = getAutoHideDelaySeconds?.call() ?? 2.8;
+    if (delaySeconds <= 0) {
+      _controlsTimer?.cancel();
+      _controlsTimer = null;
+      return;
+    }
     if (hideBlocked || !_controlsVisible) return;
     if (_controlsTimer?.isActive == true && !restart) return;
     _controlsTimer?.cancel();
+    final delay = isFullscreen()
+        ? fullscreenHideDelay
+        : Duration(milliseconds: (delaySeconds * 1000).round());
     _controlsTimer = Timer(
-      isFullscreen() ? fullscreenHideDelay : controlHideDelay,
+      delay,
       () {
         if (!hideBlocked && _controlsVisible) {
           _controlsVisible = false;
