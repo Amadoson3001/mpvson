@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:isolate';
 import 'dart:math';
 
+import 'package:meta/meta.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
@@ -73,6 +74,11 @@ class SessionRepository {
   _PendingProgressRequest? _pendingProgressSave;
   Future<void>? _scrubFuture;
 
+  /// Whether the primary file was structurally unusable at load time. While
+  /// true, saves keep the known-good backup instead of promoting the damaged
+  /// primary into its place.
+  bool _primaryInvalid = false;
+
   /// Default session encoder that performs heavy JSON serialization in a background isolate.
   static Future<String> _defaultEncoder(PlaybackSession session) =>
       Isolate.run(() => jsonEncode(session.toJson()));
@@ -94,16 +100,21 @@ class SessionRepository {
       final file = await _sessionFile();
       try {
         final primary = await _readSession(file);
-        if (primary != null) return SessionLoadResult(session: primary);
+        if (primary != null) {
+          _primaryInvalid = false;
+          return SessionLoadResult(session: primary);
+        }
         if (!await file.exists()) {
           // No primary at all: the backup may still carry the last session.
           final backup = await _readSession(_backupFile(file));
+          _primaryInvalid = backup != null;
           return SessionLoadResult(
             session: backup,
             note: backup == null ? null : 'Recovered from the session backup.',
           );
         }
       } on SessionFormatException catch (error) {
+        _primaryInvalid = true;
         final backup = await _readSession(_backupFile(file));
         return SessionLoadResult(
           session: backup,
@@ -365,17 +376,25 @@ class SessionRepository {
           await temporary.writeAsString(encoded, flush: true);
           final hadPreviousFile = await target.exists();
           if (hadPreviousFile) {
-            if (await backup.exists()) await backup.delete();
-            await target.rename(backup.path);
+            if (_primaryInvalid) {
+              // Keep the known-good backup while replacing a damaged primary.
+              await target.delete();
+            } else {
+              if (await backup.exists()) await backup.delete();
+              await target.rename(backup.path);
+            }
           }
           try {
-            await temporary.rename(target.path);
+            await commitTemporary(temporary, target);
           } on Object {
-            if (hadPreviousFile && await backup.exists()) {
-              await backup.rename(target.path);
+            // Copy rather than rename so a failed commit never consumes the
+            // recovery copy.
+            if (!await target.exists() && await backup.exists()) {
+              await backup.copy(target.path);
             }
             rethrow;
           }
+          _primaryInvalid = false;
           if (scrubBackup) {
             // The recovery copy must not keep what the user removed from the
             // session, so it is replaced with the same content.
@@ -522,6 +541,12 @@ class SessionRepository {
       rethrow;
     }
   }
+
+  /// Swaps the prepared temporary file into [target]. A separate step so tests
+  /// can inject a commit failure at the exact point recovery must survive.
+  @visibleForTesting
+  Future<void> commitTemporary(File temporary, File target) =>
+      temporary.rename(target.path);
 
   File _backupFile(File target) => File('${target.path}.bak');
 

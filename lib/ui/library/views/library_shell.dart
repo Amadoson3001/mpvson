@@ -389,17 +389,17 @@ class _LibraryShellState extends State<LibraryShell>
                                       ),
                                     ),
                                     // Header Bar (Search & Mobile Drawer Trigger)
-                                    if (_currentSection !=
-                                        LibrarySection.settings)
-                                      AnimatedBuilder(
-                                        animation: widget.controller,
-                                        builder: (context, _) =>
-                                            _buildHeaderBar(
-                                              isCompact,
-                                              !isCompact,
-                                              showBackLabel: width >= 600,
-                                            ),
+                                    // Stays visible in Settings too: below the
+                                    // medium breakpoint it carries the drawer
+                                    // button, the only navigation exit there.
+                                    AnimatedBuilder(
+                                      animation: widget.controller,
+                                      builder: (context, _) => _buildHeaderBar(
+                                        isCompact,
+                                        !isCompact,
+                                        showBackLabel: width >= 600,
                                       ),
+                                    ),
                                     // Main Stage View
                                     Expanded(child: _buildContentStage()),
                                   ],
@@ -459,6 +459,20 @@ class _LibraryShellState extends State<LibraryShell>
       color: context.palette.background,
       child: Row(
         children: [
+          // One back affordance at a time: with a video underneath the header
+          // already offers "Return to video".
+          if (_currentSection == LibrarySection.settings &&
+              widget.onBackToPlayer == null) ...[
+            IconButton(
+              onPressed:
+                  widget.onCloseSettings ??
+                  () => _selectSection(LibrarySection.home),
+              tooltip: 'Close settings',
+              icon: const Icon(Icons.arrow_back_rounded),
+              color: context.palette.primaryText,
+            ),
+            const SizedBox(width: 8),
+          ],
           if (widget.onBackToPlayer != null) ...[
             if (showBackLabel)
               TextButton.icon(
@@ -713,6 +727,7 @@ class _LibraryShellState extends State<LibraryShell>
                   repository: widget.repository,
                   onBack: _closeNowPlaying,
                   onOpenQueue: _showCompactQueue,
+                  onAddQueueFiles: widget.onAddQueueFiles,
                 ),
               ),
             ),

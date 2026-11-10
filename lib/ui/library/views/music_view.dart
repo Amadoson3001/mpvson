@@ -58,6 +58,7 @@ class _MusicViewState extends State<MusicView> {
   List<MediaItemRecord>? _albumTracks;
   List<MediaItemRecord>? _artistSongs;
   bool _isLoading = false;
+  Object? _error;
   Future<void>? _reloadFuture;
   bool _reloadAgain = false;
   Timer? _reloadThrottle;
@@ -185,6 +186,7 @@ class _MusicViewState extends State<MusicView> {
         if (!mounted) return;
         if (_reloadAgain) continue;
         setState(() {
+          _error = null;
           if (album != null) {
             _albumTracks = items;
           } else if (artist != null) {
@@ -196,6 +198,7 @@ class _MusicViewState extends State<MusicView> {
       } while (_reloadAgain && mounted);
     } catch (error) {
       debugPrint('Music view could not refresh: $error');
+      if (mounted) setState(() => _error = error);
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -291,6 +294,8 @@ class _MusicViewState extends State<MusicView> {
                       ),
                     ),
                   )
+                : _error != null && items.isEmpty
+                ? _buildLoadErrorState()
                 : items.isEmpty
                 ? _buildEmptyStateForSubtab()
                 : switch (_currentSubtab) {
@@ -455,6 +460,16 @@ class _MusicViewState extends State<MusicView> {
         return all.where((item) => item.lastPlayedAt != null).toList();
     }
   }
+
+  Widget _buildLoadErrorState() => EmptyState(
+    title: "Couldn't load music",
+    message:
+        'The library could not be queried. Try again, or check that the library database is available.',
+    icon: Icons.error_outline_rounded,
+    actionLabel: 'Try again',
+    actionIcon: Icons.refresh_rounded,
+    onAction: () => unawaited(_reload()),
+  );
 
   Widget _buildEmptyStateForSubtab() {
     final query = widget.searchQuery?.trim();

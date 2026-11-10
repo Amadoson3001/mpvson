@@ -238,9 +238,7 @@ class _NavItemState extends State<_NavItem> {
       label: label,
       excludeSemantics: true,
       child: Material(
-        color: selected
-            ? accent.withValues(alpha: 0.12)
-            : Colors.transparent,
+        color: selected ? accent.withValues(alpha: 0.12) : Colors.transparent,
         borderRadius: radius,
         child: InkWell(
           onTap: widget.onTap,
@@ -255,9 +253,7 @@ class _NavItemState extends State<_NavItem> {
               border: _focused
                   ? Border.all(color: accent, width: 2)
                   : selected
-                  ? Border(
-                      left: BorderSide(color: accent, width: 3),
-                    )
+                  ? Border(left: BorderSide(color: accent, width: 3))
                   : null,
             ),
             child: ConstrainedBox(

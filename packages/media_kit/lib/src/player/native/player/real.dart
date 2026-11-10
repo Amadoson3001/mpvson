@@ -90,6 +90,11 @@ class NativePlayer extends PlatformPlayer {
         try {
           configuration.ready?.call();
         } catch (_) {}
+      })
+      ..catchError((Object _) {
+        // Awaited callers still receive the error; this listener keeps a
+        // failed initialization out of the zone's unhandled-error path when
+        // nobody awaits construction.
       });
   }
 

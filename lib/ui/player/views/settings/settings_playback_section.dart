@@ -13,10 +13,15 @@ class PlaybackSettingsSection extends StatelessWidget {
     super.key,
     required this.controller,
     required this.pickSubtitle,
+    this.embedded = false,
   });
 
   final PlayerController controller;
   final Future<String?> Function() pickSubtitle;
+
+  /// True when these settings render inline in the library shell rather than
+  /// in their own dialog route. Only a dialog route may be popped here.
+  final bool embedded;
 
   @override
   Widget build(BuildContext context) {
@@ -132,7 +137,9 @@ class PlaybackSettingsSection extends StatelessWidget {
                   ),
                   trailing: const Icon(Icons.chevron_right_rounded, size: 20),
                   onTap: () async {
-                    Navigator.of(context).pop();
+                    // Embedded settings share the host route; popping would
+                    // dismiss the whole library/player instead of a dialog.
+                    if (!embedded) Navigator.of(context).pop();
                     final path = await pickSubtitle();
                     if (path == null || path.isEmpty) return;
                     try {

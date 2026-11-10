@@ -777,7 +777,7 @@ Future<bool> _syncActive(String root, _Options options) async {
   artifact['memberSize'] = activeDll.lengthSync();
   await File(
     recordPath,
-  ).writeAsString(const JsonEncoder.withIndent('  ').convert(record) + '\n');
+  ).writeAsString('${const JsonEncoder.withIndent('  ').convert(record)}\n');
   stdout.writeln('Updated engine-provenance.json with active engine v$version');
   return true;
 }

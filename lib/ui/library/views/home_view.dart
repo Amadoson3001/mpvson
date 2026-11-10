@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../../../data/repositories/media_library_repository.dart';
@@ -63,8 +65,12 @@ class HomeView extends StatelessWidget {
           0.0,
           double.infinity,
         );
-        final columns = ((contentWidth + gap) / 320).ceil().clamp(1, 8);
-        final tileWidth = (contentWidth - (columns - 1) * gap) / columns;
+        // The opening surface is capped at 960; keep the recent grid on the
+        // same measure instead of letting it run wider underneath.
+        final gridWidth = math.min(contentWidth, 960.0);
+        final gridInset = inset + (contentWidth - gridWidth) / 2;
+        final columns = ((gridWidth + gap) / 320).ceil().clamp(1, 8);
+        final tileWidth = (gridWidth - (columns - 1) * gap) / columns;
         final textHeight = MediaQuery.textScalerOf(context).scale(13) * 3.8;
         return CustomScrollView(
           slivers: [
@@ -101,9 +107,7 @@ class HomeView extends StatelessWidget {
                                   'Recently played',
                                   overflow: TextOverflow.ellipsis,
                                   maxLines: 1,
-                                  style: Theme.of(
-                                    context,
-                                  ).textTheme.titleLarge,
+                                  style: Theme.of(context).textTheme.titleLarge,
                                 ),
                               ),
                               const SizedBox(width: 12),
@@ -153,7 +157,7 @@ class HomeView extends StatelessWidget {
             ),
             if (recent.isNotEmpty)
               SliverPadding(
-                padding: EdgeInsets.fromLTRB(inset, 0, inset, 32),
+                padding: EdgeInsets.fromLTRB(gridInset, 0, gridInset, 32),
                 sliver: SliverGrid(
                   gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: columns,
@@ -457,8 +461,8 @@ class _RecentTileState extends State<_RecentTile> {
               ),
               if (widget.onRemove != null)
                 SizedBox(
-                  width: 24,
-                  height: 24,
+                  width: 44,
+                  height: 44,
                   child: PopupMenuButton<String>(
                     icon: Icon(
                       Icons.more_vert_rounded,

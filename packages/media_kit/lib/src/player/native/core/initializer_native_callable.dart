@@ -39,6 +39,9 @@ class InitializerNativeCallable {
     Map<String, String> options = const {},
   }) async {
     final ctx = mpv.mpv_create();
+    if (ctx == nullptr) {
+      throw StateError('libmpv failed to create a playback instance.');
+    }
     for (final entry in options.entries) {
       final name = entry.key.toNativeUtf8();
       final value = entry.value.toNativeUtf8();
@@ -46,7 +49,11 @@ class InitializerNativeCallable {
       calloc.free(name);
       calloc.free(value);
     }
-    mpv.mpv_initialize(ctx);
+    final result = mpv.mpv_initialize(ctx);
+    if (result < 0) {
+      mpv.mpv_terminate_destroy(ctx);
+      throw StateError('libmpv failed to initialize (error $result).');
+    }
     final nativeCallable = WakeUpNativeCallable.listener(_callback);
     final nativeFunction = nativeCallable.nativeFunction;
     _locks[ctx.address] = Lock();

@@ -1,3 +1,7 @@
+import 'dart:ffi' show Abi;
+
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 
 import '../../../core/app_motion.dart';
@@ -174,8 +178,10 @@ class AboutSettingsSection extends StatelessWidget {
               AnimatedBuilder(
                 animation: updates,
                 builder: (context, _) {
-                  final (statusText, statusColor) =
-                      appUpdateStatusPresentation(context, updates);
+                  final (statusText, statusColor) = appUpdateStatusPresentation(
+                    context,
+                    updates,
+                  );
                   return _AboutTile(
                     icon: Icons.desktop_windows_outlined,
                     title: 'Application updates',
@@ -215,13 +221,13 @@ class AboutSettingsSection extends StatelessWidget {
           // System & Architecture Group
           SettingsCardGroup(
             title: 'System & Architecture',
-            children: const [
+            children: [
               _AboutTile(
                 icon: Icons.speed_rounded,
                 title: 'Rendering pipeline',
-                subtitle: 'Flutter Impeller · Direct3D 11 · GPU Accelerated',
+                subtitle: _renderingPipelineLabel(),
               ),
-              _AboutTile(
+              const _AboutTile(
                 icon: Icons.verified_user_outlined,
                 title: 'Open source & license',
                 subtitle: 'GPLv3 / LGPL · Built with Flutter and libmpv',
@@ -231,6 +237,27 @@ class AboutSettingsSection extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  /// Flutter exposes no runtime query for its rasterizer backend, so report
+  /// only what the app can actually detect instead of naming a pipeline.
+  static String _renderingPipelineLabel() {
+    final platform = switch (defaultTargetPlatform) {
+      TargetPlatform.windows => 'Windows',
+      TargetPlatform.linux => 'Linux',
+      TargetPlatform.macOS => 'macOS',
+      TargetPlatform.android => 'Android',
+      TargetPlatform.iOS => 'iOS',
+      TargetPlatform.fuchsia => 'Fuchsia',
+    };
+    final architecture = switch (Abi.current()) {
+      Abi.windowsX64 || Abi.linuxX64 || Abi.macosX64 => 'x64',
+      Abi.windowsArm64 || Abi.linuxArm64 || Abi.macosArm64 => 'ARM64',
+      _ => null,
+    };
+    return architecture == null
+        ? 'Flutter · $platform'
+        : 'Flutter · $platform · $architecture';
   }
 
   static String _formatEngineVersion(String raw) {

@@ -255,12 +255,7 @@ class _ApplicationTrack extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _applicationStatusContent(
-                  context,
-                  updates,
-                  release,
-                  accent,
-                ),
+                _applicationStatusContent(context, updates, release, accent),
                 if (updates.error != null && updates.status != 'error') ...[
                   const SizedBox(height: 8),
                   _TrackNotice(
@@ -900,7 +895,7 @@ class _AppReleaseDetails extends StatelessWidget {
         _TrackNotice(
           icon: Icons.shield_outlined,
           color: context.palette.secondaryText,
-          text: 'Verified with SHA-256 integrity check.',
+          text: 'SHA-256 verification required before installation.',
         ),
       ],
     );
@@ -986,6 +981,19 @@ class _ReleaseNotesPreviewState extends State<ReleaseNotesPreview> {
 
     final hasMore = lines.length > 2 || raw.length > 150;
 
+    // Notes that consist only of URLs and separators leave [lines] empty, so
+    // the collapsed preview falls back to the raw text instead of crashing.
+    final preview = highlights.isNotEmpty
+        ? highlights
+        : lines.isNotEmpty
+        ? [lines.first]
+        : [
+            raw
+                .split('\n')
+                .map((line) => line.trim())
+                .firstWhere((line) => line.isNotEmpty),
+          ];
+
     return Container(
       margin: const EdgeInsets.only(top: 8),
       padding: const EdgeInsets.all(10),
@@ -1051,8 +1059,7 @@ class _ReleaseNotesPreviewState extends State<ReleaseNotesPreview> {
           ),
           const SizedBox(height: 6),
           if (!_expanded) ...[
-            for (final h
-                in highlights.isNotEmpty ? highlights : [lines.first]) ...[
+            for (final h in preview) ...[
               Padding(
                 padding: const EdgeInsets.only(bottom: 2),
                 child: Row(

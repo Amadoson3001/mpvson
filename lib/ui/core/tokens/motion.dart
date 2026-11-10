@@ -58,24 +58,16 @@ abstract final class AppMotion {
   static Duration duration(BuildContext context, Duration preferred) =>
       reduce(context) ? instant : preferred;
 
-  /// Composited shared-axis transition (fade + micro vertical glide) for stage/view swaps.
+  /// Surface transition for stage/view swaps: the outgoing surface fades out
+  /// while the incoming one fades in. Timing curves come from the caller, so
+  /// the swap stays a single composited effect instead of fade plus glide.
   static Widget stageTransition(
     BuildContext context,
     Widget child,
     Animation<double> animation,
   ) {
     if (lowPower(context)) return child;
-    final curved = CurvedAnimation(parent: animation, curve: enter);
-    return FadeTransition(
-      opacity: curved,
-      child: SlideTransition(
-        position: Tween<Offset>(
-          begin: const Offset(0, 0.015),
-          end: Offset.zero,
-        ).animate(curved),
-        child: child,
-      ),
-    );
+    return FadeTransition(opacity: animation, child: child);
   }
 }
 
@@ -183,8 +175,10 @@ Future<T?> showMorphDialog<T>({
     barrierDismissible: barrierDismissible,
     barrierColor: barrierColor,
     barrierLabel:
-        Localizations.of<MaterialLocalizations>(context, MaterialLocalizations)
-            ?.modalBarrierDismissLabel ??
+        Localizations.of<MaterialLocalizations>(
+          context,
+          MaterialLocalizations,
+        )?.modalBarrierDismissLabel ??
         'Close dialog',
     transitionDuration: AppMotion.emphasized,
     pageBuilder: (context, animation, secondaryAnimation) => builder(context),
@@ -211,8 +205,7 @@ class _MorphDialogTransition extends StatefulWidget {
   final Widget child;
 
   @override
-  State<_MorphDialogTransition> createState() =>
-      _MorphDialogTransitionState();
+  State<_MorphDialogTransition> createState() => _MorphDialogTransitionState();
 }
 
 class _MorphDialogTransitionState extends State<_MorphDialogTransition> {

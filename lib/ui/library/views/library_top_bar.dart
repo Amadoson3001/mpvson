@@ -125,16 +125,19 @@ class LibraryTopBar extends StatelessWidget {
                       icon: Icon(
                         Icons.queue_music_rounded,
                         size: 18,
-                        color: queueOpen ? palette.accent : palette.secondaryText,
+                        color: queueOpen
+                            ? palette.accent
+                            : palette.secondaryText,
                       ),
                       label: Text(
                         'Queue',
-                        style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                          fontWeight: FontWeight.w600,
-                          color: queueOpen
-                              ? palette.accent
-                              : palette.secondaryText,
-                        ),
+                        style: Theme.of(context).textTheme.labelMedium
+                            ?.copyWith(
+                              fontWeight: FontWeight.w600,
+                              color: queueOpen
+                                  ? palette.accent
+                                  : palette.secondaryText,
+                            ),
                       ),
                       style: TextButton.styleFrom(
                         padding: const EdgeInsets.symmetric(

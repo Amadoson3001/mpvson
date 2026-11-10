@@ -275,10 +275,9 @@ class EngineInstallationRepository {
       final root = p.normalize(
         p.absolute((await _resolveEnginesDirectory()).path),
       );
-      await File(p.join(root, bootLeaseOwnerFileName)).writeAsString(
-        jsonEncode({'pid': pid, 'token': token}),
-        flush: true,
-      );
+      await File(
+        p.join(root, bootLeaseOwnerFileName),
+      ).writeAsString(jsonEncode({'pid': pid, 'token': token}), flush: true);
     } on Object {
       // Adopting a boot attempt after an in-process restart is a convenience;
       // a failed owner record must not fail the boot itself.

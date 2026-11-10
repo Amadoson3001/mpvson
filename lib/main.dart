@@ -66,8 +66,8 @@ Future<EngineBootSelection> _initializeMediaKitWithFallbacks(
         MediaKit.ensureInitialized(libmpv: loadedPath);
         final loadedVersion =
             bundledEnginePath != null && p.equals(loadedPath, bundledEnginePath)
-                ? bundledEngineVersion
-                : p.basename(p.dirname(loadedPath));
+            ? bundledEngineVersion
+            : p.basename(p.dirname(loadedPath));
         return EngineBootSelection(
           libraryPath: loadedPath,
           version: loadedVersion,
@@ -262,10 +262,18 @@ Future<void> main(List<String> arguments) async {
   readyController.applyGraphicsSettings(graphicsSettings);
 
   final mediaProbeService = MediaProbeServiceImpl();
-  final supportDir = await getApplicationSupportDirectory();
-  final dbFile = File(p.join(supportDir.path, 'media_library.db'));
+  // The library is optional: a path-provider failure degrades to an in-memory
+  // library instead of blocking playback startup.
+  String? libraryDatabasePath;
+  try {
+    final supportDir = await getApplicationSupportDirectory();
+    libraryDatabasePath = p.join(supportDir.path, 'media_library.db');
+  } on Object catch (error) {
+    diagnostics.record('startup.library_path', error: error);
+  }
   final libraryRepository = MediaLibraryRepositoryImpl(
-    databasePath: dbFile.path,
+    databasePath: libraryDatabasePath,
+    inMemory: libraryDatabasePath == null,
     probeService: mediaProbeService,
   );
   final libraryPlaybackTracker = LibraryPlaybackTracker(
@@ -352,8 +360,17 @@ Future<void> main(List<String> arguments) async {
     mediaProbeService: mediaProbeService,
     desktopIntegration: desktopIntegration,
   );
-  await windowManager.setPreventClose(true);
   windowManager.addListener(lifecycle);
+  try {
+    await windowManager.setPreventClose(true);
+  } on Object catch (error) {
+    // Close interception owns the guarded shutdown; without it, surface the
+    // failure instead of running with an unguarded window.
+    await lifecycle._releaseServices(discard: true);
+    runApp(_StartupFailureApp(error: error.toString()));
+    await _showFallbackWindow();
+    return;
+  }
 
   // Mount the real UI frame instantly
   runApp(
@@ -369,8 +386,12 @@ Future<void> main(List<String> arguments) async {
       desktopIntegration: desktopIntegration,
     ),
   );
-  await windowManager.show();
-  await windowManager.focus();
+  try {
+    await windowManager.show();
+    await windowManager.focus();
+  } on Object catch (error) {
+    diagnostics.record('startup.window_show', error: error);
+  }
 
   // The adapter probe creates a D3D11 device; keep it off the startup path.
   unawaited(GpuInfoService().recordSnapshot(diagnostics));
@@ -379,6 +400,14 @@ Future<void> main(List<String> arguments) async {
   // run concurrently without delaying the initial UI frame.
   if (selectedEngine?.isPending ?? false) {
     try {
+      final platform = readyPlayback.player.platform;
+      if (platform is NativePlayer) {
+        // Construction alone does not prove the staged engine works: native
+        // creation and initialization run asynchronously. Confirm only after
+        // they succeed, within a bounded wait; a failed or stalled engine
+        // stays unconfirmed so the next launch can recover it.
+        await platform.future?.timeout(const Duration(seconds: 15));
+      }
       await engineUpdates.confirmPendingBoot();
     } on Object catch (error) {
       stderr.writeln('Could not commit the staged playback engine: $error');
@@ -650,12 +679,12 @@ class _StartupFailureApp extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
                   Text(
-                    'Mpvson could not start playback',
+                    'Mpvson could not start',
                     style: Theme.of(context).textTheme.headlineSmall,
                   ),
                   const SizedBox(height: 12),
                   Text(
-                    'The native media engine could not be initialized. Check that the bundled libmpv runtime is present and compatible.',
+                    'A required startup component could not be initialized. Check that the bundled libmpv runtime is present and compatible.',
                     style: Theme.of(context).textTheme.bodyMedium,
                   ),
                   const SizedBox(height: 16),

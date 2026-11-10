@@ -795,6 +795,16 @@ class MediaKitPlaybackService
     }
     _scheduleResize(force: true);
     await _applyBufferingPolicy(isNetwork: MediaEntry.isNetworkUrl(path));
+    // A stop or a newer open can complete while the buffering-policy writes
+    // are in flight; dispatching now would restart playback after Stop/Clear.
+    if (_disposed || _identity.boundaryCounter != boundary) {
+      _diagnostics?.record(
+        'playback.open',
+        sourceId: MediaSource.redact(path),
+        message: 'boundary $boundary superseded before native open',
+      );
+      return;
+    }
     _syncVideoDecoding(_videoOutputPolicy.visible);
     await _player.open(Media(path), play: play);
     if (!_identity.observationActive && !_disposed) {

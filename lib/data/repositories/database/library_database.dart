@@ -842,6 +842,21 @@ void _initializeSchema(Database db) {
     needsRebuild = true;
   }
 
+  // Older libraries may predate columns referenced by the indexes below.
+  // Add missing columns before index creation so reopening an old database
+  // cannot abort initialization.
+  final mediaExists = db.select(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'media'",
+  );
+  if (mediaExists.isNotEmpty) {
+    final columns = db.select('PRAGMA table_info(media)');
+    if (!columns.any((column) => column['name'] == 'is_in_library')) {
+      db.execute(
+        'ALTER TABLE media ADD COLUMN is_in_library INTEGER NOT NULL DEFAULT 1',
+      );
+    }
+  }
+
   db.execute('''
     CREATE TABLE IF NOT EXISTS folders (
       path TEXT PRIMARY KEY,
@@ -942,12 +957,6 @@ void _initializeSchema(Database db) {
       VALUES (new.rowid, new.title, new.artist, new.album_artist, new.album, new.path);
     END;
   ''');
-  final columns = db.select('PRAGMA table_info(media)');
-  if (!columns.any((column) => column['name'] == 'is_in_library')) {
-    db.execute(
-      'ALTER TABLE media ADD COLUMN is_in_library INTEGER NOT NULL DEFAULT 1',
-    );
-  }
   if (needsRebuild) {
     final mediaCount =
         db.select('SELECT count(*) AS c FROM media').first['c'] as int;

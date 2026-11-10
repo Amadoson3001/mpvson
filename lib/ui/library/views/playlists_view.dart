@@ -37,6 +37,7 @@ class _PlaylistsViewState extends State<PlaylistsView> {
   List<PlaylistEntryRecord>? _entries;
   String? _selectedEntry;
   bool _isLoading = false;
+  Object? _error;
   Future<void>? _reloadFuture;
   bool _reloadAgain = false;
   Timer? _reloadThrottle;
@@ -115,16 +116,23 @@ class _PlaylistsViewState extends State<PlaylistsView> {
           );
           if (!mounted) return;
           if (_reloadAgain) continue;
-          setState(() => _entries = entries);
+          setState(() {
+            _entries = entries;
+            _error = null;
+          });
         } else {
           final playlists = await widget.repository.getPlaylists();
           if (!mounted) return;
           if (_reloadAgain) continue;
-          setState(() => _playlists = playlists);
+          setState(() {
+            _playlists = playlists;
+            _error = null;
+          });
         }
       } while (_reloadAgain && mounted);
     } catch (error) {
       debugPrint('Playlists view could not refresh: $error');
+      if (mounted) setState(() => _error = error);
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -251,6 +259,16 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                 strokeWidth: 2,
                 valueColor: AlwaysStoppedAnimation<Color>(accent),
               ),
+            )
+          : _error != null && playlists.isEmpty
+          ? EmptyState(
+              title: "Couldn't load playlists",
+              message:
+                  'The library could not be queried. Try again, or check that the library database is available.',
+              icon: Icons.error_outline_rounded,
+              actionLabel: 'Try again',
+              actionIcon: Icons.refresh_rounded,
+              onAction: () => unawaited(_reload()),
             )
           : playlists.isEmpty
           ? EmptyState(

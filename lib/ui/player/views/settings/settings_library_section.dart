@@ -4,9 +4,11 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
 import '../../../core/app_theme.dart';
+import '../../../core/components/app_dialog.dart';
 import '../../../core/components/empty_state.dart';
 import '../../../core/toast/app_toast.dart';
 import '../../../../data/repositories/media_library_repository.dart';
+import '../../../../domain/models/library_models.dart';
 
 class LibraryFoldersView extends StatelessWidget {
   const LibraryFoldersView({super.key, required this.repository});
@@ -42,6 +44,39 @@ class MediaLibrarySettingsSection extends StatelessWidget {
         'Could not add folder. Please check directory permissions.',
         tone: AppToastTone.danger,
       );
+    }
+  }
+
+  Future<void> _removeFolder(
+    BuildContext context,
+    LibraryFolderRecord folder,
+  ) async {
+    final confirmed = await AppDialog.show<bool>(
+      context: context,
+      builder: (ctx) => AppDialog(
+        maxWidth: 420,
+        title: const Text('Remove folder'),
+        content: Text(
+          'Remove "${folder.path}" from the library? Indexed files in this folder will no longer be listed. Files on disk are not deleted.',
+          style: context.palette.rowSecondary,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: context.palette.danger,
+            ),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await libraryRepository.removeFolder(folder.path);
     }
   }
 
@@ -164,7 +199,8 @@ class MediaLibrarySettingsSection extends StatelessWidget {
                                       style: theme.textTheme.bodySmall
                                           ?.copyWith(
                                             color: theme
-                                                .colorScheme.onSurfaceVariant,
+                                                .colorScheme
+                                                .onSurfaceVariant,
                                           ),
                                     ),
                                   ),
@@ -177,9 +213,8 @@ class MediaLibrarySettingsSection extends StatelessWidget {
                                   Icons.delete_outline_rounded,
                                   size: 19,
                                 ),
-                                onPressed: () => unawaited(
-                                  libraryRepository.removeFolder(folder.path),
-                                ),
+                                onPressed: () =>
+                                    unawaited(_removeFolder(context, folder)),
                               ),
                             ),
                           );

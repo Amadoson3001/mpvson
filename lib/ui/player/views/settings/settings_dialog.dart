@@ -144,6 +144,7 @@ class _SettingsDialogViewState extends State<SettingsDialogView> {
               updates: widget.updates,
               engineUpdates: widget.engineUpdates,
               pickSubtitle: widget.pickSubtitle,
+              embedded: widget.embedded,
               compactViewport: widget.compactViewport,
               preferences: widget.preferences,
               desktopIntegration: widget.desktopIntegration,
@@ -172,6 +173,7 @@ class _SettingsDialogViewState extends State<SettingsDialogView> {
             updates: widget.updates,
             engineUpdates: widget.engineUpdates,
             pickSubtitle: widget.pickSubtitle,
+            embedded: widget.embedded,
             compactViewport: widget.compactViewport,
             preferences: widget.preferences,
             desktopIntegration: widget.desktopIntegration,
@@ -351,6 +353,7 @@ class SettingsContentPane extends StatelessWidget {
     required this.desktopIntegration,
     required this.libraryRepository,
     this.pickDirectory,
+    this.embedded = false,
   });
 
   final SettingsSection section;
@@ -363,6 +366,7 @@ class SettingsContentPane extends StatelessWidget {
   final DesktopIntegrationService desktopIntegration;
   final MediaLibraryRepository libraryRepository;
   final Future<String?> Function()? pickDirectory;
+  final bool embedded;
 
   @override
   Widget build(BuildContext context) {
@@ -416,53 +420,42 @@ class SettingsContentPane extends StatelessWidget {
             ),
           ),
           Expanded(
-            child: AnimatedSwitcher(
-              duration: AppMotion.duration(context, AppMotion.standard),
-              reverseDuration: AppMotion.duration(context, AppMotion.quick),
-              switchInCurve: AppMotion.enter,
-              switchOutCurve: AppMotion.exit,
-              layoutBuilder: (currentChild, previousChildren) => Stack(
-                fit: StackFit.expand,
-                children: [...previousChildren, ?currentChild],
-              ),
-              transitionBuilder: (child, animation) {
-                if (AppMotion.reduce(context)) return child;
-                return FadeTransition(opacity: animation, child: child);
-              },
-              child: KeyedSubtree(
-                key: ValueKey<SettingsSection>(section),
-                child: switch (section) {
-                  SettingsSection.appearance => AppearanceSettingsSection(
-                    controller: controller,
-                    compactViewport: compactViewport,
-                    appPreferences: preferences,
-                  ),
-                  SettingsSection.playback => PlaybackSettingsSection(
-                    controller: controller,
-                    pickSubtitle: pickSubtitle,
-                  ),
-                  SettingsSection.videoAudio => VideoAudioSettingsSection(
-                    controller: controller,
-                  ),
-                  SettingsSection.desktopIntegration =>
-                    DesktopIntegrationSettingsSection(
-                      preferences: preferences,
-                      desktopIntegration: desktopIntegration,
-                    ),
-                  SettingsSection.mediaLibrary => MediaLibrarySettingsSection(
-                    libraryRepository: libraryRepository,
-                    pickDirectory: pickDirectory,
-                  ),
-                  SettingsSection.shortcuts => ShortcutsSettingsSection(
+            // Section content is text and controls: swap it instantly instead
+            // of cross-fading so the pane stays calm while navigating.
+            child: KeyedSubtree(
+              key: ValueKey<SettingsSection>(section),
+              child: switch (section) {
+                SettingsSection.appearance => AppearanceSettingsSection(
+                  controller: controller,
+                  compactViewport: compactViewport,
+                  appPreferences: preferences,
+                ),
+                SettingsSection.playback => PlaybackSettingsSection(
+                  controller: controller,
+                  pickSubtitle: pickSubtitle,
+                  embedded: embedded,
+                ),
+                SettingsSection.videoAudio => VideoAudioSettingsSection(
+                  controller: controller,
+                ),
+                SettingsSection.desktopIntegration =>
+                  DesktopIntegrationSettingsSection(
                     preferences: preferences,
+                    desktopIntegration: desktopIntegration,
                   ),
-                  SettingsSection.about => AboutSettingsSection(
-                    updates: updates,
-                    engineUpdates: engineUpdates,
-                    engineVersion: controller.engineVersion,
-                  ),
-                },
-              ),
+                SettingsSection.mediaLibrary => MediaLibrarySettingsSection(
+                  libraryRepository: libraryRepository,
+                  pickDirectory: pickDirectory,
+                ),
+                SettingsSection.shortcuts => ShortcutsSettingsSection(
+                  preferences: preferences,
+                ),
+                SettingsSection.about => AboutSettingsSection(
+                  updates: updates,
+                  engineUpdates: engineUpdates,
+                  engineVersion: controller.engineVersion,
+                ),
+              },
             ),
           ),
         ],

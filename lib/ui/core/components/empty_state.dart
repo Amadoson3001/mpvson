@@ -10,6 +10,7 @@ class EmptyState extends StatelessWidget {
         'Add your media folders to browse and play your local music, albums, and video collection.',
     this.actionLabel,
     this.onAction,
+    this.actionIcon = Icons.add_rounded,
     this.icon = Icons.folder_open_rounded,
   });
 
@@ -17,6 +18,7 @@ class EmptyState extends StatelessWidget {
   final String message;
   final String? actionLabel;
   final VoidCallback? onAction;
+  final IconData actionIcon;
   final IconData icon;
 
   @override
@@ -74,7 +76,7 @@ class EmptyState extends StatelessWidget {
                     ),
                   ),
                   onPressed: onAction,
-                  icon: const Icon(Icons.add_rounded, size: 20),
+                  icon: Icon(actionIcon, size: 20),
                   label: Text(actionLabel!),
                 ),
               ],

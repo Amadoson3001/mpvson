@@ -46,6 +46,7 @@ class _VideosViewState extends State<VideosView> {
   bool _ascending = false;
   List<MediaItemRecord>? _videos;
   bool _isLoading = false;
+  Object? _error;
   Future<void>? _reloadFuture;
   bool _reloadAgain = false;
   Timer? _reloadThrottle;
@@ -121,10 +122,14 @@ class _VideosViewState extends State<VideosView> {
         );
         if (!mounted) return;
         if (_reloadAgain) continue;
-        setState(() => _videos = videos);
+        setState(() {
+          _videos = videos;
+          _error = null;
+        });
       } while (_reloadAgain && mounted);
     } catch (error) {
       debugPrint('Videos view could not refresh: $error');
+      if (mounted) setState(() => _error = error);
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -150,6 +155,7 @@ class _VideosViewState extends State<VideosView> {
   @override
   Widget build(BuildContext context) {
     final hasVideos = (_videos ?? const <MediaItemRecord>[]).isNotEmpty;
+    final queryFailed = _error != null && !hasVideos;
     return Material(
       color: context.palette.background,
       child: Column(
@@ -170,6 +176,16 @@ class _VideosViewState extends State<VideosView> {
                         Theme.of(context).colorScheme.primary,
                       ),
                     ),
+                  )
+                : queryFailed
+                ? EmptyState(
+                    title: "Couldn't load videos",
+                    message:
+                        'The library could not be queried. Try again, or check that the library database is available.',
+                    icon: Icons.error_outline_rounded,
+                    actionLabel: 'Try again',
+                    actionIcon: Icons.refresh_rounded,
+                    onAction: () => unawaited(_reload()),
                   )
                 : !hasVideos
                 ? EmptyState(

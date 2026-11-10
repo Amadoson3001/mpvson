@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:math' as math;
-import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -104,59 +103,55 @@ class _FloatingVideoSettingsState extends State<FloatingVideoSettings> {
                       duration: AppMotion.duration(context, AppMotion.standard),
                       curve: AppMotion.enter,
                       builder: (context, progress, child) {
-                        final reduce = AppMotion.reduce(context);
-                        return Opacity(
-                          opacity: progress,
-                          child: Transform.translate(
-                            offset: reduce
-                                ? Offset.zero
-                                : Offset((1.0 - progress) * 20.0, 0),
-                            child: child,
-                          ),
+                        // One surface, one motion: the panel slides in from the
+                        // edge. No opacity fade or backdrop blur is layered on
+                        // top, so the surface stays calm.
+                        return Transform.translate(
+                          offset: AppMotion.reduce(context)
+                              ? Offset.zero
+                              : Offset((1.0 - progress) * 20.0, 0),
+                          child: child,
                         );
                       },
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(16),
-                        child: BackdropFilter(
-                          filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-                          child: Container(
-                            width: panelWidth,
-                            height: panelHeight,
-                            decoration: BoxDecoration(
+                        child: Container(
+                          width: panelWidth,
+                          height: panelHeight,
+                          decoration: BoxDecoration(
+                            color: isDark
+                                ? const Color(0xE8141519)
+                                : const Color(0xF2FFFFFF),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(
                               color: isDark
-                                  ? const Color(0xE8141519)
-                                  : const Color(0xF2FFFFFF),
-                              borderRadius: BorderRadius.circular(16),
-                              border: Border.all(
-                                color: isDark
-                                    ? Colors.white.withValues(alpha: 0.12)
-                                    : Colors.black.withValues(alpha: 0.1),
-                                width: 1,
+                                  ? Colors.white.withValues(alpha: 0.12)
+                                  : Colors.black.withValues(alpha: 0.1),
+                              width: 1,
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.42),
+                                blurRadius: 28,
+                                offset: const Offset(0, 10),
                               ),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.42),
-                                  blurRadius: 28,
-                                  offset: const Offset(0, 10),
+                            ],
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              _buildHeader(theme, accent),
+                              _buildTabBar(theme, accent),
+                              Expanded(
+                                child: ListenableBuilder(
+                                  listenable: widget.controller,
+                                  builder: (context, _) =>
+                                      _buildTabContent(theme, accent),
                                 ),
-                              ],
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                _buildHeader(theme, accent),
-                                _buildTabBar(theme, accent),
-                                Expanded(
-                                  child: ListenableBuilder(
-                                    listenable: widget.controller,
-                                    builder: (context, _) =>
-                                        _buildTabContent(theme, accent),
-                                  ),
-                                ),
-                                if (widget.onOpenFullSettings != null)
-                                  _buildFooter(theme, accent),
-                              ],
-                            ),
+                              ),
+                              if (widget.onOpenFullSettings != null)
+                                _buildFooter(theme, accent),
+                            ],
                           ),
                         ),
                       ),

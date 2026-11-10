@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mpvson/data/services/engine_update_service.dart';
 import 'package:mpvson/data/services/update_service.dart';
+import 'package:mpvson/domain/updates/release_info.dart';
 import 'package:mpvson/ui/core/app_theme.dart';
 import 'package:mpvson/ui/player/views/settings/settings_update_section.dart';
 import 'package:mpvson/ui/player/views/update_center_dialog.dart';
@@ -25,33 +26,34 @@ void main() {
     home: Scaffold(body: Center(child: child)),
   );
 
-  testWidgets('AboutSettingsSection renders brand header and status cards cleanly', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(1280, 800);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(() => tester.view.resetPhysicalSize());
+  testWidgets(
+    'AboutSettingsSection renders brand header and status cards cleanly',
+    (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() => tester.view.resetPhysicalSize());
 
-    await tester.pumpWidget(
-      buildTestWidget(
-        AboutSettingsSection(
-          updates: updates,
-          engineUpdates: engineUpdates,
-          engineVersion: 'v0.42.0-dev',
+      await tester.pumpWidget(
+        buildTestWidget(
+          AboutSettingsSection(
+            updates: updates,
+            engineUpdates: engineUpdates,
+            engineVersion: 'v0.42.0-dev',
+          ),
         ),
-      ),
-    );
-    await tester.pumpAndSettle();
+      );
+      await tester.pumpAndSettle();
 
-    expect(find.text('Mpvson'), findsOneWidget);
-    expect(find.text('v1.2.0'), findsOneWidget);
-    expect(find.text('Update center'), findsOneWidget);
-    expect(find.text('Application updates'), findsOneWidget);
-    expect(find.text('Playback engine'), findsOneWidget);
-    expect(find.text('libmpv v0.42.0-dev'), findsOneWidget);
-    expect(find.text('Rendering pipeline'), findsOneWidget);
-    expect(find.text('Open source & license'), findsOneWidget);
-  });
+      expect(find.text('Mpvson'), findsOneWidget);
+      expect(find.text('v1.2.0'), findsOneWidget);
+      expect(find.text('Update center'), findsOneWidget);
+      expect(find.text('Application updates'), findsOneWidget);
+      expect(find.text('Playback engine'), findsOneWidget);
+      expect(find.text('libmpv v0.42.0-dev'), findsOneWidget);
+      expect(find.text('Rendering pipeline'), findsOneWidget);
+      expect(find.text('Open source & license'), findsOneWidget);
+    },
+  );
 
   testWidgets('AboutSettingsSection opens UpdateCenterDialog on tap', (
     tester,
@@ -86,7 +88,154 @@ void main() {
     expect(find.text('Application'), findsOneWidget);
   });
 
-  testWidgets('Status tiles are informational and do not open UpdateCenterDialog', (
+  testWidgets(
+    'Status tiles are informational and do not open UpdateCenterDialog',
+    (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() => tester.view.resetPhysicalSize());
+
+      await tester.pumpWidget(
+        buildTestWidget(
+          AboutSettingsSection(
+            updates: updates,
+            engineUpdates: engineUpdates,
+            engineVersion: 'v0.42.0',
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      for (final tile in [
+        'Application updates',
+        'Playback engine',
+        'Engine channel & distribution',
+      ]) {
+        await tester.tap(find.text(tile), warnIfMissed: false);
+        await tester.pumpAndSettle();
+      }
+
+      expect(find.byType(UpdateCenterDialog), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'UpdateCenterDialog renders without overflows at standard dialog size',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 700);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() => tester.view.resetPhysicalSize());
+
+      await tester.pumpWidget(
+        buildTestWidget(
+          UpdateCenterDialog(
+            updates: updates,
+            engineUpdates: engineUpdates,
+            engineVersion: 'v0.42.0-dev-g3138fc8ee',
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byType(UpdateCenterDialog), findsOneWidget);
+      expect(find.text('Updates & about'), findsOneWidget);
+      expect(find.text('Update channel'), findsOneWidget);
+      expect(find.text('Check engine updates'), findsOneWidget);
+      expect(find.text('Check for updates'), findsOneWidget);
+      expect(find.text('Close'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'Release highlights parses clean bullets and avoids wall of text',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 700);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() => tester.view.resetPhysicalSize());
+
+      const longAssNotes = '''
+# mpv v0.39.0 Release Notes
+============================
+Automated Windows build artifacts generated from commit abc1234.
+SHA-256 checksums available in assets.
+
+### Features
+* Added support for new Vulkan presentation modes
+* Improved hardware decoding pipeline on Windows D3D11
+* Demuxer: fix buffer overflow when parsing malformed mkv tags
+* Audio: rework spatial audio mapping for 7.1 channels
+* Fixed issue where subtitle styles were not reloading dynamically
+
+Full changelog: https://github.com/mpv-player/mpv/releases/tag/v0.39.0
+Build commit: 849a37bc89d201e74a
+''';
+
+      await tester.pumpWidget(
+        buildTestWidget(
+          const Column(children: [_TestNotesHost(notes: longAssNotes)]),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Verify highlights are displayed concisely
+      expect(find.text('Highlights'), findsOneWidget);
+      expect(find.text('View full notes'), findsOneWidget);
+
+      // Only clean highlight lines are rendered, not the header or URLs
+      expect(
+        find.textContaining('Added support for new Vulkan presentation modes'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('# mpv v0.39.0 Release Notes'), findsNothing);
+      expect(find.textContaining('Full changelog: https://'), findsNothing);
+
+      // Tap to expand
+      await tester.tap(find.text('View full notes'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Show less'), findsOneWidget);
+      expect(
+        find.textContaining('Automated Windows build artifacts'),
+        findsOneWidget,
+      );
+
+      // Tap to collapse
+      await tester.tap(find.text('Show less'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('View full notes'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'Release highlights falls back to raw text when only URLs and separators remain',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 700);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() => tester.view.resetPhysicalSize());
+
+      const notes = '''
+https://github.com/mpv-player/mpv/releases/tag/v0.42.0
+==========
+----------
+''';
+
+      await tester.pumpWidget(
+        buildTestWidget(const Column(children: [_TestNotesHost(notes: notes)])),
+      );
+      await tester.pumpAndSettle();
+
+      // Filtering every line must not crash the preview; the raw line is
+      // surfaced as the fallback highlight instead.
+      expect(find.text('Highlights'), findsOneWidget);
+      expect(
+        find.textContaining('https://github.com/mpv-player/'),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets('rendering pipeline reports detected platform facts', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(1280, 800);
@@ -104,97 +253,65 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    for (final tile in ['Application updates', 'Playback engine', 'Engine channel & distribution']) {
-      await tester.tap(find.text(tile), warnIfMissed: false);
-      await tester.pumpAndSettle();
-    }
-
-    expect(find.byType(UpdateCenterDialog), findsNothing);
+    // No unverified renderer claim; only the detected platform is shown.
+    expect(find.textContaining('Flutter Impeller'), findsNothing);
+    expect(find.textContaining('Direct3D'), findsNothing);
+    expect(find.textContaining('Flutter · '), findsOneWidget);
   });
 
-  testWidgets('UpdateCenterDialog renders without overflows at standard dialog size', (
+  testWidgets('pre-download notes require SHA-256 verification', (
     tester,
   ) async {
-    tester.view.physicalSize = const Size(800, 700);
+    tester.view.physicalSize = const Size(900, 800);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(() => tester.view.resetPhysicalSize());
+
+    final available = _AvailableUpdates(
+      ReleaseInfo(
+        version: '9.9.9',
+        notes: '* Fixed playback edge cases',
+        engineVersion: '0.42.0',
+        downloadUri: Uri(
+          scheme: 'https',
+          host: 'example.com',
+          path: '/app.zip',
+        ),
+        sha256:
+            '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+      ),
+    );
 
     await tester.pumpWidget(
       buildTestWidget(
         UpdateCenterDialog(
-          updates: updates,
+          updates: available,
           engineUpdates: engineUpdates,
-          engineVersion: 'v0.42.0-dev-g3138fc8ee',
+          engineVersion: 'v0.42.0',
         ),
       ),
     );
     await tester.pumpAndSettle();
 
-    expect(find.byType(UpdateCenterDialog), findsOneWidget);
-    expect(find.text('Updates & about'), findsOneWidget);
-    expect(find.text('Update channel'), findsOneWidget);
-    expect(find.text('Check engine updates'), findsOneWidget);
-    expect(find.text('Check for updates'), findsOneWidget);
-    expect(find.text('Close'), findsOneWidget);
-  });
-
-  testWidgets('Release highlights parses clean bullets and avoids wall of text', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(800, 700);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(() => tester.view.resetPhysicalSize());
-
-    const longAssNotes = '''
-# mpv v0.39.0 Release Notes
-============================
-Automated Windows build artifacts generated from commit abc1234.
-SHA-256 checksums available in assets.
-
-### Features
-* Added support for new Vulkan presentation modes
-* Improved hardware decoding pipeline on Windows D3D11
-* Demuxer: fix buffer overflow when parsing malformed mkv tags
-* Audio: rework spatial audio mapping for 7.1 channels
-* Fixed issue where subtitle styles were not reloading dynamically
-
-Full changelog: https://github.com/mpv-player/mpv/releases/tag/v0.39.0
-Build commit: 849a37bc89d201e74a
-''';
-
-    await tester.pumpWidget(
-      buildTestWidget(
-        const Column(
-          children: [
-            _TestNotesHost(notes: longAssNotes),
-          ],
-        ),
-      ),
+    expect(
+      find.textContaining('SHA-256 verification required'),
+      findsOneWidget,
     );
-    await tester.pumpAndSettle();
+    expect(find.textContaining('Verified with SHA-256'), findsNothing);
 
-    // Verify highlights are displayed concisely
-    expect(find.text('Highlights'), findsOneWidget);
-    expect(find.text('View full notes'), findsOneWidget);
-
-    // Only clean highlight lines are rendered, not the header or URLs
-    expect(find.textContaining('Added support for new Vulkan presentation modes'), findsOneWidget);
-    expect(find.textContaining('# mpv v0.39.0 Release Notes'), findsNothing);
-    expect(find.textContaining('Full changelog: https://'), findsNothing);
-
-    // Tap to expand
-    await tester.tap(find.text('View full notes'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Show less'), findsOneWidget);
-    expect(find.textContaining('Automated Windows build artifacts'), findsOneWidget);
-
-    // Tap to collapse
-    await tester.tap(find.text('Show less'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('View full notes'), findsOneWidget);
+    available.dispose();
   });
+}
+
+class _AvailableUpdates extends UpdateService {
+  _AvailableUpdates(this._availableRelease);
+
+  final ReleaseInfo _availableRelease;
+
+  @override
+  String get status => 'available';
+
+  @override
+  ReleaseInfo? get release => _availableRelease;
 }
 
 class _TestNotesHost extends StatelessWidget {
@@ -206,4 +323,3 @@ class _TestNotesHost extends StatelessWidget {
     return ReleaseNotesPreview(notes: notes);
   }
 }
-
