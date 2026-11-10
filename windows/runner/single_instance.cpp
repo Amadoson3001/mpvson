@@ -1,5 +1,6 @@
 #include "single_instance.h"
 
+#include <flutter/method_result_functions.h>
 #include <flutter/standard_method_codec.h>
 #include <shellapi.h>
 
@@ -202,11 +203,21 @@ void SingleInstance::Initialize(HWND window_handle,
   channel_ = std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
       messenger, "mpvson/single_instance",
       &flutter::StandardMethodCodec::GetInstance());
-  channel_->SetMethodCallHandler([](const auto& call, auto result) {
+  channel_->SetMethodCallHandler([this](const auto& call, auto result) {
+    if (call.method_name() == "ready" || call.method_name() == "flush") {
+      is_dart_ready_ = true;
+      if (window_handle_ != nullptr) {
+        ::KillTimer(window_handle_, kSingleInstanceRetryTimerId);
+      }
+      FlushPendingActivations();
+      result->Success();
+      return;
+    }
     result->NotImplemented();
   });
 
   StartServer();
+  FlushPendingActivations();
 }
 
 void SingleInstance::StartServer() {
@@ -376,19 +387,112 @@ void SingleInstance::HandleActivate(const std::vector<std::string>& paths) {
     ::SetForegroundWindow(window_handle_);
   }
 
-  if (channel_ != nullptr) {
-    flutter::EncodableList list;
-    list.reserve(paths.size());
-    for (const auto& path : paths) {
-      list.emplace_back(flutter::EncodableValue(path));
-    }
-    channel_->InvokeMethod("onActivate",
-                           std::make_unique<flutter::EncodableValue>(list));
+  pending_activations_.push_back(paths);
+  FlushPendingActivations();
+}
+
+void SingleInstance::FlushPendingActivations() {
+  if (is_dispatching_ || pending_activations_.empty()) {
+    return;
   }
+
+  if (channel_ == nullptr) {
+    if (window_handle_ != nullptr && !stopping_) {
+      ::SetTimer(window_handle_, kSingleInstanceRetryTimerId,
+                 kSingleInstanceRetryIntervalMs, nullptr);
+    }
+    return;
+  }
+
+  is_dispatching_ = true;
+  const auto& paths = pending_activations_.front();
+
+  flutter::EncodableList list;
+  list.reserve(paths.size());
+  for (const auto& path : paths) {
+    list.emplace_back(flutter::EncodableValue(path));
+  }
+
+  auto alive = alive_;
+  channel_->InvokeMethod(
+      "onActivate",
+      std::make_unique<flutter::EncodableValue>(list),
+      std::make_unique<flutter::MethodResultFunctions<flutter::EncodableValue>>(
+          /*on_success=*/[this, alive](const flutter::EncodableValue* result) {
+            if (!*alive) {
+              return;
+            }
+            is_dispatching_ = false;
+            is_dart_ready_ = true;
+            retry_count_ = 0;
+            if (!pending_activations_.empty()) {
+              pending_activations_.pop_front();
+            }
+            if (pending_activations_.empty() && window_handle_ != nullptr) {
+              ::KillTimer(window_handle_, kSingleInstanceRetryTimerId);
+            }
+            FlushPendingActivations();
+          },
+          /*on_error=*/[this, alive](const std::string& code,
+                                     const std::string& message,
+                                     const flutter::EncodableValue* details) {
+            if (!*alive) {
+              return;
+            }
+            is_dispatching_ = false;
+            is_dart_ready_ = true;
+            retry_count_ = 0;
+            if (!pending_activations_.empty()) {
+              pending_activations_.pop_front();
+            }
+            if (pending_activations_.empty() && window_handle_ != nullptr) {
+              ::KillTimer(window_handle_, kSingleInstanceRetryTimerId);
+            }
+            FlushPendingActivations();
+          },
+          /*on_not_implemented=*/[this, alive]() {
+            if (!*alive) {
+              return;
+            }
+            is_dispatching_ = false;
+            is_dart_ready_ = false;
+            // Dart MethodChannel listener not registered yet during cold boot.
+            // Start or maintain retry timer to redeliver when ready.
+            if (window_handle_ != nullptr && !stopping_) {
+              ::SetTimer(window_handle_, kSingleInstanceRetryTimerId,
+                         kSingleInstanceRetryIntervalMs, nullptr);
+            }
+          }));
+}
+
+void SingleInstance::OnRetryTimer() {
+  if (is_dispatching_) {
+    return;
+  }
+  retry_count_++;
+  if (retry_count_ > kMaxSingleInstanceRetries) {
+    if (window_handle_ != nullptr) {
+      ::KillTimer(window_handle_, kSingleInstanceRetryTimerId);
+    }
+    pending_activations_.clear();
+    retry_count_ = 0;
+    return;
+  }
+  FlushPendingActivations();
 }
 
 void SingleInstance::CleanUp() {
+  if (window_handle_ != nullptr) {
+    ::KillTimer(window_handle_, kSingleInstanceRetryTimerId);
+  }
+  if (alive_) {
+    *alive_ = false;
+    alive_ = std::make_shared<bool>(true);
+  }
   stopping_ = true;
+  pending_activations_.clear();
+  is_dispatching_ = false;
+  retry_count_ = 0;
   if (stop_event_ != nullptr) {
     ::SetEvent(stop_event_);
   }

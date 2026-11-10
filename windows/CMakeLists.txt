@@ -241,6 +241,10 @@ endif()
 
 if(PLUGIN_BUNDLED_LIBRARIES)
   list(FILTER PLUGIN_BUNDLED_LIBRARIES EXCLUDE REGEX "[/\\\\]${MPVSON_ENGINE_MEMBER}$")
+  # Exclude debug-CRT zlib.dll bundled inadvertently by media_kit_libs_windows_video (ANGLE.7z).
+  # Neither ANGLE, libmpv, nor the runner requires an external zlib.dll, and shipping a debug-CRT
+  # dependency causes launch failures on user systems without debug CRT runtimes installed.
+  list(FILTER PLUGIN_BUNDLED_LIBRARIES EXCLUDE REGEX "[/\\\\]zlib\\.dll$")
   list(APPEND PLUGIN_BUNDLED_LIBRARIES "${MPVSON_ENGINE_MODULE}")
 endif()
 
@@ -282,6 +286,18 @@ if(PLUGIN_BUNDLED_LIBRARIES)
     COMPONENT Runtime)
 endif()
 
+# Install MSVC C++ runtime redistributable DLLs so the application runs on machines
+# without the Microsoft Visual C++ Redistributable installed.
+if(MSVC)
+  set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP TRUE)
+  include(InstallRequiredSystemLibraries)
+  if(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS)
+    install(FILES ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS}
+      DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+      COMPONENT Runtime)
+  endif()
+endif()
+
 # Copy the native assets provided by the build.dart from all packages.
 set(NATIVE_ASSETS_DIR "${PROJECT_BUILD_DIR}native_assets/windows/")
 install(DIRECTORY "${NATIVE_ASSETS_DIR}"
@@ -308,10 +324,12 @@ install(FILES "${AOT_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"
 # and libGLESv2.dll from media_kit_libs_windows_video) are skipped: llvm-strip rewrites
 # the binary and invalidates its signature, so these files ship untouched and the
 # coordinator's release check (Get-AuthenticodeSignature) keeps reporting Valid.
+# Official Microsoft VC++ runtime redistributable DLLs are also skipped to keep their signatures intact.
 set(MPVSON_SIGNED_DLLS flutter_windows.dll d3dcompiler_47.dll vulkan-1.dll libEGL.dll libGLESv2.dll)
 find_program(LLVM_STRIP_TOOL NAMES llvm-strip strip PATHS "C:/Program Files/LLVM/bin")
 if(LLVM_STRIP_TOOL)
   install(CODE "
+    file(REMOVE \"\${CMAKE_INSTALL_PREFIX}/zlib.dll\")
     set(_mpvson_signed_dlls \"${MPVSON_SIGNED_DLLS}\")
     string(TOLOWER \"\${_mpvson_signed_dlls}\" _mpvson_signed_dlls)
     file(GLOB _bundled_dlls \"\${CMAKE_INSTALL_PREFIX}/*.dll\")
@@ -320,6 +338,10 @@ if(LLVM_STRIP_TOOL)
       string(TOLOWER \"\${_dll_name}\" _dll_name)
       if(_dll_name IN_LIST _mpvson_signed_dlls)
         message(STATUS \"Mpvson: keeping Authenticode signature, skipping llvm-strip for \${_dll_name}\")
+        continue()
+      endif()
+      if(_dll_name MATCHES \"^(msvcp|vcruntime|concrt|vccorlib)[^.]*\\\\.dll$\")
+        message(STATUS \"Mpvson: keeping VC++ runtime signature, skipping llvm-strip for \${_dll_name}\")
         continue()
       endif()
       execute_process(COMMAND \"${LLVM_STRIP_TOOL}\" --strip-all \"\${_dll}\")

@@ -90,7 +90,33 @@ if command -v gtk-update-icon-cache >/dev/null 2>&1; then
   gtk-update-icon-cache -f -t "${HOME}/.local/share/icons/hicolor" 2>/dev/null || true
 fi
 
-# 6. Verify PATH
+# 6. Verify runtime dependencies (libmpv)
+echo "--> Checking runtime dependencies..."
+HAS_LIBMPV=false
+if command -v ldconfig >/dev/null 2>&1; then
+  if ldconfig -p 2>/dev/null | grep -qE 'libmpv\.so(\.[0-9]+)?'; then
+    HAS_LIBMPV=true
+  fi
+fi
+if [[ "${HAS_LIBMPV}" == "false" ]]; then
+  if ls "${OPT_DIR}/lib"/libmpv.so* >/dev/null 2>&1 || ls /usr/lib*/libmpv.so* >/dev/null 2>&1 || ls /usr/local/lib*/libmpv.so* >/dev/null 2>&1; then
+    HAS_LIBMPV=true
+  fi
+fi
+
+if [[ "${HAS_LIBMPV}" == "true" ]]; then
+  echo "    [OK] libmpv playback engine detected."
+else
+  echo "    NOTICE: libmpv shared library was not detected on this system."
+  echo "    Mpvson requires libmpv for media playback. If video playback fails to initialize,"
+  echo "    install libmpv using your distribution's package manager:"
+  echo "      - Debian / Ubuntu:  sudo apt install libmpv2 (or libmpv-dev)"
+  echo "      - Fedora / RHEL:    sudo dnf install mpv-libs"
+  echo "      - Arch Linux:       sudo pacman -S mpv"
+  echo "      - openSUSE:         sudo zypper install libmpv2"
+fi
+
+# 7. Verify PATH
 echo ""
 echo "==> Mpvson user installation complete!"
 if [[ ":$PATH:" != *":${BIN_DIR}:"* ]]; then

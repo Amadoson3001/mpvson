@@ -47,6 +47,7 @@ class _PlaylistsViewState extends State<PlaylistsView> {
   Timer? _reloadThrottle;
   Timer? _searchReload;
   bool _isDragging = false;
+  int _probeGeneration = 0;
 
   /// One in-flight (or completed) preview request per playlist, keyed by id.
   final Map<String, Future<List<PlaylistEntryRecord>>> _previewFutures = {};
@@ -103,6 +104,7 @@ class _PlaylistsViewState extends State<PlaylistsView> {
   void didUpdateWidget(PlaylistsView oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.repository != widget.repository) {
+      _probeGeneration++;
       oldWidget.repository.removeListener(_onRepositoryChanged);
       widget.repository.addListener(_onRepositoryChanged);
       _previewFutures.clear();
@@ -118,6 +120,7 @@ class _PlaylistsViewState extends State<PlaylistsView> {
 
   @override
   void dispose() {
+    _probeGeneration++;
     _searchReload?.cancel();
     _reloadThrottle?.cancel();
     widget.repository.removeListener(_onRepositoryChanged);
@@ -181,6 +184,9 @@ class _PlaylistsViewState extends State<PlaylistsView> {
   }
 
   void _probeMissingMetadata(List<PlaylistEntryRecord> entries) {
+    final currentPlaylistId = _selectedPlaylist?.id;
+    if (currentPlaylistId == null) return;
+
     final missing = entries
         .where(
           (e) =>
@@ -192,25 +198,40 @@ class _PlaylistsViewState extends State<PlaylistsView> {
         .toList();
     if (missing.isEmpty) return;
 
-    for (final entry in missing) {
-      final path = entry.mediaItem?.path;
-      if (path != null) {
-        _probedPaths.add(path);
-      }
-    }
+    final currentGen = ++_probeGeneration;
 
     unawaited(
       Future(() async {
         for (final entry in missing) {
-          if (!mounted) break;
+          if (!mounted ||
+              _probeGeneration != currentGen ||
+              _selectedPlaylist?.id != currentPlaylistId) {
+            break;
+          }
           final item = entry.mediaItem;
           if (item != null) {
+            if (_probedPaths.contains(item.path)) continue;
+            _probedPaths.add(item.path);
             await widget.repository.probeMedia(item.path);
+            if (!mounted ||
+                _probeGeneration != currentGen ||
+                _selectedPlaylist?.id != currentPlaylistId) {
+              break;
+            }
             await Future<void>.delayed(const Duration(milliseconds: 16));
           }
         }
       }),
     );
+  }
+
+  void _selectPlaylist(PlaylistRecord? playlist) {
+    _probeGeneration++;
+    setState(() {
+      _selectedPlaylist = playlist;
+      _entries = null;
+    });
+    _reload();
   }
 
   Future<void> _createPlaylist() async {
@@ -219,11 +240,7 @@ class _PlaylistsViewState extends State<PlaylistsView> {
       widget.repository,
     );
     if (playlist != null && mounted) {
-      setState(() {
-        _selectedPlaylist = playlist;
-        _entries = null;
-      });
-      _reload();
+      _selectPlaylist(playlist);
     }
   }
 
@@ -256,13 +273,11 @@ class _PlaylistsViewState extends State<PlaylistsView> {
       _previewFutures.remove(pl.id);
       _previewRecords.remove(pl.id);
       if (mounted && _selectedPlaylist?.id == pl.id) {
-        setState(() {
-          _selectedPlaylist = null;
-          _entries = null;
-        });
+        _selectPlaylist(null);
+      } else if (mounted) {
+        _reload();
       }
       if (mounted) {
-        _reload();
         AppToast.show(
           context,
           'Playlist "${pl.title}" deleted',
@@ -631,13 +646,7 @@ class _PlaylistsViewState extends State<PlaylistsView> {
       ),
       title: pl.title,
       subtitle: '${pl.entryCount} items',
-      onTap: () {
-        setState(() {
-          _selectedPlaylist = pl;
-          _entries = null;
-        });
-        _reload();
-      },
+      onTap: () => _selectPlaylist(pl),
       trailing: PopupMenuButton<String>(
         tooltip: 'Playlist actions',
         icon: const Icon(Icons.more_vert_rounded, size: 18),
@@ -695,13 +704,7 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                         icon: const Icon(Icons.arrow_back_rounded),
                         tooltip: 'Back to playlists',
                         color: context.palette.secondaryText,
-                        onPressed: () {
-                          setState(() {
-                            _selectedPlaylist = null;
-                            _entries = null;
-                          });
-                          _reload();
-                        },
+                        onPressed: () => _selectPlaylist(null),
                       ),
                       const SizedBox(width: 8),
                       Text('Playlists', style: context.palette.rowSecondary),

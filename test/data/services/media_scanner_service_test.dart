@@ -429,6 +429,72 @@ void main() {
     );
     expect(availableCanonical, contains(MediaEntry.canonicalSource(a.path)));
   });
+
+  test(
+    'removing a folder mid-scan allows subsequent folders in the batch to be scanned',
+    () async {
+      final baseDir = await _createTempFolder();
+      final rootA = Directory(p.join(baseDir.path, 'a'));
+      final rootB = Directory(p.join(baseDir.path, 'longer_b'));
+      await rootA.create();
+      await rootB.create();
+
+      final aPath = p.join(rootA.path, 'a.mp3');
+      final bPath = p.join(rootB.path, 'b.mp3');
+      await File(aPath).writeAsBytes(List<int>.filled(16, 7));
+      await File(bPath).writeAsBytes(List<int>.filled(16, 7));
+      final db = await _openDb();
+
+      final completedFolders = <String>[];
+      late final MediaScannerService scanner;
+      scanner = MediaScannerService(
+        probeService: _FakeProbeService(),
+        database: db,
+        onDiscoveredFiles: (paths) async {
+          await db.batchUpsertDiscoveredFiles(paths);
+          // When rootA's files are discovered, remove rootA mid-scan.
+          final canonicalAPath = MediaEntry.canonicalSource(aPath);
+          if (paths.any(
+            (p) => MediaEntry.canonicalSource(p) == canonicalAPath,
+          )) {
+            scanner.unregisterFolder(rootA.path);
+          }
+        },
+        onFolderScanCompleted:
+            (folder, {required fileCount, required lastScannedAt}) async {
+              completedFolders.add(MediaEntry.canonicalSource(folder));
+              await db.updateFolderScanStats(
+                folder,
+                fileCount: fileCount,
+                lastScannedAt: lastScannedAt,
+              );
+            },
+      );
+
+      // Start a multi-folder batch scan containing rootA and rootB.
+      // rootA has shorter path length so deduplicateFolderRoots places it first in the batch.
+      await scanner.scanAll(folders: <String>[rootA.path, rootB.path]);
+
+      final canonicalA = MediaEntry.canonicalSource(rootA.path);
+      final canonicalB = MediaEntry.canonicalSource(rootB.path);
+
+      // rootA was removed mid-scan, so it must not have completed scanning.
+      expect(completedFolders, isNot(contains(canonicalA)));
+
+      // rootB in the same batch must still be scanned and completed.
+      expect(
+        completedFolders,
+        contains(canonicalB),
+        reason:
+            'removing folder A mid-scan must not abort folder B in the same batch',
+      );
+
+      // rootB's files must have been discovered and enriched.
+      final b = await db.getMediaByCanonicalSource(bPath);
+      expect(b, isNotNull);
+      expect(b!.metadata.artist, 'Fake Artist');
+    },
+  );
 }
 
 String cFilePath(Directory root) => p.join(root.path, 'c.mp3');

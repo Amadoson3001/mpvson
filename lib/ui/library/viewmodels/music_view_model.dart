@@ -16,6 +16,8 @@ enum MusicSubtab {
   recentlyPlayed,
 }
 
+typedef MusicSubTab = MusicSubtab;
+
 /// Fields available for sorting media collections.
 enum MusicSortField {
   title,
@@ -41,6 +43,8 @@ class MusicViewModel extends ChangeNotifier {
   MusicSubtab _currentSubtab = MusicSubtab.songs;
   MusicSubtab get currentSubtab => _currentSubtab;
   MusicSubtab get selectedSubtab => _currentSubtab;
+  MusicSubtab get subTab => _currentSubtab;
+  MusicSubtab get subtab => _currentSubtab;
 
   MusicSortField _sortField = MusicSortField.title;
   MusicSortField get sortField => _sortField;
@@ -116,6 +120,8 @@ class MusicViewModel extends ChangeNotifier {
 
   set currentSubtab(MusicSubtab subtab) => selectSubtab(subtab);
   set selectedSubtab(MusicSubtab subtab) => selectSubtab(subtab);
+  set subTab(MusicSubtab subtab) => selectSubtab(subtab);
+  set subtab(MusicSubtab subtab) => selectSubtab(subtab);
 
   void setSorting(MusicSortField field, {bool? ascending}) {
     _customSorting = true;

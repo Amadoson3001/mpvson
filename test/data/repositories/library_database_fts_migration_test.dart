@@ -72,6 +72,70 @@ Database _createLegacyDatabase(String path) {
   return db;
 }
 
+/// Creates a database with matching FTS columns but user_version = 1 and an
+/// unpopulated search index, simulating Bug #3.
+Database _createDatabaseWithExistingMatchingFtsColumnsEmpty(String path) {
+  final db = sqlite3.open(path);
+  db.execute('''
+    CREATE TABLE media (
+      id TEXT PRIMARY KEY,
+      canonical_source TEXT UNIQUE NOT NULL,
+      path TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      title TEXT,
+      artist TEXT,
+      album_artist TEXT,
+      album TEXT,
+      genre TEXT,
+      year INTEGER,
+      track_number INTEGER,
+      disc_number INTEGER,
+      duration_ms INTEGER,
+      artwork_uri TEXT,
+      audio_codec TEXT,
+      sample_rate INTEGER,
+      channels INTEGER,
+      bitrate INTEGER,
+      bits_per_sample INTEGER,
+      file_size INTEGER NOT NULL DEFAULT 0,
+      modified_at INTEGER,
+      is_available INTEGER NOT NULL DEFAULT 1,
+      is_in_library INTEGER NOT NULL DEFAULT 1,
+      is_favorite INTEGER NOT NULL DEFAULT 0,
+      added_at INTEGER NOT NULL,
+      last_played_at INTEGER,
+      play_count INTEGER NOT NULL DEFAULT 0
+    );
+  ''');
+  db.execute('''
+    CREATE VIRTUAL TABLE media_fts USING fts5(
+      title,
+      artist,
+      album_artist,
+      album,
+      path,
+      content=media,
+      content_rowid=rowid
+    );
+  ''');
+  final stmt = db.prepare('''
+    INSERT INTO media (id, canonical_source, path, kind, title, artist, album, added_at)
+    VALUES (?, ?, ?, 'audio', ?, 'Led Zeppelin', 'Led Zeppelin IV', 1000)
+  ''');
+  try {
+    stmt.execute([
+      'id-99',
+      r'c:\music\stairway.mp3',
+      r'C:\Music\stairway.mp3',
+      'Stairway to Heaven',
+    ]);
+  } finally {
+    stmt.close();
+  }
+  db.execute('PRAGMA user_version = 1;');
+  return db;
+}
+
 int _userVersion(Database db) =>
     (db.select('PRAGMA user_version;').first.values.first as int?) ?? 0;
 
@@ -164,6 +228,36 @@ void main() {
       final again = await reopened.queryMedia(searchQuery: 'hotel');
       expect(again, isNotEmpty);
       expect(again.first.title, 'Hotel California');
+    },
+  );
+
+  test(
+    'migrating a database where media_fts has matching columns but is unpopulated rebuilds the search index',
+    () async {
+      final dir = await Directory.systemTemp.createTemp('mpvson-fts-empty-');
+      addTearDown(() {
+        try {
+          dir.deleteSync(recursive: true);
+        } on Object {
+          // Best-effort cleanup; temp dir may already be gone.
+        }
+      });
+      final path = p.join(dir.path, 'library.db');
+      final raw = _createDatabaseWithExistingMatchingFtsColumnsEmpty(path);
+      // Verify initial state: user_version is 1, media has 1 row, FTS match returns 0 rows
+      expect(_userVersion(raw), 1);
+      final rawMatches = raw.select(
+        "SELECT rowid FROM media_fts WHERE media_fts MATCH 'stairway'",
+      );
+      expect(rawMatches, isEmpty);
+      raw.close();
+
+      final db = await LibraryDatabase.open(path: path);
+      addTearDown(db.close);
+
+      final results = await db.queryMedia(searchQuery: 'stairway');
+      expect(results, isNotEmpty);
+      expect(results.first.title, 'Stairway to Heaven');
     },
   );
 }

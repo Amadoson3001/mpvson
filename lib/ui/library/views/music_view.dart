@@ -44,6 +44,7 @@ class _MusicViewState extends State<MusicView> {
   /// Owns the subtab selection (and the per-subtab sorting intent). Re-created
   /// when the repository or player controller the view is bound to changes.
   late MusicViewModel _music;
+  MusicSubTab? _lastSubTab;
 
   String? _selectedSongPath;
   String? _selectedAlbum;
@@ -64,6 +65,7 @@ class _MusicViewState extends State<MusicView> {
   void initState() {
     super.initState();
     _music = _createMusicModel();
+    _lastSubTab = _music.subTab;
     _music.addListener(_onMusicChanged);
     widget.repository.addListener(_onRepoChanged);
     widget.controller.addListener(_onPlaybackChanged);
@@ -81,14 +83,29 @@ class _MusicViewState extends State<MusicView> {
   /// artist drilldown and refetches the collection for the new subtab.
   void _onMusicChanged() {
     if (!mounted) return;
-    setState(() {
-      _selectedAlbum = null;
-      _selectedAlbumArtist = null;
-      _selectedArtist = null;
-      _items = null;
-    });
-    _reload();
+    if (_music.subTab != _lastSubTab) {
+      _lastSubTab = _music.subTab;
+      setState(() {
+        _selectedAlbum = null;
+        _selectedAlbumArtist = null;
+        _selectedArtist = null;
+        _items = null;
+      });
+      _reload();
+    } else {
+      if (_selectedAlbum != null) {
+        _loadAlbumTracks(_selectedAlbum!);
+      } else if (_selectedArtist != null) {
+        _loadArtistTracks(_selectedArtist!);
+      } else {
+        _reload();
+      }
+    }
   }
+
+  Future<void> _loadAlbumTracks(String album) => _reload();
+
+  Future<void> _loadArtistTracks(String artist) => _reload();
 
   @override
   void didUpdateWidget(MusicView oldWidget) {
@@ -98,6 +115,7 @@ class _MusicViewState extends State<MusicView> {
       _music.removeListener(_onMusicChanged);
       _music.dispose();
       _music = _createMusicModel();
+      _lastSubTab = _music.subTab;
       _music.addListener(_onMusicChanged);
     }
     if (oldWidget.repository != widget.repository) {

@@ -62,22 +62,26 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          if (Test-Path build/windows/x64/runner/Release/zlib.dll) {
+            Remove-Item build/windows/x64/runner/Release/zlib.dll -Force
+          }
+          if (Test-Path build/windows/x64/runner/Release/vk_swiftshader.dll) {
+            Remove-Item build/windows/x64/runner/Release/vk_swiftshader.dll -Force
+          }
           dart run tool/engine_provenance.dart verify
           # llvm-strip rewrites the binary and invalidates Authenticode
-          # signatures, so signed DLLs ship untouched (mirrors the skip list
-          # in windows/CMakeLists.txt). -notcontains is case-insensitive.
+          # signatures, so signed DLLs and VC++ runtime DLLs ship untouched.
           $signedDlls = @('flutter_windows.dll', 'd3dcompiler_47.dll', 'vulkan-1.dll', 'libEGL.dll', 'libGLESv2.dll')
           $stripDlls = Get-ChildItem build/windows/x64/runner/Release/*.dll -ErrorAction SilentlyContinue |
-            Where-Object { $signedDlls -notcontains $_.Name }
+            Where-Object {
+              $signedDlls -notcontains $_.Name -and $_.Name -notmatch '^(msvcp|vcruntime|concrt|vccorlib).*\.dll$'
+            }
           foreach ($dll in $stripDlls) {
             if (Get-Command llvm-strip -ErrorAction SilentlyContinue) {
               llvm-strip --strip-all $dll.FullName
             } elseif (Get-Command strip -ErrorAction SilentlyContinue) {
               strip --strip-all $dll.FullName
             }
-          }
-          if (Test-Path build/windows/x64/runner/Release/vk_swiftshader.dll) {
-            Remove-Item build/windows/x64/runner/Release/vk_swiftshader.dll -Force
           }
           dart run tool/engine_provenance.dart inventory
           Copy-Item build/windows/x64/engine/engine-inventory.json build/windows/x64/runner/Release/engine-inventory.json
@@ -91,6 +95,8 @@ jobs:
           mkdir -p dist
           cp packaging/linux/dev.mpvson.mpvson.desktop build/linux/x64/release/bundle/
           cp packaging/linux/dev.mpvson.mpvson.svg build/linux/x64/release/bundle/
+          cp packaging/linux/install.sh build/linux/x64/release/bundle/
+          cp packaging/linux/uninstall.sh build/linux/x64/release/bundle/
           tar -C build/linux/x64/release/bundle -czf dist/mpvson-linux-x64.tar.gz .
           (cd dist && sha256sum mpvson-linux-x64.tar.gz > SHA256SUMS)
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

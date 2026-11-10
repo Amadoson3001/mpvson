@@ -39,6 +39,7 @@ import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 
 import 'verified_artifact_download.dart';
+import 'runtime_packaging.dart';
 
 const String _recordRelative = 'packaging/windows/engine-provenance.json';
 const String _licenseRelative = 'packaging/windows/LICENSE.libmpv-GPL.txt';
@@ -561,6 +562,29 @@ Future<bool> _verify(String root) async {
     );
   }
 
+  final Directory bundleDir = Directory(p.join(root, _bundleRelative));
+  if (bundleDir.existsSync()) {
+    final runtimeVerify = verifyBundleRuntimes(bundleDir);
+    if (!runtimeVerify.isValid) {
+      for (final violation in runtimeVerify.debugCrtViolations) {
+        problems.add('Debug CRT detected in bundle: $violation');
+      }
+    } else {
+      stdout.writeln(
+        'Debug CRT    : clean (no debug CRT dependencies detected)',
+      );
+    }
+    if (runtimeVerify.bundledVcRuntimes.isNotEmpty) {
+      stdout.writeln(
+        'VC++ Runtime : bundled (${runtimeVerify.bundledVcRuntimes.length} DLLs)',
+      );
+    } else {
+      stdout.writeln(
+        'VC++ Runtime : not bundled (relies on system VC++ 2015-2022 redistributable)',
+      );
+    }
+  }
+
   if (problems.isEmpty) {
     stdout.writeln('Engine provenance verified.');
     return true;
@@ -953,13 +977,23 @@ Future<bool> _inventory(String root, _Options options) async {
   for (final String name in <String>[member, ..._companionFiles]) {
     final File file = File(p.join(bundleDirectory, name));
     if (!file.existsSync()) {
-      if (name == 'vk_swiftshader.dll') {
+      if (name == 'vk_swiftshader.dll' || name == 'zlib.dll') {
         // vk_swiftshader.dll is a Vulkan CPU rasterizer fallback not required for
         // standard D3D11 / DirectX on Windows 10/11 and can be pruned.
+        // zlib.dll from legacy ANGLE builds carries an unused debug-CRT dependency
+        // and must be pruned from release bundles.
         continue;
       }
       problems.add('The built bundle is missing $name ($bundleDirectory).');
       continue;
+    }
+    if (name == 'zlib.dll') {
+      final debugs = getDebugCrtImports(file);
+      if (debugs.isNotEmpty) {
+        problems.add(
+          'zlib.dll in the bundle links debug CRT (${debugs.join(', ')}); prune it from release distributions.',
+        );
+      }
     }
     files.add(<String, Object?>{
       'path': name,
@@ -968,9 +1002,27 @@ Future<bool> _inventory(String root, _Options options) async {
       'role': name == member ? 'engine' : 'renderer-companion',
     });
   }
+  final runtimeVerify = verifyBundleRuntimes(Directory(bundleDirectory));
+  if (!runtimeVerify.isValid) {
+    for (final violation in runtimeVerify.debugCrtViolations) {
+      problems.add('Debug CRT detected in bundle: $violation');
+    }
+  }
   if (problems.isNotEmpty) {
     problems.forEach(stderr.writeln);
     return false;
+  }
+  final List<Map<String, Object?>> runtimeFiles = <Map<String, Object?>>[];
+  for (final name in coreVcRuntimeDlls) {
+    final File file = File(p.join(bundleDirectory, name));
+    if (file.existsSync()) {
+      runtimeFiles.add(<String, Object?>{
+        'path': name,
+        'size': file.lengthSync(),
+        'sha256': _sha256OfFile(file.path),
+        'role': 'runtime-redist',
+      });
+    }
   }
   final List<String> acceptedModuleDigests = pinnedModuleDigests(record);
   final Map<String, Object?> inventory = <String, Object?>{
@@ -984,7 +1036,14 @@ Future<bool> _inventory(String root, _Options options) async {
       'artifactUrl': _requireString(record, 'url', section: 'artifact'),
       'artifactSha256': _requireString(record, 'sha256', section: 'artifact'),
     },
+    'runtime': <String, Object?>{
+      'vcRuntimeBundled': runtimeVerify.bundledVcRuntimes.isNotEmpty,
+      'bundledVcRuntimes': runtimeVerify.bundledVcRuntimes,
+      'missingVcRuntimes': runtimeVerify.missingVcRuntimes,
+      'debugCrtDetected': runtimeVerify.debugCrtViolations.isNotEmpty,
+    },
     'files': files,
+    'runtimeFiles': runtimeFiles,
     'acceptedModuleDigests': acceptedModuleDigests,
     'matchesPinnedEngine': inventoryMatchesPinnedEngine(record, files),
   };
@@ -1000,6 +1059,14 @@ Future<bool> _inventory(String root, _Options options) async {
     stdout.writeln(
       '  ${file['path']}  ${_megabytes(file['size']! as int)}  ${file['sha256']}',
     );
+  }
+  if (runtimeFiles.isNotEmpty) {
+    stdout.writeln('  Bundled VC++ runtime DLLs (${runtimeFiles.length}):');
+    for (final Map<String, Object?> file in runtimeFiles) {
+      stdout.writeln(
+        '    ${file['path']}  ${_megabytes(file['size']! as int)}  ${file['sha256']}',
+      );
+    }
   }
   return true;
 }

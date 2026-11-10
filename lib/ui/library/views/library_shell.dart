@@ -78,7 +78,7 @@ class _LibraryShellState extends State<LibraryShell>
   final _scaffoldKey = GlobalKey<ScaffoldState>();
 
   /// Keyboard focus falls back here when the Now Playing sheet excludes the
-  /// background from focus, so shortcut keys (Esc, Ctrl+K) keep working: the
+  /// background from focus, so shortcut keys (Esc, Ctrl+F, Ctrl+K) keep working: the
   /// scope sits below [CallbackShortcuts], and key events bubble through it.
   final _shellFocusScope = FocusScopeNode(debugLabel: 'Library shell');
   String _searchQuery = '';
@@ -411,6 +411,15 @@ class _LibraryShellState extends State<LibraryShell>
                 LogicalKeyboardKey.keyK,
                 control: true,
               ): () =>
+                  _searchFocus.requestFocus(),
+              const SingleActivator(LogicalKeyboardKey.keyK, meta: true): () =>
+                  _searchFocus.requestFocus(),
+              const SingleActivator(
+                LogicalKeyboardKey.keyF,
+                control: true,
+              ): () =>
+                  _searchFocus.requestFocus(),
+              const SingleActivator(LogicalKeyboardKey.keyF, meta: true): () =>
                   _searchFocus.requestFocus(),
               const SingleActivator(LogicalKeyboardKey.escape): () {
                 if (_currentSection == LibrarySection.settings) {

@@ -1949,6 +1949,7 @@ class PlayerController extends ChangeNotifier {
 
   Future<void> seek(Duration position) async {
     if (!_acceptsCommands) return;
+    if (isLoading || _pendingNavigationEntryId != null) return;
     _transportCommandRevision++;
     final seekRevision = ++_seekRevision;
     if (current == null) return;
@@ -2175,12 +2176,31 @@ class PlayerController extends ChangeNotifier {
     if (!_acceptsCommands) return;
     _transportCommandRevision++;
     if (_queue.isEmpty || _currentIndex < 0) return;
-    if (position > const Duration(seconds: 3)) {
+
+    final isOpeningOrUnconfirmed =
+        isLoading ||
+        _pendingNavigationEntryId != null ||
+        _engineEntryId == null ||
+        _engineEntryId != current?.id;
+
+    if (!isOpeningOrUnconfirmed && position > const Duration(seconds: 3)) {
       await seek(Duration.zero);
       return;
     }
+
+    final int startHistoryCursor;
+    if (isOpeningOrUnconfirmed) {
+      if (_pendingNavigationCursor != null) {
+        startHistoryCursor = _pendingNavigationCursor! - 1;
+      } else {
+        startHistoryCursor = _navigationCursor;
+      }
+    } else {
+      startHistoryCursor = _navigationCursor - 1;
+    }
+
     final previousHistoryCursor = _findHistoryCursor(
-      _navigationCursor - 1,
+      startHistoryCursor,
       step: -1,
     );
     if (previousHistoryCursor >= 0) {
@@ -2188,15 +2208,32 @@ class PlayerController extends ChangeNotifier {
         (entry) => entry.id == _navigationHistory[previousHistoryCursor],
       );
       if (index >= 0) {
+        if (isOpeningOrUnconfirmed) {
+          _cancelPendingOpen(reason: 'navigated previous');
+        }
         await _openIndex(index, navigationCursor: previousHistoryCursor);
         return;
       }
     }
+
+    if (_currentIndex > 0) {
+      if (isOpeningOrUnconfirmed) {
+        _cancelPendingOpen(reason: 'navigated previous');
+      }
+      await playIndex(_currentIndex - 1);
+      return;
+    }
     if (_repeatMode == 'all' && !shuffle) {
+      if (isOpeningOrUnconfirmed) {
+        _cancelPendingOpen(reason: 'navigated previous');
+      }
       await playIndex((_currentIndex - 1 + _queue.length) % _queue.length);
       return;
     }
-    await seek(Duration.zero);
+
+    if (!isOpeningOrUnconfirmed) {
+      await seek(Duration.zero);
+    }
   }
 
   Future<void> toggleShuffle() => setShuffle(!shuffle);
@@ -3195,10 +3232,10 @@ class PlayerController extends ChangeNotifier {
   }
 
   void _syncCurrentProgress() {
-    if (!_engineHasMedia && _engineEntryId == null) return;
-    final progressIndex = _engineEntryId == null
-        ? _currentIndex
-        : _queue.indexWhere((entry) => entry.id == _engineEntryId);
+    if (_engineEntryId == null) return;
+    final progressIndex = _queue.indexWhere(
+      (entry) => entry.id == _engineEntryId,
+    );
     if (progressIndex < 0 || progressIndex >= _queue.length) return;
     final entry = _queue[progressIndex];
     var position = _playbackState.position;
@@ -3507,6 +3544,7 @@ class PlayerController extends ChangeNotifier {
 
   /// Writes the small progress checkpoint, coalescing overlapping writes.
   Future<void> _writeProgressCheckpoint({bool whileClosing = false}) async {
+    if (_engineEntryId == null) return;
     if (_checkpointInFlight) {
       _checkpointRequested = true;
       return;
@@ -3518,8 +3556,8 @@ class PlayerController extends ChangeNotifier {
     try {
       do {
         _checkpointRequested = false;
-        final activeId = _engineEntryId ?? current?.id;
-        if (activeId == null) continue;
+        final activeId = _engineEntryId;
+        if (activeId == null) break;
         final activeEntry = _entryById(activeId);
         if (activeEntry != null &&
             !_saveNetworkUrls &&

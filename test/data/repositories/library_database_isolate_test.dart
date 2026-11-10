@@ -65,4 +65,26 @@ void main() {
       await expectLater(db.executeRaw('SELECT 1;'), throwsStateError);
     },
   );
+
+  test(
+    'LibraryDatabase.open fails promptly if isolate exits prematurely without hanging',
+    () async {
+      final watch = Stopwatch()..start();
+      await expectLater(
+        LibraryDatabase.open(
+          inMemory: true,
+          isolateEntryPointForTesting: debugPrematureExitIsolateEntryPoint,
+        ).timeout(const Duration(seconds: 2)),
+        throwsA(
+          isA<Exception>().having(
+            (e) => e.toString(),
+            'message',
+            contains('Database isolate exited prematurely'),
+          ),
+        ),
+      );
+      watch.stop();
+      expect(watch.elapsed, lessThan(const Duration(seconds: 2)));
+    },
+  );
 }

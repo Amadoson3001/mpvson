@@ -377,8 +377,11 @@ class MediaScannerService {
         final batch = remaining;
         remaining = <String>[];
         for (final root in batch) {
-          if (_isCancelled || _isDisposed || !_explicitFolders.contains(root)) {
+          if (_isCancelled || _isDisposed) {
             break;
+          }
+          if (!_explicitFolders.contains(root)) {
+            continue;
           }
 
           _updateStatus(_status.copyWith(currentFolder: root));
@@ -391,8 +394,11 @@ class MediaScannerService {
           } catch (_) {
             exists = false;
           }
-          if (_isCancelled || _isDisposed || !_explicitFolders.contains(root)) {
+          if (_isCancelled || _isDisposed) {
             break;
+          }
+          if (!_explicitFolders.contains(root)) {
+            continue;
           }
 
           if (!exists) {
@@ -400,10 +406,8 @@ class MediaScannerService {
             await _onFolderAvailabilityChanged?.call(root, false);
             _stopWatching(root);
             _scheduleReconnect(root);
-            if (_isCancelled ||
-                _isDisposed ||
-                !_explicitFolders.contains(root)) {
-              continue;
+            if (_isCancelled || _isDisposed) {
+              break;
             }
             continue;
           }
@@ -412,7 +416,10 @@ class MediaScannerService {
           _reconnectTimers.remove(root)?.cancel();
           _startWatching(root);
           await _onFolderAvailabilityChanged?.call(root, true);
-          if (_isCancelled || _isDisposed || !_explicitFolders.contains(root)) {
+          if (_isCancelled || _isDisposed) {
+            break;
+          }
+          if (!_explicitFolders.contains(root)) {
             continue;
           }
 
@@ -435,32 +442,40 @@ class MediaScannerService {
             );
           }
 
-          if (_isCancelled || _isDisposed || !_explicitFolders.contains(root)) {
+          if (_isCancelled || _isDisposed) {
             // Incomplete scans must NEVER delete records.
             break;
+          }
+          if (!_explicitFolders.contains(root)) {
+            continue;
           }
 
           if (folderDiscovered.isNotEmpty) {
             await _onDiscoveredFiles?.call(folderDiscovered);
-            if (_isCancelled ||
-                _isDisposed ||
-                !_explicitFolders.contains(root)) {
+            if (_isCancelled || _isDisposed) {
               break;
+            }
+            if (!_explicitFolders.contains(root)) {
+              continue;
             }
             allDiscoveredFiles.addAll(folderDiscovered);
           }
 
-          if (_isCancelled || _isDisposed || !_explicitFolders.contains(root)) {
+          if (_isCancelled || _isDisposed) {
             break;
+          }
+          if (!_explicitFolders.contains(root)) {
+            continue;
           }
 
           if (traversalComplete) {
             _knownDirectories[root] = directories;
             await _onFolderReconciled?.call(root, folderDiscovered);
-            if (_isCancelled ||
-                _isDisposed ||
-                !_explicitFolders.contains(root)) {
+            if (_isCancelled || _isDisposed) {
               break;
+            }
+            if (!_explicitFolders.contains(root)) {
+              continue;
             }
           }
           await _onFolderScanCompleted?.call(

@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'runtime_packaging.dart';
+
 void main(List<String> args) {
   if (args.contains('--sync-active')) {
     stdout.writeln('Synchronizing active in-app engine into build pin...');
@@ -68,6 +70,12 @@ void main(List<String> args) {
     '\nChecking playback engine for dev and release environments...',
   );
   _ensureEngineConfigured();
+
+  // Ensure VC++ runtime redistributable DLLs are bundled and debug CRTs cleaned
+  stdout.writeln(
+    '\nChecking VC++ runtime libraries and cleaning debug CRT artifacts...',
+  );
+  _configureVcRuntimeAndCleanDebugCrt();
 }
 
 void _ensureEngineConfigured() {
@@ -146,5 +154,45 @@ void _ensureEngineConfigured() {
     }
   } catch (e) {
     stdout.writeln('  [NOTICE] Engine pre-configuration note: $e');
+  }
+}
+
+void _configureVcRuntimeAndCleanDebugCrt() {
+  final targetDirs = <Directory>[
+    Directory(r'build\windows\x64\runner\Release'),
+    Directory(r'build\windows\x64\runner\Debug'),
+    Directory(r'build-release\windows\x64\runner\Release'),
+  ];
+
+  for (final dir in targetDirs) {
+    if (!dir.existsSync()) continue;
+    final mode = dir.path.contains('Debug') ? 'Debug' : 'Release';
+
+    // 1. Clean any debug CRT artifacts (e.g. zlib.dll from legacy ANGLE)
+    final cleaned = cleanDebugCrtArtifacts(dir);
+    if (cleaned.isNotEmpty) {
+      stdout.writeln(
+        '  [OK] Cleaned ${cleaned.length} debug-CRT artifact(s) from $mode environment.',
+      );
+    }
+
+    // 2. Deploy VC++ runtime redistributable DLLs
+    final copied = copyVcRuntimeDlls(dir);
+    if (copied.isNotEmpty) {
+      stdout.writeln(
+        '  [OK] Deployed ${copied.length} VC++ runtime DLL(s) into $mode environment.',
+      );
+    } else {
+      final verify = verifyBundleRuntimes(dir);
+      if (verify.bundledVcRuntimes.isNotEmpty) {
+        stdout.writeln(
+          '  [OK] VC++ runtime DLLs already present in $mode environment (${verify.bundledVcRuntimes.length} DLLs).',
+        );
+      } else {
+        stdout.writeln(
+          '  [NOTICE] VC++ Redistributable directory not found on host; app will rely on system-installed runtime in $mode.',
+        );
+      }
+    }
   }
 }

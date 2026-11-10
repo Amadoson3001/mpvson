@@ -51,6 +51,21 @@ class _DelayedClearRepository extends InMemoryMediaLibraryRepository {
   }
 }
 
+class _BlockingProbeRepository extends InMemoryMediaLibraryRepository {
+  _BlockingProbeRepository({super.initialItems});
+
+  final List<String> probedPaths = [];
+  Completer<void>? probeCompleter;
+
+  @override
+  Future<void> probeMedia(String path) async {
+    probedPaths.add(path);
+    if (probeCompleter != null && !probeCompleter!.isCompleted) {
+      await probeCompleter!.future;
+    }
+  }
+}
+
 class _FakeThumbnailService implements ThumbnailService, ThumbnailPeeker {
   final Map<String, MediaThumbnail> cached = {};
 
@@ -509,5 +524,114 @@ void main() {
         expect(titles.length, 4);
       },
     );
+
+    testWidgets(
+      'playlist switch aborts in-flight metadata probing for previous playlist',
+      (tester) async {
+        final probeCompleter = Completer<void>();
+        final probeRepo = _BlockingProbeRepository(
+          initialItems: [
+            track(1, duration: Duration.zero),
+            track(2, duration: Duration.zero),
+            track(3, duration: Duration.zero),
+            track(4, duration: Duration.zero),
+          ],
+        );
+        probeRepo.probeCompleter = probeCompleter;
+
+        final pl1 = await probeRepo.createPlaylist('Playlist 1');
+        await probeRepo.addToPlaylist(pl1.id, ['id1', 'id2', 'id3']);
+
+        final pl2 = await probeRepo.createPlaylist('Playlist 2');
+        await probeRepo.addToPlaylist(pl2.id, ['id4']);
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: PlaylistsView(
+                repository: probeRepo,
+                controller: controller,
+              ),
+            ),
+          ),
+        );
+        await settle(tester);
+
+        // Open Playlist 1 to trigger _probeMissingMetadata
+        await tester.tap(find.text('Playlist 1'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 50));
+
+        // First item should be in-flight
+        expect(probeRepo.probedPaths, ['C:\\Media\\file_1.mp3']);
+
+        // While id1 is in-flight, navigate back to playlists
+        await tester.tap(find.byTooltip('Back to playlists'));
+        await tester.pump();
+
+        // Release id1 probe so it finishes
+        probeCompleter.complete();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        await settle(tester);
+
+        // Probing for Playlist 1 ceased: id2 and id3 were never probed
+        expect(probeRepo.probedPaths, ['C:\\Media\\file_1.mp3']);
+
+        // Now open Playlist 2; it should probe id4 normally
+        await tester.tap(find.text('Playlist 2'));
+        await settle(tester);
+
+        expect(probeRepo.probedPaths, [
+          'C:\\Media\\file_1.mp3',
+          'C:\\Media\\file_4.mp3',
+        ]);
+      },
+    );
+
+    testWidgets('unmounting PlaylistsView aborts in-flight metadata probing', (
+      tester,
+    ) async {
+      final probeCompleter = Completer<void>();
+      final probeRepo = _BlockingProbeRepository(
+        initialItems: [
+          track(1, duration: Duration.zero),
+          track(2, duration: Duration.zero),
+        ],
+      );
+      probeRepo.probeCompleter = probeCompleter;
+
+      final pl1 = await probeRepo.createPlaylist('Playlist 1');
+      await probeRepo.addToPlaylist(pl1.id, ['id1', 'id2']);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: PlaylistsView(repository: probeRepo, controller: controller),
+          ),
+        ),
+      );
+      await settle(tester);
+
+      await tester.tap(find.text('Playlist 1'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(probeRepo.probedPaths, ['C:\\Media\\file_1.mp3']);
+
+      // Unmount widget
+      await tester.pumpWidget(
+        const MaterialApp(home: Scaffold(body: SizedBox())),
+      );
+      await tester.pump();
+
+      probeCompleter.complete();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      await settle(tester);
+
+      // id2 was never probed
+      expect(probeRepo.probedPaths, ['C:\\Media\\file_1.mp3']);
+    });
   });
 }

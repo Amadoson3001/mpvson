@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mpvson/data/repositories/in_memory_media_library_repository.dart';
 import 'package:mpvson/domain/models/library_models.dart';
+import 'package:mpvson/domain/models/media_entry.dart';
 import 'package:mpvson/ui/player/views/settings/settings_library_section.dart';
 
 void main() {
@@ -114,6 +116,105 @@ void main() {
           .onPressed,
       isNotNull,
     );
+  });
+
+  testWidgets(
+    'displays actual filesystem casing for existing directory on disk',
+    (tester) async {
+      final tempDir = Directory.systemTemp.createTempSync(
+        'Mpvson_UiCase_Test_',
+      );
+      addTearDown(() {
+        if (tempDir.existsSync()) {
+          tempDir.deleteSync(recursive: true);
+        }
+      });
+
+      final lowercased = tempDir.path.toLowerCase();
+      final expectedCasing = MediaEntry.formatDisplayPath(tempDir.path);
+
+      final diskFolder = LibraryFolderRecord(
+        path: lowercased,
+        addedAt: DateTime(2026),
+        fileCount: 5,
+      );
+      final repository = InMemoryMediaLibraryRepository(
+        initialFolders: [diskFolder],
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: MediaLibrarySettingsSection(libraryRepository: repository),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text(expectedCasing), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'falls back to stored folder.path when directory is not on disk',
+    (tester) async {
+      const missing = r'X:\NonExistent\Music\Catalog';
+      final mockFolder = LibraryFolderRecord(
+        path: missing,
+        addedAt: DateTime(2026),
+        fileCount: 0,
+        isAvailable: false,
+      );
+      final repository = InMemoryMediaLibraryRepository(
+        initialFolders: [mockFolder],
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: MediaLibrarySettingsSection(libraryRepository: repository),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text(missing), findsOneWidget);
+    },
+  );
+
+  testWidgets('addFolder normalizes casing with actual filesystem casing', (
+    tester,
+  ) async {
+    final tempDir = Directory.systemTemp.createTempSync(
+      'Mpvson_AddFolder_Test_',
+    );
+    addTearDown(() {
+      if (tempDir.existsSync()) {
+        tempDir.deleteSync(recursive: true);
+      }
+    });
+
+    final lowercased = tempDir.path.toLowerCase();
+    final expectedCasing = MediaEntry.formatDisplayPath(tempDir.path);
+
+    final repository = InMemoryMediaLibraryRepository();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: MediaLibrarySettingsSection(
+            libraryRepository: repository,
+            pickDirectory: () async => lowercased,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('add-folder-button')));
+    await tester.pumpAndSettle();
+
+    expect(repository.folders.single.path, equals(expectedCasing));
+    expect(find.text(expectedCasing), findsOneWidget);
   });
 }
 

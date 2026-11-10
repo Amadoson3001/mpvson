@@ -113,6 +113,7 @@ class LibraryDatabase {
     required SendPort commandPort,
     required ReceivePort responsePort,
     required ReceivePort exitPort,
+    StreamSubscription<dynamic>? exitSubscription,
   }) : _isolate = isolate,
        _commandPort = commandPort,
        _responsePort = responsePort,
@@ -126,9 +127,16 @@ class LibraryDatabase {
         _handleIsolateGone('Database isolate connection closed.');
       },
     );
-    _exitSubscription = _exitPort.listen((_) {
-      _handleIsolateGone('Database isolate exited unexpectedly.');
-    });
+    if (exitSubscription != null) {
+      _exitSubscription = exitSubscription;
+      _exitSubscription!.onData((_) {
+        _handleIsolateGone('Database isolate exited unexpectedly.');
+      });
+    } else {
+      _exitSubscription = _exitPort.listen((_) {
+        _handleIsolateGone('Database isolate exited unexpectedly.');
+      });
+    }
   }
 
   final Isolate _isolate;
@@ -165,48 +173,68 @@ class LibraryDatabase {
   static Future<LibraryDatabase> open({
     String? path,
     bool inMemory = false,
+    @visibleForTesting
+    void Function(dynamic params)? isolateEntryPointForTesting,
   }) async {
     final initPort = ReceivePort();
     final exitPort = ReceivePort();
     final responsePort = ReceivePort();
+    StreamSubscription<dynamic>? exitSubscription;
+    Isolate? isolate;
 
-    final isolate = await Isolate.spawn<_DbInitParams>(
-      _databaseIsolateEntryPoint,
-      _DbInitParams(
-        initPort: initPort.sendPort,
-        path: path,
-        inMemory: inMemory,
-      ),
-      onExit: exitPort.sendPort,
-    );
+    try {
+      final exitCompleter = Completer<_DbInitError>();
+      exitSubscription = exitPort.listen((_) {
+        if (!exitCompleter.isCompleted) {
+          exitCompleter.complete(
+            const _DbInitError('Database isolate exited prematurely'),
+          );
+        }
+      });
 
-    final dynamic initResult = await initPort.first;
-    initPort.close();
+      isolate = await Isolate.spawn<_DbInitParams>(
+        isolateEntryPointForTesting ?? _databaseIsolateEntryPoint,
+        _DbInitParams(
+          initPort: initPort.sendPort,
+          path: path,
+          inMemory: inMemory,
+        ),
+        onExit: exitPort.sendPort,
+      );
 
-    if (initResult is _DbInitError) {
+      final dynamic initResult = await Future.any<dynamic>([
+        initPort.first,
+        exitCompleter.future,
+      ]);
+      initPort.close();
+
+      if (initResult is _DbInitError) {
+        throw Exception(
+          'Failed to initialize LibraryDatabase: ${initResult.message}',
+        );
+      }
+
+      if (initResult is! SendPort) {
+        throw StateError(
+          'Unexpected init response from database isolate: $initResult',
+        );
+      }
+
+      return LibraryDatabase._(
+        isolate: isolate,
+        commandPort: initResult,
+        responsePort: responsePort,
+        exitPort: exitPort,
+        exitSubscription: exitSubscription,
+      );
+    } catch (_) {
+      initPort.close();
+      await exitSubscription?.cancel();
       exitPort.close();
       responsePort.close();
-      isolate.kill(priority: Isolate.immediate);
-      throw Exception(
-        'Failed to initialize LibraryDatabase: ${initResult.message}',
-      );
+      isolate?.kill(priority: Isolate.immediate);
+      rethrow;
     }
-
-    if (initResult is! SendPort) {
-      exitPort.close();
-      responsePort.close();
-      isolate.kill(priority: Isolate.immediate);
-      throw StateError(
-        'Unexpected init response from database isolate: $initResult',
-      );
-    }
-
-    return LibraryDatabase._(
-      isolate: isolate,
-      commandPort: initResult,
-      responsePort: responsePort,
-      exitPort: exitPort,
-    );
   }
 
   void _handleResponse(dynamic message) {
@@ -894,7 +922,8 @@ void _initializeSchema(
   // empty forever).
   db.execute('BEGIN IMMEDIATE;');
   try {
-    var rebuildFts = false;
+    final userVersion = _readUserVersion(db);
+    var rebuildFts = userVersion < 2;
     final ftsCheck = db.select(
       "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'media_fts'",
     );
@@ -933,6 +962,37 @@ void _initializeSchema(
 
     _createSchema(db);
 
+    if (!rebuildFts) {
+      final mediaCount =
+          db.select('SELECT count(*) AS c FROM media').first['c'] as int;
+      if (mediaCount > 0) {
+        int ftsCount = 0;
+        final docsizeExists = db
+            .select(
+              "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'media_fts_docsize'",
+            )
+            .isNotEmpty;
+        if (docsizeExists) {
+          ftsCount =
+              db
+                      .select('SELECT count(*) AS c FROM media_fts_docsize')
+                      .first['c']
+                  as int;
+        } else {
+          try {
+            ftsCount =
+                db.select('SELECT count(*) AS c FROM media_fts').first['c']
+                    as int;
+          } catch (_) {
+            ftsCount = 0;
+          }
+        }
+        if (ftsCount == 0) {
+          rebuildFts = true;
+        }
+      }
+    }
+
     if (rebuildFts) {
       final mediaCount =
           db.select('SELECT count(*) AS c FROM media').first['c'] as int;
@@ -963,6 +1023,12 @@ void debugRunSchemaMigrationForTesting(
     midMigrationFaultForTesting: midMigrationFaultForTesting,
   );
 }
+
+/// An isolate entrypoint that exits immediately without sending an initialization
+/// response, used to test that [LibraryDatabase.open] fails promptly instead of
+/// hanging.
+@visibleForTesting
+void debugPrematureExitIsolateEntryPoint(dynamic params) {}
 
 void _createSchema(Database db) {
   db.execute('''

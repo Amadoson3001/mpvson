@@ -7,6 +7,7 @@ import '../../../core/app_theme.dart';
 import '../../../core/components/empty_state.dart';
 import '../../../core/toast/app_toast.dart';
 import '../../../../data/repositories/media_library_repository.dart';
+import '../../../../domain/models/media_entry.dart';
 
 class LibraryFoldersView extends StatelessWidget {
   const LibraryFoldersView({super.key, required this.repository});
@@ -59,7 +60,10 @@ class _MediaLibrarySettingsSectionState
           ? widget.pickDirectory!()
           : getDirectoryPath());
       if (path == null || path.isEmpty) return;
-      await _runOperation(() => widget.libraryRepository.addFolder(path));
+      final formattedPath = MediaEntry.formatDisplayPath(path);
+      await _runOperation(
+        () => widget.libraryRepository.addFolder(formattedPath),
+      );
     } catch (_) {
       if (!mounted) return;
       AppToast.show(
@@ -166,11 +170,15 @@ class _MediaLibrarySettingsSectionState
                                     : theme.colorScheme.error,
                                 size: 24,
                               ),
-                              title: Text(
-                                folder.path,
-                                overflow: TextOverflow.ellipsis,
-                                style: theme.textTheme.bodyMedium?.copyWith(
-                                  fontWeight: FontWeight.w600,
+                              title: Tooltip(
+                                message: folder.displayPath,
+                                waitDuration: const Duration(milliseconds: 500),
+                                child: Text(
+                                  folder.displayPath,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: theme.textTheme.bodyMedium?.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                  ),
                                 ),
                               ),
                               subtitle: Row(

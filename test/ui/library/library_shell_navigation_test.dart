@@ -27,8 +27,9 @@ Future<void> _pumpShell(
   Harness h,
   _SettingsFlag flag,
   FocusNode homeFocus,
-  FocusNode settingsFocus,
-) async {
+  FocusNode settingsFocus, {
+  LibrarySection initialSection = LibrarySection.home,
+}) async {
   await tester.pumpWidget(
     MaterialApp(
       theme: AppTheme.dark,
@@ -39,6 +40,7 @@ Future<void> _pumpShell(
           return LibraryShell(
             repository: h.library,
             controller: h.controller,
+            initialSection: initialSection,
             home: Focus(
               focusNode: homeFocus,
               autofocus: true,
@@ -240,6 +242,116 @@ void main() {
         await settle(tester);
         expect(find.byKey(const Key('home-stage')), findsOneWidget);
         expect(find.byType(NowPlayingView), findsNothing);
+
+        await h.shutdown(tester);
+      },
+    );
+
+    testWidgets(
+      'Ctrl+F, Ctrl+K, Cmd+F, and Cmd+K shortcuts all focus the search field',
+      (tester) async {
+        configureView(tester, size: const Size(1240, 780));
+        final h = buildHarness();
+        final flag = _SettingsFlag();
+        final homeFocus = FocusNode(debugLabel: 'home-stage-focus');
+        final settingsFocus = FocusNode(debugLabel: 'settings-stage-focus');
+        await _pumpShell(
+          tester,
+          h,
+          flag,
+          homeFocus,
+          settingsFocus,
+          initialSection: LibrarySection.videos,
+        );
+
+        final searchTextFieldFinder = find.byType(TextField);
+        expect(searchTextFieldFinder, findsOneWidget);
+        final textField = tester.widget<TextField>(searchTextFieldFinder);
+        final searchFocus = textField.focusNode!;
+
+        // Check bindings on CallbackShortcuts
+        final shortcuts = tester.widget<CallbackShortcuts>(
+          find.byType(CallbackShortcuts),
+        );
+        final triggers = shortcuts.bindings.keys.cast<SingleActivator>();
+        expect(
+          triggers.any(
+            (a) => a.trigger == LogicalKeyboardKey.keyF && a.control,
+          ),
+          isTrue,
+        );
+        expect(
+          triggers.any((a) => a.trigger == LogicalKeyboardKey.keyF && a.meta),
+          isTrue,
+        );
+        expect(
+          triggers.any(
+            (a) => a.trigger == LogicalKeyboardKey.keyK && a.control,
+          ),
+          isTrue,
+        );
+        expect(
+          triggers.any((a) => a.trigger == LogicalKeyboardKey.keyK && a.meta),
+          isTrue,
+        );
+
+        // Tap the shell scaffold to establish primary focus within the shell scope
+        await tester.tap(find.byType(Scaffold));
+        await tester.pump();
+
+        // Test all four shortcut callbacks directly
+        final ctrlF = triggers.firstWhere(
+          (a) => a.trigger == LogicalKeyboardKey.keyF && a.control && !a.meta,
+        );
+        final ctrlK = triggers.firstWhere(
+          (a) => a.trigger == LogicalKeyboardKey.keyK && a.control && !a.meta,
+        );
+        final cmdF = triggers.firstWhere(
+          (a) => a.trigger == LogicalKeyboardKey.keyF && a.meta && !a.control,
+        );
+        final cmdK = triggers.firstWhere(
+          (a) => a.trigger == LogicalKeyboardKey.keyK && a.meta && !a.control,
+        );
+
+        for (final activator in [ctrlF, ctrlK, cmdF, cmdK]) {
+          searchFocus.unfocus();
+          await tester.pump();
+          expect(searchFocus.hasFocus, isFalse);
+
+          shortcuts.bindings[activator]!();
+          await tester.pump();
+          expect(searchFocus.hasFocus, isTrue);
+        }
+
+        // Also test dispatching key events when focus is inside the shell scope
+        final scope = FocusScope.of(tester.element(find.byType(Scaffold)));
+        for (final (key, isControl, isMeta) in [
+          (LogicalKeyboardKey.keyF, true, false),
+          (LogicalKeyboardKey.keyK, true, false),
+          (LogicalKeyboardKey.keyF, false, true),
+          (LogicalKeyboardKey.keyK, false, true),
+        ]) {
+          searchFocus.unfocus();
+          scope.requestFocus();
+          await tester.pump();
+          expect(searchFocus.hasFocus, isFalse);
+
+          if (isControl) {
+            await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+          }
+          if (isMeta) {
+            await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+          }
+          await tester.sendKeyEvent(key);
+          if (isControl) {
+            await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+          }
+          if (isMeta) {
+            await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+          }
+          await tester.pump();
+          expect(searchFocus.hasFocus, isTrue);
+        }
 
         await h.shutdown(tester);
       },
