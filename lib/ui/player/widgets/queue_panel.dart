@@ -105,6 +105,8 @@ class _QueuePanelState extends State<QueuePanel> {
                     Expanded(
                       child: Row(
                         children: [
+                          const Icon(Icons.queue_music_rounded, size: 20),
+                          const SizedBox(width: 8),
                           Text(
                             'Queue',
                             style: Theme.of(context).textTheme.titleMedium
@@ -1069,12 +1071,11 @@ class _QueueThumbnail extends StatelessWidget {
                           snapshot.hasError ? 'error' : 'empty',
                         ),
                 ),
-                if (playing || duration > Duration.zero)
-                  Positioned(
-                    right: 4,
-                    bottom: 4,
-                    child: _badge(context, duration),
-                  ),
+                Positioned(
+                  right: 4,
+                  bottom: 4,
+                  child: _badge(context, duration),
+                ),
               ],
             ),
           ),
