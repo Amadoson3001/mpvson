@@ -50,7 +50,11 @@ class VideoOutput {
     }
     // S/W
     if (pixel_buffer_ != nullptr && texture_id_) {
-      return pixel_buffer_textures_.at(texture_id_)->width;
+      std::lock_guard<std::mutex> lock(textures_mutex_);
+      auto it = pixel_buffer_textures_.find(texture_id_);
+      if (it != pixel_buffer_textures_.end()) {
+        return it->second->width;
+      }
     }
     return width_.value_or(1);
   }
@@ -61,7 +65,11 @@ class VideoOutput {
     }
     // S/W
     if (pixel_buffer_ != nullptr && texture_id_) {
-      return pixel_buffer_textures_.at(texture_id_)->height;
+      std::lock_guard<std::mutex> lock(textures_mutex_);
+      auto it = pixel_buffer_textures_.find(texture_id_);
+      if (it != pixel_buffer_textures_.end()) {
+        return it->second->height;
+      }
     }
     return height_.value_or(1);
   }
@@ -116,7 +124,7 @@ class VideoOutput {
   // destruction.
   std::atomic<bool> destroyed_{false};
 
-  std::mutex textures_mutex_ = std::mutex();
+  mutable std::mutex textures_mutex_ = std::mutex();
   std::mutex retirement_mutex_;
   std::condition_variable retirement_cv_;
   size_t pending_texture_retirements_ = 0;

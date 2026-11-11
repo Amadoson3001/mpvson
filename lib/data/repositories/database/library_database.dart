@@ -113,6 +113,7 @@ class LibraryDatabase {
     required SendPort commandPort,
     required ReceivePort responsePort,
     required ReceivePort exitPort,
+    StreamSubscription<dynamic>? exitSubscription,
   }) : _isolate = isolate,
        _commandPort = commandPort,
        _responsePort = responsePort,
@@ -123,12 +124,19 @@ class LibraryDatabase {
         _failAllPending(error, stackTrace);
       },
       onDone: () {
-        _failAllPending(StateError('Database isolate connection closed.'));
+        _handleIsolateGone('Database isolate connection closed.');
       },
     );
-    _exitSubscription = _exitPort.listen((_) {
-      _failAllPending(StateError('Database isolate exited unexpectedly.'));
-    });
+    if (exitSubscription != null) {
+      _exitSubscription = exitSubscription;
+      _exitSubscription!.onData((_) {
+        _handleIsolateGone('Database isolate exited unexpectedly.');
+      });
+    } else {
+      _exitSubscription = _exitPort.listen((_) {
+        _handleIsolateGone('Database isolate exited unexpectedly.');
+      });
+    }
   }
 
   final Isolate _isolate;
@@ -148,53 +156,85 @@ class LibraryDatabase {
   /// Whether the database isolate connection is closed.
   bool get isClosed => _isClosed;
 
+  /// The underlying database isolate, exposed so tests can simulate an
+  /// unexpected isolate death.
+  @visibleForTesting
+  Isolate get debugIsolate => _isolate;
+
+  /// Marks the connection as closed after the isolate died or its ports closed,
+  /// so pending and future calls fail fast instead of hanging forever.
+  void _handleIsolateGone(String message) {
+    _isClosed = true;
+    _failAllPending(StateError(message));
+  }
+
   /// Opens or initializes the SQLite database at [path], or in-memory when
   /// [inMemory] is true or [path] is ':memory:'.
   static Future<LibraryDatabase> open({
     String? path,
     bool inMemory = false,
+    @visibleForTesting
+    void Function(dynamic params)? isolateEntryPointForTesting,
   }) async {
     final initPort = ReceivePort();
     final exitPort = ReceivePort();
     final responsePort = ReceivePort();
+    StreamSubscription<dynamic>? exitSubscription;
+    Isolate? isolate;
 
-    final isolate = await Isolate.spawn<_DbInitParams>(
-      _databaseIsolateEntryPoint,
-      _DbInitParams(
-        initPort: initPort.sendPort,
-        path: path,
-        inMemory: inMemory,
-      ),
-      onExit: exitPort.sendPort,
-    );
+    try {
+      final exitCompleter = Completer<_DbInitError>();
+      exitSubscription = exitPort.listen((_) {
+        if (!exitCompleter.isCompleted) {
+          exitCompleter.complete(
+            const _DbInitError('Database isolate exited prematurely'),
+          );
+        }
+      });
 
-    final dynamic initResult = await initPort.first;
-    initPort.close();
+      isolate = await Isolate.spawn<_DbInitParams>(
+        isolateEntryPointForTesting ?? _databaseIsolateEntryPoint,
+        _DbInitParams(
+          initPort: initPort.sendPort,
+          path: path,
+          inMemory: inMemory,
+        ),
+        onExit: exitPort.sendPort,
+      );
 
-    if (initResult is _DbInitError) {
+      final dynamic initResult = await Future.any<dynamic>([
+        initPort.first,
+        exitCompleter.future,
+      ]);
+      initPort.close();
+
+      if (initResult is _DbInitError) {
+        throw Exception(
+          'Failed to initialize LibraryDatabase: ${initResult.message}',
+        );
+      }
+
+      if (initResult is! SendPort) {
+        throw StateError(
+          'Unexpected init response from database isolate: $initResult',
+        );
+      }
+
+      return LibraryDatabase._(
+        isolate: isolate,
+        commandPort: initResult,
+        responsePort: responsePort,
+        exitPort: exitPort,
+        exitSubscription: exitSubscription,
+      );
+    } catch (_) {
+      initPort.close();
+      await exitSubscription?.cancel();
       exitPort.close();
       responsePort.close();
-      isolate.kill(priority: Isolate.immediate);
-      throw Exception(
-        'Failed to initialize LibraryDatabase: ${initResult.message}',
-      );
+      isolate?.kill(priority: Isolate.immediate);
+      rethrow;
     }
-
-    if (initResult is! SendPort) {
-      exitPort.close();
-      responsePort.close();
-      isolate.kill(priority: Isolate.immediate);
-      throw StateError(
-        'Unexpected init response from database isolate: $initResult',
-      );
-    }
-
-    return LibraryDatabase._(
-      isolate: isolate,
-      commandPort: initResult,
-      responsePort: responsePort,
-      exitPort: exitPort,
-    );
   }
 
   void _handleResponse(dynamic message) {
@@ -400,6 +440,17 @@ class LibraryDatabase {
   /// Deletes a media item by canonical source URI.
   Future<void> deleteMediaByCanonicalSource(String canonicalSource) async {
     await _send<dynamic>('deleteMediaByCanonicalSource', canonicalSource);
+  }
+
+  /// Updates duration for a single media item.
+  Future<void> updateMediaDuration(
+    String canonicalSource,
+    Duration duration,
+  ) async {
+    await _send<dynamic>('updateMediaDuration', <String, Object?>{
+      'canonicalSource': canonicalSource,
+      'durationMs': duration.inMilliseconds,
+    });
   }
 
   /// Gets a media item by ID.
@@ -617,21 +668,36 @@ class LibraryDatabase {
     });
   }
 
+  /// Adds media files by disk path to a playlist, discovering/indexing them if needed.
+  Future<void> addPathsToPlaylist(String playlistId, List<String> paths) async {
+    await _send<dynamic>('addPathsToPlaylist', <String, Object?>{
+      'playlistId': playlistId,
+      'paths': paths,
+    });
+  }
+
+  /// Clears all entries from a playlist without deleting the playlist itself.
+  Future<void> clearPlaylist(String playlistId) async {
+    await _send<dynamic>('clearPlaylist', playlistId);
+  }
+
   /// Removes a single playlist entry by entry ID.
   Future<void> removePlaylistEntry(String entryId) async {
     await _send<dynamic>('removePlaylistEntry', entryId);
   }
 
-  /// Reorders playlist entries so that entry at [oldIndex] moves to [newIndex].
+  /// Reorders playlist entries so that entry at [oldIndex] (or [entryId]) moves to [newIndex].
   Future<void> reorderPlaylistEntries(
     String playlistId,
     int oldIndex,
-    int newIndex,
-  ) async {
+    int newIndex, {
+    String? entryId,
+  }) async {
     await _send<dynamic>('reorderPlaylistEntries', <String, Object?>{
       'playlistId': playlistId,
       'oldIndex': oldIndex,
       'newIndex': newIndex,
+      'entryId': entryId,
     });
   }
 
@@ -657,9 +723,13 @@ class LibraryDatabase {
     _isClosing = true;
 
     try {
-      await _send<dynamic>('close');
+      // The isolate usually answers the handshake promptly. If it died or is
+      // stuck mid-query, do not wait forever: after a bounded grace period the
+      // isolate is killed below, which also fails every pending request.
+      await _send<dynamic>('close').timeout(const Duration(seconds: 5));
     } catch (_) {
-      // Isolate may have already exited.
+      // Isolate may have already exited or the handshake stalled; the kill in
+      // the finally block is the authoritative shutdown path.
     } finally {
       _isClosed = true;
       _isClosing = false;
@@ -750,6 +820,9 @@ void _databaseIsolateEntryPoint(_DbInitParams params) {
     db.execute('PRAGMA foreign_keys = ON;');
     db.execute('PRAGMA busy_timeout = 5000;');
     db.execute('PRAGMA synchronous = NORMAL;');
+    db.execute('PRAGMA temp_store = MEMORY;');
+    db.execute('PRAGMA cache_size = -8000;');
+    db.execute('PRAGMA mmap_size = 33554432;');
 
     db.createFunction(
       functionName: 'unicode_lower',
@@ -821,42 +894,143 @@ void _databaseIsolateEntryPoint(_DbInitParams params) {
   });
 }
 
-void _initializeSchema(Database db) {
-  var needsRebuild = false;
-  final ftsCheck = db.select(
-    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'media_fts'",
-  );
-  if (ftsCheck.isNotEmpty) {
-    final ftsCols = db.select("PRAGMA table_info('media_fts')");
-    final hasFilename = ftsCols.any((c) => c['name'] == 'filename');
-    final hasAlbumArtist = ftsCols.any((c) => c['name'] == 'album_artist');
-    final hasPath = ftsCols.any((c) => c['name'] == 'path');
-    if (hasFilename || !hasAlbumArtist || !hasPath) {
-      db.execute('DROP TRIGGER IF EXISTS media_ai');
-      db.execute('DROP TRIGGER IF EXISTS media_ad');
-      db.execute('DROP TRIGGER IF EXISTS media_au');
-      db.execute('DROP TABLE IF EXISTS media_fts');
-      needsRebuild = true;
-    }
-  } else {
-    needsRebuild = true;
+/// Schema version tracked in PRAGMA user_version.
+///
+/// Version 2 describes the FTS5 external-content search table with
+/// album_artist and path columns; version 0 (or 1) marks a database that still
+/// needs the migration (or was left mid-migration by a crash).
+const int _currentSchemaVersion = 2;
+
+int _readUserVersion(Database db) {
+  final rows = db.select('PRAGMA user_version;');
+  return (rows.first.values.first as int?) ?? 0;
+}
+
+void _initializeSchema(
+  Database db, {
+  void Function(Database db)? midMigrationFaultForTesting,
+}) {
+  if (_readUserVersion(db) >= _currentSchemaVersion) {
+    _createSchema(db);
+    return;
   }
 
-  // Older libraries may predate columns referenced by the indexes below.
-  // Add missing columns before index creation so reopening an old database
-  // cannot abort initialization.
-  final mediaExists = db.select(
-    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'media'",
-  );
-  if (mediaExists.isNotEmpty) {
-    final columns = db.select('PRAGMA table_info(media)');
-    if (!columns.any((column) => column['name'] == 'is_in_library')) {
-      db.execute(
-        'ALTER TABLE media ADD COLUMN is_in_library INTEGER NOT NULL DEFAULT 1',
-      );
+  // The migration runs as a single transaction (D-6): a crash part-way rolls
+  // back to the previous consistent state, is tracked by user_version, and is
+  // retried whole on the next open instead of leaving a half-built search
+  // index (an external-content FTS table committed without its rebuild stays
+  // empty forever).
+  db.execute('BEGIN IMMEDIATE;');
+  try {
+    final userVersion = _readUserVersion(db);
+    var rebuildFts = userVersion < 2;
+    final ftsCheck = db.select(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'media_fts'",
+    );
+    if (ftsCheck.isNotEmpty) {
+      final ftsCols = db.select("PRAGMA table_info('media_fts')");
+      final hasFilename = ftsCols.any((c) => c['name'] == 'filename');
+      final hasAlbumArtist = ftsCols.any((c) => c['name'] == 'album_artist');
+      final hasPath = ftsCols.any((c) => c['name'] == 'path');
+      if (hasFilename || !hasAlbumArtist || !hasPath) {
+        db.execute('DROP TRIGGER IF EXISTS media_ai');
+        db.execute('DROP TRIGGER IF EXISTS media_ad');
+        db.execute('DROP TRIGGER IF EXISTS media_au');
+        db.execute('DROP TABLE IF EXISTS media_fts');
+        rebuildFts = true;
+      }
+    } else {
+      rebuildFts = true;
     }
-  }
 
+    // Pre-migration media tables may lack is_in_library; add it before the
+    // schema script creates the index that references the column. A fresh
+    // database gets the column from the CREATE TABLE below.
+    final mediaTableExists = db
+        .select(
+          "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'media'",
+        )
+        .isNotEmpty;
+    if (mediaTableExists) {
+      final columns = db.select('PRAGMA table_info(media)');
+      if (!columns.any((column) => column['name'] == 'is_in_library')) {
+        db.execute(
+          'ALTER TABLE media ADD COLUMN is_in_library INTEGER NOT NULL DEFAULT 1',
+        );
+      }
+    }
+
+    _createSchema(db);
+
+    if (!rebuildFts) {
+      final mediaCount =
+          db.select('SELECT count(*) AS c FROM media').first['c'] as int;
+      if (mediaCount > 0) {
+        int ftsCount = 0;
+        final docsizeExists = db
+            .select(
+              "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'media_fts_docsize'",
+            )
+            .isNotEmpty;
+        if (docsizeExists) {
+          ftsCount =
+              db
+                      .select('SELECT count(*) AS c FROM media_fts_docsize')
+                      .first['c']
+                  as int;
+        } else {
+          try {
+            ftsCount =
+                db.select('SELECT count(*) AS c FROM media_fts').first['c']
+                    as int;
+          } catch (_) {
+            ftsCount = 0;
+          }
+        }
+        if (ftsCount == 0) {
+          rebuildFts = true;
+        }
+      }
+    }
+
+    if (rebuildFts) {
+      final mediaCount =
+          db.select('SELECT count(*) AS c FROM media').first['c'] as int;
+      if (mediaCount > 0) {
+        db.execute("INSERT INTO media_fts(media_fts) VALUES('rebuild');");
+      }
+    }
+
+    midMigrationFaultForTesting?.call(db);
+
+    db.execute('PRAGMA user_version = $_currentSchemaVersion;');
+    db.execute('COMMIT;');
+  } catch (_) {
+    db.execute('ROLLBACK;');
+    rethrow;
+  }
+}
+
+/// Runs the schema migration against a raw database handle so tests can
+/// simulate a crash between migration steps.
+@visibleForTesting
+void debugRunSchemaMigrationForTesting(
+  Database db, {
+  void Function(Database db)? midMigrationFaultForTesting,
+}) {
+  _initializeSchema(
+    db,
+    midMigrationFaultForTesting: midMigrationFaultForTesting,
+  );
+}
+
+/// An isolate entrypoint that exits immediately without sending an initialization
+/// response, used to test that [LibraryDatabase.open] fails promptly instead of
+/// hanging.
+@visibleForTesting
+void debugPrematureExitIsolateEntryPoint(dynamic params) {}
+
+void _createSchema(Database db) {
   db.execute('''
     CREATE TABLE IF NOT EXISTS folders (
       path TEXT PRIMARY KEY,
@@ -957,13 +1131,57 @@ void _initializeSchema(Database db) {
       VALUES (new.rowid, new.title, new.artist, new.album_artist, new.album, new.path);
     END;
   ''');
-  if (needsRebuild) {
-    final mediaCount =
-        db.select('SELECT count(*) AS c FROM media').first['c'] as int;
-    if (mediaCount > 0) {
-      db.execute("INSERT INTO media_fts(media_fts) VALUES('rebuild');");
-    }
+}
+
+/// Canonical key for folder rows so `C:\Music` and `c:\music` share one record.
+///
+/// [MediaEntry.canonicalSource] lowercases paths on Windows and keeps the
+/// original casing on POSIX, matching the media table's canonical_source keys.
+String _canonicalFolderKey(String path) => MediaEntry.canonicalSource(path);
+
+/// Canonical identity for a media source, applied at every write/lookup so the
+/// UNIQUE(canonical_source) constraint dedupes case-variant duplicates.
+String _canonicalMediaKey(String source) => MediaEntry.canonicalSource(source);
+
+/// Builds a SQL predicate matching every canonical_source at or below [root].
+///
+/// The predicate is a half-open BINARY range per separator —
+/// `[prefix, prefix-with-last-byte-incremented)` — instead of a `substr()`
+/// comparison, so SQLite can seek the implicit UNIQUE(canonical_source) index
+/// rather than evaluate an expression against every row. A range whose lower
+/// bound is `root + separator` matches the root itself plus every key beginning
+/// with that prefix, which is exactly the `p.equals(root, path) ||
+/// p.isWithin(root, path)` behavior it replaces. On POSIX only `/` separates
+/// paths; Windows additionally matches the same root spelled with `\`.
+(String, List<Object?>) _canonicalSourceUnderRoot(String root) {
+  void addRange(String prefix, List<String> conditions, List<Object?> args) {
+    final lastUnit = prefix.codeUnitAt(prefix.length - 1);
+    final upper =
+        '${prefix.substring(0, prefix.length - 1)}'
+        '${String.fromCharCode(lastUnit + 1)}';
+    conditions.add('(canonical_source >= ? AND canonical_source < ?)');
+    args
+      ..add(prefix)
+      ..add(upper);
   }
+
+  final conditions = <String>[];
+  final args = <Object?>[];
+  final rootSlash = root.replaceAll(r'\', '/');
+  addRange(
+    rootSlash.endsWith('/') ? rootSlash : '$rootSlash/',
+    conditions,
+    args,
+  );
+  if (Platform.isWindows) {
+    final rootBackslash = root.replaceAll('/', r'\');
+    addRange(
+      rootBackslash.endsWith(r'\') ? rootBackslash : '$rootBackslash\\',
+      conditions,
+      args,
+    );
+  }
+  return ('(${conditions.join(' OR ')})', args);
 }
 
 Object? _dispatchAction(Database db, String action, Object? params) {
@@ -1003,7 +1221,7 @@ Object? _dispatchAction(Database db, String action, Object? params) {
           file_count = excluded.file_count
         ''',
         [
-          f['path'],
+          _canonicalFolderKey(f['path'] as String),
           f['added_at'],
           f['last_scanned_at'],
           (f['is_available'] as bool? ?? true) ? 1 : 0,
@@ -1028,13 +1246,13 @@ Object? _dispatchAction(Database db, String action, Object? params) {
           f['last_scanned_at'],
           (f['is_available'] as bool? ?? true) ? 1 : 0,
           f['file_count'] ?? 0,
-          f['path'],
+          _canonicalFolderKey(f['path'] as String),
         ],
       );
       return null;
 
     case 'deleteFolder':
-      final path = params as String;
+      final path = _canonicalFolderKey(params as String);
       db.execute('BEGIN TRANSACTION');
       try {
         db.execute('DELETE FROM folders WHERE path = ?', [path]);
@@ -1047,7 +1265,7 @@ Object? _dispatchAction(Database db, String action, Object? params) {
       return null;
 
     case 'getFolder':
-      final path = params as String;
+      final path = _canonicalFolderKey(params as String);
       final rows = db.select('SELECT * FROM folders WHERE path = ?', [path]);
       if (rows.isEmpty) return null;
       return Map<String, Object?>.from(rows.first);
@@ -1058,7 +1276,7 @@ Object? _dispatchAction(Database db, String action, Object? params) {
 
     case 'markFolderAvailability':
       final map = (params as Map).cast<String, Object?>();
-      final folderPath = map['folderPath'] as String;
+      final folderPath = _canonicalFolderKey(map['folderPath'] as String);
       final isAvailable = map['isAvailable'] as bool;
       final availInt = isAvailable ? 1 : 0;
 
@@ -1094,7 +1312,7 @@ Object? _dispatchAction(Database db, String action, Object? params) {
       return null;
 
     case 'refreshFolderFileCount':
-      final folderPath = params as String;
+      final folderPath = _canonicalFolderKey(params as String);
       final root = MediaEntry.canonicalSource(folderPath);
       final rootSlash = root.replaceAll(r'\', '/');
       final rootBackslash = root.replaceAll('/', r'\');
@@ -1131,7 +1349,7 @@ Object? _dispatchAction(Database db, String action, Object? params) {
 
     case 'updateFolderScanStats':
       final map = (params as Map).cast<String, Object?>();
-      final path = map['path'] as String;
+      final path = _canonicalFolderKey(map['path'] as String);
       final fileCount = map['fileCount'] as int?;
       final lastScannedAt = map['lastScannedAt'] as int?;
 
@@ -1168,6 +1386,17 @@ Object? _dispatchAction(Database db, String action, Object? params) {
       db.execute(
         'DELETE FROM media WHERE canonical_source = ? OR canonical_source = ?',
         [canonicalSource, canon],
+      );
+      return null;
+
+    case 'updateMediaDuration':
+      final map = (params as Map).cast<String, Object?>();
+      final canonicalSource = map['canonicalSource'] as String;
+      final durationMs = map['durationMs'] as int;
+      final canon = MediaEntry.canonicalSource(canonicalSource);
+      db.execute(
+        'UPDATE media SET duration_ms = ? WHERE canonical_source = ? OR canonical_source = ?',
+        [durationMs, canonicalSource, canon],
       );
       return null;
 
@@ -1283,9 +1512,10 @@ Object? _dispatchAction(Database db, String action, Object? params) {
             file_size = excluded.file_size,
             modified_at = excluded.modified_at,
             is_available = excluded.is_available,
-            is_favorite = excluded.is_favorite,
-            last_played_at = excluded.last_played_at,
-            play_count = excluded.play_count
+            is_in_library = 1,
+            is_favorite = media.is_favorite,
+            last_played_at = media.last_played_at,
+            play_count = media.play_count
         ''');
         try {
           for (final item in list) {
@@ -1420,6 +1650,80 @@ Object? _dispatchAction(Database db, String action, Object? params) {
       db.execute('DELETE FROM playlists WHERE id = ?', [id]);
       return null;
 
+    case 'clearPlaylist':
+      final playlistId = params as String;
+      db.execute('BEGIN TRANSACTION;');
+      try {
+        db.execute('DELETE FROM playlist_entries WHERE playlist_id = ?', [
+          playlistId,
+        ]);
+        db.execute('UPDATE playlists SET updated_at = ? WHERE id = ?', [
+          DateTime.now().millisecondsSinceEpoch,
+          playlistId,
+        ]);
+        db.execute('COMMIT;');
+      } catch (_) {
+        db.execute('ROLLBACK;');
+        rethrow;
+      }
+      return null;
+
+    case 'addPathsToPlaylist':
+      final map = (params as Map).cast<String, Object?>();
+      final playlistId = map['playlistId'] as String;
+      final paths = (map['paths'] as List).cast<String>();
+
+      _batchUpsertPaths(db, paths);
+
+      db.execute('BEGIN TRANSACTION;');
+      try {
+        final posRow = db.select(
+          'SELECT COALESCE(MAX(position), -1) AS max_pos FROM playlist_entries WHERE playlist_id = ?',
+          [playlistId],
+        );
+        int nextPos = ((posRow.first['max_pos'] as int?) ?? -1) + 1;
+        final now = DateTime.now().millisecondsSinceEpoch;
+
+        final selectStmt = db.prepare(
+          'SELECT id FROM media WHERE canonical_source = ? LIMIT 1',
+        );
+        final insertStmt = db.prepare('''
+          INSERT INTO playlist_entries (id, playlist_id, media_id, position, added_at)
+          VALUES (?, ?, ?, ?, ?)
+        ''');
+
+        try {
+          for (final rawPath in paths) {
+            final canonical = MediaEntry.canonicalSource(rawPath);
+            final rows = selectStmt.select([canonical]);
+            if (rows.isNotEmpty) {
+              final mediaId = rows.first['id'] as String;
+              final entryId = _generateId('$playlistId-$mediaId-$nextPos');
+              insertStmt.execute([
+                entryId,
+                playlistId,
+                mediaId,
+                nextPos++,
+                now,
+              ]);
+            }
+          }
+        } finally {
+          selectStmt.close();
+          insertStmt.close();
+        }
+
+        db.execute('UPDATE playlists SET updated_at = ? WHERE id = ?', [
+          now,
+          playlistId,
+        ]);
+        db.execute('COMMIT;');
+      } catch (_) {
+        db.execute('ROLLBACK;');
+        rethrow;
+      }
+      return null;
+
     case 'addEntriesToPlaylist':
       final map = (params as Map).cast<String, Object?>();
       final playlistId = map['playlistId'] as String;
@@ -1496,8 +1800,9 @@ Object? _dispatchAction(Database db, String action, Object? params) {
       final playlistId = map['playlistId'] as String;
       final oldIndex = map['oldIndex'] as int;
       final newIndex = map['newIndex'] as int;
+      final entryId = map['entryId'] as String?;
 
-      if (oldIndex == newIndex) return null;
+      if (entryId == null && oldIndex == newIndex) return null;
 
       db.execute('BEGIN TRANSACTION;');
       try {
@@ -1506,13 +1811,21 @@ Object? _dispatchAction(Database db, String action, Object? params) {
           [playlistId],
         );
 
-        if (oldIndex >= 0 &&
-            oldIndex < entries.length &&
+        final idList = entries.map((r) => r['id'] as String).toList();
+        final actualOldIndex = entryId != null
+            ? idList.indexOf(entryId)
+            : oldIndex;
+
+        if (actualOldIndex >= 0 &&
+            actualOldIndex < idList.length &&
             newIndex >= 0 &&
-            newIndex <= entries.length) {
-          final idList = entries.map((r) => r['id'] as String).toList();
-          final movedId = idList.removeAt(oldIndex);
-          final insertionIndex = newIndex > oldIndex ? newIndex - 1 : newIndex;
+            newIndex <= idList.length) {
+          final movedId = idList.removeAt(actualOldIndex);
+          final insertionIndex =
+              (newIndex > actualOldIndex ? newIndex - 1 : newIndex).clamp(
+                0,
+                idList.length,
+              );
           idList.insert(insertionIndex, movedId);
 
           final stmt = db.prepare(
@@ -1638,7 +1951,7 @@ void _executeInsertMediaRowStmt(
 ) {
   stmt.execute([
     m['id'],
-    m['canonical_source'],
+    _canonicalMediaKey(m['canonical_source'] as String),
     m['path'],
     m['kind'] ?? 'unknown',
     m['title'],
@@ -1703,13 +2016,14 @@ void _insertOrUpdateMediaRow(Database db, Map<String, Object?> m) {
       file_size = excluded.file_size,
       modified_at = excluded.modified_at,
       is_available = excluded.is_available,
-      is_favorite = excluded.is_favorite,
-      last_played_at = excluded.last_played_at,
-      play_count = excluded.play_count
+      is_in_library = 1,
+      is_favorite = media.is_favorite,
+      last_played_at = media.last_played_at,
+      play_count = media.play_count
     ''',
     [
       m['id'],
-      m['canonical_source'],
+      _canonicalMediaKey(m['canonical_source'] as String),
       m['path'],
       m['kind'] ?? 'unknown',
       m['title'],
@@ -1744,8 +2058,17 @@ void _untrackRemovedFolder(Database db, String folderPath) {
       .select('SELECT path FROM folders')
       .map((row) => MediaEntry.canonicalSource(row['path'] as String))
       .toList();
+  // Only rows at or below the removed root can lose library membership. The
+  // indexed prefix seek keeps that candidate set bounded by the removed
+  // folder's size instead of scanning the whole media table; the still-covered
+  // check stays in Dart because the remaining roots are few.
+  final (coveredPredicate, coveredArgs) = _canonicalSourceUnderRoot(
+    removedRoot,
+  );
   final rows = db.select(
-    'SELECT canonical_source, path FROM media WHERE is_in_library = 1',
+    'SELECT canonical_source, path FROM media '
+    'WHERE is_in_library = 1 AND $coveredPredicate',
+    coveredArgs,
   );
   final update = db.prepare(
     'UPDATE media SET is_in_library = 0 WHERE canonical_source = ?',
@@ -1755,10 +2078,11 @@ void _untrackRemovedFolder(Database db, String folderPath) {
       final path = MediaEntry.canonicalSource(row['path'] as String);
       final wasCovered =
           p.equals(removedRoot, path) || p.isWithin(removedRoot, path);
+      if (!wasCovered) continue;
       final stillCovered = remainingRoots.any(
         (root) => p.equals(root, path) || p.isWithin(root, path),
       );
-      if (wasCovered && !stillCovered) {
+      if (!stillCovered) {
         update.execute([row['canonical_source']]);
       }
     }
@@ -1773,9 +2097,22 @@ void _markMissingFilesInFolder(
   Set<String> discovered,
 ) {
   final root = MediaEntry.canonicalSource(folderPath);
+  // Restrict the stale-file candidates with an indexed prefix seek over
+  // canonical_source so a watcher batch costs one bounded scan instead of a
+  // whole-library Dart loop over every row.
+  final (withinPredicate, withinArgs) = _canonicalSourceUnderRoot(root);
   final rows = db.select(
-    'SELECT canonical_source, path FROM media WHERE is_available = 1',
+    'SELECT canonical_source, path FROM media '
+    'WHERE is_available = 1 AND $withinPredicate',
+    withinArgs,
   );
+  // A watcher add that lands while a scan is in flight can be missing from the
+  // discovered snapshot; re-stating each candidate keeps mid-scan additions
+  // from being marked unavailable. The re-stat is skipped when the folder root
+  // itself is gone, because stats against a disconnected drive can block for
+  // seconds per file.
+  final revalidateWithStat =
+      discovered.isNotEmpty && Directory(root).existsSync();
   db.execute('BEGIN TRANSACTION');
   try {
     final statement = db.prepare(
@@ -1787,6 +2124,9 @@ void _markMissingFilesInFolder(
         final path = MediaEntry.canonicalSource(row['path'] as String);
         if ((p.equals(root, path) || p.isWithin(root, path)) &&
             !discovered.contains(source)) {
+          if (revalidateWithStat && File(row['path'] as String).existsSync()) {
+            continue;
+          }
           statement.execute([source]);
         }
       }
@@ -1808,14 +2148,15 @@ void _batchUpsertPaths(Database db, List<String> paths) {
     final now = DateTime.now().millisecondsSinceEpoch;
     final stmt = db.prepare('''
       INSERT INTO media (
-        id, canonical_source, path, kind, title,
+        id, canonical_source, path, kind, title, artist,
         file_size, modified_at, is_available, is_favorite, added_at, play_count
       ) VALUES (
-        ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?,
         0, NULL, 1, 0, ?, 0
       )
       ON CONFLICT(canonical_source) DO UPDATE SET
         path = excluded.path,
+        artist = COALESCE(media.artist, excluded.artist),
         is_available = 1,
         is_in_library = 1
     ''');
@@ -1825,9 +2166,21 @@ void _batchUpsertPaths(Database db, List<String> paths) {
         final canonical = MediaEntry.canonicalSource(rawPath);
         final id = _generateId(canonical);
         final kind = MediaCatalog.kindFromExtension(normalized).name;
-        final fileName = MediaEntry.titleFromPath(normalized);
+        final rawTitle = MediaEntry.titleFromPath(normalized);
+        final displayName = MediaCatalog.displayName(rawTitle);
+        String title = displayName;
+        String? artist;
+        if (displayName.contains(' - ')) {
+          final parts = displayName.split(' - ');
+          final pArtist = parts[0].trim();
+          final pTitle = parts.sublist(1).join(' - ').trim();
+          if (pArtist.isNotEmpty && pTitle.isNotEmpty) {
+            artist = pArtist;
+            title = pTitle;
+          }
+        }
 
-        stmt.execute([id, canonical, normalized, kind, fileName, now]);
+        stmt.execute([id, canonical, normalized, kind, title, artist, now]);
       }
     } finally {
       stmt.close();

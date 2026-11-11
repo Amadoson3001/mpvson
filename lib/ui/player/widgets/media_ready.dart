@@ -172,29 +172,38 @@ class _ReadyContent extends StatelessWidget {
           ],
         ],
         const SizedBox(height: 21),
-        Tooltip(
-          message: hasResumePosition ? 'Resume this video' : 'Play this video',
-          child: FilledButton.icon(
-            key: const ValueKey('resume-current'),
-            onPressed: isOpening ? null : onPlay,
-            icon: isOpening
-                ? SizedBox(
-                    width: 17,
-                    height: 17,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: context.palette.accentForeground,
-                    ),
-                  )
-                : const Icon(Icons.play_arrow_rounded),
-            label: Text(
-              isOpening
-                  ? 'Opening…'
-                  : hasResumePosition
-                  ? 'Resume video'
-                  : 'Play video',
+        Wrap(
+          spacing: 12,
+          runSpacing: 10,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            Tooltip(
+              message: hasResumePosition
+                  ? 'Resume this video'
+                  : 'Play this video',
+              child: FilledButton.icon(
+                key: const ValueKey('resume-current'),
+                onPressed: isOpening ? null : onPlay,
+                icon: isOpening
+                    ? SizedBox(
+                        width: 17,
+                        height: 17,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: context.palette.accentForeground,
+                        ),
+                      )
+                    : const Icon(Icons.play_arrow_rounded),
+                label: Text(
+                  isOpening
+                      ? 'Opening…'
+                      : hasResumePosition
+                      ? 'Resume video'
+                      : 'Play video',
+                ),
+              ),
             ),
-          ),
+          ],
         ),
       ],
     );

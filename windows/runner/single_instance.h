@@ -7,12 +7,16 @@
 #include <flutter/method_channel.h>
 
 #include <atomic>
+#include <deque>
 #include <memory>
 #include <string>
 #include <thread>
 #include <vector>
 
 constexpr UINT WM_SINGLE_INSTANCE_ACTIVATE = WM_USER + 101;
+constexpr UINT_PTR kSingleInstanceRetryTimerId = 1001;
+constexpr UINT kSingleInstanceRetryIntervalMs = 100;
+constexpr int kMaxSingleInstanceRetries = 300;  // 30 seconds max wait for Dart listener
 
 class SingleInstance {
  public:
@@ -21,8 +25,12 @@ class SingleInstance {
 
   SingleInstance(const SingleInstance&) = delete;
   SingleInstance& operator=(const SingleInstance&) = delete;
-  SingleInstance(SingleInstance&& other) noexcept;
-  SingleInstance& operator=(SingleInstance&& other) noexcept;
+  // Moves are deleted: a moved-from instance would hand the single-instance
+  // mutex handle to another object while the server thread keeps running with
+  // |this|, breaking the mutex ownership and thread invariants. Instances are
+  // always owned through std::unique_ptr.
+  SingleInstance(SingleInstance&&) = delete;
+  SingleInstance& operator=(SingleInstance&&) = delete;
 
   // Tries to acquire primary instance ownership or forwards arguments to the primary instance.
   // Returns true if this is the primary instance and execution should proceed.
@@ -36,12 +44,16 @@ class SingleInstance {
   // Handles activation posted to the main thread.
   void HandleActivate(const std::vector<std::string>& paths);
 
+  // Handles retry timer when Dart listener has not registered yet.
+  void OnRetryTimer();
+
   // Cleans up resources, shuts down background server thread, and releases mutex.
   void CleanUp();
 
  private:
   void StartServer();
   void ServerThreadWorker();
+  void FlushPendingActivations();
   static void ForwardToPrimary(const std::vector<std::wstring>& raw_args);
   static std::vector<std::wstring> GetRawCommandLineArgs();
   static std::vector<std::string> ResolvePaths(const std::vector<std::wstring>& raw_args);
@@ -51,6 +63,12 @@ class SingleInstance {
   HWND window_handle_ = nullptr;
   std::thread server_thread_;
   std::atomic<bool> stopping_{false};
+
+  std::deque<std::vector<std::string>> pending_activations_;
+  bool is_dispatching_ = false;
+  bool is_dart_ready_ = false;
+  int retry_count_ = 0;
+  std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
 
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> channel_;
 };

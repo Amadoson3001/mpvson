@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:window_manager/window_manager.dart';
 
 import '../../domain/models/media_entry.dart';
 import '../../domain/models/open_request.dart';
@@ -27,6 +28,8 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
     MethodChannel? powerChannel,
     this._urlLauncher,
     MediaLibraryRepository? libraryRepository,
+    this.onRaiseWindow,
+    this.onQuitApplication,
   }) : singleInstanceChannel =
            singleInstanceChannel ??
            const MethodChannel('mpvson/single_instance'),
@@ -40,6 +43,11 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
   final MethodChannel mediaControlsChannel;
   final MethodChannel powerChannel;
   final Future<bool> Function(Uri uri)? _urlLauncher;
+
+  /// Overrides for the MPRIS `Raise` and `Quit` media-control commands.
+  /// When omitted, the default window-manager implementations are used.
+  final Future<void> Function()? onRaiseWindow;
+  final Future<void> Function()? onQuitApplication;
 
   PlayerController? _controller;
   OpenRequestCoordinator? _openRequestCoordinator;
@@ -333,7 +341,9 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
       newStatus = SystemPlaybackStatus.closed;
     } else if (_controller!.isPlaying) {
       newStatus = SystemPlaybackStatus.playing;
-    } else if (_controller!.current == null || !_controller!.hasMedia) {
+    } else if (_controller!.current == null ||
+        !_controller!.hasMedia ||
+        _controller!.isStopped) {
       newStatus = SystemPlaybackStatus.stopped;
     } else {
       newStatus = SystemPlaybackStatus.paused;
@@ -360,7 +370,9 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
 
   void _syncMetadata() {
     if (_disposed) return;
-    if (_controller == null || _controller!.current == null) {
+    if (_controller == null ||
+        _controller!.current == null ||
+        _controller!.isStopped) {
       if (_currentMetadata != MediaMetadata.empty) {
         _currentTrackId = null;
         _lastSyncedEntryId = null;
@@ -448,13 +460,20 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
   void _probeMetadataIfAvailable(MediaEntry entry) async {
     final controller = _controller;
     if (controller == null) return;
+    bool isStale() =>
+        _disposed ||
+        !identical(_controller, controller) ||
+        controller.current?.id != entry.id;
     // Library rows already carry parsed tags, so reading the record avoids
     // starting a second native probe while the requested song is loading.
     final library = _libraryRepository;
     if (library != null && library.isReady) {
       try {
         final record = await library.getMediaByCanonicalSource(entry.path);
-        if (_disposed || controller.current?.id != entry.id) return;
+        // Staleness must be re-checked after every await: the track may have
+        // changed, the controller detached, or the service disposed while the
+        // lookup was in flight.
+        if (isStale()) return;
         if (record != null) {
           updateMetadata(
             record.metadata.copyWith(
@@ -469,11 +488,12 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
         // Fall through to probing files that are not in the library.
       }
     }
+    if (isStale()) return;
     final probe = _mediaProbeService;
     if (probe == null) return;
     try {
       final probed = await probe.probe(entry.path);
-      if (!_disposed && controller.current?.id == entry.id) {
+      if (!isStale()) {
         updateMetadata(probed.metadata);
       }
     } on Object {
@@ -675,9 +695,92 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
         return true;
       case 'seek':
         return await _handleSeekCommand(call.arguments);
+      case 'raise':
+        await _handleRaiseCommand();
+        return true;
+      case 'quit':
+        await _handleQuitCommand();
+        return true;
+      case 'openUri':
+        return await _handleOpenUriCommand(call.arguments);
       default:
         throw MissingPluginException('Not implemented for ${call.method}');
     }
+  }
+
+  Future<void> _handleRaiseCommand() async {
+    final handler = onRaiseWindow;
+    if (handler != null) {
+      await handler();
+      return;
+    }
+    try {
+      await windowManager.show();
+      await windowManager.focus();
+    } on Object {
+      // Raising the window is best effort.
+    }
+  }
+
+  Future<void> _handleQuitCommand() async {
+    final handler = onQuitApplication;
+    if (handler != null) {
+      await handler();
+      return;
+    }
+    try {
+      // close() routes through the prevent-close listener so the app shuts
+      // down the same way it does for the window's own close button.
+      await windowManager.close();
+    } on Object {
+      // Quitting is best effort.
+    }
+  }
+
+  /// MPRIS `OpenUri`: starts playback for the given media URI.
+  Future<bool> _handleOpenUriCommand(dynamic args) async {
+    String? raw;
+    if (args is Map) {
+      raw = (args['uri'] ?? args['url'] ?? args['path'])?.toString();
+    } else if (args is String) {
+      raw = args;
+    }
+    final trimmed = raw?.trim();
+    if (trimmed == null || trimmed.isEmpty) return false;
+    final uri = Uri.tryParse(trimmed);
+    if (uri == null) return false;
+    const supportedSchemes = <String>{
+      'http',
+      'https',
+      'file',
+      'rtsp',
+      'rtmp',
+      'rtp',
+      'mms',
+      'udp',
+    };
+    final isLocalPath = uri.scheme.isEmpty || uri.scheme.length == 1;
+    if (!supportedSchemes.contains(uri.scheme.toLowerCase()) && !isLocalPath) {
+      return false;
+    }
+
+    final coordinator = _openRequestCoordinator;
+    if (coordinator != null) {
+      final result = await coordinator.handleOpenRequest(
+        OpenRequest(
+          id: 'media_controls_${DateTime.now().microsecondsSinceEpoch}',
+          sources: [trimmed],
+          intent: OpenIntent.playNow,
+          origin: OpenOrigin.other,
+          timestamp: DateTime.now(),
+        ),
+      );
+      return result.status == OpenStatus.accepted;
+    }
+    final controller = _controller;
+    if (controller == null) return false;
+    await controller.openPaths([trimmed]);
+    return true;
   }
 
   Future<bool> _handleSeekCommand(dynamic args) async {
@@ -754,15 +857,19 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
 
     if (_isAwakeInhibited) {
       _isAwakeInhibited = false;
-      try {
-        powerChannel.invokeMethod('setKeepAwake', <String, Object?>{
-          'enable': false,
-          'isVideoPlaying': false,
-          'assertionType': 'none',
-        });
-      } on Object {
-        // Ignore on dispose.
-      }
+      // The call is intentionally not awaited: wrap it so a late channel
+      // failure can neither crash disposal nor hold it open.
+      unawaited(
+        powerChannel
+            .invokeMethod<void>('setKeepAwake', <String, Object?>{
+              'enable': false,
+              'isVideoPlaying': false,
+              'assertionType': 'none',
+            })
+            .catchError((Object _) {
+              // Ignore on dispose.
+            }),
+      );
     }
 
     if (_controller != null) {

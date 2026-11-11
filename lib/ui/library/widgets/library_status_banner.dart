@@ -230,7 +230,7 @@ class LibraryStatusBanner extends StatelessWidget {
   ) {
     final folderCount = unavailableFolders.length;
     final String folderText = folderCount == 1
-        ? unavailableFolders.first.path
+        ? unavailableFolders.first.displayPath
         : '$folderCount folders';
 
     return Container(

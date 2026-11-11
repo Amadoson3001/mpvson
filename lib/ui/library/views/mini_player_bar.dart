@@ -26,31 +26,76 @@ class MiniPlayerBar extends StatelessWidget {
     required this.openLabel,
     required this.onOpen,
     required this.onShowQueue,
-    this.controlsOpacity = 1.0,
+    this.dense = false,
   });
 
   static const double _minRowHeight = 60;
   static const double _titleSize = 14;
   static const double _subtitleSize = 12;
   static const double seekHeight = 28;
+  static const double _denseSeekHeight = 22;
+  static const double _denseMinRowHeight = 56;
+  static const double _audioThumbSize = 44;
+  static const double _cardBorder = 1;
+
+  /// Artwork slot: square for audio, a 16:9 frame for video so the docked
+  /// in-app mini video can seat exactly here and read as part of the bar.
+  static Size thumbnailSizeFor(bool isVideo) => isVideo
+      ? const Size(
+          AppLayout.dockedMiniVideoWidth,
+          AppLayout.dockedMiniVideoHeight,
+        )
+      : const Size.square(_audioThumbSize);
+
+  /// The bar's video artwork slot, in coordinates of the full content area.
+  /// The player content lerps the docked mini video to this rect so the live
+  /// video lands in the bar instead of overlapping it.
+  static Rect dockedVideoRect(
+    double totalHeight,
+    TextScaler scaler, {
+    bool dense = false,
+  }) {
+    final size = thumbnailSizeFor(true);
+    final rowHeight = rowHeightFor(scaler, dense: dense);
+    final top =
+        totalHeight -
+        heightFor(scaler, dense: dense) +
+        (dense ? AppSpace.xxs : AppSpace.xs) +
+        _cardBorder +
+        (rowHeight - size.height) / 2;
+    return Rect.fromLTWH(
+      AppSpace.sm + _cardBorder + 2 * AppSpace.xs,
+      top < 0 ? 0 : top,
+      size.width,
+      size.height,
+    );
+  }
 
   /// Transport row height. Grows with the text scale so two lines of text
-  /// never overflow the title area.
-  static double rowHeightFor(TextScaler scaler) {
+  /// never overflow the title area. [dense] trims the vertical padding for
+  /// short windows where the stage needs every pixel.
+  static double rowHeightFor(TextScaler scaler, {bool dense = false}) {
     final text =
         scaler.scale(_titleSize) * 1.3 +
         AppSpace.micro +
         scaler.scale(_subtitleSize) * 1.3;
-    return (text + 2 * AppSpace.xs + 2 * AppSpace.xxs + 2).ceilToDouble().clamp(
-      _minRowHeight,
+    final padding = dense
+        ? 2 * AppSpace.xxs + 2 * AppSpace.xxs + 2
+        : 2 * AppSpace.xs + 2 * AppSpace.xxs + 2;
+    return (text + padding).ceilToDouble().clamp(
+      dense ? _denseMinRowHeight : _minRowHeight,
       double.infinity,
     );
   }
 
-  /// Whole bar: transport row, seek strip and the 1px top border. The shell
-  /// sizes the bar from this, so it must equal what [build] lays out.
-  static double heightFor(TextScaler scaler) =>
-      rowHeightFor(scaler) + seekHeight + 1;
+  /// Whole bar: floating card (transport row + seek strip) plus the outer
+  /// gaps. The shell sizes the bar from this, so it must equal what [build]
+  /// lays out.
+  static double heightFor(TextScaler scaler, {bool dense = false}) =>
+      (dense ? AppSpace.xxs : AppSpace.xs) +
+      rowHeightFor(scaler, dense: dense) +
+      (dense ? _denseSeekHeight : seekHeight) +
+      (dense ? AppSpace.xs : AppSpace.sm);
 
   final PlayerController controller;
   final MediaLibraryRepository repository;
@@ -60,60 +105,67 @@ class MiniPlayerBar extends StatelessWidget {
   final String openLabel;
   final VoidCallback onOpen;
   final VoidCallback onShowQueue;
-  final double controlsOpacity;
+  final bool dense;
 
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
-    final rowHeight = rowHeightFor(MediaQuery.textScalerOf(context));
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: palette.sidebar,
-        border: Border(top: BorderSide(color: palette.border)),
+    final scaler = MediaQuery.textScalerOf(context);
+    final rowHeight = rowHeightFor(scaler, dense: dense);
+    final seek = dense ? _denseSeekHeight : seekHeight;
+    final radius = BorderRadius.circular(AppRadii.card);
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        AppSpace.sm,
+        dense ? AppSpace.xxs : AppSpace.xs,
+        AppSpace.sm,
+        dense ? AppSpace.xs : AppSpace.sm,
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          AudioVolumeWheel(
-            controller: controller,
-            child: SizedBox(
-              height: rowHeight,
-              child: Padding(
-                padding: const EdgeInsets.only(
-                  left: AppSpace.xs,
-                  right: AppSpace.md,
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: _OpenArea(
-                        label: openLabel,
-                        onTap: onOpen,
-                        child: Row(
-                          children: [
-                            _Thumbnail(
-                              entry: entry,
-                              repository: repository,
-                              showEqualizer: controller.isPlaying && !isVideo,
-                            ),
-                            const SizedBox(width: AppSpace.sm),
-                            Expanded(
-                              child: _MiniPlayerSubtitle(
-                                key: ValueKey(entry.path),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: palette.card,
+          borderRadius: radius,
+          border: Border.all(color: palette.border),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            AudioVolumeWheel(
+              controller: controller,
+              child: SizedBox(
+                height: rowHeight,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: AppSpace.xs),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: _OpenArea(
+                          label: openLabel,
+                          onTap: onOpen,
+                          child: Row(
+                            children: [
+                              _Thumbnail(
+                                entry: entry,
                                 repository: repository,
-                                path: entry.path,
-                                fallbackTitle: entry.title,
                                 isVideo: isVideo,
+                                showEqualizer: controller.isPlaying && !isVideo,
                               ),
-                            ),
-                          ],
+                              const SizedBox(width: AppSpace.sm),
+                              Expanded(
+                                child: _MiniPlayerSubtitle(
+                                  key: ValueKey(entry.path),
+                                  repository: repository,
+                                  path: entry.path,
+                                  fallbackTitle: entry.title,
+                                  isVideo: isVideo,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
-                    ),
-                    const SizedBox(width: AppSpace.sm),
-                    Opacity(
-                      opacity: controlsOpacity,
-                      child: Row(
+                      const SizedBox(width: AppSpace.sm),
+                      Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           TransportButtons(
@@ -135,20 +187,20 @@ class MiniPlayerBar extends StatelessWidget {
                             ),
                         ],
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
-          ),
-          SizedBox(
-            height: seekHeight,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: AppSpace.xxs),
-              child: SeekBar(controller: controller),
+            SizedBox(
+              height: seek,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: AppSpace.xxs),
+                child: SeekBar(controller: controller),
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -158,18 +210,20 @@ class _Thumbnail extends StatelessWidget {
   const _Thumbnail({
     required this.entry,
     required this.repository,
+    required this.isVideo,
     required this.showEqualizer,
   });
 
   final MediaEntry entry;
   final MediaLibraryRepository repository;
+  final bool isVideo;
   final bool showEqualizer;
 
   @override
   Widget build(BuildContext context) => ClipRRect(
     borderRadius: BorderRadius.circular(AppRadii.control),
-    child: SizedBox.square(
-      dimension: 44,
+    child: SizedBox.fromSize(
+      size: MiniPlayerBar.thumbnailSizeFor(isVideo),
       child: Stack(
         fit: StackFit.expand,
         children: [
@@ -222,36 +276,30 @@ class _OpenAreaState extends State<_OpenArea> {
   Widget build(BuildContext context) {
     final palette = context.palette;
     final radius = BorderRadius.circular(AppRadii.control);
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: AppSpace.xs),
-      child: Semantics(
-        button: true,
-        label: widget.label,
-        excludeSemantics: true,
-        child: Material(
-          color: Colors.transparent,
+    return Semantics(
+      button: true,
+      label: widget.label,
+      excludeSemantics: true,
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: radius,
+        child: InkWell(
+          onTap: widget.onTap,
+          onFocusChange: (value) => setState(() => _focused = value),
           borderRadius: radius,
-          child: InkWell(
-            onTap: widget.onTap,
-            onFocusChange: (value) => setState(() => _focused = value),
-            borderRadius: radius,
-            hoverColor: palette.hover,
-            focusColor: Colors.transparent,
-            child: DecoratedBox(
-              position: DecorationPosition.foreground,
-              decoration: BoxDecoration(
-                borderRadius: radius,
-                border: _focused
-                    ? Border.all(color: palette.accent, width: 2)
-                    : null,
-              ),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: AppSpace.xs,
-                  vertical: AppSpace.xxs,
-                ),
-                child: widget.child,
-              ),
+          hoverColor: palette.hover,
+          focusColor: Colors.transparent,
+          child: DecoratedBox(
+            position: DecorationPosition.foreground,
+            decoration: BoxDecoration(
+              borderRadius: radius,
+              border: _focused
+                  ? Border.all(color: palette.accent, width: 2)
+                  : null,
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: AppSpace.xs),
+              child: widget.child,
             ),
           ),
         ),

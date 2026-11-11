@@ -1,6 +1,7 @@
 import 'package:meta/meta.dart';
 
 import 'media_catalog.dart';
+import 'media_entry.dart';
 import 'media_kind.dart';
 import 'media_metadata.dart';
 
@@ -72,6 +73,9 @@ class LibraryFolderRecord {
   final DateTime? lastScannedAt;
   final bool isAvailable;
   final int fileCount;
+
+  /// Formatted display path preserving original filesystem casing if available.
+  String get displayPath => MediaEntry.formatDisplayPath(path);
 
   LibraryFolderRecord copyWith({
     String? path,

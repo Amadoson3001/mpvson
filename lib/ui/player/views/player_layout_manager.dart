@@ -57,6 +57,7 @@ class PlayerLayoutManager with WindowListener, ChangeNotifier {
 
   bool _isFullscreen = false;
   bool _miniPlayer = false;
+  bool _miniPlayerTransition = false;
   bool _minimized = false;
   bool _animationsSuspended = false;
 
@@ -110,11 +111,16 @@ class PlayerLayoutManager with WindowListener, ChangeNotifier {
     super.dispose();
   }
 
-  Future<void> toggleMiniPlayer() =>
-      _miniPlayer ? exitMiniPlayer() : enterMiniPlayer();
+  Future<void> toggleMiniPlayer() {
+    // A toggle while a mini-player transition is still applying its window
+    // changes would capture mid-transition bounds and corrupt the restore
+    // state, so it is swallowed until the running transition settles.
+    if (_miniPlayerTransition) return Future<void>.value();
+    return _miniPlayer ? exitMiniPlayer() : enterMiniPlayer();
+  }
 
   Future<void> enterMiniPlayer() async {
-    if (_miniPlayer || !isNativeWindow) return;
+    if (_miniPlayer || _miniPlayerTransition || !isNativeWindow) return;
     final current = controller.current;
     final isVideoEntry =
         current != null && MediaCatalog.kindFromExtension(current.path).isVideo;
@@ -122,6 +128,10 @@ class PlayerLayoutManager with WindowListener, ChangeNotifier {
       showMessage('Mini player is available while a video is playing.');
       return;
     }
+    // Entering is asynchronous: flag the transition synchronously so a rapid
+    // double-toggle cannot interleave window calls before the first enter
+    // has stored its restore bounds.
+    _miniPlayerTransition = true;
     var wasMaximized = false;
     try {
       onCloseContextMenu?.call();
@@ -158,16 +168,22 @@ class PlayerLayoutManager with WindowListener, ChangeNotifier {
         // Best effort while the window manager is unavailable.
       }
       showMessage('Mini player could not be enabled.');
+    } finally {
+      _miniPlayerTransition = false;
     }
   }
 
   Future<void> exitMiniPlayer() async {
-    if (!_miniPlayer) return;
+    if (!_miniPlayer || _miniPlayerTransition) return;
     final restoreBounds = _miniPlayerRestoreBounds;
     final restoreMaximized = _miniRestoreMaximized;
     _miniPlayer = false;
     _miniPlayerRestoreBounds = null;
     _miniRestoreMaximized = false;
+    // Exiting is asynchronous too: flag the transition synchronously so a
+    // rapid re-enter cannot capture the mini bounds as restore bounds while
+    // the window is still being restored.
+    _miniPlayerTransition = true;
     onMiniPlayerChanged?.call(false);
     notifyListeners();
     try {
@@ -177,6 +193,8 @@ class PlayerLayoutManager with WindowListener, ChangeNotifier {
       if (restoreMaximized) await windowManager.maximize();
     } catch (_) {
       // The window may already be closing.
+    } finally {
+      _miniPlayerTransition = false;
     }
     showFeedback(Icons.open_in_full_rounded, 'Mini player off', centered: true);
   }

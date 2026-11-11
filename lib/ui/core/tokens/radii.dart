@@ -5,8 +5,11 @@ abstract final class AppRadii {
   /// Buttons, inputs, nav items, chips.
   static const double control = 8;
 
-  /// Cards, tiles, artwork, dialogs, banners, menus.
+  /// Cards, tiles, artwork, banners, menus.
   static const double artwork = 12;
+
+  /// Modal dialogs.
+  static const double dialog = 12;
 
   /// Modern container and card radius.
   static const double card = 16;

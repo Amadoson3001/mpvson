@@ -30,3 +30,11 @@ default engine source is available.
 
 Bundled playback engine: libmpv mpv v0.41.0, pinned in
 engine-provenance.json and verified by SHA-256 before it is bundled.
+
+Runtime requirements:
+- Windows 10 (version 1809 or later) or Windows 11 (64-bit).
+- Microsoft Visual C++ 2015-2022 Redistributable (x64). Official release
+  runtime DLLs (msvcp140.dll, vcruntime140.dll, vcruntime140_1.dll) are
+  bundled directly beside mpvson.exe for standalone portable operation
+  without requiring administrative redistributable installation. Debug-CRT
+  dependencies are excluded.

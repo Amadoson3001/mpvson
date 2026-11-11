@@ -81,6 +81,9 @@ void main() {
           ],
         );
         await tester.tap(find.byTooltip('Queue (4)').first);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 120));
+        await capture(tester, '${tag}_queue_push_mid');
         await settle(tester);
         await capture(tester, '${tag}_queue_open');
         await h.shutdown(tester);
@@ -88,6 +91,9 @@ void main() {
 
       testWidgets('player context menu $tag', (tester) async {
         final h = await bootPlayer(tester, size: size, dark: dark);
+        // The right-click gesture below adds another mouse pointer, so the
+        // boot hover must go first (one live mouse pointer at a time).
+        await releasePlayerHover(tester);
         final at = Offset(size.width * 0.3, size.height * 0.3);
         final g = await tester.createGesture(
           kind: PointerDeviceKind.mouse,
@@ -134,7 +140,9 @@ void main() {
           if (f.evaluate().isNotEmpty) {
             await tester.tap(f.first, warnIfMissed: false);
             await settle(tester);
-            await capture(tester, '${tag}_audio_queue');
+            // Distinct name: shots_test.dart's "shots audio" also captures
+            // ${tag}_audio_queue, and one write must not clobber the other.
+            await capture(tester, '${tag}_player_audio_queue');
             break;
           }
         }

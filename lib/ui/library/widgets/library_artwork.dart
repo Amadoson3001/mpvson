@@ -99,9 +99,9 @@ class _LibraryArtworkState extends State<LibraryArtwork> {
             final cacheWidth = width.isFinite && width > 0
                 ? (width * MediaQuery.devicePixelRatioOf(context))
                       .round()
-                      .clamp(1, 4096)
+                      .clamp(1, 512)
                       .toInt()
-                : null;
+                : 256;
             return Image.file(
               _file(path),
               fit: BoxFit.cover,

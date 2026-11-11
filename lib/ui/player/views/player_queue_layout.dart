@@ -50,7 +50,7 @@ class _PlayerQueueLayoutState extends State<PlayerQueueLayout>
     )..addStatusListener(_handleOpenStatus);
     _progress = CurvedAnimation(
       parent: _open,
-      curve: AppMotion.enter,
+      curve: AppMotion.panelEnterCurve,
       reverseCurve: AppMotion.exit,
     );
   }
@@ -60,8 +60,12 @@ class _PlayerQueueLayoutState extends State<PlayerQueueLayout>
     super.didChangeDependencies();
     final reduced = AppMotion.reduce(context);
     // An entering side panel needs room to decelerate; a leaving one can snap.
-    _open.duration = reduced ? Duration.zero : AppMotion.emphasized;
-    _open.reverseDuration = reduced ? Duration.zero : AppMotion.standard;
+    _open.duration = reduced
+        ? Duration.zero
+        : AppMotion.scaled(context, AppMotion.panelEnter);
+    _open.reverseDuration = reduced
+        ? Duration.zero
+        : AppMotion.scaled(context, AppMotion.panelExit);
   }
 
   @override
@@ -106,16 +110,9 @@ class _PlayerQueueLayoutState extends State<PlayerQueueLayout>
               children: [
                 Expanded(child: widget.playerArea),
                 if (wide && present)
-                  AnimatedBuilder(
-                    animation: _progress,
+                  QueueSlideSlot(
+                    progress: _progress,
                     child: _InlinePanel(open: open, panel: widget.queuePanel),
-                    builder: (context, child) => ClipRect(
-                      child: Align(
-                        alignment: Alignment.centerLeft,
-                        widthFactor: _progress.value,
-                        child: child,
-                      ),
-                    ),
                   ),
               ],
             ),
@@ -190,6 +187,33 @@ class _PlayerQueueLayoutState extends State<PlayerQueueLayout>
       ),
     ];
   }
+}
+
+/// Widens an inline slot while a fixed-width panel slides in from the right
+/// edge as a single already-painted surface, so the video area shrinks in sync
+/// and the panel never relayouts mid-transition.
+class QueueSlideSlot extends StatelessWidget {
+  const QueueSlideSlot({
+    super.key,
+    required this.progress,
+    required this.child,
+  });
+
+  final Animation<double> progress;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: progress,
+    child: child,
+    builder: (context, child) => ClipRect(
+      child: Align(
+        alignment: Alignment.centerLeft,
+        widthFactor: progress.value,
+        child: child,
+      ),
+    ),
+  );
 }
 
 /// Holds the inline panel at its final width so widening the slot never

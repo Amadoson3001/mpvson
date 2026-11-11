@@ -26,12 +26,15 @@ class ControlBarPreview extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(AppRadii.artwork),
-        border: Border.all(color: theme.colorScheme.outlineVariant, width: 1),
+        border: Border.all(
+          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.35),
+          width: 1,
+        ),
         gradient: LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
           colors: [
-            theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+            theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.25),
             theme.colorScheme.surfaceContainerLowest,
           ],
         ),
@@ -65,7 +68,7 @@ class ControlBarPreview extends StatelessWidget {
                 border: Border(
                   top: BorderSide(
                     color: theme.colorScheme.outlineVariant.withValues(
-                      alpha: 0.5,
+                      alpha: 0.3,
                     ),
                     width: 1,
                   ),

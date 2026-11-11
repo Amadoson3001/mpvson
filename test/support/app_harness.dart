@@ -137,6 +137,7 @@ MediaItemRecord track(
   bool favorite = false,
   bool available = true,
   String ext = 'mp3',
+  Duration? duration,
 }) {
   final path = 'C:\\Media\\file_$n.$ext';
   return MediaItemRecord(
@@ -148,7 +149,7 @@ MediaItemRecord track(
       title: title,
       artist: artist,
       album: album,
-      duration: Duration(seconds: 90 + n * 7),
+      duration: duration ?? Duration(seconds: 90 + n * 7),
     ),
     fileSize: 4000000 + n * 1000,
     modifiedAt: _epoch,

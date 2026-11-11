@@ -29,12 +29,11 @@ export 'player_layout_manager.dart';
 export 'player_queue_layout.dart';
 export 'player_stage.dart';
 export 'player_top_bar.dart';
+export 'player_media_coordinator.dart'
+    show MediaFilePicker, SubtitleFilePicker, UrlPrompt;
 
 typedef PlayerVideoBuilder =
     Widget Function(BuildContext context, PlayerController controller);
-typedef MediaFilePicker = Future<List<String>> Function();
-typedef SubtitleFilePicker = Future<String?> Function();
-typedef UrlPrompt = Future<String?> Function(BuildContext context);
 
 class PlayerScreen extends StatefulWidget {
   const PlayerScreen({
@@ -109,6 +108,13 @@ class _PlayerScreenState extends State<PlayerScreen>
       playerFocus: _playerFocus,
       isFullscreen: () => _layoutManager.isFullscreen,
       reduceMotion: () => AppMotion.reduce(context),
+      getAutoHideDelaySeconds: () =>
+          widget
+              .appPreferences
+              ?.preferences
+              .playerControls
+              .autoHideDelaySeconds ??
+          2.8,
     )..addListener(_onVisualStateChanged);
 
     _navigation = PlayerLibraryNavigation(
@@ -304,6 +310,7 @@ class _PlayerScreenState extends State<PlayerScreen>
         widget.controller.isVideo &&
         current.id != _lastVideoEntryId) {
       _lastVideoEntryId = current.id;
+      _preparedPausedVideoId = current.id;
       _navigation.hideLibrary();
     }
     if (_layoutManager.isMiniPlayer) {
@@ -318,7 +325,9 @@ class _PlayerScreenState extends State<PlayerScreen>
     } else {
       _chrome.scheduleHide();
     }
-    _preparePausedVideo();
+    if (!widget.controller.isStopped) {
+      _preparePausedVideo();
+    }
     _layoutManager.syncVideoVisibilityForLibrary();
   }
 
@@ -326,7 +335,12 @@ class _PlayerScreenState extends State<PlayerScreen>
     if (!mounted || _navigation.isShowingLibrary) return;
     final controller = widget.controller;
     final current = controller.current;
-    if (current == null || controller.hasMedia || controller.isLoading) return;
+    if (current == null ||
+        controller.hasMedia ||
+        controller.isLoading ||
+        controller.isStopped) {
+      return;
+    }
     if (!MediaCatalog.kindFromExtension(current.path).isVideo) return;
     if (_preparedPausedVideoId == current.id) return;
     _preparedPausedVideoId = current.id;
@@ -337,6 +351,9 @@ class _PlayerScreenState extends State<PlayerScreen>
     _closeContextMenu();
     final wasFullscreen = _layoutManager.isFullscreen;
     _chrome.dismissQueue();
+    if (widget.controller.isStopped || !widget.controller.hasMedia) {
+      unawaited(widget.controller.closePlayer());
+    }
     _navigation.backToHome();
     if (wasFullscreen) unawaited(_layoutManager.setFullscreen(false));
   }
@@ -359,29 +376,11 @@ class _PlayerScreenState extends State<PlayerScreen>
   Future<void> _adjustPlaybackDelay({
     required bool audio,
     required bool later,
-  }) async {
-    final settings = widget.controller.playbackSettings;
-    final stepMs = widget.appPreferences?.preferences.syncStepMs ?? 50;
-    final step = later ? stepMs : -stepMs;
-    final current = audio
-        ? settings.audioDelaySeconds
-        : settings.subtitleDelaySeconds;
-    final boundedMs = ((current * 1000).round() + step).clamp(-10000, 10000);
-    final next = boundedMs / 1000;
-    final updated = audio
-        ? settings.copyWith(audioDelaySeconds: next)
-        : settings.copyWith(subtitleDelaySeconds: next);
-    final suffix = boundedMs > 0 ? '+' : '';
-    _chrome.showFeedback(
-      audio ? Icons.graphic_eq_rounded : Icons.closed_caption_rounded,
-      '${audio ? 'Audio' : 'Subtitle'} delay $suffix$boundedMs ms',
-      centered: true,
-    );
-    await widget.controller.setPlaybackSettings(updated);
-    if (mounted && widget.controller.playbackSettingsError != null) {
-      _showMessage('The playback engine did not accept the delay change.');
-    }
-  }
+  }) => _media.adjustPlaybackDelay(
+    audio: audio,
+    later: later,
+    showFeedback: _chrome.showFeedback,
+  );
 
   void _toggleVideoPlayback() {
     if (_chrome.dismissedContextMenuOnPointerDown || _contextMenu.isOpen) {

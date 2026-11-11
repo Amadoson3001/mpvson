@@ -14,17 +14,9 @@ import '../../core/components/media_row.dart';
 import '../../core/components/media_accent_scope.dart';
 import '../../core/components/empty_state.dart';
 import '../../core/components/playback_pulse.dart';
+import '../viewmodels/music_view_model.dart';
 import '../widgets/add_to_playlist_dialog.dart';
 import '../widgets/library_artwork.dart';
-
-enum MusicSubtab {
-  songs,
-  albums,
-  artists,
-  favorites,
-  recentlyAdded,
-  recentlyPlayed,
-}
 
 /// Comprehensive Music View with subtabs for Songs, Albums, Artists,
 /// Favorites, Recently Added, and Recently Played.
@@ -49,7 +41,11 @@ class MusicView extends StatefulWidget {
 }
 
 class _MusicViewState extends State<MusicView> {
-  MusicSubtab _currentSubtab = MusicSubtab.songs;
+  /// Owns the subtab selection (and the per-subtab sorting intent). Re-created
+  /// when the repository or player controller the view is bound to changes.
+  late MusicViewModel _music;
+  MusicSubTab? _lastSubTab;
+
   String? _selectedSongPath;
   String? _selectedAlbum;
   String? _selectedAlbumArtist;
@@ -69,6 +65,9 @@ class _MusicViewState extends State<MusicView> {
   @override
   void initState() {
     super.initState();
+    _music = _createMusicModel();
+    _lastSubTab = _music.subTab;
+    _music.addListener(_onMusicChanged);
     widget.repository.addListener(_onRepoChanged);
     widget.controller.addListener(_onPlaybackChanged);
     _currentRowPath = widget.controller.current?.path;
@@ -76,9 +75,50 @@ class _MusicViewState extends State<MusicView> {
     _reload();
   }
 
+  MusicViewModel _createMusicModel() => MusicViewModel(
+    repository: widget.repository,
+    playerController: widget.controller,
+  );
+
+  /// The view model owns the subtab selection; a change resets any album or
+  /// artist drilldown and refetches the collection for the new subtab.
+  void _onMusicChanged() {
+    if (!mounted) return;
+    if (_music.subTab != _lastSubTab) {
+      _lastSubTab = _music.subTab;
+      setState(() {
+        _selectedAlbum = null;
+        _selectedAlbumArtist = null;
+        _selectedArtist = null;
+        _items = null;
+      });
+      _reload();
+    } else {
+      if (_selectedAlbum != null) {
+        _loadAlbumTracks(_selectedAlbum!);
+      } else if (_selectedArtist != null) {
+        _loadArtistTracks(_selectedArtist!);
+      } else {
+        _reload();
+      }
+    }
+  }
+
+  Future<void> _loadAlbumTracks(String album) => _reload();
+
+  Future<void> _loadArtistTracks(String artist) => _reload();
+
   @override
   void didUpdateWidget(MusicView oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.repository != widget.repository ||
+        oldWidget.controller != widget.controller) {
+      _music.removeListener(_onMusicChanged);
+      _music.dispose();
+      _music = _createMusicModel();
+      _lastSubTab = _music.subTab;
+      _music.addListener(_onMusicChanged);
+    }
     if (oldWidget.repository != widget.repository) {
       oldWidget.repository.removeListener(_onRepoChanged);
       widget.repository.addListener(_onRepoChanged);
@@ -107,6 +147,8 @@ class _MusicViewState extends State<MusicView> {
   void dispose() {
     _reloadThrottle?.cancel();
     _searchReload?.cancel();
+    _music.removeListener(_onMusicChanged);
+    _music.dispose();
     widget.repository.removeListener(_onRepoChanged);
     widget.controller.removeListener(_onPlaybackChanged);
     super.dispose();
@@ -298,7 +340,7 @@ class _MusicViewState extends State<MusicView> {
                 ? _buildLoadErrorState()
                 : items.isEmpty
                 ? _buildEmptyStateForSubtab()
-                : switch (_currentSubtab) {
+                : switch (_music.currentSubtab) {
                     MusicSubtab.songs ||
                     MusicSubtab.favorites ||
                     MusicSubtab.recentlyAdded ||
@@ -313,14 +355,9 @@ class _MusicViewState extends State<MusicView> {
   }
 
   void _changeSubtab(MusicSubtab tab) {
-    setState(() {
-      _currentSubtab = tab;
-      _selectedAlbum = null;
-      _selectedAlbumArtist = null;
-      _selectedArtist = null;
-      _items = null;
-    });
-    _reload();
+    // The view model notifies; _onMusicChanged resets the drilldown state and
+    // refetches. selectSubtab ignores a redundant selection.
+    _music.selectSubtab(tab);
   }
 
   Widget _detailAccent(Widget child, List<MediaItemRecord>? items) {
@@ -333,9 +370,9 @@ class _MusicViewState extends State<MusicView> {
   }
 
   Widget _buildSubtabHeader() {
+    final subtab = _music.currentSubtab;
     final songsSelected =
-        _currentSubtab != MusicSubtab.albums &&
-        _currentSubtab != MusicSubtab.artists;
+        subtab != MusicSubtab.albums && subtab != MusicSubtab.artists;
     return Container(
       color: context.palette.surface,
       padding: const EdgeInsets.symmetric(
@@ -349,16 +386,20 @@ class _MusicViewState extends State<MusicView> {
               scrollDirection: Axis.horizontal,
               child: Row(
                 children: [
-                  _subtabButton('Songs', MusicSubtab.songs, songsSelected),
-                  _subtabButton(
-                    'Albums',
-                    MusicSubtab.albums,
-                    _currentSubtab == MusicSubtab.albums,
+                  _SubtabPill(
+                    label: 'Songs',
+                    selected: subtab == MusicSubtab.songs,
+                    onSelect: () => _changeSubtab(MusicSubtab.songs),
                   ),
-                  _subtabButton(
-                    'Artists',
-                    MusicSubtab.artists,
-                    _currentSubtab == MusicSubtab.artists,
+                  _SubtabPill(
+                    label: 'Albums',
+                    selected: subtab == MusicSubtab.albums,
+                    onSelect: () => _changeSubtab(MusicSubtab.albums),
+                  ),
+                  _SubtabPill(
+                    label: 'Artists',
+                    selected: subtab == MusicSubtab.artists,
+                    onSelect: () => _changeSubtab(MusicSubtab.artists),
                   ),
                 ],
               ),
@@ -370,7 +411,7 @@ class _MusicViewState extends State<MusicView> {
               onSelected: _changeSubtab,
               icon: Icon(
                 Icons.filter_list_rounded,
-                color: _currentSubtab == MusicSubtab.songs
+                color: subtab == MusicSubtab.songs
                     ? context.palette.secondaryText
                     : Theme.of(context).colorScheme.primary,
               ),
@@ -398,36 +439,9 @@ class _MusicViewState extends State<MusicView> {
     );
   }
 
-  Widget _subtabButton(String title, MusicSubtab tab, bool selected) {
-    final accent = Theme.of(context).colorScheme.primary;
-    return Padding(
-      padding: const EdgeInsets.only(right: 4),
-      child: TextButton(
-        onPressed: () => _changeSubtab(tab),
-        style: TextButton.styleFrom(
-          foregroundColor: selected ? accent : context.palette.secondaryText,
-          backgroundColor: selected
-              ? accent.withValues(alpha: 0.10)
-              : Colors.transparent,
-          minimumSize: const Size(0, 34),
-          padding: const EdgeInsets.symmetric(horizontal: AppSpace.sm),
-          textStyle: TextStyle(
-            fontFamily: AppType.family,
-            fontSize: AppType.small,
-            fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
-          ),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(AppRadii.control),
-          ),
-        ),
-        child: Text(title),
-      ),
-    );
-  }
-
   Future<List<MediaItemRecord>> _fetchMediaForSubtab() async {
     final query = widget.searchQuery;
-    switch (_currentSubtab) {
+    switch (_music.currentSubtab) {
       case MusicSubtab.songs:
       case MusicSubtab.albums:
       case MusicSubtab.artists:
@@ -480,7 +494,7 @@ class _MusicViewState extends State<MusicView> {
         icon: Icons.search_off_rounded,
       );
     }
-    switch (_currentSubtab) {
+    switch (_music.currentSubtab) {
       case MusicSubtab.favorites:
         return const EmptyState(
           title: 'No favorite songs yet',
@@ -510,6 +524,7 @@ class _MusicViewState extends State<MusicView> {
   Widget _buildSongTableView(List<MediaItemRecord> songs) {
     return ListView.separated(
       addAutomaticKeepAlives: false,
+      addRepaintBoundaries: true,
       padding: const EdgeInsets.symmetric(
         horizontal: AppSpace.lg,
         vertical: AppSpace.md,
@@ -769,21 +784,13 @@ class _MusicViewState extends State<MusicView> {
             );
             break;
           case 'play_next':
-            await widget.controller.openPaths(
-              [song.path],
-              append: true,
-              playNext: true,
-            );
+            await _music.playNext(song.path);
             break;
           case 'add_queue':
-            await widget.controller.openPaths(
-              [song.path],
-              append: true,
-              playNext: false,
-            );
+            await _music.addToQueue(song.path);
             break;
           case 'toggle_favorite':
-            await widget.repository.toggleFavorite(song.id, !song.isFavorite);
+            await _music.toggleFavorite(song);
             break;
           case 'add_playlist':
             final added = await AddToPlaylistDialog.show(
@@ -791,7 +798,10 @@ class _MusicViewState extends State<MusicView> {
               widget.repository,
               song.id,
             );
-            if (added && mounted) {
+            // `context` is the State's context, so the State's mounted flag is
+            // the matching guard for the async gap.
+            if (!mounted) return;
+            if (added) {
               AppToast.show(
                 context,
                 'Added to playlist',
@@ -885,6 +895,7 @@ class _MusicViewState extends State<MusicView> {
 
         return GridView.builder(
           addAutomaticKeepAlives: false,
+          addRepaintBoundaries: true,
           padding: const EdgeInsets.all(AppSpace.lg),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: columns,
@@ -1145,6 +1156,7 @@ class _MusicViewState extends State<MusicView> {
 
         return GridView.builder(
           addAutomaticKeepAlives: false,
+          addRepaintBoundaries: true,
           padding: const EdgeInsets.all(AppSpace.lg),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: columns,
@@ -1296,6 +1308,52 @@ class _MusicViewState extends State<MusicView> {
           Divider(height: 1, color: context.palette.border),
           Expanded(child: _buildSongTableView(songs)),
         ],
+      ),
+    );
+  }
+}
+
+/// One subtab pill in the Music header. Exposed to assistive tech as a
+/// button with a selected state instead of a bare text label.
+class _SubtabPill extends StatelessWidget {
+  const _SubtabPill({
+    required this.label,
+    required this.selected,
+    required this.onSelect,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = Theme.of(context).colorScheme.primary;
+    return Padding(
+      padding: const EdgeInsets.only(right: 4),
+      child: Semantics(
+        button: true,
+        selected: selected,
+        child: TextButton(
+          onPressed: onSelect,
+          style: TextButton.styleFrom(
+            foregroundColor: selected ? accent : context.palette.secondaryText,
+            backgroundColor: selected
+                ? accent.withValues(alpha: 0.10)
+                : Colors.transparent,
+            minimumSize: const Size(0, 34),
+            padding: const EdgeInsets.symmetric(horizontal: AppSpace.sm),
+            textStyle: TextStyle(
+              fontFamily: AppType.family,
+              fontSize: AppType.small,
+              fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+            ),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AppRadii.control),
+            ),
+          ),
+          child: Text(label),
+        ),
       ),
     );
   }

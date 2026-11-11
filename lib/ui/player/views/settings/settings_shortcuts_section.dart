@@ -19,7 +19,7 @@ class ShortcutsSettingsSection extends StatelessWidget {
     PlayerHotkeys hotkeys,
     PlayerAction action,
   ) async {
-    final binding = await showDialog<HotkeyBinding>(
+    final binding = await AppDialog.show<HotkeyBinding>(
       context: context,
       builder: (_) => HotkeyCaptureDialog(
         action: action,

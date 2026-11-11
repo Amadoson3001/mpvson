@@ -110,6 +110,23 @@ Widget playerApp(
   ),
 );
 
+/// The mouse pointer left live by [bootPlayer]'s hover chrome, if any. The
+/// mouse tracker tolerates only one live mouse pointer, so it must be released
+/// before another mouse gesture is added (see `hover` in audit_helpers.dart).
+TestGesture? _playerHover;
+
+/// Removes the live hover pointer left by the last [bootPlayer], if present.
+/// Call before adding another mouse gesture (a second [bootPlayer] does this
+/// itself).
+Future<void> releasePlayerHover(WidgetTester tester) async {
+  final gesture = _playerHover;
+  _playerHover = null;
+  if (gesture != null) {
+    await gesture.removePointer();
+    await settle(tester);
+  }
+}
+
 /// Boots the app at [size] and opens [names]; the first one becomes current.
 Future<Harness> bootPlayer(
   WidgetTester tester, {
@@ -120,12 +137,15 @@ Future<Harness> bootPlayer(
   List<String> names = const ['A movie with a title.mkv', 'b.mp3', 'c.mp4'],
   bool openChrome = true,
 }) async {
+  await releasePlayerHover(tester);
   final h = buildHarness(dark: dark);
   configureView(tester, size: size, textScale: textScale);
   await tester.pumpWidget(playerApp(h, video: video));
   await settle(tester);
   await openMedia(tester, h, names);
-  if (openChrome) await hover(tester, size.center(Offset.zero));
+  if (openChrome) {
+    _playerHover = await hover(tester, size.center(Offset.zero));
+  }
   return h;
 }
 

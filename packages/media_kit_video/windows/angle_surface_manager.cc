@@ -119,6 +119,18 @@ void ANGLESurfaceManager::CleanUp(bool release_context) {
     if (display_ != EGL_NO_DISPLAY && surface_ != EGL_NO_SURFACE) {
       eglReleaseTexImage(display_, surface_, EGL_BACK_BUFFER);
     }
+    if (display_ != EGL_NO_DISPLAY && context_ != EGL_NO_CONTEXT &&
+        surface_ != EGL_NO_SURFACE) {
+      // Delete the GL texture object that was bound to the pbuffer surface.
+      // glDeleteTextures requires a current context, so this happens while the
+      // context & surface still exist.
+      MakeCurrent(true);
+      if (tex_id_ != 0) {
+        glDeleteTextures(1, &tex_id_);
+        tex_id_ = 0;
+      }
+      MakeCurrent(false);
+    }
     if (display_ != EGL_NO_DISPLAY && context_ != EGL_NO_CONTEXT) {
       eglDestroyContext(display_, context_);
       context_ = EGL_NO_CONTEXT;
@@ -142,6 +154,17 @@ void ANGLESurfaceManager::CleanUp(bool release_context) {
     }
   } else {
     // Clear context & destroy existing |surface_|.
+    if (display_ != EGL_NO_DISPLAY && surface_ != EGL_NO_SURFACE &&
+        tex_id_ != 0) {
+      // Release the GL texture object bound to the surface & delete it before
+      // the surface goes away, otherwise it leaks on every |Resize|.
+      // glDeleteTextures requires a current context.
+      MakeCurrent(true);
+      eglReleaseTexImage(display_, surface_, EGL_BACK_BUFFER);
+      glDeleteTextures(1, &tex_id_);
+      tex_id_ = 0;
+      MakeCurrent(false);
+    }
     eglMakeCurrent(display_, EGL_NO_SURFACE, EGL_NO_SURFACE, context_);
     if (display_ != EGL_NO_DISPLAY && surface_ != EGL_NO_SURFACE) {
       eglDestroySurface(display_, surface_);
@@ -167,26 +190,31 @@ bool ANGLESurfaceManager::CreateD3DTexture() {
         D3D_FEATURE_LEVEL_9_3,
     };
 
-    IDXGIAdapter* adapter = nullptr;
+    // Kept in a |ComPtr| so the adapter (and the factory below) are released
+    // when this function returns. D3D11CreateDevice takes its own reference,
+    // so the one acquired here must not be leaked: a new set of interfaces is
+    // acquired for every surface (re)creation, e.g. on each resize.
+    Microsoft::WRL::ComPtr<IDXGIAdapter> adapter;
     D3D_DRIVER_TYPE driver_type = D3D_DRIVER_TYPE_UNKNOWN;
 
     // NOTE: Automatically selecting adapter on Windows 10 RTM or greater.
     if (Utils::IsWindows10RTMOrGreater()) {
-      adapter = NULL;
       driver_type = D3D_DRIVER_TYPE_HARDWARE;
     } else {
-      IDXGIFactory* dxgi = nullptr;
-      ::CreateDXGIFactory(__uuidof(IDXGIFactory), (void**)&dxgi);
+      Microsoft::WRL::ComPtr<IDXGIFactory> dxgi;
       // As far as my experience goes, this is the safest approach. Passing NULL
       // (so-called default) seems to cause issues on Windows 7 or maybe some
       // older graphics drivers. First adapter is the default.
       // D3D_DRIVER_TYPE_UNKNOWN| must be passed with manual adapter selection.
-      dxgi->EnumAdapters(0, &adapter);
-      dxgi->Release();
+      if (SUCCEEDED(
+              ::CreateDXGIFactory(IID_PPV_ARGS(dxgi.GetAddressOf()))) &&
+          dxgi) {
+        dxgi->EnumAdapters(0, adapter.GetAddressOf());
+      }
     }
 
     auto hr = ::D3D11CreateDevice(
-        adapter, driver_type, 0, 0, feature_levels.begin(),
+        adapter.Get(), driver_type, 0, 0, feature_levels.begin(),
         static_cast<UINT>(feature_levels.size()), D3D11_SDK_VERSION,
         &d3d_11_device_, 0, &d3d_11_device_context_);
     CHECK_HRESULT("D3D11CreateDevice");
@@ -309,9 +337,8 @@ bool ANGLESurfaceManager::CreateAndBindEGLSurface() {
   if (surface_ == EGL_NO_SURFACE) {
     FAIL("eglCreatePbufferFromClientBuffer");
   }
-  GLuint t;
-  glGenTextures(1, &t);
-  glBindTexture(GL_TEXTURE_2D, t);
+  glGenTextures(1, &tex_id_);
+  glBindTexture(GL_TEXTURE_2D, tex_id_);
   eglBindTexImage(display_, surface_, EGL_BACK_BUFFER);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);

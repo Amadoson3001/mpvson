@@ -107,7 +107,10 @@ const wchar_t* WindowClassRegistrar::GetWindowClass() {
 }
 
 void WindowClassRegistrar::UnregisterWindowClass() {
-  UnregisterClass(kWindowClassName, nullptr);
+  // The instance handle must match the one the class was registered with in
+  // GetWindowClass(), otherwise UnregisterClass fails and the class stays
+  // registered for the lifetime of the process.
+  UnregisterClass(kWindowClassName, GetModuleHandle(nullptr));
   class_registered_ = false;
 }
 
@@ -179,6 +182,13 @@ Win32Window::MessageHandler(HWND hwnd,
                             WPARAM const wparam,
                             LPARAM const lparam) noexcept {
   switch (message) {
+    case WM_QUERYENDSESSION:
+      return OnQueryEndSession() ? TRUE : FALSE;
+
+    case WM_ENDSESSION:
+      OnEndSession(wparam == TRUE);
+      return 0;
+
     case WM_DESTROY:
       window_handle_ = nullptr;
       Destroy();
@@ -270,6 +280,21 @@ bool Win32Window::OnCreate() {
 
 void Win32Window::OnDestroy() {
   // No-op; provided for subclasses.
+}
+
+bool Win32Window::OnQueryEndSession() {
+  return true;
+}
+
+void Win32Window::OnEndSession(bool is_ending) {
+  if (is_ending) {
+    if (!session_ending_ && window_handle_ != nullptr) {
+      session_ending_ = true;
+      PostMessage(window_handle_, WM_CLOSE, 0, 0);
+    }
+  } else {
+    session_ending_ = false;
+  }
 }
 
 void Win32Window::UpdateTheme(HWND const window) {

@@ -7,6 +7,8 @@ import 'package:mpvson/domain/updates/semantic_version.dart';
 import 'package:mpvson/domain/updates/update_manifest.dart';
 import 'package:path/path.dart' as p;
 
+import 'runtime_packaging.dart';
+
 /// Resolves symbolic links and returns the canonical absolute normalized path for [file].
 Future<String> canonicalResolvedPath(File file) async {
   if (await file.exists()) {
@@ -102,6 +104,7 @@ Future<Map<String, Object?>> createReleaseManifest({
   required File linuxFile,
   required Uri linuxUri,
   File? outputFile,
+  bool verifyBundle = false,
 }) async {
   if (outputFile != null) {
     await validateManifestOutput(
@@ -112,6 +115,19 @@ Future<Map<String, Object?>> createReleaseManifest({
   }
   SemanticVersion.parse(version);
   SemanticVersion.parse(engineVersion);
+
+  if (verifyBundle &&
+      windowsFile.existsSync() &&
+      windowsFile.path.endsWith('.zip')) {
+    final verification = verifyWindowsReleaseArchive(windowsFile);
+    final problems = verification['problems'] as List<String>? ?? <String>[];
+    if (problems.isNotEmpty) {
+      throw FormatException(
+        'Windows release bundle validation failed:\n  ${problems.join('\n  ')}',
+      );
+    }
+  }
+
   final windowsHash = await _sha256(windowsFile);
   final linuxHash = await _sha256(linuxFile);
 
@@ -165,6 +181,8 @@ Future<void> main(List<String> arguments) async {
       linuxFile: linuxFile,
     );
 
+    final bool verifyBundle = options.containsKey('verify-bundle');
+
     final manifest = await createReleaseManifest(
       version: _required(options, 'version'),
       engineVersion: _required(options, 'engine-version'),
@@ -175,6 +193,7 @@ Future<void> main(List<String> arguments) async {
       linuxFile: linuxFile,
       linuxUri: _httpsUri(_required(options, 'linux-url'), 'Linux URL'),
       outputFile: output,
+      verifyBundle: verifyBundle,
     );
     await writeManifestAtomically(output, manifest);
 
@@ -213,6 +232,7 @@ Map<String, String> _parseArguments(List<String> arguments) {
     'notes',
     'notes-file',
     'output',
+    'verify-bundle',
   };
   final result = <String, String>{};
   for (var index = 0; index < arguments.length; index++) {
@@ -226,6 +246,10 @@ Map<String, String> _parseArguments(List<String> arguments) {
     }
     if (result.containsKey(key)) {
       throw FormatException('Repeated option: $argument');
+    }
+    if (key == 'verify-bundle') {
+      result[key] = 'true';
+      continue;
     }
     if (index + 1 == arguments.length ||
         arguments[index + 1].startsWith('--')) {

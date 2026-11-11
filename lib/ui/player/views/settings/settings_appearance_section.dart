@@ -1,8 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-
-import '../../../core/app_motion.dart';
 import '../../../core/app_theme.dart';
 import '../../../../data/repositories/app_preferences_repository.dart';
 import '../../../../domain/models/control_density.dart';
@@ -105,70 +103,111 @@ class AppearanceSettingsSection extends StatelessWidget {
                       title: 'Accent color',
                       description:
                           'Curated palettes for highlights, timeline bars, and buttons.',
-                      trailing: isArtworkSyncActive
-                          ? Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 4,
+                      children: [
+                        if (isArtworkSyncActive)
+                          Container(
+                            margin: const EdgeInsets.fromLTRB(14, 12, 14, 4),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 10,
+                            ),
+                            decoration: BoxDecoration(
+                              color: accent.withValues(alpha: 0.08),
+                              borderRadius: BorderRadius.circular(
+                                AppRadii.control,
                               ),
-                              decoration: BoxDecoration(
-                                color: accent.withValues(alpha: 0.12),
-                                borderRadius: BorderRadius.circular(
-                                  AppRadii.control,
-                                ),
-                                border: Border.all(
-                                  color: accent.withValues(alpha: 0.3),
-                                  width: 1,
-                                ),
+                              border: Border.all(
+                                color: accent.withValues(alpha: 0.25),
+                                width: 1,
                               ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    Icons.auto_awesome_rounded,
-                                    size: 13,
-                                    color: accent,
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.auto_awesome_rounded,
+                                  size: 16,
+                                  color: accent,
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Dynamic artwork color active',
+                                        style: theme.textTheme.labelMedium
+                                            ?.copyWith(
+                                              color: accent,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                      ),
+                                      const SizedBox(height: 1),
+                                      Text(
+                                        'Colors adapt automatically to playing media. Pick a preset below to switch to custom accent.',
+                                        style: theme.textTheme.bodySmall
+                                            ?.copyWith(
+                                              color: theme
+                                                  .colorScheme
+                                                  .onSurfaceVariant,
+                                              fontSize: 11.5,
+                                            ),
+                                      ),
+                                    ],
                                   ),
-                                  const SizedBox(width: 5),
-                                  Flexible(
-                                    child: Text(
-                                      'Overridden by active artwork',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: theme.textTheme.labelSmall
-                                          ?.copyWith(
-                                            color: accent,
-                                            fontWeight: FontWeight.w600,
-                                          ),
+                                ),
+                                const SizedBox(width: 8),
+                                TextButton(
+                                  style: TextButton.styleFrom(
+                                    visualDensity: VisualDensity.compact,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 10,
+                                      vertical: 4,
+                                    ),
+                                    foregroundColor: accent,
+                                  ),
+                                  onPressed: () => unawaited(
+                                    appPreferences!.setDynamicArtworkColor(
+                                      false,
                                     ),
                                   ),
-                                ],
-                              ),
-                            )
-                          : null,
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.all(12),
-                          child: AnimatedOpacity(
-                            duration: AppMotion.duration(
-                              context,
-                              AppMotion.quick,
+                                  child: const Text(
+                                    'Use preset',
+                                    style: TextStyle(fontSize: 12),
+                                  ),
+                                ),
+                              ],
                             ),
-                            opacity: isArtworkSyncActive ? 0.5 : 1.0,
+                          ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 14,
+                          ),
+                          child: Center(
                             child: Wrap(
-                              spacing: 10,
+                              spacing: 14,
                               runSpacing: 10,
+                              alignment: WrapAlignment.center,
                               children: [
                                 for (final preset in AppAccentPreset.all)
                                   AccentColorChip(
                                     preset: preset,
                                     selected: preset.id == activeId,
                                     isOverridden: isArtworkSyncActive,
-                                    onTap: () => unawaited(
-                                      appPreferences!.setAccentPreset(
-                                        preset.id,
-                                      ),
-                                    ),
+                                    onTap: () {
+                                      if (isArtworkSyncActive) {
+                                        unawaited(
+                                          appPreferences!
+                                              .setDynamicArtworkColor(false),
+                                        );
+                                      }
+                                      unawaited(
+                                        appPreferences!.setAccentPreset(
+                                          preset.id,
+                                        ),
+                                      );
+                                    },
                                   ),
                               ],
                             ),
@@ -197,18 +236,6 @@ class AppearanceSettingsSection extends StatelessWidget {
                           value: prefs.oledBlack,
                           onChanged: (val) =>
                               unawaited(appPreferences!.setOledBlack(val)),
-                        ),
-                        SettingsSwitchTile(
-                          icon: Icons.motion_photos_off_rounded,
-                          title: 'Calm mode (Reduced motion)',
-                          subtitle:
-                              'Disables animations and transitions app-wide for minimal visual stimulation and low CPU usage.',
-                          value: prefs.reduceMotion,
-                          onChanged: (val) => unawaited(
-                            appPreferences!.updatePreferences(
-                              prefs.copyWith(reduceMotion: val),
-                            ),
-                          ),
                         ),
                       ],
                     ),
@@ -240,18 +267,35 @@ class AppearanceSettingsSection extends StatelessWidget {
                   selected: {controller.controlDensity},
                   showSelectedIcon: false,
                   style: ButtonStyle(
+                    visualDensity: VisualDensity.compact,
+                    shape: WidgetStatePropertyAll(
+                      RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(AppRadii.control),
+                      ),
+                    ),
                     backgroundColor: WidgetStateProperty.resolveWith(
                       (s) => s.contains(WidgetState.selected)
                           ? accent
-                          : theme.colorScheme.surfaceContainer,
+                          : theme.colorScheme.surfaceContainerHighest
+                                .withValues(alpha: 0.3),
                     ),
                     foregroundColor: WidgetStateProperty.resolveWith(
                       (s) => s.contains(WidgetState.selected)
-                          ? theme.colorScheme.onPrimary
+                          ? (theme.brightness == Brightness.dark
+                                ? Colors.black
+                                : Colors.white)
                           : theme.colorScheme.onSurface,
                     ),
+                    side: WidgetStatePropertyAll(
+                      BorderSide(
+                        color: theme.colorScheme.outlineVariant.withValues(
+                          alpha: 0.35,
+                        ),
+                        width: 1,
+                      ),
+                    ),
                     padding: const WidgetStatePropertyAll(
-                      EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      EdgeInsets.symmetric(horizontal: 14, vertical: 4),
                     ),
                   ),
                   onSelectionChanged: (selection) =>
@@ -259,7 +303,7 @@ class AppearanceSettingsSection extends StatelessWidget {
                 ),
                 children: [
                   Padding(
-                    padding: const EdgeInsets.all(12),
+                    padding: const EdgeInsets.all(14),
                     child: ExcludeSemantics(
                       child: RepaintBoundary(
                         child: ControlBarPreview(

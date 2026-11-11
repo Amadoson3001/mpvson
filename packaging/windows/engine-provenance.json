@@ -82,7 +82,7 @@
     }
   ],
   "bundledCompanions": {
-    "note": "These are unchanged and still come from media_kit_libs_windows_video. They serve the video renderer's ANGLE path, not the engine. vk_swiftshader.dll is a Vulkan CPU rasterizer fallback not required for Direct3D 11 (d3d11) on Windows 10/11 and is excluded from the installer to save ~4.6 MB.",
+    "note": "These are unchanged and still come from media_kit_libs_windows_video. They serve the video renderer's ANGLE path, not the engine. vk_swiftshader.dll is a Vulkan CPU rasterizer fallback not required for Direct3D 11 (d3d11) on Windows 10/11 and is excluded from the installer to save ~4.6 MB. zlib.dll is an unused artifact from legacy ANGLE builds that carries a debug-CRT dependency (VCRUNTIME140D.dll / ucrtbased.dll) and is excluded from release packages.",
     "files": [
       "d3dcompiler_47.dll",
       "libEGL.dll",

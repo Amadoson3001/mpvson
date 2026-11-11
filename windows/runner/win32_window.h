@@ -71,6 +71,16 @@ class Win32Window {
   // Called when Destroy is called.
   virtual void OnDestroy();
 
+  // Called when WM_QUERYENDSESSION is received, asking whether the session can
+  // end. Subclasses can override to deny or perform clean shutdown checks.
+  // Default returns true.
+  virtual bool OnQueryEndSession();
+
+  // Called when WM_ENDSESSION is received, informing the window whether the
+  // session is ending (is_ending == true). Subclasses can override to execute
+  // or trigger clean shutdown. Default posts WM_CLOSE when is_ending is true.
+  virtual void OnEndSession(bool is_ending);
+
  private:
   friend class WindowClassRegistrar;
 
@@ -91,6 +101,7 @@ class Win32Window {
   static void UpdateTheme(HWND const window);
 
   bool quit_on_close_ = false;
+  bool session_ending_ = false;
 
   // window handle for top level window.
   HWND window_handle_ = nullptr;

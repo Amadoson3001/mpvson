@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../app.dart' show AppPreferencesScope;
 import '../../player/player_controller.dart';
 import '../../../domain/models/media_entry.dart';
-import '../tokens/colors.dart';
+import '../app_theme.dart';
 
 /// Follows the active media and animates its accessible artwork color.
 class MediaAccentScope extends StatefulWidget {
@@ -248,12 +248,10 @@ class _MediaAccentScopeState extends State<MediaAccentScope> {
     }
 
     final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
     final color = MediaAccentScope.clampAccentForVibrancy(
       _color!,
       theme.brightness,
     );
-    final onAccent = isDark ? AppColors.ground : Colors.white;
     final palette = _palette != null
         ? MediaAccentPalette(
             dominant: color,
@@ -265,125 +263,25 @@ class _MediaAccentScopeState extends State<MediaAccentScope> {
           )
         : MediaAccentPalette(dominant: color);
 
+    final prefs = AppPreferencesScope.of(context);
+    final oledBlack = prefs?.oledBlack ?? false;
+    final dynamicTheme =
+        AppTheme.buildTheme(
+          brightness: theme.brightness,
+          accent: color,
+          oledBlack: oledBlack,
+        ).copyWith(
+          extensions: [
+            MediaAccent(color: color),
+            palette,
+          ],
+        );
+
     return AnimatedTheme(
       duration: MediaQuery.disableAnimationsOf(context)
           ? Duration.zero
           : const Duration(milliseconds: 400),
-      data: theme.copyWith(
-        colorScheme: theme.colorScheme.copyWith(
-          primary: color,
-          onPrimary: onAccent,
-          secondary: color,
-          onSecondary: onAccent,
-        ),
-        switchTheme: SwitchThemeData(
-          thumbColor: WidgetStateProperty.resolveWith(
-            (states) => states.contains(WidgetState.selected)
-                ? onAccent
-                : theme.colorScheme.onSurfaceVariant,
-          ),
-          trackColor: WidgetStateProperty.resolveWith(
-            (states) => states.contains(WidgetState.selected)
-                ? color
-                : theme.colorScheme.surfaceContainer,
-          ),
-          trackOutlineColor: WidgetStatePropertyAll(
-            theme.colorScheme.outlineVariant,
-          ),
-        ),
-        sliderTheme: theme.sliderTheme.copyWith(
-          activeTrackColor: color,
-          thumbColor: color,
-          overlayColor: color.withValues(alpha: 0.14),
-        ),
-        progressIndicatorTheme: theme.progressIndicatorTheme.copyWith(
-          color: color,
-        ),
-        filledButtonTheme: FilledButtonThemeData(
-          style: theme.filledButtonTheme.style?.copyWith(
-            backgroundColor: WidgetStateProperty.resolveWith(
-              (states) => states.contains(WidgetState.disabled)
-                  ? theme.filledButtonTheme.style?.backgroundColor?.resolve({
-                          WidgetState.disabled,
-                        }) ??
-                        theme.colorScheme.surfaceContainerHighest
-                  : color,
-            ),
-            foregroundColor: WidgetStateProperty.resolveWith(
-              (states) => states.contains(WidgetState.disabled)
-                  ? theme.filledButtonTheme.style?.foregroundColor?.resolve({
-                          WidgetState.disabled,
-                        }) ??
-                        theme.colorScheme.onSurfaceVariant
-                  : onAccent,
-            ),
-          ),
-        ),
-        elevatedButtonTheme: ElevatedButtonThemeData(
-          style: theme.elevatedButtonTheme.style?.copyWith(
-            backgroundColor: WidgetStateProperty.resolveWith(
-              (states) => states.contains(WidgetState.disabled)
-                  ? theme.elevatedButtonTheme.style?.backgroundColor?.resolve({
-                          WidgetState.disabled,
-                        }) ??
-                        theme.colorScheme.surfaceContainerHighest
-                  : color,
-            ),
-            foregroundColor: WidgetStateProperty.resolveWith(
-              (states) => states.contains(WidgetState.disabled)
-                  ? theme.elevatedButtonTheme.style?.foregroundColor?.resolve({
-                          WidgetState.disabled,
-                        }) ??
-                        theme.colorScheme.onSurfaceVariant
-                  : onAccent,
-            ),
-          ),
-        ),
-        textButtonTheme: TextButtonThemeData(
-          style: theme.textButtonTheme.style?.copyWith(
-            foregroundColor: WidgetStateProperty.resolveWith(
-              (states) => states.contains(WidgetState.disabled)
-                  ? theme.textButtonTheme.style?.foregroundColor?.resolve({
-                          WidgetState.disabled,
-                        }) ??
-                        theme.colorScheme.onSurfaceVariant
-                  : color,
-            ),
-          ),
-        ),
-        iconButtonTheme: IconButtonThemeData(
-          style: theme.iconButtonTheme.style?.copyWith(
-            foregroundColor: WidgetStateProperty.resolveWith(
-              (states) => states.contains(WidgetState.disabled)
-                  ? theme.colorScheme.onSurfaceVariant
-                  : states.contains(WidgetState.selected)
-                  ? color
-                  : theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
-        ),
-        badgeTheme: theme.badgeTheme.copyWith(textColor: color),
-        segmentedButtonTheme: SegmentedButtonThemeData(
-          style: ButtonStyle(
-            backgroundColor: WidgetStateProperty.resolveWith((states) {
-              return states.contains(WidgetState.selected)
-                  ? color
-                  : theme.colorScheme.surfaceContainer;
-            }),
-            foregroundColor: WidgetStateProperty.resolveWith((states) {
-              if (states.contains(WidgetState.selected)) return onAccent;
-              if (states.contains(WidgetState.disabled)) {
-                return theme.colorScheme.onSurfaceVariant;
-              }
-              return theme.colorScheme.onSurface;
-            }),
-          ),
-        ),
-        extensions: [
-          MediaAccent(color: color),
-          palette,
-        ],
-      ),
+      data: dynamicTheme,
       child: widget.child,
     );
   }

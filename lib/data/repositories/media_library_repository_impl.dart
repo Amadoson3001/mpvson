@@ -2,6 +2,7 @@
 
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
 import '../../domain/models/library_models.dart';
@@ -48,6 +49,18 @@ class MediaLibraryRepositoryImpl extends MediaLibraryRepository {
   String? _initializationError;
   bool _isDisposed = false;
   Future<void>? _initializationFuture;
+  Timer? _notifyDebounceTimer;
+
+  void _notifyDebounced() {
+    if (_isDisposed) return;
+    if (_notifyDebounceTimer?.isActive ?? false) return;
+    _notifyDebounceTimer = Timer(const Duration(milliseconds: 150), () {
+      _notifyDebounceTimer = null;
+      if (!_isDisposed) {
+        notifyListeners();
+      }
+    });
+  }
 
   @override
   LibraryScanStatus get scanStatus => _scanner?.scanStatus ?? _scanStatus;
@@ -153,8 +166,8 @@ class MediaLibraryRepositoryImpl extends MediaLibraryRepository {
       if (_isDisposed) return;
       _folders = folders;
       notifyListeners();
-    } catch (_) {
-      if (!_isDisposed && !database.isClosed) rethrow;
+    } catch (e) {
+      debugPrint('Failed to refresh folders: $e');
     }
   }
 
@@ -317,6 +330,57 @@ class MediaLibraryRepositoryImpl extends MediaLibraryRepository {
   }
 
   @override
+  Future<void> addPathsToPlaylist(String playlistId, List<String> paths) async {
+    _checkReady();
+    await _database!.addPathsToPlaylist(playlistId, paths);
+    notifyListeners();
+    if (_probeService != null) {
+      unawaited(
+        Future(() async {
+          for (final path in paths) {
+            try {
+              await probeMedia(path);
+            } catch (_) {}
+          }
+        }),
+      );
+    }
+  }
+
+  @override
+  Future<void> probeMedia(String path) async {
+    _checkReady();
+    final probeService = _probeService;
+    final db = _database;
+    if (probeService == null || db == null || db.isClosed) return;
+    try {
+      final probeResult = await probeService.probe(path, priority: 5);
+      await db.updateMediaMetadata(
+        probeResult.canonicalSource,
+        kind: probeResult.kind,
+        metadata: probeResult.metadata,
+        fileSize: probeResult.fileSize,
+        modifiedAt: probeResult.modifiedAt,
+      );
+      _notifyDebounced();
+    } catch (_) {
+      // Best-effort probing
+    }
+  }
+
+  @override
+  Future<void> updateMediaDuration(
+    String canonicalSource,
+    Duration duration,
+  ) async {
+    _checkReady();
+    final db = _database;
+    if (db == null || db.isClosed) return;
+    await db.updateMediaDuration(canonicalSource, duration);
+    _notifyDebounced();
+  }
+
+  @override
   Future<void> removeFromPlaylist(
     String playlistId,
     String playlistEntryId,
@@ -330,10 +394,23 @@ class MediaLibraryRepositoryImpl extends MediaLibraryRepository {
   Future<void> reorderPlaylist(
     String playlistId,
     int oldIndex,
-    int newIndex,
-  ) async {
+    int newIndex, {
+    String? entryId,
+  }) async {
     _checkReady();
-    await _database!.reorderPlaylistEntries(playlistId, oldIndex, newIndex);
+    await _database!.reorderPlaylistEntries(
+      playlistId,
+      oldIndex,
+      newIndex,
+      entryId: entryId,
+    );
+    notifyListeners();
+  }
+
+  @override
+  Future<void> clearPlaylist(String playlistId) async {
+    _checkReady();
+    await _database!.clearPlaylist(playlistId);
     notifyListeners();
   }
 
@@ -409,6 +486,8 @@ class MediaLibraryRepositoryImpl extends MediaLibraryRepository {
   Future<void> dispose() async {
     if (_isDisposed) return;
     _isDisposed = true;
+    _notifyDebounceTimer?.cancel();
+    _notifyDebounceTimer = null;
 
     final initialization = _initializationFuture;
     if (initialization != null) {

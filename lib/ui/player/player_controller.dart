@@ -565,6 +565,7 @@ class PlayerController extends ChangeNotifier {
   int _resumeGeneration = 0;
   bool _engineHasMedia = false;
   String? _engineEntryId;
+  bool _isStopped = false;
   ControllerClosingState _closingState = ControllerClosingState.running;
   Future<void>? _closeFuture;
   Future<void>? _releaseFuture;
@@ -740,6 +741,9 @@ class PlayerController extends ChangeNotifier {
   /// A restored queue can have a [current] entry while remaining stopped, so
   /// views should use this instead of inferring media presence from the queue.
   bool get hasMedia => _engineHasMedia;
+
+  /// Whether playback has been explicitly stopped by the user.
+  bool get isStopped => _isStopped;
 
   /// Whether a load attempt is still in flight.
   ///
@@ -1529,7 +1533,7 @@ class PlayerController extends ChangeNotifier {
   /// Loads the restored current entry without starting playback so the player
   /// can present its paused frame instead of a resume placeholder.
   Future<void> prepareCurrentPaused() async {
-    if (!_acceptsCommands || _engineHasMedia || isLoading) return;
+    if (!_acceptsCommands || _engineHasMedia || isLoading || _isStopped) return;
     final entry = current;
     if (entry == null || !MediaCatalog.kindFromExtension(entry.path).isVideo) {
       return;
@@ -1543,6 +1547,7 @@ class PlayerController extends ChangeNotifier {
     bool play = true,
   }) async {
     if (!_acceptsCommands || index < 0 || index >= _queue.length) return;
+    _isStopped = false;
     _syncCurrentProgress();
     final operation = ++_operation;
     var entry = _queue[index];
@@ -1850,8 +1855,14 @@ class PlayerController extends ChangeNotifier {
 
   Future<void> stop() async {
     if (!_acceptsCommands || current == null) return;
+    _isStopped = true;
+    _completionHandled = true;
     _transportCommandRevision++;
-    _updateQueueProgress(_currentIndex, position: position, duration: duration);
+    _updateQueueProgress(
+      _currentIndex,
+      position: Duration.zero,
+      duration: duration,
+    );
     unawaited(_writeProgressCheckpoint());
     _operation++;
     _cancelPendingOpen(reason: 'playback stopped');
@@ -1863,16 +1874,20 @@ class PlayerController extends ChangeNotifier {
     _playbackState = _playbackState.copyWith(
       isPlaying: false,
       isBuffering: false,
+      position: Duration.zero,
       clearNativeSource: true,
       sourceLoaded: false,
     );
-    final stopping = _playback.stop();
+    final stopping = _ignorePlaybackFailure(_playback.stop);
     _seekPreview.setSource(null);
+    _publishPosition(Duration.zero);
     _publishTransport();
     _notifyIfOpen();
     _scheduleSave();
     await stopping;
-    trimMemory();
+    // The engine may have been released while the stop drained; touching the
+    // thumbnail caches afterwards would use torn-down services.
+    if (_acceptsCommands) trimMemory();
   }
 
   /// Stops playback and dismisses the now-playing item.
@@ -1924,14 +1939,17 @@ class PlayerController extends ChangeNotifier {
     if (isPlaying) {
       await _runPlaybackCommand(_playback.pause);
     } else if (!_engineHasMedia) {
+      _isStopped = false;
       await playIndex(_currentIndex);
     } else {
+      _isStopped = false;
       await _runPlaybackCommand(_playback.play);
     }
   }
 
   Future<void> seek(Duration position) async {
     if (!_acceptsCommands) return;
+    if (isLoading || _pendingNavigationEntryId != null) return;
     _transportCommandRevision++;
     final seekRevision = ++_seekRevision;
     if (current == null) return;
@@ -2158,12 +2176,31 @@ class PlayerController extends ChangeNotifier {
     if (!_acceptsCommands) return;
     _transportCommandRevision++;
     if (_queue.isEmpty || _currentIndex < 0) return;
-    if (position > const Duration(seconds: 3)) {
+
+    final isOpeningOrUnconfirmed =
+        isLoading ||
+        _pendingNavigationEntryId != null ||
+        _engineEntryId == null ||
+        _engineEntryId != current?.id;
+
+    if (!isOpeningOrUnconfirmed && position > const Duration(seconds: 3)) {
       await seek(Duration.zero);
       return;
     }
+
+    final int startHistoryCursor;
+    if (isOpeningOrUnconfirmed) {
+      if (_pendingNavigationCursor != null) {
+        startHistoryCursor = _pendingNavigationCursor! - 1;
+      } else {
+        startHistoryCursor = _navigationCursor;
+      }
+    } else {
+      startHistoryCursor = _navigationCursor - 1;
+    }
+
     final previousHistoryCursor = _findHistoryCursor(
-      _navigationCursor - 1,
+      startHistoryCursor,
       step: -1,
     );
     if (previousHistoryCursor >= 0) {
@@ -2171,15 +2208,32 @@ class PlayerController extends ChangeNotifier {
         (entry) => entry.id == _navigationHistory[previousHistoryCursor],
       );
       if (index >= 0) {
+        if (isOpeningOrUnconfirmed) {
+          _cancelPendingOpen(reason: 'navigated previous');
+        }
         await _openIndex(index, navigationCursor: previousHistoryCursor);
         return;
       }
     }
+
+    if (_currentIndex > 0) {
+      if (isOpeningOrUnconfirmed) {
+        _cancelPendingOpen(reason: 'navigated previous');
+      }
+      await playIndex(_currentIndex - 1);
+      return;
+    }
     if (_repeatMode == 'all' && !shuffle) {
+      if (isOpeningOrUnconfirmed) {
+        _cancelPendingOpen(reason: 'navigated previous');
+      }
       await playIndex((_currentIndex - 1 + _queue.length) % _queue.length);
       return;
     }
-    await seek(Duration.zero);
+
+    if (!isOpeningOrUnconfirmed) {
+      await seek(Duration.zero);
+    }
   }
 
   Future<void> toggleShuffle() => setShuffle(!shuffle);
@@ -2542,6 +2596,7 @@ class PlayerController extends ChangeNotifier {
   }
 
   Future<void> _stopAfterQueue() async {
+    _isStopped = true;
     _markSourceDisplaced();
     _engineHasMedia = false;
     _engineEntryId = null;
@@ -2742,7 +2797,10 @@ class PlayerController extends ChangeNotifier {
     if (current != null && _engineHasMedia) {
       _consumePendingResume();
     }
-    if (snapshot.completed && !wasCompleted && !_completionHandled) {
+    if (!_isStopped &&
+        snapshot.completed &&
+        !wasCompleted &&
+        !_completionHandled) {
       _completionHandled = true;
       unawaited(_advance(fromCompletion: true));
     }
@@ -3174,10 +3232,10 @@ class PlayerController extends ChangeNotifier {
   }
 
   void _syncCurrentProgress() {
-    if (!_engineHasMedia && _engineEntryId == null) return;
-    final progressIndex = _engineEntryId == null
-        ? _currentIndex
-        : _queue.indexWhere((entry) => entry.id == _engineEntryId);
+    if (_engineEntryId == null) return;
+    final progressIndex = _queue.indexWhere(
+      (entry) => entry.id == _engineEntryId,
+    );
     if (progressIndex < 0 || progressIndex >= _queue.length) return;
     final entry = _queue[progressIndex];
     var position = _playbackState.position;
@@ -3270,7 +3328,7 @@ class PlayerController extends ChangeNotifier {
     final removed = _recent.removeAt(index);
     _unmodifiableRecent = List<MediaEntry>.unmodifiable(_recent);
     _scheduleSave();
-    notifyListeners();
+    _notifyIfOpen();
     return (index, removed);
   }
 
@@ -3289,7 +3347,7 @@ class PlayerController extends ChangeNotifier {
     final removed = _recent.removeAt(index);
     _unmodifiableRecent = List<MediaEntry>.unmodifiable(_recent);
     _scheduleSave();
-    notifyListeners();
+    _notifyIfOpen();
     return (index, removed);
   }
 
@@ -3306,7 +3364,7 @@ class PlayerController extends ChangeNotifier {
     }
     _unmodifiableRecent = List<MediaEntry>.unmodifiable(_recent);
     _scheduleSave();
-    notifyListeners();
+    _notifyIfOpen();
   }
 
   /// Clears all entries from the recently played history.
@@ -3316,7 +3374,7 @@ class PlayerController extends ChangeNotifier {
     _recent.clear();
     _unmodifiableRecent = const <MediaEntry>[];
     _scheduleSave();
-    notifyListeners();
+    _notifyIfOpen();
     return cleared;
   }
 
@@ -3328,7 +3386,7 @@ class PlayerController extends ChangeNotifier {
       ..addAll(_canonicalizeRecent(entries));
     _unmodifiableRecent = List<MediaEntry>.unmodifiable(_recent);
     _scheduleSave();
-    notifyListeners();
+    _notifyIfOpen();
   }
 
   List<MediaEntry> _canonicalizeRecent(List<MediaEntry> entries) {
@@ -3453,10 +3511,21 @@ class PlayerController extends ChangeNotifier {
     }
   }
 
-  Future<void> _drainPersistence() async {
-    await _saveDrain?.future;
-    await _checkpointDrain?.future;
-    await _sessions.flush();
+  Future<void> _drainPersistence({
+    Duration timeout = const Duration(seconds: 3),
+  }) async {
+    try {
+      final drains = <Future<void>>[
+        if (_saveDrain != null) _saveDrain!.future,
+        if (_checkpointDrain != null) _checkpointDrain!.future,
+      ];
+      if (drains.isNotEmpty) {
+        await Future.wait(drains).timeout(timeout);
+      }
+    } catch (_) {}
+    try {
+      await _sessions.flush().timeout(timeout);
+    } catch (_) {}
   }
 
   void _updateProgressTimer() {
@@ -3475,6 +3544,7 @@ class PlayerController extends ChangeNotifier {
 
   /// Writes the small progress checkpoint, coalescing overlapping writes.
   Future<void> _writeProgressCheckpoint({bool whileClosing = false}) async {
+    if (_engineEntryId == null) return;
     if (_checkpointInFlight) {
       _checkpointRequested = true;
       return;
@@ -3486,8 +3556,8 @@ class PlayerController extends ChangeNotifier {
     try {
       do {
         _checkpointRequested = false;
-        final activeId = _engineEntryId ?? current?.id;
-        if (activeId == null) continue;
+        final activeId = _engineEntryId;
+        if (activeId == null) break;
         final activeEntry = _entryById(activeId);
         if (activeEntry != null &&
             !_saveNetworkUrls &&
@@ -3569,6 +3639,12 @@ class PlayerController extends ChangeNotifier {
   bool get _isClosed => _closingState == ControllerClosingState.closed;
 
   Future<void> _cancelAndDisposePlayback() async {
+    try {
+      await _thumbnails?.dispose();
+    } on Object {
+      // The native thumbnail extractor must still be released even if its
+      // teardown reports a problem; playback disposal continues below.
+    }
     try {
       await _seekPreview.dispose();
     } on Object {

@@ -10,6 +10,7 @@ import 'package:watcher/watcher.dart';
 
 import '../../domain/models/library_models.dart';
 import '../../domain/models/media_catalog.dart';
+import '../../domain/models/media_entry.dart';
 import '../repositories/database/library_database.dart';
 import 'media_probe_service.dart';
 
@@ -128,12 +129,21 @@ class MediaScannerService {
   final Map<String, DateTime> _pendingEventStarts = <String, DateTime>{};
   final Map<String, Future<void>> _watcherDrains = <String, Future<void>>{};
 
+  /// Roots requested while a scan was already running; the running scan picks
+  /// them up instead of being cancelled and replaced.
+  final Set<String> _pendingMergeRoots = <String>{};
+
   final StreamController<LibraryScanStatus> _statusController =
       StreamController<LibraryScanStatus>.broadcast();
 
   LibraryScanStatus _status = const LibraryScanStatus();
   bool _isCancelled = false;
   bool _isDisposed = false;
+
+  /// Bumped on every cancellation and scan replacement. Enrichment batches
+  /// capture the value at start; a mismatch means their probes may have failed
+  /// because of the cancellation, so destructive fallback writes are skipped.
+  int _cancellationEpoch = 0;
   Future<void>? _currentScanFuture;
   Future<void> _scanTransitionTail = Future<void>.value();
   DateTime? _lastStatusEmission;
@@ -197,9 +207,12 @@ class MediaScannerService {
   }
 
   /// Registers a folder to be scanned and watched.
+  ///
+  /// The registration key is the canonical source path so `C:\Music` and
+  /// `c:\music` share one watcher and one scan root.
   void registerFolder(String path) {
     if (_isDisposed) return;
-    final norm = _pathContext.normalize(_pathContext.absolute(path));
+    final norm = MediaEntry.canonicalSource(path);
     if (_explicitFolders.add(norm)) {
       _startWatching(norm);
     }
@@ -208,7 +221,7 @@ class MediaScannerService {
   /// Unregisters a folder, stopping its watcher and removing it from registered folders.
   void unregisterFolder(String path) {
     if (_isDisposed) return;
-    final norm = _pathContext.normalize(_pathContext.absolute(path));
+    final norm = MediaEntry.canonicalSource(path);
     _explicitFolders.remove(norm);
     _stopWatching(norm);
     _knownDirectories.remove(norm);
@@ -216,11 +229,14 @@ class MediaScannerService {
   }
 
   /// Scans a specific folder.
+  ///
+  /// When a scan is already running the folder is merged into it rather than
+  /// replacing it, so a single-folder rescan cannot abort a startup scan.
   Future<void> scanFolder(String folderPath) async {
     if (_isDisposed) return;
-    final norm = _pathContext.normalize(_pathContext.absolute(folderPath));
+    final norm = MediaEntry.canonicalSource(folderPath);
     registerFolder(norm);
-    await _runScanRoots(<String>[norm]);
+    await _runScanRoots(<String>[norm], replaceCurrent: false);
   }
 
   /// Scans all registered library folders (deduplicating overlapping roots).
@@ -235,6 +251,20 @@ class MediaScannerService {
       if (_isDisposed) return;
       for (final f in dbFolders) {
         registerFolder(f.path);
+      }
+      // A folder removed while the read was in flight must not be resurrected
+      // by this scan (D-4): re-validate every root against a fresh database
+      // snapshot before scanning it.
+      final fresh = await _getRegisteredFolders();
+      if (_isDisposed) return;
+      final freshPaths = fresh
+          .map((f) => MediaEntry.canonicalSource(f.path))
+          .toSet();
+      for (final f in dbFolders) {
+        final key = MediaEntry.canonicalSource(f.path);
+        if (!freshPaths.contains(key)) {
+          unregisterFolder(key);
+        }
       }
     }
     await _runScanRoots(
@@ -254,6 +284,7 @@ class MediaScannerService {
   /// Cancels any in-progress scan and enrichment.
   void cancelScan() {
     _isCancelled = true;
+    _cancellationEpoch++;
     _probeService.cancelAll();
     _updateStatus(_status.copyWith(phase: ScanPhase.idle, errorMessage: null));
   }
@@ -269,14 +300,37 @@ class MediaScannerService {
     Future<void>? scan;
     try {
       await previousTransition;
-      while (_currentScanFuture != null) {
+      if (replaceCurrent) {
+        while (_currentScanFuture != null) {
+          if (_isDisposed) return;
+          cancelScan();
+          final activeScan = _currentScanFuture!;
+          try {
+            await activeScan;
+          } catch (_) {}
+          break;
+        }
+      } else if (_currentScanFuture != null) {
+        // A scan is already running: merge these roots into it instead of
+        // cancelling it. The running scan drains the pending roots; if it
+        // finishes before picking them up, they are scanned right after.
+        while (!_isDisposed && _currentScanFuture != null) {
+          final mergeable = roots.where(_explicitFolders.contains).toSet();
+          if (mergeable.isNotEmpty) {
+            _pendingMergeRoots.addAll(mergeable);
+          }
+          final activeScan = _currentScanFuture!;
+          try {
+            await activeScan;
+          } catch (_) {}
+        }
         if (_isDisposed) return;
-        if (replaceCurrent) cancelScan();
-        final activeScan = _currentScanFuture!;
-        try {
-          await activeScan;
-        } catch (_) {}
-        if (replaceCurrent) break;
+        final leftover = _pendingMergeRoots
+            .where(_explicitFolders.contains)
+            .toList(growable: false);
+        _pendingMergeRoots.removeAll(leftover);
+        if (leftover.isEmpty) return;
+        roots = leftover;
       }
       if (_isDisposed) return;
 
@@ -286,6 +340,9 @@ class MediaScannerService {
       if (scanRoots.isEmpty) return;
 
       _isCancelled = false;
+      // Invalidate any still-running enrichment batch from a previous
+      // generation so a reset of _isCancelled cannot resurrect its workers.
+      _cancellationEpoch++;
       final scanCompleter = Completer<void>();
       scan = scanCompleter.future;
       _currentScanFuture = scan;
@@ -314,90 +371,131 @@ class MediaScannerService {
 
       final allDiscoveredFiles = <String>[];
 
-      for (final root in roots) {
-        if (_isCancelled || _isDisposed || !_explicitFolders.contains(root)) {
-          break;
-        }
-
-        _updateStatus(_status.copyWith(currentFolder: root));
-
-        // Check if root exists (detects disconnected drive or missing directory)
-        final rootDir = Directory(root);
-        bool exists = false;
-        try {
-          exists = await rootDir.exists();
-        } catch (_) {
-          exists = false;
-        }
-        if (_isCancelled || _isDisposed || !_explicitFolders.contains(root)) {
-          break;
-        }
-
-        if (!exists) {
-          // Disconnected drive or missing folder is marked unavailable (is_available = 0), NEVER deleted!
-          await _onFolderAvailabilityChanged?.call(root, false);
-          _stopWatching(root);
-          _scheduleReconnect(root);
-          if (_isCancelled || _isDisposed || !_explicitFolders.contains(root)) {
-            continue;
-          }
-          continue;
-        }
-
-        // Folder is available
-        _reconnectTimers.remove(root)?.cancel();
-        _startWatching(root);
-        await _onFolderAvailabilityChanged?.call(root, true);
-        if (_isCancelled || _isDisposed || !_explicitFolders.contains(root)) {
-          continue;
-        }
-
-        final folderDiscovered = <String>[];
-        final directories = <String>{};
-        var traversalComplete = true;
-        await for (final file in _traverseDirectory(
-          root,
-          onError: () => traversalComplete = false,
-          onDirectory: directories.add,
-        )) {
-          if (_isCancelled || _isDisposed || !_explicitFolders.contains(root)) {
+      var remaining = List<String>.of(roots);
+      while (remaining.isNotEmpty) {
+        if (_isCancelled || _isDisposed) break;
+        final batch = remaining;
+        remaining = <String>[];
+        for (final root in batch) {
+          if (_isCancelled || _isDisposed) {
             break;
           }
-          folderDiscovered.add(file);
-          _updateStatus(
-            _status.copyWith(discoveredCount: _status.discoveredCount + 1),
+          if (!_explicitFolders.contains(root)) {
+            continue;
+          }
+
+          _updateStatus(_status.copyWith(currentFolder: root));
+
+          // Check if root exists (detects disconnected drive or missing directory)
+          final rootDir = Directory(root);
+          bool exists = false;
+          try {
+            exists = await rootDir.exists();
+          } catch (_) {
+            exists = false;
+          }
+          if (_isCancelled || _isDisposed) {
+            break;
+          }
+          if (!_explicitFolders.contains(root)) {
+            continue;
+          }
+
+          if (!exists) {
+            // Disconnected drive or missing folder is marked unavailable (is_available = 0), NEVER deleted!
+            await _onFolderAvailabilityChanged?.call(root, false);
+            _stopWatching(root);
+            _scheduleReconnect(root);
+            if (_isCancelled || _isDisposed) {
+              break;
+            }
+            continue;
+          }
+
+          // Folder is available
+          _reconnectTimers.remove(root)?.cancel();
+          _startWatching(root);
+          await _onFolderAvailabilityChanged?.call(root, true);
+          if (_isCancelled || _isDisposed) {
+            break;
+          }
+          if (!_explicitFolders.contains(root)) {
+            continue;
+          }
+
+          final folderDiscovered = <String>[];
+          final directories = <String>{};
+          var traversalComplete = true;
+          await for (final file in _traverseDirectory(
+            root,
+            onError: () => traversalComplete = false,
+            onDirectory: directories.add,
+          )) {
+            if (_isCancelled ||
+                _isDisposed ||
+                !_explicitFolders.contains(root)) {
+              break;
+            }
+            folderDiscovered.add(file);
+            _updateStatus(
+              _status.copyWith(discoveredCount: _status.discoveredCount + 1),
+            );
+          }
+
+          if (_isCancelled || _isDisposed) {
+            // Incomplete scans must NEVER delete records.
+            break;
+          }
+          if (!_explicitFolders.contains(root)) {
+            continue;
+          }
+
+          if (folderDiscovered.isNotEmpty) {
+            await _onDiscoveredFiles?.call(folderDiscovered);
+            if (_isCancelled || _isDisposed) {
+              break;
+            }
+            if (!_explicitFolders.contains(root)) {
+              continue;
+            }
+            allDiscoveredFiles.addAll(folderDiscovered);
+          }
+
+          if (_isCancelled || _isDisposed) {
+            break;
+          }
+          if (!_explicitFolders.contains(root)) {
+            continue;
+          }
+
+          if (traversalComplete) {
+            _knownDirectories[root] = directories;
+            await _onFolderReconciled?.call(root, folderDiscovered);
+            if (_isCancelled || _isDisposed) {
+              break;
+            }
+            if (!_explicitFolders.contains(root)) {
+              continue;
+            }
+          }
+          await _onFolderScanCompleted?.call(
+            root,
+            fileCount: folderDiscovered.length,
+            lastScannedAt: DateTime.now(),
           );
         }
 
-        if (_isCancelled || _isDisposed || !_explicitFolders.contains(root)) {
-          // Incomplete scans must NEVER delete records.
-          break;
-        }
+        if (_isCancelled || _isDisposed) break;
 
-        if (folderDiscovered.isNotEmpty) {
-          await _onDiscoveredFiles?.call(folderDiscovered);
-          if (_isCancelled || _isDisposed || !_explicitFolders.contains(root)) {
-            break;
-          }
-          allDiscoveredFiles.addAll(folderDiscovered);
+        // Roots registered while this scan was running are merged into the
+        // same scan pass (D-3) instead of cancelling or queueing a new scan.
+        final pending = _pendingMergeRoots
+            .where(_explicitFolders.contains)
+            .toList(growable: false);
+        if (pending.isNotEmpty) {
+          _pendingMergeRoots.removeAll(pending);
+          remaining.addAll(pending);
         }
-
-        if (_isCancelled || _isDisposed || !_explicitFolders.contains(root)) {
-          break;
-        }
-
-        if (traversalComplete) {
-          _knownDirectories[root] = directories;
-          await _onFolderReconciled?.call(root, folderDiscovered);
-          if (_isCancelled || _isDisposed || !_explicitFolders.contains(root)) {
-            break;
-          }
-        }
-        await _onFolderScanCompleted?.call(
-          root,
-          fileCount: folderDiscovered.length,
-          lastScannedAt: DateTime.now(),
-        );
       }
 
       if (_isCancelled || _isDisposed) {
@@ -511,7 +609,13 @@ class MediaScannerService {
     bool ignoreScanCancellation = false,
     bool skipUnchanged = false,
   }) async {
-    bool stopped() => _isDisposed || (_isCancelled && !ignoreScanCancellation);
+    final epoch = _cancellationEpoch;
+    bool stopped() {
+      if (_isDisposed) return true;
+      if (ignoreScanCancellation) return false;
+      return _isCancelled || _cancellationEpoch != epoch;
+    }
+
     if (filePaths.isEmpty || stopped()) return;
 
     final queue = Queue<String>.from(filePaths);
@@ -551,10 +655,20 @@ class MediaScannerService {
           if (stopped() || !(shouldContinue?.call(path) ?? true)) {
             break;
           }
+          if (_cancellationEpoch != epoch) {
+            // The batch was cancelled (or replaced) after this probe started:
+            // the failure is likely the cancellation itself, and a fallback
+            // write would null richer watcher-enriched metadata (D-5). Skip
+            // the write; watcher-driven batches keep processing other files.
+            continue;
+          }
           // Probe error or unreadable file: do NOT fail scan, fall back to basic file stats
           try {
             final file = File(path);
             final stat = await file.stat();
+            if (_cancellationEpoch != epoch) {
+              continue;
+            }
             final kind = MediaCatalog.kindFromExtension(path);
             final title = _pathContext.basenameWithoutExtension(path);
             await _onUpdateMetadata?.call(
@@ -566,8 +680,10 @@ class MediaScannerService {
             );
           } catch (_) {}
         } finally {
-          completed++;
-          _updateStatus(_status.copyWith(enrichedCount: completed));
+          if (!ignoreScanCancellation) {
+            completed++;
+            _updateStatus(_status.copyWith(enrichedCount: completed));
+          }
         }
       }
     }
@@ -586,7 +702,7 @@ class MediaScannerService {
   // ---------------------------------------------------------------------------
 
   void _startWatching(String folderPath) {
-    final norm = _pathContext.normalize(_pathContext.absolute(folderPath));
+    final norm = MediaEntry.canonicalSource(folderPath);
     if (_watchers.containsKey(norm)) return;
 
     try {
@@ -651,7 +767,7 @@ class MediaScannerService {
   }
 
   void _stopWatching(String folderPath) {
-    final norm = _pathContext.normalize(_pathContext.absolute(folderPath));
+    final norm = MediaEntry.canonicalSource(folderPath);
     _debounceTimers[norm]?.cancel();
     _debounceTimers.remove(norm);
     _pendingEvents.remove(norm);
@@ -846,6 +962,10 @@ class MediaScannerService {
   Future<void> dispose() async {
     _isDisposed = true;
     cancelScan();
+
+    // A scan transition may still be starting or finishing a scan; wait for it
+    // so no scan outlives dispose().
+    await _scanTransitionTail;
 
     final activeScan = _currentScanFuture;
     if (activeScan != null) {

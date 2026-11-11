@@ -78,7 +78,8 @@ class UpdateService extends ChangeNotifier {
   bool _busy = false;
   bool _disposed = false;
   bool _downloadable = false;
-  bool _failedDuringDownload = false;
+  String? _failureKind;
+  String _failurePhase = 'check';
 
   bool get configured => _configured;
   bool get busy => _busy;
@@ -89,9 +90,13 @@ class UpdateService extends ChangeNotifier {
   ReleaseInfo? get release => _release;
   String? get downloadPath => _downloadPath;
 
+  /// What the app was doing when the current 'error' state was recorded:
+  /// 'check', 'download', or 'apply' (opening the verified archive).
+  String? get failureKind => _failureKind;
+
   /// True when the current 'error' state came from a failed download rather
-  /// than a failed update check.
-  bool get failedDuringDownload => _failedDuringDownload;
+  /// than a failed update check or a failed apply step.
+  bool get failedDuringDownload => _failureKind == 'download';
 
   static Uri? _manifestUriFromEnvironment() {
     final value = _configuredManifest.trim();
@@ -109,6 +114,7 @@ class UpdateService extends ChangeNotifier {
 
     _busy = true;
     _downloadable = false;
+    _failurePhase = 'check';
     _setState(
       status: 'checking',
       progress: 0,
@@ -180,6 +186,7 @@ class UpdateService extends ChangeNotifier {
     }
 
     _busy = true;
+    _failurePhase = 'download';
     _setState(status: 'downloading', progress: 0, error: null);
     File? temporaryFile;
     File? verifiedArchive;
@@ -442,6 +449,7 @@ class UpdateService extends ChangeNotifier {
   /// The service deliberately does not install or replace a running bundle.
   Future<void> openDownload() async {
     if (_disposed || _busy) return;
+    _failurePhase = 'apply';
     final path = _downloadPath;
     if (path == null || _release == null) {
       _fail(const _UpdateException('There is no verified update to open.'));
@@ -733,7 +741,7 @@ class UpdateService extends ChangeNotifier {
 
   void _fail(Object error) {
     if (_disposed) return;
-    _failedDuringDownload = _status == 'downloading';
+    _failureKind = _failurePhase;
     _setState(status: 'error', error: _messageFor(error));
   }
 

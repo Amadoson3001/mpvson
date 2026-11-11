@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../domain/models/media_thumbnail.dart';
 import '../../../../domain/models/playback_chapter.dart';
+import '../../../../domain/models/player_controls_preferences.dart';
 import '../../../../ui/core/app_motion.dart';
 import '../../../../ui/core/app_theme.dart';
 import '../../../../ui/core/slider_overlay.dart';
@@ -24,11 +25,13 @@ class SharedSeekBar extends StatefulWidget {
     required this.controller,
     required this.onPreviewChanged,
     required this.onInteractionChanged,
+    this.thickness = SeekBarThickness.standard,
   });
 
   final PlayerController controller;
   final ValueChanged<Duration?> onPreviewChanged;
   final ValueChanged<bool>? onInteractionChanged;
+  final SeekBarThickness thickness;
 
   @override
   State<SharedSeekBar> createState() => SharedSeekBarState();
@@ -346,12 +349,18 @@ class SharedSeekBarState extends State<SharedSeekBar> {
                   Positioned.fill(
                     child: SliderTheme(
                       data: SliderTheme.of(context).copyWith(
-                        trackHeight: 4,
+                        trackHeight: (_pointerInside || _dragging || _focused)
+                            ? widget.thickness.hoverHeight
+                            : widget.thickness.restingHeight,
                         trackShape: const UniformRoundedSliderTrackShape(),
                         trackGap: 0,
                         thumbShape: canSeek
                             ? RoundSliderThumbShape(
-                                enabledThumbRadius: thumbVisible ? 7 : 5,
+                                enabledThumbRadius: thumbVisible
+                                    ? ((_pointerInside || _dragging || _focused)
+                                          ? widget.thickness.hoverThumbRadius
+                                          : widget.thickness.restingThumbRadius)
+                                    : 0,
                                 disabledThumbRadius: 3,
                                 elevation: 2,
                                 pressedElevation: 4,
@@ -361,8 +370,9 @@ class SharedSeekBarState extends State<SharedSeekBar> {
                           overlayRadius: 14,
                         ),
                         activeTrackColor: Theme.of(context).colorScheme.primary,
-                        inactiveTrackColor: context.palette.borderStrong
-                            .withValues(alpha: 0.65),
+                        inactiveTrackColor: Colors.white.withValues(
+                          alpha: 0.25,
+                        ),
                         disabledActiveTrackColor: context.palette.muted,
                         disabledInactiveTrackColor: context.palette.border,
                         overlayColor: Theme.of(
@@ -418,10 +428,10 @@ class SharedSeekBarState extends State<SharedSeekBar> {
                         switchOutCurve: AppMotion.exit,
                         transitionBuilder: (child, animation) {
                           if (AppMotion.reduce(context)) return child;
-                          final curved = CurvedAnimation(
-                            parent: animation,
-                            curve: AppMotion.enter,
-                            reverseCurve: AppMotion.exit,
+                          // CurveTween keeps this transient: no
+                          // CurvedAnimation to outlive the switcher.
+                          final curved = animation.drive(
+                            CurveTween(curve: AppMotion.enter),
                           );
                           return FadeTransition(
                             opacity: curved,

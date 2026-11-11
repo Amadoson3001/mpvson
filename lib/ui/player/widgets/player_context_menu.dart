@@ -404,31 +404,79 @@ MenuStyle _menuPanelStyle(BuildContext context, Color color) => MenuStyle(
   ),
 );
 
-ButtonStyle _menuItemButtonStyle(BuildContext context) =>
-    MenuItemButton.styleFrom(
-      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-      foregroundColor: context.palette.text,
-      disabledForegroundColor: context.palette.muted,
-      minimumSize: const Size(260, 40),
-      padding: const EdgeInsets.symmetric(horizontal: 10),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(AppRadii.control),
-      ),
-      overlayColor: context.palette.hover,
-    );
+ButtonStyle _menuItemButtonStyle(BuildContext context) {
+  final accent = Theme.of(context).colorScheme.primary;
+  return MenuItemButton.styleFrom(
+    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    foregroundColor: context.palette.text,
+    disabledForegroundColor: context.palette.muted,
+    minimumSize: const Size(260, 40),
+    padding: const EdgeInsets.symmetric(horizontal: 10),
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(AppRadii.control),
+      side: BorderSide.none,
+    ),
+    side: BorderSide.none,
+    backgroundColor: Colors.transparent,
+    overlayColor: accent.withValues(alpha: 0.08),
+  ).copyWith(
+    side: const WidgetStatePropertyAll(BorderSide.none),
+    backgroundColor: WidgetStateProperty.resolveWith((states) {
+      if (states.contains(WidgetState.hovered) ||
+          states.contains(WidgetState.focused)) {
+        return accent.withValues(alpha: 0.14);
+      }
+      return Colors.transparent;
+    }),
+    iconColor: WidgetStateProperty.resolveWith((states) {
+      if (states.contains(WidgetState.disabled)) {
+        return context.palette.muted;
+      }
+      if (states.contains(WidgetState.hovered) ||
+          states.contains(WidgetState.focused)) {
+        return context.palette.text;
+      }
+      return context.palette.secondaryText;
+    }),
+  );
+}
 
-ButtonStyle _submenuButtonStyle(BuildContext context) =>
-    SubmenuButton.styleFrom(
-      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-      foregroundColor: context.palette.text,
-      disabledForegroundColor: context.palette.muted,
-      minimumSize: const Size(260, 40),
-      padding: const EdgeInsets.symmetric(horizontal: 10),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(AppRadii.control),
-      ),
-      overlayColor: context.palette.hover,
-    );
+ButtonStyle _submenuButtonStyle(BuildContext context) {
+  final accent = Theme.of(context).colorScheme.primary;
+  return SubmenuButton.styleFrom(
+    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    foregroundColor: context.palette.text,
+    disabledForegroundColor: context.palette.muted,
+    minimumSize: const Size(260, 40),
+    padding: const EdgeInsets.symmetric(horizontal: 10),
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(AppRadii.control),
+      side: BorderSide.none,
+    ),
+    side: BorderSide.none,
+    backgroundColor: Colors.transparent,
+    overlayColor: accent.withValues(alpha: 0.08),
+  ).copyWith(
+    side: const WidgetStatePropertyAll(BorderSide.none),
+    backgroundColor: WidgetStateProperty.resolveWith((states) {
+      if (states.contains(WidgetState.hovered) ||
+          states.contains(WidgetState.focused)) {
+        return accent.withValues(alpha: 0.14);
+      }
+      return Colors.transparent;
+    }),
+    iconColor: WidgetStateProperty.resolveWith((states) {
+      if (states.contains(WidgetState.disabled)) {
+        return context.palette.muted;
+      }
+      if (states.contains(WidgetState.hovered) ||
+          states.contains(WidgetState.focused)) {
+        return context.palette.text;
+      }
+      return context.palette.secondaryText;
+    }),
+  );
+}
 
 class _MenuDivider extends StatelessWidget {
   const _MenuDivider();

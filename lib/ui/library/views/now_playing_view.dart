@@ -41,6 +41,16 @@ class NowPlayingView extends StatefulWidget {
 }
 
 class _NowPlayingViewState extends State<NowPlayingView> {
+  /// Minimum interactive edge for the top-bar controls. The theme already
+  /// enforces a 44px minimum, but pinning the constraints keeps the back,
+  /// queue, and close buttons at an exact 44×44 hit target.
+  static const BoxConstraints _hitTargetConstraints = BoxConstraints(
+    minWidth: 44,
+    minHeight: 44,
+    maxWidth: 44,
+    maxHeight: 44,
+  );
+
   Uint8List? _cachedArtwork;
   String? _cachedArtworkPath;
   String? _lastEntryTitle;
@@ -202,18 +212,18 @@ class _NowPlayingViewState extends State<NowPlayingView> {
         // remainder keeps the artwork from overshooting on shorter windows,
         // where it used to stay at its maximum and push the transport row
         // below the fold.
+        final isCompactHeight =
+            constraints.maxHeight < NowPlayingLayout.compactHeightBreakpoint;
+        // Unknown artist and album stay empty until real metadata arrives;
+        // inventing names would present fabricated information as fact.
         final artworkSize =
             NowPlayingLayout(
               title:
                   _currentMediaRecord?.title ??
                   entry?.title ??
                   'Nothing playing',
-              artist:
-                  _currentMediaRecord?.artist ??
-                  (entry == null ? '' : 'Unknown artist'),
-              album:
-                  _currentMediaRecord?.album ??
-                  (entry == null ? '' : 'Unknown album'),
+              artist: _currentMediaRecord?.artist ?? '',
+              album: _currentMediaRecord?.album ?? '',
             ).artworkSize(
               context: context,
               viewportWidth: constraints.maxWidth,
@@ -222,14 +232,9 @@ class _NowPlayingViewState extends State<NowPlayingView> {
               textScaler: MediaQuery.textScalerOf(context),
             );
 
-        final isCompactHeight = constraints.maxHeight < 640;
-        final verticalPadding = isCompactHeight ? AppSpace.sm : AppSpace.md;
-        final gapAboveArtwork = isCompactHeight ? 6.0 : 10.0;
-        final gapBelowArtwork = isCompactHeight ? 10.0 : 14.0;
-        final gapBelowTitle = isCompactHeight ? 3.0 : 6.0;
-        final gapBelowArtist = isCompactHeight ? 2.0 : 4.0;
-        final gapAboveTransport = isCompactHeight ? 12.0 : 18.0;
-        final gapTimelineTransport = isCompactHeight ? 6.0 : 12.0;
+        final verticalPadding = NowPlayingLayout.stageVerticalPadding(
+          isCompactHeight: isCompactHeight,
+        );
         final queue = widget.controller.queue;
         final showSideQueue =
             constraints.maxWidth >= 920 &&
@@ -327,42 +332,49 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                                       ),
                                       tooltip: 'Back to library',
                                       color: context.palette.secondaryText,
+                                      constraints: _hitTargetConstraints,
+                                      padding: EdgeInsets.zero,
                                       onPressed: widget.onBack,
                                     )
                                   else
-                                    const SizedBox(width: 40),
+                                    const SizedBox(width: 44),
                                   const Spacer(),
                                   if (!showSideQueue &&
                                       (widget.onOpenQueue != null ||
                                           _sideQueueHidden))
-                                    Tooltip(
-                                      message: 'Open queue',
-                                      child: TextButton.icon(
-                                        icon: const Icon(
-                                          Icons.queue_music_rounded,
-                                          size: 18,
-                                        ),
-                                        label: const Text('Queue'),
-                                        style: TextButton.styleFrom(
-                                          foregroundColor:
-                                              context.palette.primaryText,
-                                        ),
-                                        onPressed: () {
-                                          // Wide layouts dock the full queue
-                                          // panel; restore it instead of
-                                          // covering the stage with a sheet.
-                                          if (constraints.maxWidth >= 920 &&
-                                              queue.length > 1) {
-                                            setState(
-                                              () => _sideQueueHidden = false,
-                                            );
-                                          } else {
-                                            widget.onOpenQueue?.call();
-                                          }
-                                        },
+                                    IconButton(
+                                      icon: const Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(
+                                            Icons.queue_music_rounded,
+                                            size: 20,
+                                          ),
+                                          SizedBox(width: 4),
+                                          Text('Queue'),
+                                        ],
                                       ),
+                                      tooltip: 'Open queue',
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                      ),
+                                      constraints: const BoxConstraints(
+                                        minWidth: 44,
+                                        minHeight: 44,
+                                      ),
+                                      color: context.palette.primaryText,
+                                      onPressed: () {
+                                        if (constraints.maxWidth >= 920 &&
+                                            queue.length > 1) {
+                                          setState(
+                                            () => _sideQueueHidden = false,
+                                          );
+                                        } else {
+                                          widget.onOpenQueue?.call();
+                                        }
+                                      },
                                     ),
-                                  const SizedBox(width: 4),
+                                  const SizedBox(width: AppSpace.xxs),
                                   IconButton(
                                     icon: const Icon(
                                       Icons.close_rounded,
@@ -370,27 +382,39 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                                     ),
                                     tooltip: 'Close player',
                                     color: context.palette.secondaryText,
+                                    constraints: _hitTargetConstraints,
+                                    padding: EdgeInsets.zero,
                                     onPressed: _closePlayer,
                                   ),
                                 ],
                               ),
-                              SizedBox(height: gapAboveArtwork),
+                              SizedBox(
+                                height: NowPlayingLayout.gapAboveArtwork(
+                                  isCompactHeight: isCompactHeight,
+                                ),
+                              ),
                               // Large square artwork
                               AudioVolumeWheel(
                                 controller: widget.controller,
                                 child: _buildArtwork(context, artworkSize),
                               ),
-                              SizedBox(height: gapBelowArtwork),
+                              SizedBox(
+                                height: NowPlayingLayout.gapBelowArtwork(
+                                  isCompactHeight: isCompactHeight,
+                                ),
+                              ),
                               // Title & Favorite row
                               Padding(
                                 padding: const EdgeInsets.symmetric(
-                                  horizontal: 16,
+                                  horizontal: AppSpace.md,
                                 ),
                                 child: Row(
                                   mainAxisAlignment: MainAxisAlignment.center,
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    const SizedBox(width: 48),
+                                    const SizedBox(
+                                      width: NowPlayingLayout.titleBalanceWidth,
+                                    ),
                                     Flexible(
                                       child: Text(
                                         _currentMediaRecord?.title ??
@@ -404,7 +428,7 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                                         overflow: TextOverflow.ellipsis,
                                       ),
                                     ),
-                                    const SizedBox(width: 8),
+                                    const SizedBox(width: AppSpace.xs),
                                     IconButton(
                                       icon: Icon(
                                         (_currentMediaRecord?.isFavorite ??
@@ -433,36 +457,37 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                                   ],
                                 ),
                               ),
-                              SizedBox(height: gapBelowTitle),
+                              SizedBox(
+                                height: NowPlayingLayout.gapBelowTitle(
+                                  isCompactHeight: isCompactHeight,
+                                ),
+                              ),
                               // Artist
                               Text(
-                                _currentMediaRecord?.artist ??
-                                    (entry == null ? '' : 'Unknown artist'),
-                                style: context.palette.sectionTitle.copyWith(
-                                  color: context.palette.primaryText.withValues(
-                                    alpha: 0.82,
-                                  ),
-                                  fontWeight: FontWeight.w500,
-                                ),
+                                _currentMediaRecord?.artist ?? '',
+                                style: NowPlayingLayout.artistStyle(context),
                                 textAlign: TextAlign.center,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                               ),
-                              SizedBox(height: gapBelowArtist),
+                              SizedBox(
+                                height: NowPlayingLayout.gapBelowArtist(
+                                  isCompactHeight: isCompactHeight,
+                                ),
+                              ),
                               // Album
                               Text(
-                                _currentMediaRecord?.album ??
-                                    (entry == null ? '' : 'Unknown album'),
-                                style: context.palette.rowSecondary.copyWith(
-                                  color: context.palette.primaryText.withValues(
-                                    alpha: 0.6,
-                                  ),
-                                ),
+                                _currentMediaRecord?.album ?? '',
+                                style: NowPlayingLayout.albumStyle(context),
                                 textAlign: TextAlign.center,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                               ),
-                              SizedBox(height: gapAboveTransport),
+                              SizedBox(
+                                height: NowPlayingLayout.gapAboveTransport(
+                                  isCompactHeight: isCompactHeight,
+                                ),
+                              ),
                               // Transport, timeline and volume, so this screen
                               // can drive playback on its own.
                               AudioVolumeWheel(
@@ -472,7 +497,12 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                                   child: Column(
                                     children: [
                                       SeekBar(controller: widget.controller),
-                                      SizedBox(height: gapTimelineTransport),
+                                      SizedBox(
+                                        height:
+                                            NowPlayingLayout.gapTimelineTransport(
+                                              isCompactHeight: isCompactHeight,
+                                            ),
+                                      ),
                                       _buildControls(isCompactHeight),
                                     ],
                                   ),
@@ -491,9 +521,9 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                         width: AppLayout.queuePanelWidth,
                         child: QueuePanel(
                           controller: widget.controller,
+                          onQueueFocus: (_) {},
                           onClose: () =>
                               setState(() => _sideQueueHidden = true),
-                          onQueueFocus: (_) {},
                           onAddFiles: widget.onAddQueueFiles ?? () {},
                         ),
                       ),
@@ -521,7 +551,7 @@ class _NowPlayingViewState extends State<NowPlayingView> {
             showShuffleRepeat: true,
           ),
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: NowPlayingLayout.transportVolumeGap),
         Center(
           child: AudioVolumeControl(
             controller: widget.controller,

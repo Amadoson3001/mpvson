@@ -98,7 +98,7 @@ class AppDialog extends StatelessWidget {
   /// Clip behavior. Defaults to [Clip.antiAlias].
   final Clip clipBehavior;
 
-  /// Border radius override. Defaults to [AppRadii.artwork] (10.0).
+  /// Border radius override. Defaults to [AppRadii.dialog].
   final double? borderRadius;
 
   /// Border side color override. Defaults to `context.palette.border`.
@@ -125,7 +125,7 @@ class AppDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final effectiveRadius = borderRadius ?? AppRadii.artwork;
+    final effectiveRadius = borderRadius ?? AppRadii.dialog;
     final effectiveBorderColor = borderColor ?? context.palette.border;
     final dialogShape = RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(effectiveRadius),

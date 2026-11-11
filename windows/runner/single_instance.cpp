@@ -1,5 +1,6 @@
 #include "single_instance.h"
 
+#include <flutter/method_result_functions.h>
 #include <flutter/standard_method_codec.h>
 #include <shellapi.h>
 
@@ -22,26 +23,6 @@ SingleInstance::SingleInstance() = default;
 
 SingleInstance::~SingleInstance() {
   CleanUp();
-}
-
-SingleInstance::SingleInstance(SingleInstance&& other) noexcept {
-  *this = std::move(other);
-}
-
-SingleInstance& SingleInstance::operator=(SingleInstance&& other) noexcept {
-  if (this != &other) {
-    CleanUp();
-    mutex_ = other.mutex_;
-    other.mutex_ = nullptr;
-    stop_event_ = other.stop_event_;
-    other.stop_event_ = nullptr;
-    window_handle_ = other.window_handle_;
-    other.window_handle_ = nullptr;
-    server_thread_ = std::move(other.server_thread_);
-    stopping_.store(other.stopping_.load());
-    channel_ = std::move(other.channel_);
-  }
-  return *this;
 }
 
 std::vector<std::wstring> SingleInstance::GetRawCommandLineArgs() {
@@ -148,10 +129,13 @@ void SingleInstance::ForwardToPrimary(const std::vector<std::wstring>& raw_args)
   // Allow the primary instance to set its window as foreground
   ::AllowSetForegroundWindow(ASFW_ANY);
 
-  // Find the primary instance window and bring it to foreground
-  HWND hwnd = ::FindWindowW(kWindowClassName, nullptr);
+  // Find the primary instance window and bring it to foreground. Match the
+  // window created in main.cpp: the FLUTTER_RUNNER_WIN32_WINDOW class with the
+  // kWindowTitle title. Fall back to the class name alone in case the title
+  // was changed at runtime.
+  HWND hwnd = ::FindWindowW(kWindowClassName, kWindowTitle);
   if (hwnd == nullptr) {
-    hwnd = ::FindWindowW(nullptr, kWindowTitle);
+    hwnd = ::FindWindowW(kWindowClassName, nullptr);
   }
   if (hwnd != nullptr) {
     if (::IsIconic(hwnd)) {
@@ -186,8 +170,15 @@ bool SingleInstance::AcquireOwnershipOrForward() {
     if (mutex_ != nullptr) {
       DWORD wait_result = ::WaitForSingleObject(mutex_, 10000);
       if (wait_result == WAIT_OBJECT_0 || wait_result == WAIT_ABANDONED) {
+        // Ownership acquired; proceed as the primary instance.
         return true;
       }
+      // The wait timed out or failed, so this process does NOT own the mutex.
+      // Drop the handle instead of leaving one that looks owned (CleanUp would
+      // otherwise release/close a mutex held by a stale instance). Recovery
+      // was explicitly requested, so proceed as primary regardless.
+      ::CloseHandle(mutex_);
+      mutex_ = nullptr;
     }
     return true;
   }
@@ -212,11 +203,21 @@ void SingleInstance::Initialize(HWND window_handle,
   channel_ = std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
       messenger, "mpvson/single_instance",
       &flutter::StandardMethodCodec::GetInstance());
-  channel_->SetMethodCallHandler([](const auto& call, auto result) {
+  channel_->SetMethodCallHandler([this](const auto& call, auto result) {
+    if (call.method_name() == "ready" || call.method_name() == "flush") {
+      is_dart_ready_ = true;
+      if (window_handle_ != nullptr) {
+        ::KillTimer(window_handle_, kSingleInstanceRetryTimerId);
+      }
+      FlushPendingActivations();
+      result->Success();
+      return;
+    }
     result->NotImplemented();
   });
 
   StartServer();
+  FlushPendingActivations();
 }
 
 void SingleInstance::StartServer() {
@@ -386,19 +387,112 @@ void SingleInstance::HandleActivate(const std::vector<std::string>& paths) {
     ::SetForegroundWindow(window_handle_);
   }
 
-  if (channel_ != nullptr) {
-    flutter::EncodableList list;
-    list.reserve(paths.size());
-    for (const auto& path : paths) {
-      list.emplace_back(flutter::EncodableValue(path));
-    }
-    channel_->InvokeMethod("onActivate",
-                           std::make_unique<flutter::EncodableValue>(list));
+  pending_activations_.push_back(paths);
+  FlushPendingActivations();
+}
+
+void SingleInstance::FlushPendingActivations() {
+  if (is_dispatching_ || pending_activations_.empty()) {
+    return;
   }
+
+  if (channel_ == nullptr) {
+    if (window_handle_ != nullptr && !stopping_) {
+      ::SetTimer(window_handle_, kSingleInstanceRetryTimerId,
+                 kSingleInstanceRetryIntervalMs, nullptr);
+    }
+    return;
+  }
+
+  is_dispatching_ = true;
+  const auto& paths = pending_activations_.front();
+
+  flutter::EncodableList list;
+  list.reserve(paths.size());
+  for (const auto& path : paths) {
+    list.emplace_back(flutter::EncodableValue(path));
+  }
+
+  auto alive = alive_;
+  channel_->InvokeMethod(
+      "onActivate",
+      std::make_unique<flutter::EncodableValue>(list),
+      std::make_unique<flutter::MethodResultFunctions<flutter::EncodableValue>>(
+          /*on_success=*/[this, alive](const flutter::EncodableValue* result) {
+            if (!*alive) {
+              return;
+            }
+            is_dispatching_ = false;
+            is_dart_ready_ = true;
+            retry_count_ = 0;
+            if (!pending_activations_.empty()) {
+              pending_activations_.pop_front();
+            }
+            if (pending_activations_.empty() && window_handle_ != nullptr) {
+              ::KillTimer(window_handle_, kSingleInstanceRetryTimerId);
+            }
+            FlushPendingActivations();
+          },
+          /*on_error=*/[this, alive](const std::string& code,
+                                     const std::string& message,
+                                     const flutter::EncodableValue* details) {
+            if (!*alive) {
+              return;
+            }
+            is_dispatching_ = false;
+            is_dart_ready_ = true;
+            retry_count_ = 0;
+            if (!pending_activations_.empty()) {
+              pending_activations_.pop_front();
+            }
+            if (pending_activations_.empty() && window_handle_ != nullptr) {
+              ::KillTimer(window_handle_, kSingleInstanceRetryTimerId);
+            }
+            FlushPendingActivations();
+          },
+          /*on_not_implemented=*/[this, alive]() {
+            if (!*alive) {
+              return;
+            }
+            is_dispatching_ = false;
+            is_dart_ready_ = false;
+            // Dart MethodChannel listener not registered yet during cold boot.
+            // Start or maintain retry timer to redeliver when ready.
+            if (window_handle_ != nullptr && !stopping_) {
+              ::SetTimer(window_handle_, kSingleInstanceRetryTimerId,
+                         kSingleInstanceRetryIntervalMs, nullptr);
+            }
+          }));
+}
+
+void SingleInstance::OnRetryTimer() {
+  if (is_dispatching_) {
+    return;
+  }
+  retry_count_++;
+  if (retry_count_ > kMaxSingleInstanceRetries) {
+    if (window_handle_ != nullptr) {
+      ::KillTimer(window_handle_, kSingleInstanceRetryTimerId);
+    }
+    pending_activations_.clear();
+    retry_count_ = 0;
+    return;
+  }
+  FlushPendingActivations();
 }
 
 void SingleInstance::CleanUp() {
+  if (window_handle_ != nullptr) {
+    ::KillTimer(window_handle_, kSingleInstanceRetryTimerId);
+  }
+  if (alive_) {
+    *alive_ = false;
+    alive_ = std::make_shared<bool>(true);
+  }
   stopping_ = true;
+  pending_activations_.clear();
+  is_dispatching_ = false;
+  retry_count_ = 0;
   if (stop_event_ != nullptr) {
     ::SetEvent(stop_event_);
   }
@@ -410,6 +504,11 @@ void SingleInstance::CleanUp() {
     stop_event_ = nullptr;
   }
   if (mutex_ != nullptr) {
+    // Release ownership before closing the handle so the next process is not
+    // kept waiting between the release and the close. ReleaseMutex fails with
+    // ERROR_NOT_OWNER when this process never acquired the mutex (secondary
+    // instance or a failed recovery wait), which is harmless.
+    ::ReleaseMutex(mutex_);
     ::CloseHandle(mutex_);
     mutex_ = nullptr;
   }

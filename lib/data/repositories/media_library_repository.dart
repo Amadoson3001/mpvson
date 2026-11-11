@@ -47,8 +47,15 @@ abstract class MediaLibraryRepository extends ChangeNotifier {
   Future<void> deletePlaylist(String playlistId);
   Future<void> renamePlaylist(String playlistId, String newTitle);
   Future<void> addToPlaylist(String playlistId, List<String> mediaIds);
+  Future<void> addPathsToPlaylist(String playlistId, List<String> paths);
   Future<void> removeFromPlaylist(String playlistId, String playlistEntryId);
-  Future<void> reorderPlaylist(String playlistId, int oldIndex, int newIndex);
+  Future<void> reorderPlaylist(
+    String playlistId,
+    int oldIndex,
+    int newIndex, {
+    String? entryId,
+  });
+  Future<void> clearPlaylist(String playlistId);
   Future<List<PlaylistEntryRecord>> getPlaylistEntries(String playlistId);
 
   Future<List<String>> getDistinctArtists({MediaKind? kind});
@@ -64,6 +71,16 @@ abstract class MediaLibraryRepository extends ChangeNotifier {
 
   /// Runs PRAGMA optimize on the database to maintain query planner statistics.
   Future<void> optimize() async {}
+
+  /// Probes the media file at [path] to extract duration and metadata,
+  /// updating the library database.
+  Future<void> probeMedia(String path) async {}
+
+  /// Updates duration for a single media item.
+  Future<void> updateMediaDuration(
+    String canonicalSource,
+    Duration duration,
+  ) async {}
 
   @override
   Future<void> dispose();

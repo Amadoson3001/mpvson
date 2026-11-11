@@ -50,6 +50,7 @@ VideoOutput::VideoOutput(int64_t handle,
   auto future = thread_pool_ref_->Post([&]() {
     mpv_set_option_string(handle_, "video-sync", "audio");
     mpv_set_option_string(handle_, "video-timing-offset", "0");
+    mpv_set_option_string(handle_, "interpolation", "no");
     // First try to initialize video playback with hardware acceleration &
     // |ANGLESurfaceManager|, use S/W API as fallback.
     auto is_hardware_acceleration_enabled = false;
@@ -269,10 +270,17 @@ void VideoOutput::Render() {
     }
     // S/W
     if (pixel_buffer_ != nullptr) {
-      int32_t size[]{
-          static_cast<int32_t>(pixel_buffer_textures_.at(texture_id_)->width),
-          static_cast<int32_t>(pixel_buffer_textures_.at(texture_id_)->height),
-      };
+      int32_t size[2];
+      {
+        std::lock_guard<std::mutex> lock(textures_mutex_);
+        auto it = pixel_buffer_textures_.find(texture_id_);
+        if (it == pixel_buffer_textures_.end()) {
+          // The texture has been retired; skip rendering this frame.
+          return;
+        }
+        size[0] = static_cast<int32_t>(it->second->width);
+        size[1] = static_cast<int32_t>(it->second->height);
+      }
       auto pitch = 4 * size[0];
       mpv_render_param params[]{
           {MPV_RENDER_PARAM_SW_SIZE, size},
@@ -349,8 +357,15 @@ void VideoOutput::CheckAndResize() {
     current_height = surface_manager_->height();
   }
   if (pixel_buffer_ != nullptr) {
-    current_width = pixel_buffer_textures_.at(texture_id_)->width;
-    current_height = pixel_buffer_textures_.at(texture_id_)->height;
+    std::lock_guard<std::mutex> lock(textures_mutex_);
+    auto it = pixel_buffer_textures_.find(texture_id_);
+    if (it == pixel_buffer_textures_.end()) {
+      // The texture is being retired; skip the comparison this frame. A
+      // subsequent frame will find the freshly registered texture.
+      return;
+    }
+    current_width = it->second->width;
+    current_height = it->second->height;
   }
   // Currently rendered video output dimensions.
   // Either H/W or S/W rendered.
@@ -395,11 +410,13 @@ void VideoOutput::Resize(int64_t required_width, int64_t required_height) {
             kFlutterDesktopGpuSurfaceTypeDxgiSharedHandle, [&](auto, auto) {
               std::lock_guard<std::mutex> lock(textures_mutex_);
               if (texture_id_) {
-                surface_manager_->Read();
-                return textures_.at(texture_id_).get();
-              } else {
-                return (FlutterDesktopGpuSurfaceDescriptor*)nullptr;
+                auto it = textures_.find(texture_id_);
+                if (it != textures_.end()) {
+                  surface_manager_->Read();
+                  return it->second.get();
+                }
               }
+              return (FlutterDesktopGpuSurfaceDescriptor*)nullptr;
             }));
     // Register new texture.
     texture_id_ =
@@ -425,10 +442,12 @@ void VideoOutput::Resize(int64_t required_width, int64_t required_height) {
         flutter::PixelBufferTexture([&](auto, auto) {
           std::lock_guard<std::mutex> lock(textures_mutex_);
           if (texture_id_) {
-            return pixel_buffer_textures_.at(texture_id_).get();
-          } else {
-            return (FlutterDesktopPixelBuffer*)nullptr;
+            auto it = pixel_buffer_textures_.find(texture_id_);
+            if (it != pixel_buffer_textures_.end()) {
+              return it->second.get();
+            }
           }
+          return (FlutterDesktopPixelBuffer*)nullptr;
         }));
     // Register new texture.
     texture_id_ =

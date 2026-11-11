@@ -58,7 +58,7 @@ class SettingsDialog extends StatefulWidget {
     Future<String?> Function()? pickDirectory,
     bool showMediaLibrary = false,
     VoidCallback? onClose,
-  }) => showDialog<void>(
+  }) => AppDialog.show<void>(
     context: context,
     builder: (_) => SettingsDialog(
       controller: controller,
@@ -157,7 +157,9 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   color: theme.colorScheme.surface,
                   border: Border(
                     bottom: BorderSide(
-                      color: theme.colorScheme.outline.withValues(alpha: 0.6),
+                      color: theme.colorScheme.outlineVariant.withValues(
+                        alpha: 0.35,
+                      ),
                       width: 1,
                     ),
                   ),
@@ -193,8 +195,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     IconButton(
                       tooltip: 'Close settings',
                       constraints: const BoxConstraints.tightFor(
-                        width: 36,
-                        height: 36,
+                        width: 44,
+                        height: 44,
                       ),
                       style: IconButton.styleFrom(
                         padding: EdgeInsets.zero,
@@ -234,7 +236,9 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   color: theme.colorScheme.surface,
                   border: Border(
                     top: BorderSide(
-                      color: theme.colorScheme.outline.withValues(alpha: 0.6),
+                      color: theme.colorScheme.outlineVariant.withValues(
+                        alpha: 0.35,
+                      ),
                       width: 1,
                     ),
                   ),

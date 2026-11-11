@@ -9,6 +9,7 @@ import '../../../core/components/empty_state.dart';
 import '../../../core/toast/app_toast.dart';
 import '../../../../data/repositories/media_library_repository.dart';
 import '../../../../domain/models/library_models.dart';
+import '../../../../domain/models/media_entry.dart';
 
 class LibraryFoldersView extends StatelessWidget {
   const LibraryFoldersView({super.key, required this.repository});
@@ -20,7 +21,7 @@ class LibraryFoldersView extends StatelessWidget {
       MediaLibrarySettingsSection(libraryRepository: repository);
 }
 
-class MediaLibrarySettingsSection extends StatelessWidget {
+class MediaLibrarySettingsSection extends StatefulWidget {
   const MediaLibrarySettingsSection({
     super.key,
     required this.libraryRepository,
@@ -30,15 +31,43 @@ class MediaLibrarySettingsSection extends StatelessWidget {
   final MediaLibraryRepository libraryRepository;
   final Future<String?> Function()? pickDirectory;
 
-  Future<void> _addFolder(BuildContext context) async {
+  @override
+  State<MediaLibrarySettingsSection> createState() =>
+      _MediaLibrarySettingsSectionState();
+}
+
+class _MediaLibrarySettingsSectionState
+    extends State<MediaLibrarySettingsSection> {
+  /// Folder operations currently in flight. The mutating controls stay
+  /// disabled while this is non-zero so the repository never runs two folder
+  /// mutations concurrently.
+  int _pendingOperations = 0;
+
+  bool get _busy => _pendingOperations > 0;
+
+  /// Runs [operation] with the readiness gate engaged; errors propagate to
+  /// the caller for its own messaging.
+  Future<void> _runOperation(Future<void> Function() operation) async {
+    setState(() => _pendingOperations++);
     try {
-      final path = await (pickDirectory != null
-          ? pickDirectory!()
+      await operation();
+    } finally {
+      if (mounted) setState(() => _pendingOperations--);
+    }
+  }
+
+  Future<void> _addFolder() async {
+    try {
+      final path = await (widget.pickDirectory != null
+          ? widget.pickDirectory!()
           : getDirectoryPath());
       if (path == null || path.isEmpty) return;
-      await libraryRepository.addFolder(path);
+      final formattedPath = MediaEntry.formatDisplayPath(path);
+      await _runOperation(
+        () => widget.libraryRepository.addFolder(formattedPath),
+      );
     } catch (_) {
-      if (!context.mounted) return;
+      if (!mounted) return;
       AppToast.show(
         context,
         'Could not add folder. Please check directory permissions.',
@@ -48,17 +77,17 @@ class MediaLibrarySettingsSection extends StatelessWidget {
   }
 
   Future<void> _removeFolder(
-    BuildContext context,
+    BuildContext hostContext,
     LibraryFolderRecord folder,
   ) async {
     final confirmed = await AppDialog.show<bool>(
-      context: context,
+      context: hostContext,
       builder: (ctx) => AppDialog(
         maxWidth: 420,
         title: const Text('Remove folder'),
         content: Text(
           'Remove "${folder.path}" from the library? Indexed files in this folder will no longer be listed. Files on disk are not deleted.',
-          style: context.palette.rowSecondary,
+          style: hostContext.palette.rowSecondary,
         ),
         actions: [
           TextButton(
@@ -67,7 +96,7 @@ class MediaLibrarySettingsSection extends StatelessWidget {
           ),
           FilledButton(
             style: FilledButton.styleFrom(
-              backgroundColor: context.palette.danger,
+              backgroundColor: hostContext.palette.danger,
             ),
             onPressed: () => Navigator.of(ctx).pop(true),
             child: const Text('Remove'),
@@ -76,18 +105,30 @@ class MediaLibrarySettingsSection extends StatelessWidget {
       ),
     );
     if (confirmed == true) {
-      await libraryRepository.removeFolder(folder.path);
+      try {
+        await _runOperation(() => widget.libraryRepository.removeFolder(folder.path));
+      } catch (_) {
+        if (!mounted) return;
+        AppToast.show(
+          context,
+          'Could not remove that folder. Please check directory permissions.',
+          tone: AppToastTone.danger,
+        );
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
-    listenable: libraryRepository,
+    listenable: widget.libraryRepository,
     builder: (context, _) {
-      final folders = libraryRepository.folders;
+      final repository = widget.libraryRepository;
+      final folders = repository.folders;
       final theme = Theme.of(context);
       final accent = theme.colorScheme.primary;
-      final isReady = libraryRepository.isReady;
+      // Readiness gate: the repository must be initialized AND no folder
+      // operation may be in flight before the mutating controls re-arm.
+      final isReady = repository.isReady && !_busy;
 
       return Align(
         alignment: Alignment.topCenter,
@@ -109,14 +150,14 @@ class MediaLibrarySettingsSection extends StatelessWidget {
                         size: 17,
                       ),
                       label: const Text('Add media folder'),
-                      onPressed: isReady ? () => _addFolder(context) : null,
+                      onPressed: isReady ? _addFolder : null,
                     ),
                     OutlinedButton.icon(
                       key: const ValueKey('rescan-all-button'),
                       icon: const Icon(Icons.refresh_rounded, size: 17),
                       label: const Text('Rescan library'),
                       onPressed: isReady && folders.isNotEmpty
-                          ? () => unawaited(libraryRepository.rescanAll())
+                          ? () => unawaited(_runOperation(repository.rescanAll))
                           : null,
                     ),
                   ],
@@ -160,11 +201,15 @@ class MediaLibrarySettingsSection extends StatelessWidget {
                                     : theme.colorScheme.error,
                                 size: 24,
                               ),
-                              title: Text(
-                                folder.path,
-                                overflow: TextOverflow.ellipsis,
-                                style: theme.textTheme.bodyMedium?.copyWith(
-                                  fontWeight: FontWeight.w600,
+                              title: Tooltip(
+                                message: folder.displayPath,
+                                waitDuration: const Duration(milliseconds: 500),
+                                child: Text(
+                                  folder.displayPath,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: theme.textTheme.bodyMedium?.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                  ),
                                 ),
                               ),
                               subtitle: Row(
@@ -213,8 +258,10 @@ class MediaLibrarySettingsSection extends StatelessWidget {
                                   Icons.delete_outline_rounded,
                                   size: 19,
                                 ),
-                                onPressed: () =>
-                                    unawaited(_removeFolder(context, folder)),
+                                onPressed: isReady
+                                    ? () =>
+                                          unawaited(_removeFolder(context, folder))
+                                    : null,
                               ),
                             ),
                           );

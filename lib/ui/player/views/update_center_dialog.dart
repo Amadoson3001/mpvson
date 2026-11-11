@@ -9,6 +9,7 @@ import '../../../domain/updates/engine_update_channel.dart';
 import '../../../domain/updates/release_info.dart';
 import '../../core/app_motion.dart';
 import '../../core/app_theme.dart';
+import '../../core/components/app_dialog.dart';
 import 'update_status.dart';
 
 class UpdateCenterDialog extends StatelessWidget {
@@ -33,19 +34,14 @@ class UpdateCenterDialog extends StatelessWidget {
       final engineBusy = engineUpdates.busy;
       final theme = Theme.of(context);
 
-      return Dialog(
+      return AppDialog(
         backgroundColor: theme.colorScheme.surface,
-        surfaceTintColor: Colors.transparent,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppRadii.artwork),
-          side: BorderSide(
-            color: theme.colorScheme.outlineVariant.withValues(alpha: 0.8),
-          ),
-        ),
+        borderColor: theme.colorScheme.outlineVariant.withValues(alpha: 0.8),
         insetPadding: const EdgeInsets.symmetric(
           horizontal: AppSpace.xl,
           vertical: AppSpace.lg,
         ),
+        constraints: BoxConstraints(maxWidth: 580, maxHeight: dialogHeight),
         child: SizedBox(
           width: 580,
           height: dialogHeight,
@@ -98,8 +94,8 @@ class UpdateCenterDialog extends StatelessWidget {
                     IconButton(
                       tooltip: 'Close dialog',
                       constraints: const BoxConstraints.tightFor(
-                        width: 36,
-                        height: 36,
+                        width: 44,
+                        height: 44,
                       ),
                       onPressed: () => Navigator.of(context).pop(),
                       icon: const Icon(Icons.close_rounded, size: 20),
@@ -981,18 +977,11 @@ class _ReleaseNotesPreviewState extends State<ReleaseNotesPreview> {
 
     final hasMore = lines.length > 2 || raw.length > 150;
 
-    // Notes that consist only of URLs and separators leave [lines] empty, so
-    // the collapsed preview falls back to the raw text instead of crashing.
-    final preview = highlights.isNotEmpty
+    // Guard: notes that contain only links (or rules) yield an empty `lines`
+    // list; fall back to the raw notes so the preview never crashes.
+    final previewLines = highlights.isNotEmpty
         ? highlights
-        : lines.isNotEmpty
-        ? [lines.first]
-        : [
-            raw
-                .split('\n')
-                .map((line) => line.trim())
-                .firstWhere((line) => line.isNotEmpty),
-          ];
+        : (lines.isNotEmpty ? [lines.first] : [raw]);
 
     return Container(
       margin: const EdgeInsets.only(top: 8),
@@ -1026,32 +1015,35 @@ class _ReleaseNotesPreviewState extends State<ReleaseNotesPreview> {
               ),
               const Spacer(),
               if (hasMore)
-                InkWell(
-                  onTap: () => setState(() => _expanded = !_expanded),
-                  borderRadius: BorderRadius.circular(4),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 4,
-                      vertical: 2,
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          _expanded ? 'Show less' : 'View full notes',
-                          style: theme.textTheme.labelSmall?.copyWith(
-                            color: theme.colorScheme.primary,
-                            fontSize: 11,
+                Semantics(
+                  button: true,
+                  selected: _expanded,
+                  child: InkWell(
+                    onTap: () => setState(() => _expanded = !_expanded),
+                    borderRadius: BorderRadius.circular(4),
+                    child: Container(
+                      constraints: const BoxConstraints(minHeight: 44),
+                      alignment: Alignment.center,
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            _expanded ? 'Show less' : 'View full notes',
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: theme.colorScheme.primary,
+                              fontSize: 11,
+                            ),
                           ),
-                        ),
-                        Icon(
-                          _expanded
-                              ? Icons.keyboard_arrow_up_rounded
-                              : Icons.keyboard_arrow_down_rounded,
-                          size: 14,
-                          color: theme.colorScheme.primary,
-                        ),
-                      ],
+                          Icon(
+                            _expanded
+                                ? Icons.keyboard_arrow_up_rounded
+                                : Icons.keyboard_arrow_down_rounded,
+                            size: 14,
+                            color: theme.colorScheme.primary,
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -1059,7 +1051,7 @@ class _ReleaseNotesPreviewState extends State<ReleaseNotesPreview> {
           ),
           const SizedBox(height: 6),
           if (!_expanded) ...[
-            for (final h in preview) ...[
+            for (final h in previewLines) ...[
               Padding(
                 padding: const EdgeInsets.only(bottom: 2),
                 child: Row(

@@ -14,6 +14,7 @@ import '../../../data/services/update_service.dart';
 import '../../../domain/models/media_catalog.dart';
 import '../../../domain/models/media_entry.dart';
 import '../../../domain/models/open_request.dart';
+import '../../core/components/app_dialog.dart';
 import '../../core/toast/app_toast.dart';
 import '../player_controller.dart';
 import '../widgets/open_url_dialog.dart';
@@ -63,6 +64,35 @@ class PlayerMediaCoordinator {
   final VoidCallback onClearFocusedQueueEntry;
 
   BuildContext get context => getContext();
+
+  Future<void> adjustPlaybackDelay({
+    required bool audio,
+    required bool later,
+    required void Function(IconData icon, String message, {bool centered})
+    showFeedback,
+  }) async {
+    final settings = controller.playbackSettings;
+    final stepMs = appPreferences?.preferences.syncStepMs ?? 50;
+    final step = later ? stepMs : -stepMs;
+    final current = audio
+        ? settings.audioDelaySeconds
+        : settings.subtitleDelaySeconds;
+    final boundedMs = ((current * 1000).round() + step).clamp(-10000, 10000);
+    final next = boundedMs / 1000;
+    final updated = audio
+        ? settings.copyWith(audioDelaySeconds: next)
+        : settings.copyWith(subtitleDelaySeconds: next);
+    final suffix = boundedMs > 0 ? '+' : '';
+    showFeedback(
+      audio ? Icons.graphic_eq_rounded : Icons.closed_caption_rounded,
+      '${audio ? 'Audio' : 'Subtitle'} delay $suffix$boundedMs ms',
+      centered: true,
+    );
+    await controller.setPlaybackSettings(updated);
+    if (controller.playbackSettingsError != null) {
+      showMessage('The playback engine did not accept the delay change.');
+    }
+  }
 
   Future<void> addQueueFiles() async {
     onCloseContextMenu();
@@ -140,10 +170,13 @@ class PlayerMediaCoordinator {
       );
       if (result.status == OpenStatus.rejected) {
         showMessage(
-          'Could not open the selected media. Check the source and try again.',
+          result.message ??
+              'Could not open the selected media. Check the source and try again.',
         );
       } else if (result.rejectedCount > 0) {
-        showMessage('Some selected sources could not be opened.');
+        showMessage(
+          result.message ?? 'Some selected sources could not be opened.',
+        );
       }
     } catch (_) {
       showMessage('Mpvson could not open that media.');
@@ -154,7 +187,7 @@ class PlayerMediaCoordinator {
     onCloseContextMenu();
     final url = await withControlsVisible(
       () => urlPrompt == null
-          ? showDialog<String>(
+          ? AppDialog.show<String>(
               context: context,
               builder: (_) => const OpenUrlDialog(),
             )
@@ -212,9 +245,25 @@ class PlayerMediaCoordinator {
   });
 
   Future<void> loadSubtitle() async {
-    final path = await pickSubtitle();
-    if (path == null) return;
-    await controller.loadSubtitle(path);
+    final ctx = context;
+    final String? path;
+    try {
+      path = await pickSubtitle();
+    } catch (_) {
+      showMessage('The file picker could not be opened.');
+      return;
+    }
+    if (path == null || path.isEmpty) return;
+    try {
+      await controller.loadSubtitle(path);
+    } catch (_) {
+      if (!ctx.mounted) return;
+      AppToast.show(
+        ctx,
+        'Mpvson could not load that subtitle file.',
+        tone: AppToastTone.danger,
+      );
+    }
   }
 
   Future<void> removeQueueEntryById(String id) async {
@@ -278,7 +327,7 @@ class PlayerMediaCoordinator {
       return;
     }
     await withControlsVisible(
-      () => showDialog<void>(
+      () => AppDialog.show<void>(
         context: context,
         builder: (_) => SettingsDialog(
           controller: controller,
@@ -298,7 +347,7 @@ class PlayerMediaCoordinator {
     onCloseContextMenu();
     final gpuInfo = GpuInfoService();
     await withControlsVisible(
-      () => showDialog<void>(
+      () => AppDialog.show<void>(
         context: context,
         builder: (_) => PlaybackInfoDialog(
           readStatistics: () =>

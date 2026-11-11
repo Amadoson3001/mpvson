@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 
 import '../../../core/app_theme.dart';
+import '../../../core/toast/app_toast.dart';
 import '../../../../domain/models/playback_settings.dart';
 import '../../player_controller.dart';
 import 'settings_shared_widgets.dart';
@@ -137,14 +138,43 @@ class PlaybackSettingsSection extends StatelessWidget {
                   ),
                   trailing: const Icon(Icons.chevron_right_rounded, size: 20),
                   onTap: () async {
-                    // Embedded settings share the host route; popping would
-                    // dismiss the whole library/player instead of a dialog.
-                    if (!embedded) Navigator.of(context).pop();
-                    final path = await pickSubtitle();
+                    final route = ModalRoute.of(context);
+                    final navigator = Navigator.maybeOf(context);
+                    final toastContext = navigator?.context ?? context;
+                    if (!embedded && route != null && route.isCurrent) {
+                      Navigator.of(context).pop();
+                    }
+                    String? path;
+                    try {
+                      path = await pickSubtitle();
+                    } catch (_) {
+                      if (!toastContext.mounted) return;
+                      AppToast.show(
+                        toastContext,
+                        'The file picker could not be opened.',
+                        tone: AppToastTone.danger,
+                      );
+                      return;
+                    }
                     if (path == null || path.isEmpty) return;
+                    // Close the settings sheet only after a successful pick,
+                    // and only while this route is still the current one and
+                    // can actually be popped.
+                    if (navigator != null &&
+                        (route?.isCurrent ?? false) &&
+                        navigator.canPop()) {
+                      navigator.pop();
+                    }
                     try {
                       await controller.loadSubtitle(path);
-                    } catch (_) {}
+                    } catch (_) {
+                      if (!toastContext.mounted) return;
+                      AppToast.show(
+                        toastContext,
+                        'Mpvson could not load that subtitle file.',
+                        tone: AppToastTone.danger,
+                      );
+                    }
                   },
                 ),
               ],
@@ -175,13 +205,57 @@ class VideoAudioSettingsSection extends StatefulWidget {
 class _VideoAudioSettingsSectionState extends State<VideoAudioSettingsSection> {
   late PlaybackSettings _draft = widget.controller.playbackSettings;
 
+  /// The last value this section pushed to the controller, so an echo of our
+  /// own commit is not mistaken for an external edit.
+  PlaybackSettings? _lastSent;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_handleControllerChanged);
+  }
+
+  @override
+  void didUpdateWidget(covariant VideoAudioSettingsSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller == widget.controller) return;
+    oldWidget.controller.removeListener(_handleControllerChanged);
+    widget.controller.addListener(_handleControllerChanged);
+    _adoptControllerSettings();
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_handleControllerChanged);
+    super.dispose();
+  }
+
+  /// Keeps the draft in step with edits made elsewhere (floating panel,
+  /// hotkeys, another settings surface).
+  void _handleControllerChanged() {
+    if (!mounted) return;
+    _adoptControllerSettings();
+  }
+
+  void _adoptControllerSettings() {
+    final current = widget.controller.playbackSettings;
+    if (current == _lastSent || current == _draft) return;
+    setState(() {
+      _draft = current;
+      _lastSent = current;
+    });
+  }
+
   void _changeDraft(PlaybackSettings value) {
     setState(() => _draft = value.normalized());
   }
 
   void _commit(PlaybackSettings value) {
     final normalized = value.normalized();
-    setState(() => _draft = normalized);
+    setState(() {
+      _draft = normalized;
+      _lastSent = normalized;
+    });
     unawaited(widget.controller.setPlaybackSettings(normalized));
   }
 
@@ -292,7 +366,7 @@ class _VideoAudioSettingsSectionState extends State<VideoAudioSettingsSection> {
               ModernSliderTile(
                 key: const ValueKey('playback-audio-delay'),
                 label: 'Audio delay',
-                value: _draft.audioDelaySeconds,
+                value: _draft.audioDelaySeconds.clamp(-10, 10),
                 min: -10,
                 max: 10,
                 divisions: 200,
@@ -305,7 +379,7 @@ class _VideoAudioSettingsSectionState extends State<VideoAudioSettingsSection> {
               ModernSliderTile(
                 key: const ValueKey('playback-subtitle-delay'),
                 label: 'Subtitle delay',
-                value: _draft.subtitleDelaySeconds,
+                value: _draft.subtitleDelaySeconds.clamp(-10, 10),
                 min: -10,
                 max: 10,
                 divisions: 200,

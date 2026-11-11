@@ -29,6 +29,8 @@ class FlutterWindow : public Win32Window {
   void OnDestroy() override;
   LRESULT MessageHandler(HWND window, UINT const message, WPARAM const wparam,
                          LPARAM const lparam) noexcept override;
+  bool OnQueryEndSession() override;
+  void OnEndSession(bool is_ending) override;
 
  private:
   // The project to run.

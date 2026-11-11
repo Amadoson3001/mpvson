@@ -335,7 +335,7 @@ class _QueuePanelState extends State<QueuePanel> {
 
   Future<void> _confirmClear(BuildContext context) async {
     if (widget.controller.queue.isEmpty) return;
-    final confirmed = await showDialog<bool>(
+    final confirmed = await AppDialog.show<bool>(
       context: context,
       builder: (context) => AppDialog(
         maxWidth: 420,
@@ -1104,7 +1104,9 @@ class _QueueThumbnail extends StatelessWidget {
                   semanticLabel: 'Now playing',
                 )
               : Text(
-                  formatTime(duration),
+                  duration > Duration.zero
+                      ? formatTime(duration)
+                      : '--:--',
                   maxLines: 1,
                   style: Theme.of(context).textTheme.labelSmall?.copyWith(
                     color: AppColors.onStage,

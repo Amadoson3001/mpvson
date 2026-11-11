@@ -130,7 +130,9 @@ class AppAccentPreset {
     id: 'lamp',
     label: 'Amber Lamp',
     description: 'Warm projector-room glow',
-    color: Color(0xFFF1A64C),
+    // Resolves through the palette token instead of restating the hex so the
+    // preset and the surfaces it lights cannot drift apart.
+    color: AppColors.lamp,
     lightColor: AppColors.lampLight,
     icon: Icons.lightbulb_outline_rounded,
   );

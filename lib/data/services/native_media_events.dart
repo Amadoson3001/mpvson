@@ -199,6 +199,7 @@ class MediaKitNativeMediaEvents implements NativeMediaEvents {
   final Player _player;
   final StreamController<NativeMediaEvent> _events =
       StreamController<NativeMediaEvent>.broadcast(sync: true);
+  final List<String> _observedProperties = [];
   bool _started = false;
   bool _disposed = false;
 
@@ -213,18 +214,33 @@ class MediaKitNativeMediaEvents implements NativeMediaEvents {
     if (platform is! NativePlayer) return false;
     try {
       for (final property in NativePropertyNames.all) {
-        if (_disposed) return false;
+        if (_disposed) {
+          await _unobserveAll(platform);
+          return false;
+        }
         await platform.observeProperty(property, (value) async {
           _handle(property, value);
         });
+        _observedProperties.add(property);
       }
     } on Object {
       // An engine build that refuses one of the properties keeps playback
       // working through request-based attribution.
+      await _unobserveAll(platform);
       return false;
     }
     _started = true;
     return true;
+  }
+
+  Future<void> _unobserveAll(NativePlayer platform) async {
+    final toRemove = List<String>.of(_observedProperties);
+    _observedProperties.clear();
+    for (final prop in toRemove) {
+      try {
+        await platform.unobserveProperty(prop);
+      } catch (_) {}
+    }
   }
 
   void _handle(String property, String value) {
@@ -238,6 +254,10 @@ class MediaKitNativeMediaEvents implements NativeMediaEvents {
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
+    final platform = _player.platform;
+    if (platform is NativePlayer) {
+      await _unobserveAll(platform);
+    }
     try {
       await _events.close();
     } on Object {

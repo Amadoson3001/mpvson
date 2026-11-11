@@ -4,9 +4,12 @@
 # Installs Mpvson for the current user without requiring root privileges.
 # Targets:
 #   - Binary symlink: ~/.local/bin/mpvson
-#   - Desktop entry:  ~/.local/share/applications/mpvson.desktop
-#   - Scalable icon:  ~/.local/share/icons/hicolor/scalable/apps/mpvson.svg
+#   - Desktop entry:  ~/.local/share/applications/dev.mpvson.mpvson.desktop
+#   - Scalable icon:  ~/.local/share/icons/hicolor/scalable/apps/dev.mpvson.mpvson.svg
 #   - App bundle:     ~/.local/opt/mpvson
+#
+# Exactly one launcher entry (dev.mpvson.mpvson.desktop) is installed; the
+# legacy mpvson.desktop / mpvson.svg files from earlier installers are removed.
 # ==============================================================================
 
 set -euo pipefail
@@ -53,33 +56,29 @@ else
   echo "    (Place your Mpvson bundle files in ${OPT_DIR})"
 fi
 
-# 3. Install desktop entries
-echo "--> Installing desktop entries..."
-if [[ -f "${SCRIPT_DIR}/mpvson.desktop" ]]; then
-  cp "${SCRIPT_DIR}/mpvson.desktop" "${APP_DIR}/mpvson.desktop"
-  chmod 644 "${APP_DIR}/mpvson.desktop"
-  echo "    Installed ${APP_DIR}/mpvson.desktop"
-fi
-
+# 3. Install the single desktop entry and clear the legacy one
+echo "--> Installing desktop entry..."
 if [[ -f "${SCRIPT_DIR}/dev.mpvson.mpvson.desktop" ]]; then
   cp "${SCRIPT_DIR}/dev.mpvson.mpvson.desktop" "${APP_DIR}/dev.mpvson.mpvson.desktop"
   chmod 644 "${APP_DIR}/dev.mpvson.mpvson.desktop"
   echo "    Installed ${APP_DIR}/dev.mpvson.mpvson.desktop"
+else
+  echo "    WARNING: ${SCRIPT_DIR}/dev.mpvson.mpvson.desktop not found; launcher entry not installed."
 fi
 
-# 4. Install scalable vector icons
-echo "--> Installing application icons..."
-if [[ -f "${SCRIPT_DIR}/mpvson.svg" ]]; then
-  cp "${SCRIPT_DIR}/mpvson.svg" "${ICON_DIR}/mpvson.svg"
-  chmod 644 "${ICON_DIR}/mpvson.svg"
-  echo "    Installed ${ICON_DIR}/mpvson.svg"
-fi
+# Remove the legacy launcher entry copied by older installers so exactly one
+# desktop entry remains after install.
+rm -f "${APP_DIR}/mpvson.desktop"
 
+# 4. Install the scalable vector icon and clear the legacy one
+echo "--> Installing application icon..."
 if [[ -f "${SCRIPT_DIR}/dev.mpvson.mpvson.svg" ]]; then
   cp "${SCRIPT_DIR}/dev.mpvson.mpvson.svg" "${ICON_DIR}/dev.mpvson.mpvson.svg"
   chmod 644 "${ICON_DIR}/dev.mpvson.mpvson.svg"
   echo "    Installed ${ICON_DIR}/dev.mpvson.mpvson.svg"
 fi
+
+rm -f "${ICON_DIR}/mpvson.svg"
 
 # 5. Refresh FreeDesktop caches
 echo "--> Updating desktop database and icon caches..."
@@ -91,7 +90,33 @@ if command -v gtk-update-icon-cache >/dev/null 2>&1; then
   gtk-update-icon-cache -f -t "${HOME}/.local/share/icons/hicolor" 2>/dev/null || true
 fi
 
-# 6. Verify PATH
+# 6. Verify runtime dependencies (libmpv)
+echo "--> Checking runtime dependencies..."
+HAS_LIBMPV=false
+if command -v ldconfig >/dev/null 2>&1; then
+  if ldconfig -p 2>/dev/null | grep -qE 'libmpv\.so(\.[0-9]+)?'; then
+    HAS_LIBMPV=true
+  fi
+fi
+if [[ "${HAS_LIBMPV}" == "false" ]]; then
+  if ls "${OPT_DIR}/lib"/libmpv.so* >/dev/null 2>&1 || ls /usr/lib*/libmpv.so* >/dev/null 2>&1 || ls /usr/local/lib*/libmpv.so* >/dev/null 2>&1; then
+    HAS_LIBMPV=true
+  fi
+fi
+
+if [[ "${HAS_LIBMPV}" == "true" ]]; then
+  echo "    [OK] libmpv playback engine detected."
+else
+  echo "    NOTICE: libmpv shared library was not detected on this system."
+  echo "    Mpvson requires libmpv for media playback. If video playback fails to initialize,"
+  echo "    install libmpv using your distribution's package manager:"
+  echo "      - Debian / Ubuntu:  sudo apt install libmpv2 (or libmpv-dev)"
+  echo "      - Fedora / RHEL:    sudo dnf install mpv-libs"
+  echo "      - Arch Linux:       sudo pacman -S mpv"
+  echo "      - openSUSE:         sudo zypper install libmpv2"
+fi
+
+# 7. Verify PATH
 echo ""
 echo "==> Mpvson user installation complete!"
 if [[ ":$PATH:" != *":${BIN_DIR}:"* ]]; then

@@ -94,6 +94,14 @@ void FlutterWindow::OnDestroy() {
   Win32Window::OnDestroy();
 }
 
+bool FlutterWindow::OnQueryEndSession() {
+  return Win32Window::OnQueryEndSession();
+}
+
+void FlutterWindow::OnEndSession(bool is_ending) {
+  Win32Window::OnEndSession(is_ending);
+}
+
 LRESULT
 FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               WPARAM const wparam,
@@ -124,6 +132,19 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
       }
       return 0;
     }
+    case WM_TIMER:
+      if (wparam == kSingleInstanceRetryTimerId) {
+        if (single_instance_) {
+          single_instance_->OnRetryTimer();
+        }
+        return 0;
+      }
+      break;
+    case WM_QUERYENDSESSION:
+      return OnQueryEndSession() ? TRUE : FALSE;
+    case WM_ENDSESSION:
+      OnEndSession(wparam == TRUE);
+      return 0;
     case WM_SMTC_BUTTON_PRESS:
       if (system_media_transport_) {
         system_media_transport_->HandleButtonPress(static_cast<int>(wparam));

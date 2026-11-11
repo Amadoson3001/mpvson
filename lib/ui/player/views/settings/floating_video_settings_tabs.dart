@@ -5,6 +5,7 @@ import 'package:media_kit/media_kit.dart';
 
 import '../../../../domain/models/playback_settings.dart';
 import '../../../core/app_theme.dart';
+import '../../../core/toast/app_toast.dart';
 import '../../player_controller.dart';
 import 'settings_shared_widgets.dart';
 
@@ -44,7 +45,7 @@ class FloatingAudioSubsTab extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
               child: OutlinedButton.icon(
                 style: OutlinedButton.styleFrom(
-                  minimumSize: const Size(0, 34),
+                  minimumSize: const Size(0, 44),
                   padding: const EdgeInsets.symmetric(horizontal: 12),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(AppRadii.control),
@@ -53,11 +54,30 @@ class FloatingAudioSubsTab extends StatelessWidget {
                 icon: const Icon(Icons.file_open_rounded, size: 16),
                 label: const Text('Load external subtitle...'),
                 onPressed: () async {
-                  final path = await pickSubtitle();
-                  if (path != null && path.isNotEmpty) {
-                    try {
-                      await controller.loadSubtitle(path);
-                    } catch (_) {}
+                  String? path;
+                  try {
+                    path = await pickSubtitle();
+                  } catch (_) {
+                    if (context.mounted) {
+                      AppToast.show(
+                        context,
+                        'The file picker could not be opened.',
+                        tone: AppToastTone.danger,
+                      );
+                    }
+                    return;
+                  }
+                  if (path == null || path.isEmpty) return;
+                  try {
+                    await controller.loadSubtitle(path);
+                  } catch (_) {
+                    if (context.mounted) {
+                      AppToast.show(
+                        context,
+                        'Mpvson could not load that subtitle file.',
+                        tone: AppToastTone.danger,
+                      );
+                    }
                   }
                 },
               ),
@@ -65,10 +85,10 @@ class FloatingAudioSubsTab extends StatelessWidget {
             ModernSliderTile(
               key: const ValueKey('video-subtitle-delay'),
               label: 'Subtitle sync offset',
-              value: draft.subtitleDelaySeconds,
-              min: -5,
-              max: 5,
-              divisions: 100,
+              value: draft.subtitleDelaySeconds.clamp(-10, 10),
+              min: -10,
+              max: 10,
+              divisions: 200,
               formatValue: formatSecondsValue,
               onChanged: (val) =>
                   onChangeDraft(draft.copyWith(subtitleDelaySeconds: val)),
@@ -91,10 +111,10 @@ class FloatingAudioSubsTab extends StatelessWidget {
             ModernSliderTile(
               key: const ValueKey('video-audio-delay'),
               label: 'Audio sync offset',
-              value: draft.audioDelaySeconds,
-              min: -5,
-              max: 5,
-              divisions: 100,
+              value: draft.audioDelaySeconds.clamp(-10, 10),
+              min: -10,
+              max: 10,
+              divisions: 200,
               formatValue: formatSecondsValue,
               onChanged: (val) =>
                   onChangeDraft(draft.copyWith(audioDelaySeconds: val)),
@@ -359,35 +379,39 @@ class _SpeedPill extends StatelessWidget {
     final theme = Theme.of(context);
     final label = speed == 1.0 ? '1.0× (Normal)' : '$speed×';
 
-    return Material(
-      color: selected
-          ? accent.withValues(alpha: 0.16)
-          : theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
-      borderRadius: BorderRadius.circular(AppRadii.control),
-      child: InkWell(
-        onTap: onTap,
+    return Semantics(
+      button: true,
+      selected: selected,
+      child: Material(
+        color: selected
+            ? accent.withValues(alpha: 0.16)
+            : theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
         borderRadius: BorderRadius.circular(AppRadii.control),
-        child: Container(
-          height: 34,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(AppRadii.control),
-            border: Border.all(
-              color: selected
-                  ? accent
-                  : theme.colorScheme.outlineVariant.withValues(alpha: 0.4),
-              width: selected ? 1.4 : 1,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(AppRadii.control),
+          child: Container(
+            height: 44,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(AppRadii.control),
+              border: Border.all(
+                color: selected
+                    ? accent
+                    : theme.colorScheme.outlineVariant.withValues(alpha: 0.4),
+                width: selected ? 1.4 : 1,
+              ),
             ),
-          ),
-          child: Text(
-            label,
-            style: theme.textTheme.bodySmall?.copyWith(
-              fontSize: 12,
-              fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-              color: selected ? accent : theme.colorScheme.onSurface,
+            child: Text(
+              label,
+              style: theme.textTheme.bodySmall?.copyWith(
+                fontSize: 12,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                color: selected ? accent : theme.colorScheme.onSurface,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
           ),
         ),
       ),

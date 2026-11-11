@@ -187,11 +187,20 @@ extension ThumbnailServiceRequests on ThumbnailService {
   }
 }
 
+/// Optional interface for [ThumbnailService] implementations that support
+/// synchronous, in-memory thumbnail peeking.
+abstract interface class ThumbnailPeeker {
+  MediaThumbnail? peekThumbnail(MediaEntry entry);
+}
+
 /// Provides a synchronous, provisional thumbnail read without changing the
 /// [ThumbnailService] contract for test doubles and alternate implementations.
 extension ThumbnailServicePeek on ThumbnailService {
   MediaThumbnail? peek(MediaEntry entry) {
     final service = this;
+    if (service is ThumbnailPeeker) {
+      return (service as ThumbnailPeeker).peekThumbnail(entry);
+    }
     if (service is MediaKitThumbnailService) return service.peek(entry);
     return null;
   }
@@ -205,7 +214,7 @@ typedef ThumbnailImageValidator = Future<bool> Function(Uint8List bytes);
 /// [cacheDirectory] or [cacheDirectoryProvider] is useful for tests and tools
 /// that need an isolated cache. The provided directory is the exact thumbnail
 /// cache directory, not a parent directory.
-class MediaKitThumbnailService implements ThumbnailService {
+class MediaKitThumbnailService implements ThumbnailService, ThumbnailPeeker {
   MediaKitThumbnailService({
     ThumbnailExtractor? extractor,
     ThumbnailImageValidator? imageValidator,
@@ -275,6 +284,12 @@ class MediaKitThumbnailService implements ThumbnailService {
   final List<_NormalizerTask> _normalizerQueue = <_NormalizerTask>[];
   final List<_DiskWriteTask> _diskQueue = <_DiskWriteTask>[];
   final Map<String, _DiskEntry> _diskEntries = <String, _DiskEntry>{};
+
+  /// Disk writes that are queued or executing, keyed by digest. Readers use
+  /// this to obtain the in-flight thumbnail instead of racing on files that
+  /// are absent or half-replaced on disk.
+  final Map<String, _DiskWriteTask> _activeDiskWrites =
+      <String, _DiskWriteTask>{};
   final Set<String> _activeTempFiles = <String>{};
   final Set<Future<MediaThumbnail?>> _loadOperations =
       <Future<MediaThumbnail?>>{};
@@ -366,6 +381,9 @@ class MediaKitThumbnailService implements ThumbnailService {
   /// This is only a provisional read. Callers must still start [load] or
   /// [request], which asynchronously validates the source and sidecars before
   /// returning cached artwork as current.
+  @override
+  MediaThumbnail? peekThumbnail(MediaEntry entry) => peek(entry);
+
   MediaThumbnail? peek(MediaEntry entry) {
     final key = MediaEntry.canonicalSource(entry.path);
     final memory = _memory[key];
@@ -1017,6 +1035,28 @@ class MediaKitThumbnailService implements ThumbnailService {
     return Directory(p.join(root.path, 'mpvson', 'thumbnails-v1'));
   }
 
+  /// Consults the in-flight disk write for [digest], if any.
+  ///
+  /// - `thumbnail != null`: the queued/executing write carries exactly the
+  ///   content this reader asked for; return it as a cache hit.
+  /// - `thumbnail == null, present == true`: a write for a different
+  ///   fingerprint owns the cache pair; the reader must not delete the files
+  ///   because the writer is about to replace them.
+  /// - `present == false`: no write is active and the on-disk pair is safe to
+  ///   inspect and clean up.
+  ({bool present, MediaThumbnail? thumbnail}) _inflightDiskWrite(
+    String digest,
+    String fingerprint,
+  ) {
+    final inflight = _activeDiskWrites[digest];
+    if (inflight == null) return (present: false, thumbnail: null);
+    final matches =
+        inflight.fingerprint == fingerprint &&
+        inflight.thumbnail.byteLength > 0 &&
+        inflight.thumbnail.byteLength <= _maximumCacheEntryBytes;
+    return (present: true, thumbnail: matches ? inflight.thumbnail : null);
+  }
+
   Future<MediaThumbnail?> _readDisk(
     String key,
     String fingerprint, {
@@ -1035,6 +1075,9 @@ class MediaKitThumbnailService implements ThumbnailService {
         maximumBytes: _maximumMetadataBytes,
       );
       if (metadataBytes == null) {
+        final inflight = _inflightDiskWrite(digest, fingerprint);
+        if (inflight.thumbnail != null) return inflight.thumbnail;
+        if (inflight.present) return null;
         await _deleteCachePair(metadataFile, bytesFile);
         _forgetDiskEntry(digest);
         return null;
@@ -1042,6 +1085,9 @@ class MediaKitThumbnailService implements ThumbnailService {
       final decoded = jsonDecode(utf8.decode(metadataBytes));
       if (decoded is! Map<String, Object?> ||
           decoded['fingerprint'] != fingerprint) {
+        final inflight = _inflightDiskWrite(digest, fingerprint);
+        if (inflight.thumbnail != null) return inflight.thumbnail;
+        if (inflight.present) return null;
         await _deleteCachePair(metadataFile, bytesFile);
         _forgetDiskEntry(digest);
         return null;
@@ -1051,6 +1097,9 @@ class MediaKitThumbnailService implements ThumbnailService {
         maximumBytes: _maximumCacheEntryBytes,
       );
       if (bytes == null || !_looksLikeImage(bytes)) {
+        final inflight = _inflightDiskWrite(digest, fingerprint);
+        if (inflight.thumbnail != null) return inflight.thumbnail;
+        if (inflight.present) return null;
         await _deleteCachePair(metadataFile, bytesFile);
         _forgetDiskEntry(digest);
         return null;
@@ -1065,6 +1114,9 @@ class MediaKitThumbnailService implements ThumbnailService {
       );
       if (cancellation.isCancelled) return null;
       if (normalized == null || normalized.isEmpty) {
+        final inflight = _inflightDiskWrite(digest, fingerprint);
+        if (inflight.thumbnail != null) return inflight.thumbnail;
+        if (inflight.present) return null;
         await _deleteCachePair(metadataFile, bytesFile);
         _forgetDiskEntry(digest);
         return null;
@@ -1083,18 +1135,27 @@ class MediaKitThumbnailService implements ThumbnailService {
         ),
       );
       if (!identical(normalized, bytes)) {
-        await _scheduleDiskWrite(
-          key,
-          fingerprint,
-          thumbnail,
-          cancellation: cancellation,
+        // Persisting the re-normalized copy is bookkeeping; the caller already
+        // holds the result and must not wait on background disk work.
+        unawaited(
+          _scheduleDiskWrite(
+            key,
+            fingerprint,
+            thumbnail,
+            cancellation: cancellation,
+          ),
         );
       }
       return thumbnail;
     } on FileSystemException {
-      _forgetDiskEntry(digest);
+      final inflight = _inflightDiskWrite(digest, fingerprint);
+      if (inflight.thumbnail != null) return inflight.thumbnail;
+      if (!inflight.present) _forgetDiskEntry(digest);
       return null;
     } on FormatException {
+      final inflight = _inflightDiskWrite(digest, fingerprint);
+      if (inflight.thumbnail != null) return inflight.thumbnail;
+      if (inflight.present) return null;
       await _deleteCachePair(metadataFile, bytesFile);
       _forgetDiskEntry(digest);
       return null;
@@ -1127,15 +1188,15 @@ class MediaKitThumbnailService implements ThumbnailService {
       return Future<void>.value();
     }
     final completer = Completer<void>();
-    _diskQueue.add(
-      _DiskWriteTask(
-        digest: digest,
-        fingerprint: fingerprint,
-        thumbnail: thumbnail,
-        cancellation: cancellation,
-        completer: completer,
-      ),
+    final task = _DiskWriteTask(
+      digest: digest,
+      fingerprint: fingerprint,
+      thumbnail: thumbnail,
+      cancellation: cancellation,
+      completer: completer,
     );
+    _diskQueue.add(task);
+    _activeDiskWrites[digest] = task;
     _pendingDiskWriteBytes += thumbnail.byteLength;
     cancellation?.setWaitingInQueue(true);
     _pumpDiskQueue();
@@ -1156,6 +1217,9 @@ class MediaKitThumbnailService implements ThumbnailService {
           } catch (_) {
             // Cache writes are best-effort
           } finally {
+            if (identical(_activeDiskWrites[task.digest], task)) {
+              _activeDiskWrites.remove(task.digest);
+            }
             if (!task.completer.isCompleted) task.completer.complete();
           }
         }
@@ -1221,9 +1285,27 @@ class MediaKitThumbnailService implements ThumbnailService {
     }
   }
 
+  /// Replaces [destination] with [temporary].
+  ///
+  /// The rename is attempted first because it is atomic where the platform
+  /// allows replacing the destination directly. When the filesystem refuses
+  /// (Windows may while a reader holds the destination open), the contents are
+  /// copied over the destination instead so the cache entry still lands.
   static Future<void> _replaceFile(File temporary, File destination) async {
-    await _deleteIfPresent(destination);
-    await temporary.rename(destination.path);
+    try {
+      await temporary.rename(destination.path);
+      return;
+    } on FileSystemException {
+      // Fall through to the copy-based replacement.
+    }
+    try {
+      await temporary.copy(destination.path);
+    } on FileSystemException {
+      // The destination itself may be the blocker; drop it and copy again.
+      await _deleteIfPresent(destination);
+      await temporary.copy(destination.path);
+    }
+    await _deleteIfPresent(temporary);
   }
 
   Future<void> _pruneDisk(

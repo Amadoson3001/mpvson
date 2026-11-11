@@ -325,184 +325,188 @@ class _RecentTileState extends State<_RecentTile> {
           )
         : 0.0;
     final accent = Theme.of(context).colorScheme.primary;
-    return InkWell(
-      onTap: widget.onOpen,
-      onSecondaryTapDown: (details) =>
-          _showContextMenu(context, details.globalPosition),
-      onHover: (value) => setState(() => _hovered = value),
-      onFocusChange: (value) => setState(() => _focused = value),
-      borderRadius: BorderRadius.circular(AppRadii.artwork),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          AspectRatio(
-            aspectRatio: 16 / 9,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(AppRadii.artwork),
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  FutureBuilder<MediaThumbnail?>(
-                    future: _thumbnail,
-                    builder: (context, snapshot) {
-                      final bytes = snapshot.data?.bytes;
-                      Widget fallback() => LibraryArtwork(
-                        mediaPath: entry.path,
-                        repository: widget.repository,
-                        icon: icon,
-                        iconSize: 32,
-                      );
-                      return bytes == null
-                          ? fallback()
-                          : Image.memory(
-                              bytes,
-                              fit: BoxFit.cover,
-                              filterQuality: FilterQuality.low,
-                              cacheWidth: 512,
-                              gaplessPlayback: true,
-                              errorBuilder: (_, _, _) => fallback(),
-                            );
-                    },
-                  ),
-                  if (_hovered || _focused)
-                    ColoredBox(
-                      color: Colors.black.withValues(alpha: 0.35),
-                      child: const Center(
-                        child: Icon(
-                          Icons.play_circle_fill_rounded,
-                          color: Colors.white,
-                          size: 44,
+    final semanticLabel = hasProgress
+        ? '$type: ${entry.title}, '
+              '${formatTime(entry.position, compactMinutes: true)} of '
+              '${formatTime(entry.duration, compactMinutes: true)}'
+        : '$type: ${entry.title}';
+    return Semantics(
+      button: true,
+      container: true,
+      label: semanticLabel,
+      child: InkWell(
+        onTap: widget.onOpen,
+        onSecondaryTapDown: (details) =>
+            _showContextMenu(context, details.globalPosition),
+        onHover: (value) => setState(() => _hovered = value),
+        onFocusChange: (value) => setState(() => _focused = value),
+        borderRadius: BorderRadius.circular(AppRadii.artwork),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            AspectRatio(
+              aspectRatio: 16 / 9,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(AppRadii.artwork),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    FutureBuilder<MediaThumbnail?>(
+                      future: _thumbnail,
+                      builder: (context, snapshot) {
+                        final bytes = snapshot.data?.bytes;
+                        Widget fallback() => LibraryArtwork(
+                          mediaPath: entry.path,
+                          repository: widget.repository,
+                          icon: icon,
+                          iconSize: 32,
+                        );
+                        return bytes == null
+                            ? fallback()
+                            : Image.memory(
+                                bytes,
+                                fit: BoxFit.cover,
+                                filterQuality: FilterQuality.low,
+                                cacheWidth: 512,
+                                gaplessPlayback: true,
+                                errorBuilder: (_, _, _) => fallback(),
+                              );
+                      },
+                    ),
+                    if (_hovered || _focused)
+                      ColoredBox(
+                        color: AppColors.lightScrim,
+                        child: const Center(
+                          child: Icon(
+                            Icons.play_circle_fill_rounded,
+                            color: AppColors.onStage,
+                            size: 44,
+                          ),
                         ),
                       ),
-                    ),
-                  if (widget.onRemove != null && (_hovered || _focused))
-                    Positioned(
-                      top: 8,
-                      right: 8,
-                      child: Material(
-                        color: Colors.transparent,
-                        child: Tooltip(
-                          message: 'Remove from recently played',
-                          child: InkResponse(
-                            onTap: widget.onRemove,
-                            radius: 16,
-                            child: Container(
-                              width: 28,
-                              height: 28,
-                              decoration: BoxDecoration(
-                                color: Colors.black.withValues(alpha: 0.7),
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: Colors.white.withValues(alpha: 0.25),
-                                  width: 1,
-                                ),
+                    if (widget.onRemove != null && (_hovered || _focused))
+                      Positioned(
+                        top: 0,
+                        right: 0,
+                        child: IconButton(
+                          onPressed: widget.onRemove,
+                          tooltip: 'Remove from recently played',
+                          color: AppColors.onStage,
+                          style: IconButton.styleFrom(
+                            backgroundColor: AppColors.scrim,
+                            shape: const CircleBorder(
+                              side: BorderSide(
+                                color: AppColors.onStage,
+                                width: 0.5,
                               ),
-                              child: const Icon(
-                                Icons.close_rounded,
-                                size: 16,
-                                color: Colors.white,
-                              ),
+                            ),
+                            minimumSize: const Size.square(44),
+                            maximumSize: const Size.square(44),
+                            padding: EdgeInsets.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                          icon: const Icon(Icons.close_rounded, size: 16),
+                        ),
+                      ),
+                    if (hasProgress)
+                      Positioned(
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        height: 3,
+                        child: ColoredBox(
+                          color: AppColors.lightScrim,
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: FractionallySizedBox(
+                              widthFactor: progress,
+                              child: ColoredBox(color: accent),
                             ),
                           ),
                         ),
                       ),
-                    ),
-                  if (hasProgress)
-                    Positioned(
-                      left: 0,
-                      right: 0,
-                      bottom: 0,
-                      height: 3,
-                      child: ColoredBox(
-                        color: Colors.black45,
-                        child: Align(
-                          alignment: Alignment.centerLeft,
-                          child: FractionallySizedBox(
-                            widthFactor: progress,
-                            child: ColoredBox(color: accent),
-                          ),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 10),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      entry.title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: context.palette.rowPrimary.copyWith(
-                        fontWeight: FontWeight.w600,
-                        color: _focused ? accent : context.palette.primaryText,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      hasProgress
-                          ? '$type  •  ${formatTime(entry.position, compactMinutes: true)} / ${formatTime(entry.duration, compactMinutes: true)}'
-                          : type,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: context.palette.metadata.copyWith(
-                        fontFeatures: const [FontFeature.tabularFigures()],
-                      ),
-                    ),
                   ],
                 ),
               ),
-              if (widget.onRemove != null)
-                SizedBox(
-                  width: 44,
-                  height: 44,
-                  child: PopupMenuButton<String>(
-                    icon: Icon(
-                      Icons.more_vert_rounded,
-                      size: 18,
-                      color: context.palette.mutedText,
-                    ),
-                    tooltip: 'Actions',
-                    padding: EdgeInsets.zero,
-                    color: context.palette.surface,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(AppRadii.control),
-                      side: BorderSide(color: context.palette.border),
-                    ),
-                    onSelected: (action) {
-                      if (action == 'play') {
-                        widget.onOpen();
-                      } else if (action == 'remove') {
-                        widget.onRemove?.call();
-                      }
-                    },
-                    itemBuilder: (context) => [
-                      AppPopupMenuItem<String>(
-                        value: 'play',
-                        icon: Icons.play_arrow_rounded,
-                        iconColor: accent,
-                        text: hasProgress ? 'Resume' : 'Play',
+            ),
+            const SizedBox(height: 10),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        entry.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: context.palette.rowPrimary.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: _focused
+                              ? accent
+                              : context.palette.primaryText,
+                        ),
                       ),
-                      const PopupMenuDivider(height: 1),
-                      AppPopupMenuItem<String>(
-                        value: 'remove',
-                        icon: Icons.delete_outline_rounded,
-                        iconColor: context.palette.danger,
-                        text: 'Remove from recently played',
+                      const SizedBox(height: 4),
+                      Text(
+                        hasProgress
+                            ? '$type  •  ${formatTime(entry.position, compactMinutes: true)} / ${formatTime(entry.duration, compactMinutes: true)}'
+                            : type,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: context.palette.metadata.copyWith(
+                          fontFeatures: const [FontFeature.tabularFigures()],
+                        ),
                       ),
                     ],
                   ),
                 ),
-            ],
-          ),
-        ],
+                if (widget.onRemove != null)
+                  SizedBox(
+                    width: 44,
+                    height: 44,
+                    child: PopupMenuButton<String>(
+                      icon: Icon(
+                        Icons.more_vert_rounded,
+                        size: 18,
+                        color: context.palette.mutedText,
+                      ),
+                      tooltip: 'Actions',
+                      padding: EdgeInsets.zero,
+                      color: context.palette.surface,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(AppRadii.control),
+                        side: BorderSide(color: context.palette.border),
+                      ),
+                      onSelected: (action) {
+                        if (action == 'play') {
+                          widget.onOpen();
+                        } else if (action == 'remove') {
+                          widget.onRemove?.call();
+                        }
+                      },
+                      itemBuilder: (context) => [
+                        AppPopupMenuItem<String>(
+                          value: 'play',
+                          icon: Icons.play_arrow_rounded,
+                          iconColor: accent,
+                          text: hasProgress ? 'Resume' : 'Play',
+                        ),
+                        const PopupMenuDivider(height: 1),
+                        AppPopupMenuItem<String>(
+                          value: 'remove',
+                          icon: Icons.delete_outline_rounded,
+                          iconColor: context.palette.danger,
+                          text: 'Remove from recently played',
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }

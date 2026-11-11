@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../app.dart' show AppPreferencesScope;
 import '../../../domain/models/media_catalog.dart';
 import '../../../domain/models/media_entry.dart';
 import '../../../utils/format.dart';
@@ -48,143 +49,148 @@ class PlayerActions extends StatelessWidget {
   final bool isMiniPlayer;
 
   @override
-  Widget build(BuildContext context) => Row(
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      Semantics(
-        label:
-            'Queue, ${controller.queue.length} ${controller.queue.length == 1 ? 'video' : 'videos'}',
-        button: true,
-        child: IconButton(
-          tooltip: 'Queue (${controller.queue.length})',
-          isSelected: queueOpen,
-          style: PlayerControlStyle.of(context).buttonStyle.copyWith(
-            animationDuration: AppMotion.duration(context, AppMotion.quick),
+  Widget build(BuildContext context) {
+    final showQueue =
+        AppPreferencesScope.of(context)?.playerControls.showQueueButton ?? true;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (showQueue)
+          Semantics(
+            label:
+                'Queue, ${controller.queue.length} ${controller.queue.length == 1 ? 'video' : 'videos'}',
+            button: true,
+            child: IconButton(
+              tooltip: 'Queue (${controller.queue.length})',
+              isSelected: queueOpen,
+              style: PlayerControlStyle.of(context).buttonStyle.copyWith(
+                animationDuration: AppMotion.duration(context, AppMotion.quick),
+              ),
+              onPressed: onToggleQueue,
+              icon: Badge(
+                isLabelVisible: controller.queue.isNotEmpty,
+                label: Text('${controller.queue.length}'),
+                child: Icon(
+                  Icons.playlist_play_rounded,
+                  size: PlayerControlStyle.of(context).iconSize,
+                ),
+              ),
+            ),
           ),
-          onPressed: onToggleQueue,
-          icon: Badge(
-            isLabelVisible: controller.queue.isNotEmpty,
-            label: Text('${controller.queue.length}'),
-            child: Icon(
-              Icons.playlist_play_rounded,
+        PopupMenuButton<Object>(
+          key: const ValueKey('player-more'),
+          tooltip: 'More options',
+          padding: EdgeInsets.zero,
+          style: PlayerControlStyle.of(context).buttonStyle,
+          iconSize: PlayerControlStyle.of(context).iconSize,
+          icon: const Icon(Icons.more_horiz_rounded),
+          position: PopupMenuPosition.over,
+          constraints: const BoxConstraints(minWidth: 260, maxWidth: 320),
+          onOpened: () => onMenuVisibilityChanged(true),
+          onCanceled: () => onMenuVisibilityChanged(false),
+          onSelected: _select,
+          itemBuilder: (context) => [
+            const PopupMenuItem(
+              value: 'files',
+              child: _ActionItem(
+                icon: Icons.folder_open_rounded,
+                label: 'Open files',
+                shortcut: 'Ctrl+O',
+              ),
+            ),
+            const PopupMenuItem(
+              value: 'url',
+              child: _ActionItem(
+                icon: Icons.link_rounded,
+                label: 'Open URL',
+                shortcut: 'Ctrl+L',
+              ),
+            ),
+            const PopupMenuDivider(),
+            if (onOpenLibrary != null)
+              const PopupMenuItem(
+                value: 'library',
+                child: _ActionItem(
+                  icon: Icons.video_library_rounded,
+                  label: 'Media library',
+                  shortcut: 'Ctrl+M',
+                ),
+              ),
+            if (onPlaybackInfo != null)
+              PopupMenuItem(
+                value: 'playback-info',
+                child: _ActionItem(
+                  icon: Icons.query_stats_rounded,
+                  label: 'Playback information',
+                  shortcut: playbackInfoShortcut,
+                ),
+              ),
+            if (onToggleMiniPlayer != null)
+              PopupMenuItem(
+                value: 'mini-player',
+                child: _ActionItem(
+                  icon: Icons.picture_in_picture_alt_rounded,
+                  label: isMiniPlayer ? 'Exit mini player' : 'Mini player',
+                  shortcut: miniPlayerShortcut,
+                ),
+              ),
+            const PopupMenuItem(
+              value: 'settings',
+              child: _ActionItem(
+                icon: Icons.settings_outlined,
+                label: 'Settings',
+              ),
+            ),
+            if (controller.recent.isNotEmpty) ...[
+              const PopupMenuDivider(),
+              PopupMenuItem(
+                enabled: false,
+                height: 32,
+                child: Text(
+                  'Recent files',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+              for (final entry in controller.recent.take(3))
+                PopupMenuItem(
+                  value: entry,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        entry.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      if (entry.position > Duration.zero &&
+                          MediaCatalog.kindFromExtension(entry.path) !=
+                              MediaKind.audio)
+                        Text(
+                          'Resume at ${formatTime(entry.position)}',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                    ],
+                  ),
+                ),
+            ],
+          ],
+        ),
+        if (onFullscreen != null)
+          IconButton(
+            tooltip: isFullscreen ? 'Exit fullscreen' : 'Fullscreen',
+            onPressed: onFullscreen,
+            style: PlayerControlStyle.of(context).buttonStyle,
+            icon: Icon(
+              isFullscreen
+                  ? Icons.fullscreen_exit_rounded
+                  : Icons.fullscreen_rounded,
               size: PlayerControlStyle.of(context).iconSize,
             ),
           ),
-        ),
-      ),
-      PopupMenuButton<Object>(
-        key: const ValueKey('player-more'),
-        tooltip: 'More options',
-        padding: EdgeInsets.zero,
-        style: PlayerControlStyle.of(context).buttonStyle,
-        iconSize: PlayerControlStyle.of(context).iconSize,
-        icon: const Icon(Icons.more_horiz_rounded),
-        position: PopupMenuPosition.over,
-        constraints: const BoxConstraints(minWidth: 260, maxWidth: 320),
-        onOpened: () => onMenuVisibilityChanged(true),
-        onCanceled: () => onMenuVisibilityChanged(false),
-        onSelected: _select,
-        itemBuilder: (context) => [
-          const PopupMenuItem(
-            value: 'files',
-            child: _ActionItem(
-              icon: Icons.folder_open_rounded,
-              label: 'Open files',
-              shortcut: 'Ctrl+O',
-            ),
-          ),
-          const PopupMenuItem(
-            value: 'url',
-            child: _ActionItem(
-              icon: Icons.link_rounded,
-              label: 'Open URL',
-              shortcut: 'Ctrl+L',
-            ),
-          ),
-          const PopupMenuDivider(),
-          if (onOpenLibrary != null)
-            const PopupMenuItem(
-              value: 'library',
-              child: _ActionItem(
-                icon: Icons.video_library_rounded,
-                label: 'Media library',
-                shortcut: 'Ctrl+M',
-              ),
-            ),
-          if (onPlaybackInfo != null)
-            PopupMenuItem(
-              value: 'playback-info',
-              child: _ActionItem(
-                icon: Icons.query_stats_rounded,
-                label: 'Playback information',
-                shortcut: playbackInfoShortcut,
-              ),
-            ),
-          if (onToggleMiniPlayer != null)
-            PopupMenuItem(
-              value: 'mini-player',
-              child: _ActionItem(
-                icon: Icons.picture_in_picture_alt_rounded,
-                label: isMiniPlayer ? 'Exit mini player' : 'Mini player',
-                shortcut: miniPlayerShortcut,
-              ),
-            ),
-          const PopupMenuItem(
-            value: 'settings',
-            child: _ActionItem(
-              icon: Icons.settings_outlined,
-              label: 'Settings',
-            ),
-          ),
-          if (controller.recent.isNotEmpty) ...[
-            const PopupMenuDivider(),
-            PopupMenuItem(
-              enabled: false,
-              height: 32,
-              child: Text(
-                'Recent files',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ),
-            for (final entry in controller.recent.take(3))
-              PopupMenuItem(
-                value: entry,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      entry.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    if (entry.position > Duration.zero &&
-                        MediaCatalog.kindFromExtension(entry.path) !=
-                            MediaKind.audio)
-                      Text(
-                        'Resume at ${formatTime(entry.position)}',
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                  ],
-                ),
-              ),
-          ],
-        ],
-      ),
-      if (onFullscreen != null)
-        IconButton(
-          tooltip: isFullscreen ? 'Exit fullscreen' : 'Fullscreen',
-          onPressed: onFullscreen,
-          style: PlayerControlStyle.of(context).buttonStyle,
-          icon: Icon(
-            isFullscreen
-                ? Icons.fullscreen_exit_rounded
-                : Icons.fullscreen_rounded,
-            size: PlayerControlStyle.of(context).iconSize,
-          ),
-        ),
-    ],
-  );
+      ],
+    );
+  }
 
   void _select(Object value) {
     onMenuVisibilityChanged(false);

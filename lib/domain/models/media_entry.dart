@@ -168,6 +168,39 @@ class MediaEntry {
     return source;
   }
 
+  /// Formats [source] for user display, preserving the filesystem's actual
+  /// on-disk casing if the directory or file exists on disk.
+  ///
+  /// On case-insensitive filesystems (such as Windows), paths may be stored
+  /// lowercased or normalized. This retrieves the canonical casing from the
+  /// filesystem using [Directory.resolveSymbolicLinksSync] or
+  /// [File.resolveSymbolicLinksSync], falling back to [source] if unavailable
+  /// or on any error.
+  static String formatDisplayPath(String source) {
+    final trimmed = source.trim();
+    if (trimmed.isEmpty || isNetworkUrl(trimmed)) {
+      return source;
+    }
+    try {
+      final dir = Directory(trimmed);
+      if (dir.existsSync()) {
+        final resolved = dir.resolveSymbolicLinksSync();
+        return p.normalize(stripLongPathPrefix(resolved));
+      }
+      final file = File(trimmed);
+      if (file.existsSync()) {
+        final resolved = file.resolveSymbolicLinksSync();
+        return p.normalize(stripLongPathPrefix(resolved));
+      }
+    } catch (_) {
+      // Fallback on any error (e.g. drive disconnected, permission denied).
+    }
+    return source;
+  }
+
+  /// Alias for [formatDisplayPath] retrieving the filesystem's canonical case.
+  static String canonicalCase(String source) => formatDisplayPath(source);
+
   static String titleFromPath(String source) {
     if (isNetworkUrl(source)) {
       final uri = Uri.tryParse(source);
