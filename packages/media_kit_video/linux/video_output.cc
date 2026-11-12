@@ -302,8 +302,10 @@ static gboolean video_output_render_idle(gpointer data) {
       if (eglMakeCurrent(self->egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE,
                          self->egl_context)) {
         int skip = 1;
+        int block_for_target_time = 0;
         mpv_render_param params[] = {
             {MPV_RENDER_PARAM_SKIP_RENDERING, &skip},
+            {MPV_RENDER_PARAM_BLOCK_FOR_TARGET_TIME, &block_for_target_time},
             {MPV_RENDER_PARAM_INVALID, NULL},
         };
         mpv_render_context_render(self->render_context, params);
@@ -321,8 +323,10 @@ static gboolean video_output_render_idle(gpointer data) {
     g_mutex_lock(&self->mutex);
     if (!video_output_get_visibility(self)) {
       int skip = 1;
+      int block_for_target_time = 0;
       mpv_render_param params[] = {
           {MPV_RENDER_PARAM_SKIP_RENDERING, &skip},
+          {MPV_RENDER_PARAM_BLOCK_FOR_TARGET_TIME, &block_for_target_time},
           {MPV_RENDER_PARAM_INVALID, NULL},
       };
       mpv_render_context_render(self->render_context, params);
@@ -332,11 +336,13 @@ static gboolean video_output_render_idle(gpointer data) {
       if (width > 0 && height > 0) {
         gint32 size[] = {(gint32)width, (gint32)height};
         gint32 pitch = 4 * (gint32)width;
+        int block_for_target_time = 0;
         mpv_render_param params[] = {
             {MPV_RENDER_PARAM_SW_SIZE, size},
             {MPV_RENDER_PARAM_SW_FORMAT, (void*)"rgb0"},
             {MPV_RENDER_PARAM_SW_STRIDE, &pitch},
             {MPV_RENDER_PARAM_SW_POINTER, self->pixel_buffer},
+            {MPV_RENDER_PARAM_BLOCK_FOR_TARGET_TIME, &block_for_target_time},
             {MPV_RENDER_PARAM_INVALID, NULL},
         };
         mpv_render_context_render(self->render_context, params);

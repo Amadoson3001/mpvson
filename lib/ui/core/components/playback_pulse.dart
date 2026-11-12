@@ -39,7 +39,7 @@ class _PlaybackPulseScopeState extends State<PlaybackPulseScope>
   @override
   void initState() {
     super.initState();
-    widget.controller.addListener(_syncPulseState);
+    widget.controller.transportListenable.addListener(_syncPulseState);
   }
 
   @override
@@ -55,22 +55,22 @@ class _PlaybackPulseScopeState extends State<PlaybackPulseScope>
   void didUpdateWidget(PlaybackPulseScope oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.controller != widget.controller) {
-      oldWidget.controller.removeListener(_syncPulseState);
-      widget.controller.addListener(_syncPulseState);
+      oldWidget.controller.transportListenable.removeListener(_syncPulseState);
+      widget.controller.transportListenable.addListener(_syncPulseState);
       _syncPulseState();
     }
   }
 
   @override
   void dispose() {
-    widget.controller.removeListener(_syncPulseState);
+    widget.controller.transportListenable.removeListener(_syncPulseState);
     _pulseController.dispose();
     super.dispose();
   }
 
   void _syncPulseState() {
-    final shouldAdvance =
-        widget.controller.isPlaying && widget.controller.hasMedia;
+    final transport = widget.controller.transportListenable.value;
+    final shouldAdvance = transport.isPlaying && transport.hasMedia;
     if (_isAdvancing == shouldAdvance) return;
     _isAdvancing = shouldAdvance;
     if (_isAdvancing) {

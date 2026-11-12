@@ -98,6 +98,10 @@ static void my_application_activate(GApplication* application) {
   g_autoptr(FlDartProject) project = fl_dart_project_new();
   fl_dart_project_set_dart_entrypoint_arguments(
       project, self->dart_entrypoint_arguments);
+  // Impeller's default compositor janks pointer-driven repaints and video
+  // textures on older GPUs. Animation timings stay the same; only the GPU
+  // backend changes.
+  fl_dart_project_set_enable_impeller(project, FALSE);
 
   FlView* view = fl_view_new(project);
   self->view = view;

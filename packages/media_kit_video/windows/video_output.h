@@ -96,6 +96,8 @@ class VideoOutput {
 
   void Render();
 
+  void PresentHardwareFrame();
+
   void CheckAndResize();
 
   void Resize(int64_t required_width, int64_t required_height);
@@ -105,6 +107,8 @@ class VideoOutput {
   int64_t GetVideoWidth();
 
   int64_t GetVideoHeight();
+
+  void GetVideoSize(int64_t* width, int64_t* height);
 
   std::optional<int64_t> height_ = std::nullopt;
   std::optional<int64_t> width_ = std::nullopt;

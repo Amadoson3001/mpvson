@@ -1083,6 +1083,14 @@ void _createSchema(Database db) {
     CREATE INDEX IF NOT EXISTS idx_media_library_kind_added_at ON media(is_in_library, kind, added_at DESC);
     CREATE INDEX IF NOT EXISTS idx_media_album_track ON media(album, track_number);
     CREATE INDEX IF NOT EXISTS idx_media_album_disc_track ON media(album, disc_number, track_number);
+    CREATE INDEX IF NOT EXISTS idx_media_lib_avail_kind_added ON media(is_in_library, is_available, kind, added_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_media_lib_avail_kind_title ON media(is_in_library, is_available, kind, title COLLATE NOCASE);
+    CREATE INDEX IF NOT EXISTS idx_media_lib_avail_kind_artist ON media(is_in_library, is_available, kind, artist COLLATE NOCASE, track_number);
+    CREATE INDEX IF NOT EXISTS idx_media_lib_avail_kind_album ON media(is_in_library, is_available, kind, album COLLATE NOCASE, disc_number, track_number);
+    CREATE INDEX IF NOT EXISTS idx_media_lib_avail_kind_last_played ON media(is_in_library, is_available, kind, last_played_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_media_lib_avail_kind_play_count ON media(is_in_library, is_available, kind, play_count DESC);
+    CREATE INDEX IF NOT EXISTS idx_media_lib_avail_kind_duration ON media(is_in_library, is_available, kind, duration_ms);
+    CREATE INDEX IF NOT EXISTS idx_media_lib_avail_kind_year ON media(is_in_library, is_available, kind, year DESC);
 
     CREATE TABLE IF NOT EXISTS playlists (
       id TEXT PRIMARY KEY,
@@ -1102,6 +1110,7 @@ void _createSchema(Database db) {
     );
 
     CREATE INDEX IF NOT EXISTS idx_playlist_entries_playlist ON playlist_entries (playlist_id, position);
+    CREATE INDEX IF NOT EXISTS idx_playlist_entries_media ON playlist_entries (media_id);
 
     CREATE VIRTUAL TABLE IF NOT EXISTS media_fts USING fts5(
       title,
@@ -1280,14 +1289,30 @@ Object? _dispatchAction(Database db, String action, Object? params) {
       final isAvailable = map['isAvailable'] as bool;
       final availInt = isAvailable ? 1 : 0;
 
-      db.execute('UPDATE folders SET is_available = ? WHERE path = ?', [
-        availInt,
-        folderPath,
-      ]);
-
-      // A reconnected folder does not imply that each previously indexed file
-      // still exists. Discovered files become available during the scan.
-      if (!isAvailable) _markMissingFilesInFolder(db, folderPath, const {});
+      if (!isAvailable) {
+        db.execute('BEGIN TRANSACTION;');
+        try {
+          db.execute('UPDATE folders SET is_available = ? WHERE path = ?', [
+            availInt,
+            folderPath,
+          ]);
+          _markMissingFilesInFolder(
+            db,
+            folderPath,
+            const {},
+            inTransaction: true,
+          );
+          db.execute('COMMIT;');
+        } catch (_) {
+          db.execute('ROLLBACK;');
+          rethrow;
+        }
+      } else {
+        db.execute('UPDATE folders SET is_available = ? WHERE path = ?', [
+          availInt,
+          folderPath,
+        ]);
+      }
       return null;
 
     case 'reconcileFolderFiles':
@@ -1673,10 +1698,10 @@ Object? _dispatchAction(Database db, String action, Object? params) {
       final playlistId = map['playlistId'] as String;
       final paths = (map['paths'] as List).cast<String>();
 
-      _batchUpsertPaths(db, paths);
-
       db.execute('BEGIN TRANSACTION;');
       try {
+        _batchUpsertPaths(db, paths, inTransaction: true);
+
         final posRow = db.select(
           'SELECT COALESCE(MAX(position), -1) AS max_pos FROM playlist_entries WHERE playlist_id = ?',
           [playlistId],
@@ -2094,8 +2119,9 @@ void _untrackRemovedFolder(Database db, String folderPath) {
 void _markMissingFilesInFolder(
   Database db,
   String folderPath,
-  Set<String> discovered,
-) {
+  Set<String> discovered, {
+  bool inTransaction = false,
+}) {
   final root = MediaEntry.canonicalSource(folderPath);
   // Restrict the stale-file candidates with an indexed prefix seek over
   // canonical_source so a watcher batch costs one bounded scan instead of a
@@ -2113,7 +2139,9 @@ void _markMissingFilesInFolder(
   // seconds per file.
   final revalidateWithStat =
       discovered.isNotEmpty && Directory(root).existsSync();
-  db.execute('BEGIN TRANSACTION');
+  if (!inTransaction) {
+    db.execute('BEGIN TRANSACTION');
+  }
   try {
     final statement = db.prepare(
       'UPDATE media SET is_available = 0 WHERE canonical_source = ?',
@@ -2133,17 +2161,27 @@ void _markMissingFilesInFolder(
     } finally {
       statement.close();
     }
-    db.execute('COMMIT');
+    if (!inTransaction) {
+      db.execute('COMMIT');
+    }
   } catch (_) {
-    db.execute('ROLLBACK');
+    if (!inTransaction) {
+      db.execute('ROLLBACK');
+    }
     rethrow;
   }
 }
 
-void _batchUpsertPaths(Database db, List<String> paths) {
+void _batchUpsertPaths(
+  Database db,
+  List<String> paths, {
+  bool inTransaction = false,
+}) {
   if (paths.isEmpty) return;
 
-  db.execute('BEGIN TRANSACTION;');
+  if (!inTransaction) {
+    db.execute('BEGIN TRANSACTION;');
+  }
   try {
     final now = DateTime.now().millisecondsSinceEpoch;
     final stmt = db.prepare('''
@@ -2185,9 +2223,13 @@ void _batchUpsertPaths(Database db, List<String> paths) {
     } finally {
       stmt.close();
     }
-    db.execute('COMMIT;');
+    if (!inTransaction) {
+      db.execute('COMMIT;');
+    }
   } catch (_) {
-    db.execute('ROLLBACK;');
+    if (!inTransaction) {
+      db.execute('ROLLBACK;');
+    }
     rethrow;
   }
 }
@@ -2338,16 +2380,16 @@ List<Map<String, Object?>> _queryMediaRows(
   final dir = ascending ? 'ASC' : 'DESC';
   switch (sortBy) {
     case 'title':
-      sql.write(' ORDER BY LOWER(media.title) COLLATE NOCASE $dir');
+      sql.write(' ORDER BY media.title COLLATE NOCASE $dir');
       break;
     case 'artist':
       sql.write(
-        ' ORDER BY LOWER(media.artist) COLLATE NOCASE $dir, media.track_number ASC',
+        ' ORDER BY media.artist COLLATE NOCASE $dir, media.track_number ASC',
       );
       break;
     case 'album':
       sql.write(
-        ' ORDER BY LOWER(media.album) COLLATE NOCASE $dir, media.disc_number ASC, media.track_number ASC',
+        ' ORDER BY media.album COLLATE NOCASE $dir, media.disc_number ASC, media.track_number ASC',
       );
       break;
     case 'duration':

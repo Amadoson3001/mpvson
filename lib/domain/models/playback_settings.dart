@@ -43,6 +43,52 @@ class PlaybackSettings {
   bool get isLowSpecOrRamPreserved =>
       qualityPreset == PlaybackQualityPreset.performance || ramPreservation;
 
+  /// mpv renderer properties for this quality preset.
+  ///
+  /// Performance is the old-hardware profile. Balanced and Quality keep a
+  /// modern-looking picture; they do not inherit the cheap FBO/scaler cuts.
+  Map<String, String> get rendererProperties {
+    return switch (qualityPreset) {
+      PlaybackQualityPreset.performance => const <String, String>{
+        'scale': 'bilinear',
+        'cscale': 'bilinear',
+        'dscale': 'bilinear',
+        'deband': 'no',
+        'gpu-dumb-mode': 'yes',
+        'dither': 'no',
+        'correct-downscaling': 'no',
+        'linear-downscaling': 'no',
+        'sigmoid-upscaling': 'no',
+        'hdr-compute-peak': 'no',
+        'fbo-format': 'rgba8',
+      },
+      PlaybackQualityPreset.balanced => const <String, String>{
+        'scale': 'lanczos',
+        'cscale': 'bilinear',
+        'dscale': 'mitchell',
+        'deband': 'no',
+        'gpu-dumb-mode': 'no',
+        'dither': 'auto',
+        'correct-downscaling': 'yes',
+        'linear-downscaling': 'no',
+        'sigmoid-upscaling': 'no',
+        'hdr-compute-peak': 'no',
+      },
+      PlaybackQualityPreset.quality => const <String, String>{
+        'scale': 'lanczos',
+        'cscale': 'lanczos',
+        'dscale': 'mitchell',
+        'deband': 'yes',
+        'gpu-dumb-mode': 'no',
+        'dither': 'yes',
+        'correct-downscaling': 'yes',
+        'linear-downscaling': 'yes',
+        'sigmoid-upscaling': 'yes',
+        'hdr-compute-peak': 'yes',
+      },
+    };
+  }
+
   PlaybackSettings copyWith({
     PlaybackQualityPreset? qualityPreset,
     bool? preferHardwareDecoding,

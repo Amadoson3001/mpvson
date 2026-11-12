@@ -664,8 +664,12 @@ class MediaKitPlaybackService
     final targetWidth = size.width;
     final targetHeight = size.height;
     if (!force &&
-        targetWidth == _lastAppliedWidth &&
-        targetHeight == _lastAppliedHeight) {
+        !VideoOutputPolicy.significantSizeChange(
+          previousWidth: _lastAppliedWidth,
+          previousHeight: _lastAppliedHeight,
+          width: targetWidth,
+          height: targetHeight,
+        )) {
       return;
     }
     _lastAppliedWidth = targetWidth;
@@ -1136,29 +1140,9 @@ class MediaKitPlaybackService
       );
     }
 
-    final preset = switch (settings.qualityPreset) {
-      PlaybackQualityPreset.performance => const <String, String>{
-        'scale': 'bilinear',
-        'cscale': 'bilinear',
-        'dscale': 'bilinear',
-        'deband': 'no',
-      },
-      PlaybackQualityPreset.balanced => const <String, String>{
-        'scale': 'lanczos',
-        'cscale': 'bilinear',
-        'dscale': 'hermite',
-        'deband': 'no',
-      },
-      PlaybackQualityPreset.quality => const <String, String>{
-        'scale': 'ewa_lanczossharp',
-        'cscale': 'bilinear',
-        'dscale': 'mitchell',
-        'deband': 'yes',
-      },
-    };
     final properties = <String, String>{
       'hwdec': _resolveHwdec(settings.preferHardwareDecoding),
-      ...preset,
+      ...settings.rendererProperties,
       'brightness': settings.brightness.toString(),
       'contrast': settings.contrast.toString(),
       'saturation': settings.saturation.toString(),

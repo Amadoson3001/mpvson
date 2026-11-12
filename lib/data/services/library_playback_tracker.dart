@@ -8,10 +8,10 @@ import '../repositories/media_library_repository.dart';
 /// Records a library item once it has played for a meaningful amount of time.
 class LibraryPlaybackTracker {
   LibraryPlaybackTracker({required this.controller, required this.repository}) {
-    controller.addListener(_update);
-    controller.positionListenable.addListener(_update);
-    repository.addListener(_update);
-    _update();
+    controller.structureListenable.addListener(_onStateChanged);
+    controller.transportListenable.addListener(_onStateChanged);
+    repository.addListener(_onStateChanged);
+    _onStateChanged();
   }
 
   final PlayerController controller;
@@ -20,6 +20,23 @@ class LibraryPlaybackTracker {
   bool _recorded = false;
   bool _wasLoaded = false;
   bool _disposed = false;
+  Timer? _poll;
+
+  void _onStateChanged() {
+    _syncPoll();
+    _update();
+  }
+
+  void _syncPoll() {
+    if (_disposed) return;
+    final playing = controller.isPlaying && controller.hasMedia && !_recorded;
+    if (playing) {
+      _poll ??= Timer.periodic(const Duration(seconds: 2), (_) => _update());
+    } else {
+      _poll?.cancel();
+      _poll = null;
+    }
+  }
 
   void _update() {
     if (_disposed) return;
@@ -55,8 +72,10 @@ class LibraryPlaybackTracker {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
-    controller.removeListener(_update);
-    controller.positionListenable.removeListener(_update);
-    repository.removeListener(_update);
+    _poll?.cancel();
+    _poll = null;
+    controller.structureListenable.removeListener(_onStateChanged);
+    controller.transportListenable.removeListener(_onStateChanged);
+    repository.removeListener(_onStateChanged);
   }
 }

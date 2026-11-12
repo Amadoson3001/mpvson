@@ -57,7 +57,9 @@ class PlayerContextMenu extends StatelessWidget {
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: playerController,
-    builder: (context, _) => Stack(
+    // Keep the video surface as AnimatedBuilder.child so controller ticks
+    // rebuild the menu model without marking the texture tree dirty.
+    builder: (context, videoChild) => Stack(
       fit: StackFit.passthrough,
       children: [
         GestureDetector(
@@ -68,7 +70,7 @@ class PlayerContextMenu extends StatelessWidget {
           onTapDown: (_) {
             if (menuController.isOpen) menuController.close();
           },
-          child: child,
+          child: videoChild,
         ),
         Positioned(
           left: 0,
@@ -86,6 +88,7 @@ class PlayerContextMenu extends StatelessWidget {
         ),
       ],
     ),
+    child: child,
   );
 
   List<Widget> _menuChildren(BuildContext context) {

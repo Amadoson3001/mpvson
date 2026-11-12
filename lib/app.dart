@@ -115,7 +115,9 @@ class MpvsonApp extends StatelessWidget {
     child: Video(
       controller: controller.videoController,
       fit: BoxFit.contain,
+      filterQuality: FilterQuality.none,
       controls: null,
+      wakelock: false,
       pauseUponEnteringBackgroundMode: false,
     ),
   );

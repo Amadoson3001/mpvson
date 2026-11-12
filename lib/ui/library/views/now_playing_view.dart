@@ -62,7 +62,7 @@ class _NowPlayingViewState extends State<NowPlayingView> {
   @override
   void initState() {
     super.initState();
-    widget.controller.addListener(_onControllerChanged);
+    widget.controller.structureListenable.addListener(_onControllerChanged);
     widget.repository?.addListener(_onRepositoryChanged);
     _syncMetadata();
   }
@@ -71,8 +71,10 @@ class _NowPlayingViewState extends State<NowPlayingView> {
   void didUpdateWidget(NowPlayingView oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.controller != widget.controller) {
-      oldWidget.controller.removeListener(_onControllerChanged);
-      widget.controller.addListener(_onControllerChanged);
+      oldWidget.controller.structureListenable.removeListener(
+        _onControllerChanged,
+      );
+      widget.controller.structureListenable.addListener(_onControllerChanged);
       _cachedArtworkPath = null;
       _syncMetadata();
     }
@@ -88,7 +90,7 @@ class _NowPlayingViewState extends State<NowPlayingView> {
   void dispose() {
     _metadataGeneration++;
     _artworkGeneration++;
-    widget.controller.removeListener(_onControllerChanged);
+    widget.controller.structureListenable.removeListener(_onControllerChanged);
     widget.repository?.removeListener(_onRepositoryChanged);
     super.dispose();
   }

@@ -48,6 +48,10 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
       GetCommandLineArguments();
 
   project.set_dart_entrypoint_arguments(std::move(command_line_arguments));
+  // Impeller's Vulkan compositor flickers DXGI shared-handle video textures
+  // and is slower than Skia on older GPUs. Keep the Dart animation code; only
+  // the GPU backend changes.
+  project.set_impeller_switch(flutter::ImpellerSwitch::Disabled);
 
   FlutterWindow window(project, std::move(single_instance));
   Win32Window::Point origin(10, 10);

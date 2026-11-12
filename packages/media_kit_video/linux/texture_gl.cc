@@ -525,9 +525,11 @@ gboolean texture_gl_populate_texture(FlTextureGL* texture,
     mpv_opengl_fbo fbo{static_cast<gint32>(self->fbo), required_width,
                        required_height, 0};
     int flip_y = 0;
+    int block_for_target_time = 0;
     mpv_render_param params[] = {
         {MPV_RENDER_PARAM_OPENGL_FBO, &fbo},
         {MPV_RENDER_PARAM_FLIP_Y, &flip_y},
+        {MPV_RENDER_PARAM_BLOCK_FOR_TARGET_TIME, &block_for_target_time},
         {MPV_RENDER_PARAM_INVALID, nullptr},
     };
     mpv_render_context_render(render_context, params);

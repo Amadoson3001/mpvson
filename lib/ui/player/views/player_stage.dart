@@ -365,7 +365,10 @@ class PlayerStage extends StatelessWidget {
                               !controlsVisible || fullControlsOpacity < 0.8,
                           child: ToastRegion(
                             child: AnimatedBuilder(
-                              animation: controller,
+                              animation: Listenable.merge(<Listenable>[
+                                controller.transportListenable,
+                                controller.structureListenable,
+                              ]),
                               builder: (context, _) => PlayerControls(
                                 controller: controller,
                                 onMenuVisibilityChanged:

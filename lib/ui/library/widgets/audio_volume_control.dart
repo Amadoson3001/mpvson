@@ -142,13 +142,10 @@ class _AudioVolumeControlState extends State<AudioVolumeControl> {
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: widget.controller,
-      builder: (context, _) {
-        final volume = (_pendingVolume ?? widget.controller.volume).clamp(
-          0.0,
-          100.0,
-        );
+    return ValueListenableBuilder<double>(
+      valueListenable: widget.controller.volumeListenable,
+      builder: (context, listedVolume, _) {
+        final volume = (_pendingVolume ?? listedVolume).clamp(0.0, 100.0);
         final icon = volume <= 0
             ? Icons.volume_off_rounded
             : volume < 50

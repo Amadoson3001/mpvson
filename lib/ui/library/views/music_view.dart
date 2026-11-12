@@ -61,6 +61,13 @@ class _MusicViewState extends State<MusicView> {
   Timer? _searchReload;
   String? _currentRowPath;
   bool _currentRowPlaying = false;
+  late Listenable _playbackListenable;
+
+  Listenable _playbackSignals(PlayerController controller) =>
+      Listenable.merge(<Listenable>[
+        controller.structureListenable,
+        controller.transportListenable,
+      ]);
 
   @override
   void initState() {
@@ -69,7 +76,8 @@ class _MusicViewState extends State<MusicView> {
     _lastSubTab = _music.subTab;
     _music.addListener(_onMusicChanged);
     widget.repository.addListener(_onRepoChanged);
-    widget.controller.addListener(_onPlaybackChanged);
+    _playbackListenable = _playbackSignals(widget.controller);
+    _playbackListenable.addListener(_onPlaybackChanged);
     _currentRowPath = widget.controller.current?.path;
     _currentRowPlaying = widget.controller.isPlaying;
     _reload();
@@ -138,8 +146,9 @@ class _MusicViewState extends State<MusicView> {
       });
     }
     if (oldWidget.controller != widget.controller) {
-      oldWidget.controller.removeListener(_onPlaybackChanged);
-      widget.controller.addListener(_onPlaybackChanged);
+      _playbackListenable.removeListener(_onPlaybackChanged);
+      _playbackListenable = _playbackSignals(widget.controller);
+      _playbackListenable.addListener(_onPlaybackChanged);
     }
   }
 
@@ -150,7 +159,7 @@ class _MusicViewState extends State<MusicView> {
     _music.removeListener(_onMusicChanged);
     _music.dispose();
     widget.repository.removeListener(_onRepoChanged);
-    widget.controller.removeListener(_onPlaybackChanged);
+    _playbackListenable.removeListener(_onPlaybackChanged);
     super.dispose();
   }
 
