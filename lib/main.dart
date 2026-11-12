@@ -45,6 +45,28 @@ const WindowOptions _windowOptions = WindowOptions(
 
 const String _supportedMediaKitVersion = '1.2.6';
 
+Future<EngineBootSelection?> _tryBundledEngineAfterBootFailure(
+  EngineUpdateService engineUpdates, {
+  required String? bundledEnginePath,
+  required List<String> arguments,
+}) async {
+  if (bundledEnginePath == null) return null;
+  final bundledFile = File(bundledEnginePath);
+  if (!await bundledFile.exists()) return null;
+  final bundled = EngineBootSelection(
+    libraryPath: bundledEnginePath,
+    version: bundledEngineVersion,
+    isBundled: true,
+    isPending: false,
+  );
+  return _initializeMediaKitWithFallbacks(
+    engineUpdates,
+    bundled,
+    bundledEnginePath: bundledEnginePath,
+    arguments: arguments,
+  );
+}
+
 Future<EngineBootSelection> _initializeMediaKitWithFallbacks(
   EngineUpdateService engineUpdates,
   EngineBootSelection initial, {
@@ -182,6 +204,18 @@ Future<void> main(List<String> arguments) async {
     );
   } on Object catch (error) {
     startupError = error;
+    try {
+      engineSelection = await _tryBundledEngineAfterBootFailure(
+        engineUpdates,
+        bundledEnginePath: bundledEnginePath,
+        arguments: arguments,
+      );
+      if (engineSelection != null) {
+        startupError = null;
+      }
+    } on Object catch (fallbackError) {
+      startupError ??= fallbackError;
+    }
   }
 
   final windowError = await windowInitFuture;

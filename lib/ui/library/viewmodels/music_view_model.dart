@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import '../../../data/repositories/media_library_repository.dart';
 import '../../../domain/models/library_models.dart';
 import '../../player/player_controller.dart';
+import '../paged_media_loader.dart';
 
 /// Subtabs within the Music library view.
 enum MusicSubtab {
@@ -33,9 +34,7 @@ enum MusicSortField {
 /// ViewModel for browsing and interacting with the music collection, albums,
 /// artists, favorites, recent tracks, and playlists.
 class MusicViewModel extends ChangeNotifier {
-  MusicViewModel({required this.repository, this.playerController}) {
-    repository.addListener(_onRepositoryChanged);
-  }
+  MusicViewModel({required this.repository, this.playerController});
 
   final MediaLibraryRepository repository;
   final PlayerController? playerController;
@@ -71,20 +70,29 @@ class MusicViewModel extends ChangeNotifier {
   List<MediaItemRecord> _songs = const [];
   List<MediaItemRecord> get songs => _songs;
 
+  int _songsOffset = 0;
+  bool _hasMoreSongs = true;
+  bool get hasMoreSongs => _hasMoreSongs;
+
+  bool _loadingMoreSongs = false;
+  bool get isLoadingMoreSongs => _loadingMoreSongs;
+
+  int _songPageEpoch = 0;
+
   List<String> _albums = const [];
   List<String> get albums => _albums;
 
   List<String> _artists = const [];
   List<String> get artists => _artists;
 
-  List<MediaItemRecord> _favorites = const [];
-  List<MediaItemRecord> get favorites => _favorites;
+  List<MediaItemRecord> get favorites =>
+      _currentSubtab == MusicSubtab.favorites ? _songs : const [];
 
-  List<MediaItemRecord> _recentlyAdded = const [];
-  List<MediaItemRecord> get recentlyAdded => _recentlyAdded;
+  List<MediaItemRecord> get recentlyAdded =>
+      _currentSubtab == MusicSubtab.recentlyAdded ? _songs : const [];
 
-  List<MediaItemRecord> _recentlyPlayed = const [];
-  List<MediaItemRecord> get recentlyPlayed => _recentlyPlayed;
+  List<MediaItemRecord> get recentlyPlayed =>
+      _currentSubtab == MusicSubtab.recentlyPlayed ? _songs : const [];
 
   List<PlaylistRecord> _playlists = const [];
   List<PlaylistRecord> get playlists => _playlists;
@@ -99,6 +107,152 @@ class MusicViewModel extends ChangeNotifier {
   bool _customSorting = false;
   Future<void>? _refreshFuture;
   bool _refreshAgain = false;
+
+  static bool _isSongListSubtab(MusicSubtab subtab) =>
+      subtab == MusicSubtab.songs ||
+      subtab == MusicSubtab.favorites ||
+      subtab == MusicSubtab.recentlyAdded ||
+      subtab == MusicSubtab.recentlyPlayed;
+
+  void _resetSongPages() {
+    _songs = const [];
+    _songsOffset = 0;
+    _hasMoreSongs = true;
+    _songPageEpoch++;
+  }
+
+  String _sortByForField(MusicSortField field) {
+    return switch (field) {
+      MusicSortField.title => 'title',
+      MusicSortField.artist => 'artist',
+      MusicSortField.album => 'album',
+      MusicSortField.duration => 'duration',
+      MusicSortField.dateAdded => 'addedAt',
+      MusicSortField.lastPlayed => 'lastPlayedAt',
+      MusicSortField.trackNumber => 'trackNumber',
+      MusicSortField.year => 'year',
+    };
+  }
+
+  /// Query parameters for [fetchMediaPage] (same filters as the music library view).
+  ({
+    MediaKind kind,
+    String? searchQuery,
+    String? artist,
+    String? album,
+    bool? onlyFavorites,
+    String sortBy,
+    bool ascending,
+  })
+  _songPageQueryForCurrentSubtab() {
+    final trimmed = _searchQuery.trim();
+    final search = trimmed.isEmpty ? null : trimmed;
+    switch (_currentSubtab) {
+      case MusicSubtab.songs:
+        return (
+          kind: MediaKind.audio,
+          searchQuery: search,
+          artist: _selectedArtist,
+          album: _selectedAlbum,
+          onlyFavorites: null,
+          sortBy: _sortByForField(_sortField),
+          ascending: _sortAscending,
+        );
+      case MusicSubtab.favorites:
+        return (
+          kind: MediaKind.audio,
+          searchQuery: search,
+          artist: _selectedArtist,
+          album: _selectedAlbum,
+          onlyFavorites: true,
+          sortBy: _sortByForField(_sortField),
+          ascending: _sortAscending,
+        );
+      case MusicSubtab.recentlyAdded:
+        return (
+          kind: MediaKind.audio,
+          searchQuery: search,
+          artist: _selectedArtist,
+          album: _selectedAlbum,
+          onlyFavorites: null,
+          sortBy: _sortByForField(_sortField),
+          ascending: _sortAscending,
+        );
+      case MusicSubtab.recentlyPlayed:
+        return (
+          kind: MediaKind.audio,
+          searchQuery: search,
+          artist: _selectedArtist,
+          album: _selectedAlbum,
+          onlyFavorites: null,
+          sortBy: _sortByForField(_sortField),
+          ascending: _sortAscending,
+        );
+      case MusicSubtab.albums:
+      case MusicSubtab.artists:
+        return (
+          kind: MediaKind.audio,
+          searchQuery: search,
+          artist: null,
+          album: null,
+          onlyFavorites: null,
+          sortBy: 'title',
+          ascending: true,
+        );
+    }
+  }
+
+  Future<void> ensureFirstSongsPage() async {
+    if (_disposed || !_isSongListSubtab(_currentSubtab)) return;
+    if (_songs.isNotEmpty || _loadingMoreSongs) return;
+    await loadMoreSongs();
+  }
+
+  Future<void> loadMoreSongs() async {
+    if (_disposed || !_isSongListSubtab(_currentSubtab)) return;
+    if (!_hasMoreSongs || _loadingMoreSongs) return;
+
+    final epoch = _songPageEpoch;
+    _loadingMoreSongs = true;
+    notifyListeners();
+
+    try {
+      final query = _songPageQueryForCurrentSubtab();
+      final batch = await fetchMediaPage(
+        repository,
+        offset: _songsOffset,
+        kind: query.kind,
+        searchQuery: query.searchQuery,
+        artist: query.artist,
+        album: query.album,
+        onlyFavorites: query.onlyFavorites,
+        sortBy: query.sortBy,
+        ascending: query.ascending,
+      );
+
+      if (_disposed || epoch != _songPageEpoch) return;
+
+      var items = batch.items;
+      if (_currentSubtab == MusicSubtab.recentlyPlayed) {
+        items = items.where((item) => item.lastPlayedAt != null).toList();
+      }
+
+      _songs = [..._songs, ...items];
+      _songsOffset += batch.items.length;
+      _hasMoreSongs = batch.hasMore;
+    } finally {
+      if (!_disposed) {
+        _loadingMoreSongs = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  void _invalidateSongPagesAndScheduleLoad() {
+    _resetSongPages();
+    notifyListeners();
+    unawaited(ensureFirstSongsPage());
+  }
 
   void selectSubtab(MusicSubtab subtab) {
     if (_currentSubtab == subtab) return;
@@ -115,7 +269,12 @@ class MusicViewModel extends ChangeNotifier {
         _sortAscending = true;
       }
     }
-    notifyListeners();
+    if (_isSongListSubtab(subtab)) {
+      _invalidateSongPagesAndScheduleLoad();
+    } else {
+      _resetSongPages();
+      notifyListeners();
+    }
   }
 
   set currentSubtab(MusicSubtab subtab) => selectSubtab(subtab);
@@ -129,37 +288,61 @@ class MusicViewModel extends ChangeNotifier {
     if (ascending != null) {
       _sortAscending = ascending;
     }
-    notifyListeners();
+    if (_isSongListSubtab(_currentSubtab)) {
+      _invalidateSongPagesAndScheduleLoad();
+    } else {
+      notifyListeners();
+    }
   }
 
   void toggleSortOrder() {
     _customSorting = true;
     _sortAscending = !_sortAscending;
-    notifyListeners();
+    if (_isSongListSubtab(_currentSubtab)) {
+      _invalidateSongPagesAndScheduleLoad();
+    } else {
+      notifyListeners();
+    }
   }
 
   void setFilterQuery(String query) {
+    if (_searchQuery == query) return;
     _searchQuery = query;
-    notifyListeners();
+    if (_isSongListSubtab(_currentSubtab)) {
+      _invalidateSongPagesAndScheduleLoad();
+    } else {
+      notifyListeners();
+    }
   }
 
   void setSearchQuery(String query) => setFilterQuery(query);
 
   void filterByArtist(String? artist) {
+    if (_selectedArtist == artist) return;
     _selectedArtist = artist;
-    notifyListeners();
+    if (_isSongListSubtab(_currentSubtab)) {
+      _invalidateSongPagesAndScheduleLoad();
+    } else {
+      notifyListeners();
+    }
   }
 
   void setSelectedArtist(String? artist) => filterByArtist(artist);
 
   void filterByAlbum(String? album) {
+    if (_selectedAlbum == album) return;
     _selectedAlbum = album;
-    notifyListeners();
+    if (_isSongListSubtab(_currentSubtab)) {
+      _invalidateSongPagesAndScheduleLoad();
+    } else {
+      notifyListeners();
+    }
   }
 
   void setSelectedAlbum(String? album) => filterByAlbum(album);
 
   void filterByGenre(String? genre) {
+    if (_selectedGenre == genre) return;
     _selectedGenre = genre;
     notifyListeners();
   }
@@ -169,10 +352,34 @@ class MusicViewModel extends ChangeNotifier {
     _selectedArtist = null;
     _selectedAlbum = null;
     _selectedGenre = null;
-    notifyListeners();
+    if (_isSongListSubtab(_currentSubtab)) {
+      _invalidateSongPagesAndScheduleLoad();
+    } else {
+      notifyListeners();
+    }
   }
 
-  /// Refreshes all music data from the repository.
+  /// Distinct albums/artists and playlists only (MusicView owns paged song loads).
+  Future<void> refreshLibraryMetadata() async {
+    if (_disposed) return;
+    try {
+      final results = await Future.wait([
+        repository.getDistinctAlbums(),
+        repository.getDistinctArtists(kind: MediaKind.audio),
+        repository.getPlaylists(),
+      ]);
+      if (_disposed) return;
+      _albums = results[0] as List<String>;
+      _artists = results[1] as List<String>;
+      _playlists = results[2] as List<PlaylistRecord>;
+      notifyListeners();
+    } catch (error, stackTrace) {
+      debugPrint('Music library metadata refresh failed: $error\n$stackTrace');
+    }
+  }
+
+  /// Refreshes library metadata (albums, artists, playlists) without loading
+  /// the full audio collection; song lists are paged on demand.
   Future<void> refresh() {
     if (_disposed) return Future<void>.value();
     final activeRefresh = _refreshFuture;
@@ -199,7 +406,6 @@ class MusicViewModel extends ChangeNotifier {
       do {
         _refreshAgain = false;
         final results = await Future.wait([
-          repository.queryMedia(kind: MediaKind.audio),
           repository.getDistinctAlbums(),
           repository.getDistinctArtists(kind: MediaKind.audio),
           repository.getPlaylists(),
@@ -207,27 +413,11 @@ class MusicViewModel extends ChangeNotifier {
 
         if (_disposed) return;
 
-        _songs = results[0] as List<MediaItemRecord>;
-        _albums = results[1] as List<String>;
-        _artists = results[2] as List<String>;
-        _favorites = _songs.where((song) => song.isFavorite).toList();
-        // Keep the repository ordering on these public collections while
-        // reusing the fetched records instead of querying them again.
-        _recentlyAdded = List<MediaItemRecord>.of(_songs)
-          ..sort((a, b) => b.addedAt.compareTo(a.addedAt));
-        _recentlyPlayed =
-            _songs
-                .where((song) => song.lastPlayedAt != null)
-                .toList(growable: false)
-              ..sort(
-                (a, b) =>
-                    (b.lastPlayedAt ?? DateTime.fromMillisecondsSinceEpoch(0))
-                        .compareTo(
-                          a.lastPlayedAt ??
-                              DateTime.fromMillisecondsSinceEpoch(0),
-                        ),
-              );
-        _playlists = results[3] as List<PlaylistRecord>;
+        _albums = results[0] as List<String>;
+        _artists = results[1] as List<String>;
+        _playlists = results[2] as List<PlaylistRecord>;
+
+        _resetSongPages();
 
         if (_selectedPlaylist != null) {
           final currentId = _selectedPlaylist!.id;
@@ -243,6 +433,10 @@ class MusicViewModel extends ChangeNotifier {
         } else {
           _playlistEntries = const [];
         }
+
+        if (_isSongListSubtab(_currentSubtab)) {
+          await ensureFirstSongsPage();
+        }
       } while (_refreshAgain && !_disposed);
     } finally {
       if (!_disposed) {
@@ -252,90 +446,21 @@ class MusicViewModel extends ChangeNotifier {
     }
   }
 
-  /// Returns the current collection based on the selected subtab,
-  /// with search and attribute filters and user sorting applied.
+  /// Returns the current collection based on the selected subtab.
+  /// Song-list subtabs expose loaded pages; albums/artists use distinct lists in the view.
   List<MediaItemRecord> get currentCollection {
-    List<MediaItemRecord> source;
     switch (_currentSubtab) {
-      case MusicSubtab.songs:
-        source = _songs;
-        break;
-      case MusicSubtab.favorites:
-        source = _favorites.isNotEmpty
-            ? _favorites
-            : _songs.where((s) => s.isFavorite).toList();
-        break;
-      case MusicSubtab.recentlyAdded:
-        source = _recentlyAdded.isNotEmpty
-            ? _recentlyAdded
-            : (List<MediaItemRecord>.of(_songs)
-                ..sort((a, b) => b.addedAt.compareTo(a.addedAt)));
-        break;
-      case MusicSubtab.recentlyPlayed:
-        source = _recentlyPlayed.isNotEmpty
-            ? _recentlyPlayed
-            : (_songs.where((s) => s.lastPlayedAt != null).toList()..sort(
-                (a, b) =>
-                    (b.lastPlayedAt ?? DateTime.fromMillisecondsSinceEpoch(0))
-                        .compareTo(
-                          a.lastPlayedAt ??
-                              DateTime.fromMillisecondsSinceEpoch(0),
-                        ),
-              ));
-        break;
       case MusicSubtab.albums:
-        if (_selectedAlbum != null) {
-          source = _songs
-              .where(
-                (s) => s.album.toLowerCase() == _selectedAlbum!.toLowerCase(),
-              )
-              .toList();
-        } else {
-          source = _songs;
-        }
-        break;
       case MusicSubtab.artists:
-        if (_selectedArtist != null) {
-          source = _songs
-              .where(
-                (s) => s.artist.toLowerCase() == _selectedArtist!.toLowerCase(),
-              )
-              .toList();
-        } else {
-          source = _songs;
-        }
+        return const [];
+      case MusicSubtab.songs:
+      case MusicSubtab.favorites:
+      case MusicSubtab.recentlyAdded:
+      case MusicSubtab.recentlyPlayed:
         break;
     }
 
-    // Apply filtering
-    var filtered = source;
-    if (_searchQuery.trim().isNotEmpty) {
-      final q = _searchQuery.trim().toLowerCase();
-      filtered = filtered.where((item) {
-        final filename = item.path.split(RegExp(r'[\\/]')).last.toLowerCase();
-        final title = item.title.toLowerCase();
-        final artist = item.artist.toLowerCase();
-        final album = item.album.toLowerCase();
-        return filename.contains(q) ||
-            title.contains(q) ||
-            artist.contains(q) ||
-            album.contains(q);
-      }).toList();
-    }
-
-    if (_selectedArtist != null && _currentSubtab != MusicSubtab.artists) {
-      filtered = filtered
-          .where(
-            (s) => s.artist.toLowerCase() == _selectedArtist!.toLowerCase(),
-          )
-          .toList();
-    }
-
-    if (_selectedAlbum != null && _currentSubtab != MusicSubtab.albums) {
-      filtered = filtered
-          .where((s) => s.album.toLowerCase() == _selectedAlbum!.toLowerCase())
-          .toList();
-    }
+    var filtered = _songs;
 
     if (_selectedGenre != null) {
       filtered = filtered
@@ -347,58 +472,21 @@ class MusicViewModel extends ChangeNotifier {
           .toList();
     }
 
-    // Apply sorting
-    final sorted = List<MediaItemRecord>.of(filtered)..sort(_compareMedia);
-    return sorted;
+    return filtered;
   }
 
   List<MediaItemRecord> get currentSongs => currentCollection;
   List<MediaItemRecord> get items => currentCollection;
 
-  int _compareMedia(MediaItemRecord a, MediaItemRecord b) {
-    int result = 0;
-    switch (_sortField) {
-      case MusicSortField.title:
-        result = a.title.toLowerCase().compareTo(b.title.toLowerCase());
-        break;
-      case MusicSortField.artist:
-        result = a.artist.toLowerCase().compareTo(b.artist.toLowerCase());
-        break;
-      case MusicSortField.album:
-        result = a.album.toLowerCase().compareTo(b.album.toLowerCase());
-        break;
-      case MusicSortField.duration:
-        result = a.metadata.duration.compareTo(b.metadata.duration);
-        break;
-      case MusicSortField.dateAdded:
-        result = a.addedAt.compareTo(b.addedAt);
-        break;
-      case MusicSortField.lastPlayed:
-        final lpA = a.lastPlayedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
-        final lpB = b.lastPlayedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
-        result = lpA.compareTo(lpB);
-        break;
-      case MusicSortField.trackNumber:
-        final tA = a.metadata.trackNumber ?? 0;
-        final tB = b.metadata.trackNumber ?? 0;
-        result = tA.compareTo(tB);
-        break;
-      case MusicSortField.year:
-        final yA = a.metadata.year ?? 0;
-        final yB = b.metadata.year ?? 0;
-        result = yA.compareTo(yB);
-        break;
-    }
-    if (result == 0) {
-      result = a.title.toLowerCase().compareTo(b.title.toLowerCase());
-      if (result == 0) {
-        result = a.id.compareTo(b.id);
-      }
-    }
-    return _sortAscending ? result : -result;
-  }
-
   // --- Operations ---
+
+  Future<MediaItemRecord?> _resolveMediaRecord(String mediaId) async {
+    final loaded = _songs.where((s) => s.id == mediaId).firstOrNull;
+    if (loaded != null) return loaded;
+    final byId = await repository.getMediaById(mediaId);
+    if (byId != null) return byId;
+    return repository.getMediaByCanonicalSource(mediaId);
+  }
 
   /// Plays the current collection starting at the specified index.
   Future<void> playSongAtIndex(int index) async {
@@ -486,6 +574,22 @@ class MusicViewModel extends ChangeNotifier {
   Future<void> playNext(dynamic media) async {
     final paths = _extractPaths(media);
     if (paths.isEmpty) return;
+    if (media is String && paths.length == 1) {
+      final inPage = _songs.any(
+        (s) => s.id == media || s.path == media || s.canonicalSource == media,
+      );
+      if (!inPage) {
+        final resolved = await _resolveMediaRecord(media);
+        if (resolved != null) {
+          await playerController?.openPaths(
+            [resolved.path],
+            append: true,
+            playNext: true,
+          );
+          return;
+        }
+      }
+    }
     await playerController?.openPaths(paths, append: true, playNext: true);
   }
 
@@ -505,7 +609,7 @@ class MusicViewModel extends ChangeNotifier {
       newStatus = targetStatus ?? !media.isFavorite;
     } else if (media is String) {
       mediaId = media;
-      final existing = _songs.where((s) => s.id == mediaId).firstOrNull;
+      final existing = await _resolveMediaRecord(mediaId);
       newStatus =
           targetStatus ?? (existing != null ? !existing.isFavorite : true);
     } else {
@@ -613,19 +717,9 @@ class MusicViewModel extends ChangeNotifier {
     );
   }
 
-  void _onRepositoryChanged() {
-    if (_disposed) return;
-    unawaited(
-      refresh().catchError((Object error, StackTrace _) {
-        debugPrint('Music library refresh failed: $error');
-      }),
-    );
-  }
-
   @override
   void dispose() {
     _disposed = true;
-    repository.removeListener(_onRepositoryChanged);
     super.dispose();
   }
 }

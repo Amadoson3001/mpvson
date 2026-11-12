@@ -124,11 +124,20 @@ class MediaLibraryRepositoryImpl extends MediaLibraryRepository {
       if (_scanner != null) {
         _scanSubscription = _scanner!.scanStatusStream.listen((status) {
           if (_isDisposed) return;
+          final previousPhase = _scanStatus.phase;
           _scanStatus = status;
-          notifyListeners();
-          if (status.phase == ScanPhase.idle) {
-            unawaited(_refreshFolders());
-            unawaited(optimize());
+          final finishedOrFailed =
+              status.phase == ScanPhase.idle || status.phase == ScanPhase.error;
+          final enteredTerminal =
+              finishedOrFailed && previousPhase != status.phase;
+          if (enteredTerminal) {
+            notifyListeners();
+            if (status.phase == ScanPhase.idle) {
+              unawaited(_refreshFolders());
+              unawaited(optimize());
+            }
+          } else if (!finishedOrFailed) {
+            _notifyDebounced();
           }
         });
       }

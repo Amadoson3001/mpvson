@@ -14,9 +14,13 @@ import '../../core/components/media_row.dart';
 import '../../core/components/media_accent_scope.dart';
 import '../../core/components/empty_state.dart';
 import '../../core/components/playback_pulse.dart';
+import '../library_browse_constants.dart';
+import '../paged_media_loader.dart';
 import '../viewmodels/music_view_model.dart';
 import '../widgets/add_to_playlist_dialog.dart';
 import '../widgets/library_artwork.dart';
+
+const int _kGridNamePageSize = 60;
 
 /// Comprehensive Music View with subtabs for Songs, Albums, Artists,
 /// Favorites, Recently Added, and Recently Played.
@@ -50,7 +54,16 @@ class _MusicViewState extends State<MusicView> {
   String? _selectedAlbum;
   String? _selectedAlbumArtist;
   String? _selectedArtist;
-  List<MediaItemRecord>? _items;
+  final ScrollController _scrollController = ScrollController();
+  List<MediaItemRecord> _items = [];
+  int _browseOffset = 0;
+  bool _hasMoreBrowse = true;
+  bool _loadingMoreBrowse = false;
+  List<String>? _albumNames;
+  List<String>? _artistNames;
+  int _albumGridVisible = _kGridNamePageSize;
+  int _artistGridVisible = _kGridNamePageSize;
+  final Map<String, MediaItemRecord?> _albumPreviewCache = {};
   List<MediaItemRecord>? _albumTracks;
   List<MediaItemRecord>? _artistSongs;
   bool _isLoading = false;
@@ -72,6 +85,7 @@ class _MusicViewState extends State<MusicView> {
     widget.controller.addListener(_onPlaybackChanged);
     _currentRowPath = widget.controller.current?.path;
     _currentRowPlaying = widget.controller.isPlaying;
+    _scrollController.addListener(_onBrowseScroll);
     _reload();
   }
 
@@ -90,7 +104,14 @@ class _MusicViewState extends State<MusicView> {
         _selectedAlbum = null;
         _selectedAlbumArtist = null;
         _selectedArtist = null;
-        _items = null;
+        _items = [];
+        _browseOffset = 0;
+        _hasMoreBrowse = true;
+        _loadingMoreBrowse = false;
+        _albumNames = null;
+        _artistNames = null;
+        _albumGridVisible = _kGridNamePageSize;
+        _artistGridVisible = _kGridNamePageSize;
       });
       _reload();
     } else {
@@ -145,6 +166,8 @@ class _MusicViewState extends State<MusicView> {
 
   @override
   void dispose() {
+    _scrollController.removeListener(_onBrowseScroll);
+    _scrollController.dispose();
     _reloadThrottle?.cancel();
     _searchReload?.cancel();
     _music.removeListener(_onMusicChanged);
@@ -173,7 +196,9 @@ class _MusicViewState extends State<MusicView> {
     }
     _reloadThrottle = Timer(const Duration(milliseconds: 200), () {
       _reloadThrottle = null;
-      if (mounted) _reload();
+      if (!mounted) return;
+      unawaited(_music.refreshLibraryMetadata());
+      _reload();
     });
   }
 
@@ -190,6 +215,21 @@ class _MusicViewState extends State<MusicView> {
     });
     _reloadFuture = tracked;
     return tracked;
+  }
+
+  void _patchFavoriteInLoadedLists(String mediaId, bool isFavorite) {
+    MediaItemRecord patch(MediaItemRecord item) =>
+        item.id == mediaId ? item.copyWith(isFavorite: isFavorite) : item;
+
+    if (_items.isNotEmpty) {
+      _items = _items.map(patch).toList();
+    }
+    if (_albumTracks != null) {
+      _albumTracks = _albumTracks!.map(patch).toList();
+    }
+    if (_artistSongs != null) {
+      _artistSongs = _artistSongs!.map(patch).toList();
+    }
   }
 
   Future<void> _drainReloads() async {
@@ -223,7 +263,53 @@ class _MusicViewState extends State<MusicView> {
             sortBy: 'title',
           );
         } else {
-          items = await _fetchMediaForSubtab();
+          switch (_music.currentSubtab) {
+            case MusicSubtab.albums:
+              final names = await widget.repository.getDistinctAlbums();
+              if (!mounted) return;
+              if (_reloadAgain) continue;
+              setState(() {
+                _error = null;
+                _albumNames = names;
+                _artistNames = null;
+                _items = [];
+                _albumGridVisible = _kGridNamePageSize;
+              });
+              continue;
+            case MusicSubtab.artists:
+              final names = await widget.repository.getDistinctArtists(
+                kind: MediaKind.audio,
+              );
+              if (!mounted) return;
+              if (_reloadAgain) continue;
+              setState(() {
+                _error = null;
+                _artistNames = names;
+                _albumNames = null;
+                _items = [];
+                _artistGridVisible = _kGridNamePageSize;
+              });
+              continue;
+            case MusicSubtab.songs:
+            case MusicSubtab.favorites:
+            case MusicSubtab.recentlyAdded:
+            case MusicSubtab.recentlyPlayed:
+              _browseOffset = 0;
+              _hasMoreBrowse = true;
+              _loadingMoreBrowse = false;
+              final batch = await _fetchMediaPageForSubtab(offset: 0);
+              if (!mounted) return;
+              if (_reloadAgain) continue;
+              setState(() {
+                _error = null;
+                _albumNames = null;
+                _artistNames = null;
+                _items = List<MediaItemRecord>.from(batch.items);
+                _browseOffset = batch.items.length;
+                _hasMoreBrowse = batch.hasMore;
+              });
+              continue;
+          }
         }
         if (!mounted) return;
         if (_reloadAgain) continue;
@@ -233,8 +319,6 @@ class _MusicViewState extends State<MusicView> {
             _albumTracks = items;
           } else if (artist != null) {
             _artistSongs = items;
-          } else {
-            _items = items;
           }
         });
       } while (_reloadAgain && mounted);
@@ -315,7 +399,27 @@ class _MusicViewState extends State<MusicView> {
       );
     }
 
-    final items = _items ?? const <MediaItemRecord>[];
+    final subtab = _music.currentSubtab;
+    final isSongSubtab =
+        subtab == MusicSubtab.songs ||
+        subtab == MusicSubtab.favorites ||
+        subtab == MusicSubtab.recentlyAdded ||
+        subtab == MusicSubtab.recentlyPlayed;
+    final isGridSubtab =
+        subtab == MusicSubtab.albums || subtab == MusicSubtab.artists;
+    final items = _items;
+    final gridEmpty = switch (subtab) {
+      MusicSubtab.albums => (_albumNames ?? const []).isEmpty,
+      MusicSubtab.artists => (_artistNames ?? const []).isEmpty,
+      _ => false,
+    };
+    final gridNamesLoading =
+        isGridSubtab &&
+        _isLoading &&
+        _albumNames == null &&
+        _artistNames == null;
+    final showInitialLoader =
+        _isLoading && ((isSongSubtab && items.isEmpty) || gridNamesLoading);
 
     return Material(
       color: context.palette.background,
@@ -327,7 +431,7 @@ class _MusicViewState extends State<MusicView> {
           Divider(height: 1, color: context.palette.border),
           // Content stage
           Expanded(
-            child: _isLoading && _items == null
+            child: showInitialLoader
                 ? Center(
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
@@ -336,17 +440,20 @@ class _MusicViewState extends State<MusicView> {
                       ),
                     ),
                   )
-                : _error != null && items.isEmpty
+                : _error != null && (isSongSubtab ? items.isEmpty : gridEmpty)
                 ? _buildLoadErrorState()
-                : items.isEmpty
+                : (isSongSubtab ? items.isEmpty : gridEmpty)
                 ? _buildEmptyStateForSubtab()
-                : switch (_music.currentSubtab) {
+                : switch (subtab) {
                     MusicSubtab.songs ||
                     MusicSubtab.favorites ||
                     MusicSubtab.recentlyAdded ||
-                    MusicSubtab.recentlyPlayed => _buildSongTableView(items),
-                    MusicSubtab.albums => _buildAlbumsGridView(items),
-                    MusicSubtab.artists => _buildArtistsGridView(items),
+                    MusicSubtab.recentlyPlayed => _buildSongTableView(
+                      items,
+                      enablePaging: true,
+                    ),
+                    MusicSubtab.albums => _buildAlbumsGridView(),
+                    MusicSubtab.artists => _buildArtistsGridView(),
                   },
           ),
         ],
@@ -439,39 +546,133 @@ class _MusicViewState extends State<MusicView> {
     );
   }
 
-  Future<List<MediaItemRecord>> _fetchMediaForSubtab() async {
+  Future<PagedMediaBatch> _fetchMediaPageForSubtab({required int offset}) {
     final query = widget.searchQuery;
+    final repository = widget.repository;
     switch (_music.currentSubtab) {
       case MusicSubtab.songs:
-      case MusicSubtab.albums:
-      case MusicSubtab.artists:
-        return widget.repository.queryMedia(
+        return fetchMediaPage(
+          repository,
+          offset: offset,
           kind: MediaKind.audio,
           searchQuery: query,
           sortBy: 'title',
         );
+      case MusicSubtab.albums:
+      case MusicSubtab.artists:
+        return Future.value(const PagedMediaBatch(items: [], hasMore: false));
       case MusicSubtab.favorites:
-        return widget.repository.queryMedia(
+        return fetchMediaPage(
+          repository,
+          offset: offset,
           kind: MediaKind.audio,
           searchQuery: query,
           onlyFavorites: true,
           sortBy: 'title',
         );
       case MusicSubtab.recentlyAdded:
-        return widget.repository.queryMedia(
+        return fetchMediaPage(
+          repository,
+          offset: offset,
           kind: MediaKind.audio,
           searchQuery: query,
           sortBy: 'addedAt',
           ascending: false,
         );
       case MusicSubtab.recentlyPlayed:
-        final all = await widget.repository.queryMedia(
+        return fetchMediaPage(
+          repository,
+          offset: offset,
           kind: MediaKind.audio,
           searchQuery: query,
           sortBy: 'lastPlayedAt',
           ascending: false,
         );
-        return all.where((item) => item.lastPlayedAt != null).toList();
+    }
+  }
+
+  void _onBrowseScroll() {
+    if (!_scrollController.hasClients) return;
+    final position = _scrollController.position;
+    if (position.maxScrollExtent - position.pixels <
+        kLibraryBrowseScrollPrefetch) {
+      unawaited(_loadMoreBrowse());
+    }
+  }
+
+  Future<void> _loadMoreBrowse() async {
+    if (_loadingMoreBrowse || !_hasMoreBrowse) return;
+    if (_selectedAlbum != null || _selectedArtist != null) return;
+    final subtab = _music.currentSubtab;
+    if (subtab != MusicSubtab.songs &&
+        subtab != MusicSubtab.favorites &&
+        subtab != MusicSubtab.recentlyAdded &&
+        subtab != MusicSubtab.recentlyPlayed) {
+      return;
+    }
+    setState(() => _loadingMoreBrowse = true);
+    try {
+      final batch = await _fetchMediaPageForSubtab(offset: _browseOffset);
+      if (!mounted) return;
+      setState(() {
+        _items.addAll(batch.items);
+        _browseOffset += batch.items.length;
+        _hasMoreBrowse = batch.hasMore;
+        _loadingMoreBrowse = false;
+      });
+    } catch (error) {
+      debugPrint('Music view could not load more: $error');
+      if (mounted) setState(() => _loadingMoreBrowse = false);
+    }
+  }
+
+  List<String> _filteredAlbumNames() {
+    final names = _albumNames ?? const <String>[];
+    final query = widget.searchQuery?.trim().toLowerCase();
+    if (query == null || query.isEmpty) return names;
+    return names.where((name) => name.toLowerCase().contains(query)).toList();
+  }
+
+  List<String> _filteredArtistNames() {
+    final names = _artistNames ?? const <String>[];
+    final query = widget.searchQuery?.trim().toLowerCase();
+    if (query == null || query.isEmpty) return names;
+    return names.where((name) => name.toLowerCase().contains(query)).toList();
+  }
+
+  bool _onGridScroll(ScrollNotification notification) {
+    if (notification is! ScrollUpdateNotification &&
+        notification is! ScrollEndNotification) {
+      return false;
+    }
+    final metrics = notification.metrics;
+    if (metrics.maxScrollExtent - metrics.pixels <
+        kLibraryBrowseScrollPrefetch) {
+      _loadMoreGridNames();
+    }
+    return false;
+  }
+
+  void _loadMoreGridNames() {
+    final subtab = _music.currentSubtab;
+    if (subtab == MusicSubtab.albums) {
+      final total = _filteredAlbumNames().length;
+      if (_albumGridVisible >= total) return;
+      setState(() {
+        _albumGridVisible = (_albumGridVisible + _kGridNamePageSize).clamp(
+          0,
+          total,
+        );
+      });
+    } else if (subtab == MusicSubtab.artists) {
+      final total = _filteredArtistNames().length;
+      if (_artistGridVisible >= total) return;
+      setState(() {
+        _artistGridVisible = (_artistGridVisible + _kGridNamePageSize).clamp(
+          0,
+          total,
+        );
+      });
     }
   }
 
@@ -521,21 +722,38 @@ class _MusicViewState extends State<MusicView> {
     }
   }
 
-  Widget _buildSongTableView(List<MediaItemRecord> songs) {
+  Widget _buildSongTableView(
+    List<MediaItemRecord> songs, {
+    bool enablePaging = false,
+  }) {
+    final footerCount = enablePaging && _loadingMoreBrowse ? 1 : 0;
     return ListView.separated(
+      controller: _scrollController,
       addAutomaticKeepAlives: false,
       addRepaintBoundaries: true,
       padding: const EdgeInsets.symmetric(
         horizontal: AppSpace.lg,
         vertical: AppSpace.md,
       ),
-      itemCount: songs.length + 1, // header row + songs
+      itemCount: songs.length + 1 + footerCount,
       separatorBuilder: (_, index) => index == 0
           ? Divider(height: 16, thickness: 1, color: context.palette.border)
           : Divider(height: 1, color: context.palette.surface),
       itemBuilder: (context, index) {
         if (index == 0) {
           return _buildTableHeaderRow();
+        }
+        if (footerCount > 0 && index == songs.length + 1) {
+          return const Padding(
+            padding: EdgeInsets.symmetric(vertical: AppSpace.md),
+            child: Center(
+              child: SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
+          );
         }
         final songIndex = index - 1;
         final song = songs[songIndex];
@@ -746,10 +964,14 @@ class _MusicViewState extends State<MusicView> {
                   tooltip: song.isFavorite
                       ? 'Remove favorite'
                       : 'Add to favorites',
-                  onPressed: () => widget.repository.toggleFavorite(
-                    song.id,
-                    !song.isFavorite,
-                  ),
+                  onPressed: () async {
+                    final next = !song.isFavorite;
+                    await widget.repository.toggleFavorite(song.id, next);
+                    if (!mounted) return;
+                    setState(() {
+                      _patchFavoriteInLoadedLists(song.id, next);
+                    });
+                  },
                 ),
               ),
               // More actions menu
@@ -863,25 +1085,10 @@ class _MusicViewState extends State<MusicView> {
 
   // --- Albums View ---
 
-  Widget _buildAlbumsGridView(List<MediaItemRecord> songs) {
-    // Group songs by album
-    final Map<(String, String), List<MediaItemRecord>> albumsMap = {};
-    for (final song in songs) {
-      albumsMap
-          .putIfAbsent((
-            song.album,
-            song.metadata.effectiveAlbumArtist,
-          ), () => [])
-          .add(song);
-    }
-
-    final albums = albumsMap.keys.toList()
-      ..sort((a, b) {
-        final title = a.$1.toLowerCase().compareTo(b.$1.toLowerCase());
-        return title != 0
-            ? title
-            : a.$2.toLowerCase().compareTo(b.$2.toLowerCase());
-      });
+  Widget _buildAlbumsGridView() {
+    final albums = _filteredAlbumNames();
+    final visibleCount = _albumGridVisible.clamp(0, albums.length);
+    final visibleAlbums = albums.take(visibleCount).toList();
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -893,61 +1100,48 @@ class _MusicViewState extends State<MusicView> {
         final tileWidth = (availableWidth - (columns - 1) * 20) / columns;
         final textHeight = MediaQuery.textScalerOf(context).scale(13) * 3.8;
 
-        return GridView.builder(
-          addAutomaticKeepAlives: false,
-          addRepaintBoundaries: true,
-          padding: const EdgeInsets.all(AppSpace.lg),
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: columns,
-            mainAxisSpacing: 24,
-            crossAxisSpacing: 20,
-            mainAxisExtent: tileWidth + textHeight + 14,
+        return NotificationListener<ScrollNotification>(
+          onNotification: _onGridScroll,
+          child: GridView.builder(
+            addAutomaticKeepAlives: false,
+            addRepaintBoundaries: true,
+            padding: const EdgeInsets.all(AppSpace.lg),
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: columns,
+              mainAxisSpacing: 24,
+              crossAxisSpacing: 20,
+              mainAxisExtent: tileWidth + textHeight + 14,
+            ),
+            itemCount: visibleAlbums.length,
+            itemBuilder: (context, index) {
+              final albumName = visibleAlbums[index];
+              return _AlbumGridTile(
+                key: ValueKey(albumName),
+                albumName: albumName,
+                repository: widget.repository,
+                previewCache: _albumPreviewCache,
+                onOpen: () {
+                  setState(() {
+                    _selectedAlbum = albumName;
+                    _selectedAlbumArtist = null;
+                    _albumTracks = null;
+                  });
+                  _reload();
+                },
+                onPlay: () async {
+                  final tracks = await widget.repository.queryMedia(
+                    kind: MediaKind.audio,
+                    album: albumName,
+                    sortBy: 'trackNumber',
+                  );
+                  if (!mounted) return;
+                  await _playAlbum(tracks);
+                },
+              );
+            },
           ),
-          itemCount: albums.length,
-          itemBuilder: (context, index) {
-            final key = albums[index];
-            final albumName = key.$1;
-            final albumSongs = albumsMap[key]!;
-            final artist = key.$2;
-            final trackCount = albumSongs.length;
-
-            return _buildAlbumCard(albumName, artist, trackCount, albumSongs);
-          },
         );
       },
-    );
-  }
-
-  Widget _buildAlbumCard(
-    String albumName,
-    String artist,
-    int trackCount,
-    List<MediaItemRecord> albumSongs,
-  ) {
-    return MediaTile(
-      artwork: LibraryArtwork(
-        path: albumSongs.first.metadata.artworkUri,
-        mediaPath: albumSongs.first.path,
-        repository: widget.repository,
-      ),
-      title: albumName,
-      subtitle: artist,
-      onTap: () {
-        setState(() {
-          _selectedAlbum = albumName;
-          _selectedAlbumArtist = artist;
-          _albumTracks = null;
-        });
-        _reload();
-      },
-      overlay: FilledButton.tonal(
-        onPressed: () => _playAlbum(albumSongs),
-        style: FilledButton.styleFrom(
-          padding: EdgeInsets.zero,
-          minimumSize: const Size(40, 40),
-        ),
-        child: const Icon(Icons.play_arrow_rounded),
-      ),
     );
   }
 
@@ -1136,13 +1330,10 @@ class _MusicViewState extends State<MusicView> {
 
   // --- Artists View ---
 
-  Widget _buildArtistsGridView(List<MediaItemRecord> songs) {
-    final Map<String, List<MediaItemRecord>> artistsMap = {};
-    for (final song in songs) {
-      artistsMap.putIfAbsent(song.artist, () => []).add(song);
-    }
-
-    final artists = artistsMap.keys.toList()..sort();
+  Widget _buildArtistsGridView() {
+    final artists = _filteredArtistNames();
+    final visibleCount = _artistGridVisible.clamp(0, artists.length);
+    final visibleArtists = artists.take(visibleCount).toList();
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -1154,40 +1345,35 @@ class _MusicViewState extends State<MusicView> {
         final tileWidth = (availableWidth - (columns - 1) * 20) / columns;
         final textHeight = MediaQuery.textScalerOf(context).scale(13) * 3.8;
 
-        return GridView.builder(
-          addAutomaticKeepAlives: false,
-          addRepaintBoundaries: true,
-          padding: const EdgeInsets.all(AppSpace.lg),
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: columns,
-            mainAxisSpacing: 20,
-            crossAxisSpacing: 20,
-            mainAxisExtent: tileWidth + textHeight + 14,
-          ),
-          itemCount: artists.length,
-          itemBuilder: (context, index) {
-            final artistName = artists[index];
-            final artistSongs = artistsMap[artistName]!;
-            final albumCount = artistSongs.map((s) => s.album).toSet().length;
-
-            return MediaTile(
-              artwork: LibraryArtwork(
-                path: artistSongs.first.metadata.artworkUri,
-                mediaPath: artistSongs.first.path,
+        return NotificationListener<ScrollNotification>(
+          onNotification: _onGridScroll,
+          child: GridView.builder(
+            addAutomaticKeepAlives: false,
+            addRepaintBoundaries: true,
+            padding: const EdgeInsets.all(AppSpace.lg),
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: columns,
+              mainAxisSpacing: 20,
+              crossAxisSpacing: 20,
+              mainAxisExtent: tileWidth + textHeight + 14,
+            ),
+            itemCount: visibleArtists.length,
+            itemBuilder: (context, index) {
+              final artistName = visibleArtists[index];
+              return _ArtistGridTile(
+                key: ValueKey(artistName),
+                artistName: artistName,
                 repository: widget.repository,
-                icon: Icons.person_rounded,
-              ),
-              title: artistName,
-              subtitle: '${artistSongs.length} songs, $albumCount albums',
-              onTap: () {
-                setState(() {
-                  _selectedArtist = artistName;
-                  _artistSongs = null;
-                });
-                _reload();
-              },
-            );
-          },
+                onOpen: () {
+                  setState(() {
+                    _selectedArtist = artistName;
+                    _artistSongs = null;
+                  });
+                  _reload();
+                },
+              );
+            },
+          ),
         );
       },
     );
@@ -1309,6 +1495,136 @@ class _MusicViewState extends State<MusicView> {
           Expanded(child: _buildSongTableView(songs)),
         ],
       ),
+    );
+  }
+}
+
+class _AlbumGridTile extends StatefulWidget {
+  const _AlbumGridTile({
+    super.key,
+    required this.albumName,
+    required this.repository,
+    required this.previewCache,
+    required this.onOpen,
+    required this.onPlay,
+  });
+
+  final String albumName;
+  final MediaLibraryRepository repository;
+  final Map<String, MediaItemRecord?> previewCache;
+  final VoidCallback onOpen;
+  final Future<void> Function() onPlay;
+
+  @override
+  State<_AlbumGridTile> createState() => _AlbumGridTileState();
+}
+
+class _AlbumGridTileState extends State<_AlbumGridTile> {
+  MediaItemRecord? _preview;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.previewCache.containsKey(widget.albumName)) {
+      _preview = widget.previewCache[widget.albumName];
+    } else {
+      unawaited(_loadPreview());
+    }
+  }
+
+  Future<void> _loadPreview() async {
+    try {
+      final items = await widget.repository.queryMedia(
+        kind: MediaKind.audio,
+        album: widget.albumName,
+        limit: 1,
+      );
+      final preview = items.isEmpty ? null : items.first;
+      widget.previewCache[widget.albumName] = preview;
+      if (mounted) setState(() => _preview = preview);
+    } catch (_) {
+      widget.previewCache[widget.albumName] = null;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final preview = _preview;
+    final subtitle =
+        preview?.metadata.effectiveAlbumArtist ?? preview?.artist ?? '';
+    return MediaTile(
+      artwork: LibraryArtwork(
+        path: preview?.metadata.artworkUri,
+        mediaPath: preview?.path,
+        repository: widget.repository,
+      ),
+      title: widget.albumName,
+      subtitle: subtitle,
+      onTap: widget.onOpen,
+      overlay: FilledButton.tonal(
+        onPressed: () => unawaited(widget.onPlay()),
+        style: FilledButton.styleFrom(
+          padding: EdgeInsets.zero,
+          minimumSize: const Size(40, 40),
+        ),
+        child: const Icon(Icons.play_arrow_rounded),
+      ),
+    );
+  }
+}
+
+class _ArtistGridTile extends StatefulWidget {
+  const _ArtistGridTile({
+    super.key,
+    required this.artistName,
+    required this.repository,
+    required this.onOpen,
+  });
+
+  final String artistName;
+  final MediaLibraryRepository repository;
+  final VoidCallback onOpen;
+
+  @override
+  State<_ArtistGridTile> createState() => _ArtistGridTileState();
+}
+
+class _ArtistGridTileState extends State<_ArtistGridTile> {
+  MediaItemRecord? _preview;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadPreview());
+  }
+
+  Future<void> _loadPreview() async {
+    try {
+      final items = await widget.repository.queryMedia(
+        kind: MediaKind.audio,
+        artist: widget.artistName,
+        limit: 1,
+      );
+      if (!mounted) return;
+      setState(() => _preview = items.isEmpty ? null : items.first);
+    } catch (_) {
+      if (mounted) setState(() => _preview = null);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final preview = _preview;
+    return MediaTile(
+      artwork: LibraryArtwork(
+        path: preview?.metadata.artworkUri,
+        mediaPath: preview?.path,
+        repository: widget.repository,
+        icon: Icons.person_rounded,
+      ),
+      title: widget.artistName,
+      subtitle: preview == null ? '' : preview.album,
+      onTap: widget.onOpen,
     );
   }
 }

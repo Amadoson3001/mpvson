@@ -58,6 +58,7 @@ class _NowPlayingViewState extends State<NowPlayingView> {
   int _metadataGeneration = 0;
   int _artworkGeneration = 0;
   bool _sideQueueHidden = false;
+  Timer? _repositoryRefreshThrottle;
 
   @override
   void initState() {
@@ -88,6 +89,7 @@ class _NowPlayingViewState extends State<NowPlayingView> {
   void dispose() {
     _metadataGeneration++;
     _artworkGeneration++;
+    _repositoryRefreshThrottle?.cancel();
     widget.controller.removeListener(_onControllerChanged);
     widget.repository?.removeListener(_onRepositoryChanged);
     super.dispose();
@@ -106,7 +108,11 @@ class _NowPlayingViewState extends State<NowPlayingView> {
   }
 
   void _onRepositoryChanged() {
-    _syncMetadata();
+    if (_repositoryRefreshThrottle?.isActive ?? false) return;
+    _repositoryRefreshThrottle = Timer(const Duration(milliseconds: 200), () {
+      _repositoryRefreshThrottle = null;
+      _syncMetadata();
+    });
   }
 
   Future<void> _syncMetadata() async {

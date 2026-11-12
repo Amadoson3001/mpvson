@@ -2159,6 +2159,10 @@ void _batchUpsertPaths(Database db, List<String> paths) {
         artist = COALESCE(media.artist, excluded.artist),
         is_available = 1,
         is_in_library = 1
+      WHERE media.path != excluded.path
+         OR (media.artist IS NULL AND excluded.artist IS NOT NULL)
+         OR media.is_available != 1
+         OR COALESCE(media.is_in_library, 1) != 1
     ''');
     try {
       for (final rawPath in paths) {
@@ -2360,6 +2364,7 @@ List<Map<String, Object?>> _queryMediaRows(
       break;
     case 'last_played_at':
     case 'lastPlayedAt':
+      sql.write(' AND media.last_played_at IS NOT NULL');
       sql.write(' ORDER BY media.last_played_at $dir');
       break;
     case 'play_count':

@@ -369,7 +369,8 @@ class MediaScannerService {
         ),
       );
 
-      final allDiscoveredFiles = <String>[];
+      var enriching = false;
+      var totalToEnrich = 0;
 
       var remaining = List<String>.of(roots);
       while (remaining.isNotEmpty) {
@@ -458,7 +459,25 @@ class MediaScannerService {
             if (!_explicitFolders.contains(root)) {
               continue;
             }
-            allDiscoveredFiles.addAll(folderDiscovered);
+            if (!enriching) {
+              enriching = true;
+              totalToEnrich = folderDiscovered.length;
+              _updateStatus(
+                _status.copyWith(
+                  phase: ScanPhase.enriching,
+                  totalToEnrich: totalToEnrich,
+                  enrichedCount: 0,
+                ),
+              );
+            } else {
+              totalToEnrich += folderDiscovered.length;
+              _updateStatus(_status.copyWith(totalToEnrich: totalToEnrich));
+            }
+            await _enrichFiles(
+              folderDiscovered,
+              shouldContinue: _isPathInRegisteredFolder,
+              skipUnchanged: true,
+            );
           }
 
           if (_isCancelled || _isDisposed) {
@@ -501,22 +520,6 @@ class MediaScannerService {
       if (_isCancelled || _isDisposed) {
         _updateStatus(_status.copyWith(phase: ScanPhase.idle));
         return;
-      }
-
-      // Enrich discovered files in background using MediaProbeService through a bounded queue
-      if (allDiscoveredFiles.isNotEmpty) {
-        _updateStatus(
-          _status.copyWith(
-            phase: ScanPhase.enriching,
-            totalToEnrich: allDiscoveredFiles.length,
-            enrichedCount: 0,
-          ),
-        );
-        await _enrichFiles(
-          allDiscoveredFiles,
-          shouldContinue: _isPathInRegisteredFolder,
-          skipUnchanged: true,
-        );
       }
 
       _updateStatus(

@@ -533,6 +533,9 @@ class PlayerController extends ChangeNotifier {
 
   final Random _random = Random();
   final List<MediaEntry> _queue = <MediaEntry>[];
+  final Map<String, MediaEntry> _queueEntryById = <String, MediaEntry>{};
+  final Map<String, int> _queueIndexById = <String, int>{};
+  final Map<String, int> _recentIndexById = <String, int>{};
   final List<MediaEntry> _recent = <MediaEntry>[];
   StreamSubscription<PlaybackSnapshot>? _stateSubscription;
   Timer? _saveTimer;
@@ -897,6 +900,7 @@ class PlayerController extends ChangeNotifier {
             ..clear()
             ..addAll(_canonicalizeRecent(scrubbed.recent));
           _unmodifiableRecent = List<MediaEntry>.unmodifiable(_recent);
+          _rebuildRecentEntryIndices();
         }
         if (_repeatPreferenceRevision == repeatRevisionAtStart) {
           _repeatMode = scrubbed.repeatMode;
@@ -1064,7 +1068,7 @@ class PlayerController extends ChangeNotifier {
     if (checkpoint.revision < sessionRevision) return;
     final id = checkpoint.entryId!;
     var applied = false;
-    final queueIndex = _queue.indexWhere((entry) => entry.id == id);
+    final queueIndex = _queueIndexById[id] ?? -1;
     if (queueIndex >= 0) {
       _queue[queueIndex] = _queue[queueIndex].copyWith(
         position: checkpoint.position,
@@ -1074,7 +1078,7 @@ class PlayerController extends ChangeNotifier {
       );
       applied = true;
     }
-    final recentIndex = _recent.indexWhere((entry) => entry.id == id);
+    final recentIndex = _recentIndexById[id] ?? -1;
     if (recentIndex >= 0) {
       _recent[recentIndex] = _recent[recentIndex].copyWith(
         position: checkpoint.position,
@@ -1822,6 +1826,8 @@ class PlayerController extends ChangeNotifier {
     _cancelPendingOpen(reason: 'queue cleared');
     _markSourceDisplaced();
     _queue.clear();
+    _queueEntryById.clear();
+    _queueIndexById.clear();
     _navigationHistory.clear();
     _navigationCursor = -1;
     _pendingNavigationEntryId = null;
@@ -3233,9 +3239,7 @@ class PlayerController extends ChangeNotifier {
 
   void _syncCurrentProgress() {
     if (_engineEntryId == null) return;
-    final progressIndex = _queue.indexWhere(
-      (entry) => entry.id == _engineEntryId,
-    );
+    final progressIndex = _queueIndexById[_engineEntryId!] ?? -1;
     if (progressIndex < 0 || progressIndex >= _queue.length) return;
     final entry = _queue[progressIndex];
     var position = _playbackState.position;
@@ -3267,11 +3271,11 @@ class PlayerController extends ChangeNotifier {
       return;
     }
     _queue[index] = updated;
-    final recentIndex = _recent.indexWhere(
-      (item) =>
-          MediaEntry.canonicalSource(item.path) ==
-          MediaEntry.canonicalSource(updated.path),
-    );
+    _queueEntryById[updated.id] = updated;
+    final recentIndex =
+        _recentIndexById[updated.id] ??
+        _recentIndexById[MediaEntry.canonicalSource(updated.path)] ??
+        -1;
     if (recentIndex >= 0) {
       _recent[recentIndex] = _recent[recentIndex].copyWith(
         position: updated.position,
@@ -3309,6 +3313,7 @@ class PlayerController extends ChangeNotifier {
       _recent.removeRange(_maximumRecentEntries, _recent.length);
     }
     _unmodifiableRecent = List<MediaEntry>.unmodifiable(_recent);
+    _rebuildRecentEntryIndices();
   }
 
   /// Removes an entry from recent history by [entry].
@@ -3327,6 +3332,7 @@ class PlayerController extends ChangeNotifier {
     if (index < 0) return null;
     final removed = _recent.removeAt(index);
     _unmodifiableRecent = List<MediaEntry>.unmodifiable(_recent);
+    _rebuildRecentEntryIndices();
     _scheduleSave();
     _notifyIfOpen();
     return (index, removed);
@@ -3346,6 +3352,7 @@ class PlayerController extends ChangeNotifier {
     if (index < 0) return null;
     final removed = _recent.removeAt(index);
     _unmodifiableRecent = List<MediaEntry>.unmodifiable(_recent);
+    _rebuildRecentEntryIndices();
     _scheduleSave();
     _notifyIfOpen();
     return (index, removed);
@@ -3363,6 +3370,7 @@ class PlayerController extends ChangeNotifier {
       _recent.removeRange(_maximumRecentEntries, _recent.length);
     }
     _unmodifiableRecent = List<MediaEntry>.unmodifiable(_recent);
+    _rebuildRecentEntryIndices();
     _scheduleSave();
     _notifyIfOpen();
   }
@@ -3372,6 +3380,7 @@ class PlayerController extends ChangeNotifier {
     if (!_acceptsCommands || _recent.isEmpty) return const <MediaEntry>[];
     final cleared = List<MediaEntry>.of(_recent);
     _recent.clear();
+    _recentIndexById.clear();
     _unmodifiableRecent = const <MediaEntry>[];
     _scheduleSave();
     _notifyIfOpen();
@@ -3385,6 +3394,7 @@ class PlayerController extends ChangeNotifier {
       ..clear()
       ..addAll(_canonicalizeRecent(entries));
     _unmodifiableRecent = List<MediaEntry>.unmodifiable(_recent);
+    _rebuildRecentEntryIndices();
     _scheduleSave();
     _notifyIfOpen();
   }
@@ -3400,12 +3410,7 @@ class PlayerController extends ChangeNotifier {
     return result;
   }
 
-  MediaEntry? _entryById(String id) {
-    for (final entry in _queue) {
-      if (entry.id == id) return entry;
-    }
-    return null;
-  }
+  MediaEntry? _entryById(String id) => _queueEntryById[id];
 
   String _sourceForEntry(String id) => _entryById(id)?.path ?? '';
 
@@ -3432,7 +3437,25 @@ class PlayerController extends ChangeNotifier {
     _updateQueueSnapshotEntries();
   }
 
+  void _rebuildRecentEntryIndices() {
+    _recentIndexById
+      ..clear()
+      ..addEntries(
+        _recent.indexed.map((pair) => MapEntry(pair.$2.id, pair.$1)),
+      );
+    for (var i = 0; i < _recent.length; i++) {
+      final canonical = MediaEntry.canonicalSource(_recent[i].path);
+      _recentIndexById.putIfAbsent(canonical, () => i);
+    }
+  }
+
   void _updateQueueSnapshotEntries() {
+    _queueEntryById
+      ..clear()
+      ..addEntries(_queue.map((entry) => MapEntry(entry.id, entry)));
+    _queueIndexById
+      ..clear()
+      ..addEntries(_queue.indexed.map((pair) => MapEntry(pair.$2.id, pair.$1)));
     final currentEntry = _currentIndex >= 0 && _currentIndex < _queue.length
         ? _queue[_currentIndex]
         : null;

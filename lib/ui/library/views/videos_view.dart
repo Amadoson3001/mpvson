@@ -13,6 +13,8 @@ import '../../core/toast/app_toast.dart';
 import '../../core/components/app_popup_menu_item.dart';
 import '../../core/components/media_row.dart';
 import '../../core/components/empty_state.dart';
+import '../library_browse_constants.dart';
+import '../paged_media_loader.dart';
 import '../widgets/add_to_playlist_dialog.dart';
 
 enum VideoViewMode { grid, list }
@@ -45,6 +47,10 @@ class _VideosViewState extends State<VideosView> {
   String _sortBy = 'addedAt';
   bool _ascending = false;
   List<MediaItemRecord>? _videos;
+  int _browseOffset = 0;
+  bool _hasMoreBrowse = false;
+  bool _loadingMoreBrowse = false;
+  final ScrollController _browseScrollController = ScrollController();
   bool _isLoading = false;
   Object? _error;
   Future<void>? _reloadFuture;
@@ -55,8 +61,44 @@ class _VideosViewState extends State<VideosView> {
   @override
   void initState() {
     super.initState();
+    _browseScrollController.addListener(_onBrowseScroll);
     widget.repository.addListener(_onRepoChanged);
     _reload();
+  }
+
+  void _onBrowseScroll() {
+    if (!_browseScrollController.hasClients) return;
+    final position = _browseScrollController.position;
+    if (position.pixels >=
+        position.maxScrollExtent - kLibraryBrowseScrollPrefetch) {
+      unawaited(_loadMoreBrowse());
+    }
+  }
+
+  Future<void> _loadMoreBrowse() async {
+    if (!_hasMoreBrowse || _loadingMoreBrowse || _isLoading) return;
+    if (mounted) setState(() => _loadingMoreBrowse = true);
+    try {
+      final batch = await fetchMediaPage(
+        widget.repository,
+        offset: _browseOffset,
+        kind: MediaKind.video,
+        searchQuery: widget.searchQuery,
+        sortBy: _sortBy,
+        ascending: _ascending,
+      );
+      if (!mounted) return;
+      setState(() {
+        _videos ??= <MediaItemRecord>[];
+        _videos!.addAll(batch.items);
+        _browseOffset += batch.items.length;
+        _hasMoreBrowse = batch.hasMore;
+      });
+    } catch (error) {
+      debugPrint('Videos view could not load more: $error');
+    } finally {
+      if (mounted) setState(() => _loadingMoreBrowse = false);
+    }
   }
 
   @override
@@ -77,6 +119,8 @@ class _VideosViewState extends State<VideosView> {
 
   @override
   void dispose() {
+    _browseScrollController.removeListener(_onBrowseScroll);
+    _browseScrollController.dispose();
     _reloadThrottle?.cancel();
     _searchReload?.cancel();
     widget.repository.removeListener(_onRepoChanged);
@@ -114,7 +158,11 @@ class _VideosViewState extends State<VideosView> {
     try {
       do {
         _reloadAgain = false;
-        final videos = await widget.repository.queryMedia(
+        _browseOffset = 0;
+        _hasMoreBrowse = false;
+        final batch = await fetchMediaPage(
+          widget.repository,
+          offset: 0,
           kind: MediaKind.video,
           searchQuery: widget.searchQuery,
           sortBy: _sortBy,
@@ -123,7 +171,9 @@ class _VideosViewState extends State<VideosView> {
         if (!mounted) return;
         if (_reloadAgain) continue;
         setState(() {
-          _videos = videos;
+          _videos = List<MediaItemRecord>.from(batch.items);
+          _browseOffset = batch.items.length;
+          _hasMoreBrowse = batch.hasMore;
           _error = null;
         });
       } while (_reloadAgain && mounted);
@@ -338,7 +388,9 @@ class _VideosViewState extends State<VideosView> {
                 .clamp(1, 12);
         final width =
             (constraints.maxWidth - 48 - (columns - 1) * 20) / columns;
+        final itemCount = videos.length + (_loadingMoreBrowse ? 1 : 0);
         return GridView.builder(
+          controller: _browseScrollController,
           addAutomaticKeepAlives: false,
           addRepaintBoundaries: true,
           padding: const EdgeInsets.all(AppSpace.lg),
@@ -348,8 +400,21 @@ class _VideosViewState extends State<VideosView> {
             crossAxisSpacing: 20,
             mainAxisExtent: width * 9 / 16 + 68,
           ),
-          itemCount: videos.length,
+          itemCount: itemCount,
           itemBuilder: (context, index) {
+            if (index >= videos.length) {
+              return Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(AppSpace.lg),
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                      Theme.of(context).colorScheme.primary,
+                    ),
+                  ),
+                ),
+              );
+            }
             final video = videos[index];
             final isUnavailable = !video.isAvailable;
             return _VideoGridCard(
@@ -375,17 +440,30 @@ class _VideosViewState extends State<VideosView> {
 
   Widget _buildVideoList(List<MediaItemRecord> videos) {
     final accent = Theme.of(context).colorScheme.primary;
+    final footerIndex = videos.length + 1;
     return ListView.separated(
+      controller: _browseScrollController,
       addAutomaticKeepAlives: false,
       padding: const EdgeInsets.symmetric(
         horizontal: AppSpace.lg,
         vertical: AppSpace.md,
       ),
-      itemCount: videos.length + 1,
+      itemCount: footerIndex + (_loadingMoreBrowse ? 1 : 0),
       separatorBuilder: (_, index) => index == 0
           ? Divider(height: 16, thickness: 1, color: context.palette.border)
           : Divider(height: 1, color: context.palette.surface),
       itemBuilder: (context, index) {
+        if (_loadingMoreBrowse && index == footerIndex) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: AppSpace.lg),
+            child: Center(
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                valueColor: AlwaysStoppedAnimation<Color>(accent),
+              ),
+            ),
+          );
+        }
         if (index == 0) {
           return Padding(
             padding: const EdgeInsets.symmetric(

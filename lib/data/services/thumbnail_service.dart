@@ -299,6 +299,7 @@ class MediaKitThumbnailService implements ThumbnailService, ThumbnailPeeker {
   bool _pumpingExtractionQueue = false;
   bool _pumpingNormalizerQueue = false;
   bool _pumpingDiskQueue = false;
+  Completer<void>? _diskQueueDrainCompleter;
   bool _suspended = false;
   ThumbnailCancellation? _currentExtractionCancellation;
   Completer<void>? _resumeCompleter;
@@ -1225,8 +1226,18 @@ class MediaKitThumbnailService implements ThumbnailService, ThumbnailPeeker {
         }
       } finally {
         _pumpingDiskQueue = false;
+        _completeDiskQueueDrainIfIdle();
       }
     }());
+  }
+
+  void _completeDiskQueueDrainIfIdle() {
+    if (_pumpingDiskQueue || _diskQueue.isNotEmpty) return;
+    final completer = _diskQueueDrainCompleter;
+    if (completer != null && !completer.isCompleted) {
+      completer.complete();
+    }
+    _diskQueueDrainCompleter = null;
   }
 
   Future<void> _executeDiskWrite(_DiskWriteTask task) async {
@@ -1635,8 +1646,12 @@ class MediaKitThumbnailService implements ThumbnailService, ThumbnailPeeker {
         task.cancel();
       }
       _pumpDiskQueue();
-      while (_pumpingDiskQueue || _diskQueue.isNotEmpty) {
-        await Future<void>.delayed(const Duration(milliseconds: 10));
+      if (_pumpingDiskQueue || _diskQueue.isNotEmpty) {
+        final drained = _diskQueueDrainCompleter ??= Completer<void>();
+        await drained.future.timeout(
+          const Duration(seconds: 8),
+          onTimeout: () {},
+        );
       }
       await _extractor.dispose();
       while (_loadOperations.isNotEmpty) {

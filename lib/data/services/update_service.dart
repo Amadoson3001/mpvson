@@ -280,6 +280,14 @@ class UpdateService extends ChangeNotifier {
 
       resetIdleTimer();
 
+      var sinkBackpressure = false;
+      void resumeAfterSink() {
+        sinkBackpressure = false;
+        if (!_disposed) {
+          subscription?.resume();
+        }
+      }
+
       subscription = response.stream.listen(
         (chunk) {
           if (_disposed) {
@@ -318,6 +326,15 @@ class UpdateService extends ChangeNotifier {
           hashing.add(chunk);
           if (contentLength != null && contentLength > 0) {
             _setProgress(receivedBytes / contentLength);
+          }
+          final sink = output;
+          if (!sinkBackpressure && sink != null) {
+            sinkBackpressure = true;
+            subscription!.pause();
+            sink
+                .flush()
+                .whenComplete(resumeAfterSink)
+                .catchError((_) => resumeAfterSink());
           }
         },
         onError: (Object error, StackTrace stackTrace) {

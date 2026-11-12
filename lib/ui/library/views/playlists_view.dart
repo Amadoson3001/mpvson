@@ -17,6 +17,8 @@ import '../../core/components/media_row.dart';
 import '../widgets/library_artwork.dart';
 import '../../core/components/empty_state.dart';
 import '../widgets/playlist_create_dialog.dart';
+import '../library_browse_constants.dart';
+import '../paged_media_loader.dart';
 
 /// Playlists view featuring playlist management, detail tracklist view,
 /// drag-and-drop reordering, and playback actions.
@@ -1293,47 +1295,112 @@ class _AddFromLibraryDialog extends StatefulWidget {
 
 class _AddFromLibraryDialogState extends State<_AddFromLibraryDialog> {
   final Set<String> _selected = <String>{};
-  List<MediaItemRecord>? _allItems;
+  final List<MediaItemRecord> _items = <MediaItemRecord>[];
+  final ScrollController _scrollController = ScrollController();
+  Set<String> _existingIds = <String>{};
+  int _browseOffset = 0;
+  bool _hasMore = true;
   bool _loading = true;
-  String _search = '';
+  bool _loadingMore = false;
+  String _activeSearch = '';
+  final TextEditingController _searchController = TextEditingController();
+  Timer? _searchDebounce;
 
   @override
   void initState() {
     super.initState();
-    _load();
+    _scrollController.addListener(_onScroll);
+    unawaited(_bootstrap());
   }
 
-  Future<void> _load() async {
+  @override
+  void dispose() {
+    _searchDebounce?.cancel();
+    _searchController.dispose();
+    _scrollController.removeListener(_onScroll);
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _onScroll() {
+    if (!_scrollController.hasClients || _loadingMore || !_hasMore) return;
+    final position = _scrollController.position;
+    if (position.maxScrollExtent - position.pixels <
+        kLibraryBrowseScrollPrefetch) {
+      unawaited(_loadMore());
+    }
+  }
+
+  Future<void> _bootstrap() async {
     try {
-      final items = await widget.repository.queryMedia(
-        sortBy: 'title',
-        ascending: true,
-      );
       final currentEntries = await widget.repository.getPlaylistEntries(
         widget.playlist.id,
       );
-      final existingIds = currentEntries.map((e) => e.mediaId).toSet();
-
-      if (mounted) {
-        setState(() {
-          _allItems = items.where((i) => !existingIds.contains(i.id)).toList();
-          _loading = false;
-        });
-      }
+      _existingIds = currentEntries.map((e) => e.mediaId).toSet();
+      await _reload(reset: true);
     } catch (_) {
       if (mounted) setState(() => _loading = false);
     }
   }
 
+  Future<void> _reload({required bool reset}) async {
+    if (reset) {
+      if (mounted) {
+        setState(() {
+          _loading = true;
+          _browseOffset = 0;
+          _hasMore = true;
+          _items.clear();
+        });
+      }
+    }
+    try {
+      final batch = await fetchMediaPage(
+        widget.repository,
+        offset: _browseOffset,
+        searchQuery: _activeSearch.isEmpty ? null : _activeSearch,
+        sortBy: 'title',
+      );
+      final page = batch.items
+          .where((item) => !_existingIds.contains(item.id))
+          .toList();
+      if (!mounted) return;
+      setState(() {
+        _items.addAll(page);
+        _browseOffset += batch.items.length;
+        _hasMore = batch.hasMore;
+        _loading = false;
+        _loadingMore = false;
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _loadingMore = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _loadMore() async {
+    if (_loadingMore || !_hasMore || _loading) return;
+    setState(() => _loadingMore = true);
+    await _reload(reset: false);
+  }
+
+  void _onSearchChanged(String value) {
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 200), () {
+      if (!mounted) return;
+      final trimmed = value.trim();
+      if (trimmed == _activeSearch) return;
+      _activeSearch = trimmed;
+      unawaited(_reload(reset: true));
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
-    final filtered = (_allItems ?? const <MediaItemRecord>[]).where((item) {
-      if (_search.isEmpty) return true;
-      final q = _search.toLowerCase();
-      return item.title.toLowerCase().contains(q) ||
-          item.artist.toLowerCase().contains(q);
-    }).toList();
-
     return AppDialog(
       maxWidth: 540,
       title: const Text('Add from library'),
@@ -1343,12 +1410,13 @@ class _AddFromLibraryDialogState extends State<_AddFromLibraryDialog> {
         child: Column(
           children: [
             TextField(
+              controller: _searchController,
               decoration: const InputDecoration(
                 hintText: 'Search tracks...',
                 prefixIcon: Icon(Icons.search_rounded, size: 20),
                 isDense: true,
               ),
-              onChanged: (val) => setState(() => _search = val.trim()),
+              onChanged: _onSearchChanged,
             ),
             const SizedBox(height: 12),
             Expanded(
@@ -1356,24 +1424,28 @@ class _AddFromLibraryDialogState extends State<_AddFromLibraryDialog> {
                   ? const Center(
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : (_allItems?.isEmpty ?? true)
+                  : _items.isEmpty
                   ? Center(
                       child: Text(
-                        'All library tracks are already in this playlist.',
-                        style: context.palette.metadata,
-                      ),
-                    )
-                  : filtered.isEmpty
-                  ? Center(
-                      child: Text(
-                        'No matching tracks found.',
+                        _activeSearch.isNotEmpty
+                            ? 'No matching tracks found.'
+                            : 'All library tracks are already in this playlist.',
                         style: context.palette.metadata,
                       ),
                     )
                   : ListView.builder(
-                      itemCount: filtered.length,
+                      controller: _scrollController,
+                      itemCount: _items.length + (_loadingMore ? 1 : 0),
                       itemBuilder: (context, index) {
-                        final item = filtered[index];
+                        if (index >= _items.length) {
+                          return const Padding(
+                            padding: EdgeInsets.all(AppSpace.md),
+                            child: Center(
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          );
+                        }
+                        final item = _items[index];
                         final isChecked = _selected.contains(item.id);
                         return CheckboxListTile(
                           value: isChecked,
