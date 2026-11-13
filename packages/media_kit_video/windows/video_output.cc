@@ -51,6 +51,12 @@ VideoOutput::VideoOutput(int64_t handle,
   auto future = thread_pool_ref_->Post([&]() {
     mpv_set_option_string(handle_, "video-sync", "audio");
     mpv_set_option_string(handle_, "interpolation", "no");
+    // ANGLE is OpenGL ES. libmpv's desktop-GL path is slower and can fall
+    // back to software upload of hardware-decoded frames.
+    mpv_set_option_string(handle_, "opengl-es", "yes");
+    mpv_set_option_string(handle_, "framedrop", "vo");
+    mpv_set_option_string(handle_, "vd-lavc-dr", "yes");
+    mpv_set_option_string(handle_, "hwdec-extra-frames", "4");
     // First try to initialize video playback with hardware acceleration &
     // |ANGLESurfaceManager|, use S/W API as fallback.
     auto is_hardware_acceleration_enabled = false;

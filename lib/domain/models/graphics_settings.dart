@@ -40,7 +40,7 @@ extension VideoMemoryModeLabel on VideoMemoryMode {
 @immutable
 class GraphicsSettings {
   const GraphicsSettings({
-    this.preferredGpu = GpuPreferenceMode.systemDefault,
+    this.preferredGpu = GpuPreferenceMode.highPerformance,
     this.videoMemoryMode = VideoMemoryMode.zeroCopy,
     this.trimOnMinimize = true,
     this.limitDemuxerCache = true,
@@ -79,8 +79,12 @@ class GraphicsSettings {
     if (value is! Map) return defaults;
     final json = Map<Object?, Object?>.from(value);
     return GraphicsSettings(
-      preferredGpu: _parseGpuPreference(json['preferredGpu']),
-      videoMemoryMode: _parseVideoMemoryMode(json['videoMemoryMode']),
+      preferredGpu: json.containsKey('preferredGpu')
+          ? _parseGpuPreference(json['preferredGpu'])
+          : defaults.preferredGpu,
+      videoMemoryMode: json.containsKey('videoMemoryMode')
+          ? _parseVideoMemoryMode(json['videoMemoryMode'])
+          : defaults.videoMemoryMode,
       trimOnMinimize: json['trimOnMinimize'] != false,
       limitDemuxerCache: json['limitDemuxerCache'] != false,
     );
@@ -130,16 +134,31 @@ class GraphicsSettings {
 }
 
 /// Resolves mpv's `hwdec` for the selected memory mode.
+///
+/// Windows rendering goes through ANGLE OpenGL ES, which cannot import
+/// D3D11VA zero-copy surfaces. `d3d11va-copy` is the working hardware
+/// decoder for that path. Linux EGL can still use `auto` interop.
 String resolveHwdec({
   required bool preferHardwareDecoding,
   required VideoMemoryMode mode,
   required bool isWindows,
 }) {
   if (!preferHardwareDecoding) return 'no';
-  if (mode == VideoMemoryMode.ramStaged) {
-    return isWindows ? 'd3d11va-copy' : 'auto-copy';
-  }
-  return isWindows ? 'auto-safe' : 'auto';
+  if (isWindows) return 'd3d11va-copy';
+  if (mode == VideoMemoryMode.ramStaged) return 'auto-copy';
+  return 'auto';
+}
+
+/// Always-on engine properties that keep hardware decode and GLES on the
+/// libmpv render path. Quality presets layer picture controls on top.
+Map<String, String> enginePlaybackProperties({required bool openGlEs}) {
+  return <String, String>{
+    'hwdec-codecs': 'h264,hevc,mpeg2video,vp9,av1,vp8,mpeg4,vc1',
+    'vd-lavc-dr': 'yes',
+    'framedrop': 'vo',
+    'hwdec-extra-frames': '4',
+    if (openGlEs) 'opengl-es': 'yes',
+  };
 }
 
 const int _megabyte = 1024 * 1024;

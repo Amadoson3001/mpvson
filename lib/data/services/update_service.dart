@@ -2,9 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
-import 'dart:typed_data';
 
-import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
@@ -14,6 +12,8 @@ import '../../domain/updates/release_info.dart';
 import '../../domain/updates/semantic_version.dart';
 import '../../domain/updates/update_manifest.dart';
 import '../../domain/updates/update_record.dart';
+import '../../utils/file_utils.dart';
+import 'download_manager.dart';
 import 'http_response_length.dart';
 
 /// Checks for complete desktop application bundles and verifies them before
@@ -45,7 +45,11 @@ class UpdateService extends ChangeNotifier {
        _requestTimeout = requestTimeoutForTesting,
        _maxDownloadDuration = maxDownloadDurationForTesting,
        _maxManifestBytes = maxManifestBytesForTesting,
-       _maxDownloadBytes = maxDownloadBytesForTesting {
+       _maxDownloadBytes = maxDownloadBytesForTesting,
+       _downloadManager = DownloadManager(
+         idleTimeout: requestTimeoutForTesting,
+         maxDuration: maxDownloadDurationForTesting,
+       ) {
     _status = configured ? 'idle' : 'unconfigured';
   }
 
@@ -65,8 +69,10 @@ class UpdateService extends ChangeNotifier {
   final Future<void> Function(IOSink sink)? _flushDownloadSink;
   final Duration _requestTimeout;
   final Duration _maxDownloadDuration;
+  Duration get maxDownloadDuration => _maxDownloadDuration;
   final int _maxManifestBytes;
   final int _maxDownloadBytes;
+  final DownloadManager _downloadManager;
   final Random _random = Random.secure();
 
   final Set<Completer<void>> _activeAbortCompleters = {};
@@ -194,8 +200,6 @@ class UpdateService extends ChangeNotifier {
     File? temporaryFile;
     File? verifiedArchive;
     var temporaryFileCreated = false;
-    IOSink? output;
-    ByteConversionSink? hashInput;
 
     final abortCompleter = Completer<void>();
     _activeAbortCompleters.add(abortCompleter);
@@ -251,154 +255,45 @@ class UpdateService extends ChangeNotifier {
       temporaryFile = partialFile;
       await partialFile.create(exclusive: true);
       temporaryFileCreated = true;
-      output = partialFile.openWrite();
-
-      final hashSink = _DigestSink();
-      final hashing = sha256.startChunkedConversion(hashSink);
-      hashInput = hashing;
-      var receivedBytes = 0;
-      final stopwatch = Stopwatch()..start();
-
-      final streamCompleter = Completer<void>();
-      StreamSubscription<List<int>>? subscription;
-      Timer? idleTimer;
-
-      void resetIdleTimer() {
-        idleTimer?.cancel();
-        idleTimer = Timer(_requestTimeout, () {
-          if (!abortCompleter.isCompleted) {
-            abortCompleter.complete();
-          }
-          subscription?.cancel();
-          if (!streamCompleter.isCompleted) {
-            streamCompleter.completeError(
-              TimeoutException(
-                'Update download stream timed out.',
-                const Duration(seconds: 20),
-              ),
-            );
-          }
-        });
-      }
-
-      resetIdleTimer();
-
-      var sinkBackpressure = false;
-      void resumeAfterSink() {
-        sinkBackpressure = false;
-        if (_disposed ||
-            streamCompleter.isCompleted ||
-            abortCompleter.isCompleted) {
-          return;
-        }
-        resetIdleTimer();
-        subscription?.resume();
-      }
-
-      subscription = response.stream.listen(
-        (chunk) {
-          if (_disposed) {
-            idleTimer?.cancel();
-            subscription?.cancel();
-            if (!streamCompleter.isCompleted) {
-              streamCompleter.completeError(const _DisposedException());
-            }
-            return;
-          }
-          resetIdleTimer();
-          if (stopwatch.elapsed > _maxDownloadDuration) {
-            idleTimer?.cancel();
-            subscription?.cancel();
-            if (!streamCompleter.isCompleted) {
-              streamCompleter.completeError(
-                const _UpdateException(
-                  'Update download exceeded the time limit.',
-                ),
-              );
-            }
-            return;
-          }
-          receivedBytes += chunk.length;
-          if (receivedBytes > _maxDownloadBytes) {
-            idleTimer?.cancel();
-            subscription?.cancel();
-            if (!streamCompleter.isCompleted) {
-              streamCompleter.completeError(
-                const _UpdateException('Update bundle exceeds the size limit.'),
-              );
-            }
-            return;
-          }
-          output?.add(chunk);
-          hashing.add(chunk);
-          if (contentLength != null && contentLength > 0) {
-            _setProgress(receivedBytes / contentLength);
-          }
-          final sink = output;
-          if (!sinkBackpressure && sink != null) {
-            sinkBackpressure = true;
-            idleTimer?.cancel();
-            idleTimer = null;
-            subscription!.pause();
-            final flushFuture = _flushDownloadSink?.call(sink) ?? sink.flush();
-            flushFuture.catchError((_) {}).whenComplete(resumeAfterSink);
-          }
-        },
-        onError: (Object error, StackTrace stackTrace) {
-          idleTimer?.cancel();
-          if (!streamCompleter.isCompleted) {
-            streamCompleter.completeError(error, stackTrace);
-          }
-        },
-        onDone: () {
-          idleTimer?.cancel();
-          if (!streamCompleter.isCompleted) {
-            streamCompleter.complete();
-          }
-        },
-        cancelOnError: true,
-      );
-
-      _activeSubscriptions.add(subscription);
-      _activeStreamCompleters.add(streamCompleter);
 
       try {
-        await streamCompleter.future;
-      } finally {
-        idleTimer?.cancel();
-        _activeSubscriptions.remove(subscription);
-        _activeStreamCompleters.remove(streamCompleter);
-        await subscription.cancel();
-      }
-
-      hashing.close();
-      hashInput = null;
-      await output.flush();
-      await output.close();
-      output = null;
-
-      if (_disposed) {
-        if (temporaryFileCreated) {
-          try {
-            if (await temporaryFile.exists()) await temporaryFile.delete();
-          } catch (_) {}
-        }
-        return;
-      }
-
-      if (stopwatch.elapsed > _maxDownloadDuration) {
+        await _downloadManager.streamToFile(
+          response.stream,
+          partialFile,
+          abort: abortCompleter,
+          maxBytes: _maxDownloadBytes,
+          expectedBytes: contentLength,
+          expectedSha256: release.sha256,
+          onProgress: (frac, received, total) {
+            if (contentLength != null && contentLength > 0) {
+              _setProgress(frac);
+            }
+          },
+          flushSink: _flushDownloadSink,
+          isDisposed: () => _disposed,
+        );
+      } on DownloadCancelledException {
+        if (_disposed) return;
+        throw const _DisposedException();
+      } on DownloadIdleTimeoutException {
+        throw TimeoutException(
+          'Update download stream timed out.',
+          const Duration(seconds: 20),
+        );
+      } on DownloadDurationExceededException {
         throw const _UpdateException(
           'Update download exceeded the time limit.',
         );
-      }
-      if (contentLength != null && receivedBytes != contentLength) {
+      } on DownloadSizeLimitException {
+        throw const _UpdateException('Update bundle exceeds the size limit.');
+      } on DownloadSizeMismatchException {
         throw const _UpdateException('Update download ended unexpectedly.');
-      }
-      final actualHash = hashSink.value?.toString().toLowerCase();
-      if (actualHash == null || actualHash != release.sha256.toLowerCase()) {
+      } on DownloadHashMismatchException {
         throw const _UpdateException(
           'Update bundle failed its SHA-256 integrity check.',
         );
+      } on DownloadException catch (e) {
+        throw _UpdateException(e.message);
       }
 
       if (_disposed) {
@@ -438,14 +333,6 @@ class UpdateService extends ChangeNotifier {
         downloadPath: finalFile.path,
       );
     } on Object catch (error) {
-      if (output != null) {
-        try {
-          await output.close();
-        } catch (_) {}
-      }
-      try {
-        hashInput?.close();
-      } catch (_) {}
       if (temporaryFile != null && temporaryFileCreated) {
         try {
           if (await temporaryFile.exists()) await temporaryFile.delete();
@@ -493,16 +380,7 @@ class UpdateService extends ChangeNotifier {
       if (opener != null) {
         await opener(path);
       } else {
-        final platform = _platformProvider();
-        if (platform == UpdatePlatform.windows) {
-          await Process.start('explorer.exe', [
-            '/select,$path',
-          ], mode: ProcessStartMode.detached);
-        } else {
-          await Process.start('xdg-open', [
-            p.dirname(path),
-          ], mode: ProcessStartMode.detached);
-        }
+        await showInFolder(path);
       }
       _setState(status: 'ready', error: null);
     } on Object catch (error) {
@@ -599,102 +477,35 @@ class UpdateService extends ChangeNotifier {
       throw const _UpdateException('Update manifest exceeds the size limit.');
     }
 
-    final bytes = BytesBuilder(copy: false);
-    var count = 0;
-    final stopwatch = Stopwatch()..start();
-
-    final streamCompleter = Completer<void>();
-    StreamSubscription<List<int>>? subscription;
-    Timer? idleTimer;
-
-    void resetIdleTimer() {
-      idleTimer?.cancel();
-      idleTimer = Timer(_requestTimeout, () {
-        if (!abortCompleter.isCompleted) {
-          abortCompleter.complete();
-        }
-        subscription?.cancel();
-        if (!streamCompleter.isCompleted) {
-          streamCompleter.completeError(
-            TimeoutException(
-              'Update manifest request timed out.',
-              const Duration(seconds: 20),
-            ),
-          );
-        }
-      });
-    }
-
-    resetIdleTimer();
-
-    subscription = response.stream.listen(
-      (chunk) {
-        if (_disposed) {
-          idleTimer?.cancel();
-          subscription?.cancel();
-          if (!streamCompleter.isCompleted) {
-            streamCompleter.completeError(const _DisposedException());
-          }
-          return;
-        }
-        resetIdleTimer();
-        if (stopwatch.elapsed > _requestTimeout) {
-          idleTimer?.cancel();
-          subscription?.cancel();
-          if (!streamCompleter.isCompleted) {
-            streamCompleter.completeError(
-              const _UpdateException('Update manifest request timed out.'),
-            );
-          }
-          return;
-        }
-        count += chunk.length;
-        if (count > maximumBytes) {
-          idleTimer?.cancel();
-          subscription?.cancel();
-          if (!streamCompleter.isCompleted) {
-            streamCompleter.completeError(
-              const _UpdateException('Update manifest exceeds the size limit.'),
-            );
-          }
-          return;
-        }
-        bytes.add(chunk);
-      },
-      onError: (Object error, StackTrace stackTrace) {
-        idleTimer?.cancel();
-        if (!streamCompleter.isCompleted) {
-          streamCompleter.completeError(error, stackTrace);
-        }
-      },
-      onDone: () {
-        idleTimer?.cancel();
-        if (!streamCompleter.isCompleted) {
-          streamCompleter.complete();
-        }
-      },
-      cancelOnError: true,
-    );
-
-    _activeSubscriptions.add(subscription);
-    _activeStreamCompleters.add(streamCompleter);
-
     try {
-      await streamCompleter.future;
-    } finally {
-      idleTimer?.cancel();
-      _activeSubscriptions.remove(subscription);
-      _activeStreamCompleters.remove(streamCompleter);
-      await subscription.cancel();
-    }
-
-    if (contentLength != null && count != contentLength) {
+      final result = await _downloadManager.streamToBytes(
+        response.stream,
+        abort: abortCompleter,
+        maxBytes: maximumBytes,
+        expectedBytes: contentLength,
+        isDisposed: () => _disposed,
+      );
+      final bytes = result.bytes ?? Uint8List(0);
+      try {
+        return utf8.decode(bytes, allowMalformed: false);
+      } on FormatException {
+        throw const _UpdateException('Update manifest is not valid UTF-8.');
+      }
+    } on DownloadCancelledException {
+      throw const _DisposedException();
+    } on DownloadIdleTimeoutException {
+      throw TimeoutException(
+        'Update manifest request timed out.',
+        const Duration(seconds: 20),
+      );
+    } on DownloadDurationExceededException {
+      throw const _UpdateException('Update manifest request timed out.');
+    } on DownloadSizeLimitException {
+      throw const _UpdateException('Update manifest exceeds the size limit.');
+    } on DownloadSizeMismatchException {
       throw const _UpdateException('Update manifest ended unexpectedly.');
-    }
-    try {
-      return utf8.decode(bytes.takeBytes(), allowMalformed: false);
-    } on FormatException {
-      throw const _UpdateException('Update manifest is not valid UTF-8.');
+    } on DownloadException catch (e) {
+      throw _UpdateException(e.message);
     }
   }
 
@@ -831,16 +642,4 @@ final class _DisposedException implements Exception {
 
   @override
   String toString() => message;
-}
-
-final class _DigestSink implements Sink<Digest> {
-  Digest? value;
-
-  @override
-  void add(Digest data) {
-    value = data;
-  }
-
-  @override
-  void close() {}
 }

@@ -1,10 +1,9 @@
+import 'dart:developer' as developer;
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
-
-/// Runs an external process. Injectable so tests (and embedders) never launch
-/// a real file manager by accident; defaults to [Process.run].
-typedef ProcessRunner =
+/// Runs an external process. Injectable so embedders never launch a real file
+/// manager by accident; defaults to [Process.run].
+typedef ShowInFolderRunner =
     Future<ProcessResult> Function(String executable, List<String> arguments);
 
 /// Reveals the file or directory at [path] in the native platform file manager:
@@ -13,7 +12,10 @@ typedef ProcessRunner =
 /// - Linux: Default file manager showing parent directory (`xdg-open <dir>`).
 ///
 /// Returns `true` if the process was launched successfully, `false` otherwise.
-Future<bool> showInFolder(String path, {ProcessRunner? processRunner}) async {
+Future<bool> showInFolder(
+  String path, {
+  ShowInFolderRunner? processRunner,
+}) async {
   final runner = processRunner ?? Process.run;
   final trimmed = path.trim();
   if (trimmed.isEmpty) return false;
@@ -39,7 +41,7 @@ Future<bool> showInFolder(String path, {ProcessRunner? processRunner}) async {
     }
     return false;
   } catch (error) {
-    debugPrint('showInFolder failed for "$path": $error');
+    developer.log('$error', name: 'showInFolder', error: error);
     return false;
   }
 }

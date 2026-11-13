@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart'
     show defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 
+import '../../../data/services/engine_path_resolver.dart';
 import '../../../data/services/engine_update_service.dart';
 import '../../../data/services/update_service.dart';
 import '../../../domain/updates/engine_release.dart';
@@ -405,17 +406,15 @@ class _EngineTrack extends StatelessWidget {
           _ => updates.configured,
         };
 
-    final cleanLoaded = loadedVersion.trim();
+    final formattedVersion = EnginePathResolver.formatVersion(loadedVersion);
 
     return _ComponentCard(
       icon: Icons.memory_rounded,
       accentColor: color,
       title: 'Playback engine',
-      subtitle: cleanLoaded.isEmpty
+      subtitle: formattedVersion == 'libmpv'
           ? 'libmpv'
-          : cleanLoaded.toLowerCase().startsWith('libmpv')
-          ? 'Loaded: $cleanLoaded'
-          : 'Loaded: libmpv $cleanLoaded',
+          : 'Loaded: $formattedVersion',
       status: status,
       statusColor: color,
       child: Column(

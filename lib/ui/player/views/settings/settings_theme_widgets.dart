@@ -34,32 +34,19 @@ class ThemeModeCard extends StatelessWidget {
         color: Colors.transparent,
         child: InkWell(
           onTap: onTap,
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(AppRadii.artwork),
           child: AnimatedContainer(
             duration: AppMotion.duration(context, AppMotion.quick),
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
               color: selected
                   ? accent.withValues(alpha: 0.08)
-                  : theme.colorScheme.surfaceContainerHighest.withValues(
-                      alpha: 0.22,
-                    ),
-              borderRadius: BorderRadius.circular(14),
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(AppRadii.artwork),
               border: Border.all(
-                color: selected
-                    ? accent
-                    : theme.colorScheme.outlineVariant.withValues(alpha: 0.35),
-                width: selected ? 1.8 : 1,
+                color: selected ? accent : context.palette.border,
+                width: selected ? 1.5 : 1,
               ),
-              boxShadow: selected
-                  ? [
-                      BoxShadow(
-                        color: accent.withValues(alpha: 0.16),
-                        blurRadius: 10,
-                        offset: const Offset(0, 2),
-                      ),
-                    ]
-                  : null,
             ),
             child: Column(
               children: [
@@ -81,16 +68,11 @@ class ThemeModeCard extends StatelessWidget {
                         title,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.bodySmall?.copyWith(
+                        style: context.palette.rowSecondary.copyWith(
                           fontWeight: selected
                               ? FontWeight.w600
                               : FontWeight.w500,
-                          color: selected
-                              ? (theme.brightness == Brightness.dark
-                                    ? Colors.white
-                                    : accent)
-                              : theme.colorScheme.onSurface,
-                          fontSize: 12.5,
+                          color: selected ? accent : context.palette.text,
                         ),
                       ),
                     ),
@@ -392,49 +374,24 @@ class AccentColorChip extends StatelessWidget {
               duration: AppMotion.duration(context, AppMotion.quick),
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
               decoration: BoxDecoration(
-                color: selected && !isOverridden
-                    ? displayColor.withValues(alpha: 0.12)
-                    : Colors.transparent,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: selected && !isOverridden
-                      ? displayColor.withValues(alpha: 0.4)
-                      : Colors.transparent,
-                  width: 1,
-                ),
+                color: Colors.transparent,
+                borderRadius: BorderRadius.circular(AppRadii.control),
               ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Container(
-                    width: 38,
-                    height: 38,
+                    width: 32,
+                    height: 32,
                     decoration: BoxDecoration(
                       color: effectiveColor,
                       shape: BoxShape.circle,
                       border: Border.all(
                         color: selected
                             ? (isDark ? Colors.white : Colors.black87)
-                            : (isDark
-                                  ? Colors.white.withValues(alpha: 0.18)
-                                  : Colors.black.withValues(alpha: 0.12)),
-                        width: selected ? 2.5 : 1,
+                            : context.palette.border,
+                        width: selected ? 2 : 1,
                       ),
-                      boxShadow: selected && !isOverridden
-                          ? [
-                              BoxShadow(
-                                color: displayColor.withValues(alpha: 0.45),
-                                blurRadius: 8,
-                                offset: const Offset(0, 2),
-                              ),
-                            ]
-                          : [
-                              BoxShadow(
-                                color: Colors.black.withValues(alpha: 0.12),
-                                blurRadius: 3,
-                                offset: const Offset(0, 1),
-                              ),
-                            ],
                     ),
                     alignment: Alignment.center,
                     child: selected

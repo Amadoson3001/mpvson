@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 
@@ -9,8 +8,10 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
 import '../../domain/models/media_source.dart';
+import '../../utils/lru_byte_cache.dart';
 import 'diagnostic_log.dart';
 import 'hls_preview_source_resolver.dart';
+import 'native_player_properties.dart';
 
 /// Quality of an extracted seek preview frame.
 enum SeekPreviewQuality {
@@ -94,18 +95,20 @@ class SeekPreviewLRUCache {
     this.maxEntries = 128,
     this.maxBytes = 6 * 1024 * 1024, // 6 MiB tuned bound
     this.pressureThreshold = 0.8,
-  });
+  }) : _cache = LruByteCache<int, SeekPreviewFrame>(
+         maxEntries: maxEntries,
+         maxBytes: maxBytes,
+         sizeOf: (frame) => frame.byteLength,
+         pressureThreshold: pressureThreshold,
+       );
 
   final int maxEntries;
   final int maxBytes;
   final double pressureThreshold;
+  final LruByteCache<int, SeekPreviewFrame> _cache;
 
-  final LinkedHashMap<int, SeekPreviewFrame> _entries =
-      LinkedHashMap<int, SeekPreviewFrame>();
-  int _currentBytes = 0;
-
-  int get length => _entries.length;
-  int get currentBytes => _currentBytes;
+  int get length => _cache.length;
+  int get currentBytes => _cache.currentBytes;
 
   static int _exactKey(Duration time) => (time.inMilliseconds * 2) + 1;
   static int _bucketKey(Duration time) => (time.inSeconds * 2);
@@ -117,13 +120,9 @@ class SeekPreviewLRUCache {
   /// (returned as approximate), then an approximate frame from the same bucket.
   SeekPreviewFrame? get(Duration target, {bool exactOnly = false}) {
     final exactKey = _exactKey(target);
-    if (_entries.containsKey(exactKey)) {
-      final frame = _entries[exactKey]!;
-      if (frame.requestedTime == target) {
-        _entries.remove(exactKey);
-        _entries[exactKey] = frame; // Promote to MRU
-        return frame;
-      }
+    final exact = _cache.get(exactKey);
+    if (exact != null && exact.requestedTime == target) {
+      return exact;
     }
     if (exactOnly) return null;
 
@@ -133,8 +132,7 @@ class SeekPreviewLRUCache {
     final nearbyExact = _nearestExactEntry(target);
     if (nearbyExact != null &&
         nearbyExact.distance <= const Duration(milliseconds: 250)) {
-      final frame = _entries.remove(nearbyExact.key)!;
-      _entries[nearbyExact.key] = frame;
+      final frame = _cache.get(nearbyExact.key)!;
       return SeekPreviewFrame(
         bytes: frame.bytes,
         requestedTime: frame.requestedTime,
@@ -143,18 +141,12 @@ class SeekPreviewLRUCache {
       );
     }
 
-    final bucketKey = _bucketKey(target);
-    if (_entries.containsKey(bucketKey)) {
-      final frame = _entries.remove(bucketKey)!;
-      _entries[bucketKey] = frame; // Promote to MRU
-      return frame;
-    }
-    return null;
+    return _cache.get(_bucketKey(target));
   }
 
   ({int key, Duration distance})? _nearestExactEntry(Duration target) {
     ({int key, Duration distance})? nearest;
-    for (final entry in _entries.entries) {
+    for (final entry in _cache.entries) {
       if (entry.value.quality != SeekPreviewQuality.exact) continue;
       final distance = (entry.value.capturedTime - target).abs();
       if (nearest == null || distance < nearest.distance) {
@@ -171,59 +163,19 @@ class SeekPreviewLRUCache {
     final key = frame.quality == SeekPreviewQuality.exact
         ? _exactKey(frame.requestedTime)
         : _bucketKey(frame.requestedTime);
-
-    final existing = _entries.remove(key);
-    if (existing != null) {
-      _currentBytes -= existing.byteLength;
-    }
-
-    _entries[key] = frame;
-    _currentBytes += frame.byteLength;
-
-    // Pre-emptive eviction when memory pressure threshold is met
-    if (_entries.length > (maxEntries * pressureThreshold) ||
-        _currentBytes > (maxBytes * pressureThreshold)) {
+    _cache.put(key, frame);
+    if (_cache.isUnderPressure) {
       _evictPreemptively();
     }
-
-    // Hard ceiling enforcement
-    while (_entries.length > maxEntries || _currentBytes > maxBytes) {
-      if (_entries.isEmpty) break;
-      final oldestKey = _entries.keys.first;
-      final evicted = _entries.remove(oldestKey);
-      if (evicted != null) {
-        _currentBytes -= evicted.byteLength;
-      }
-    }
+    _cache.evictToBounds();
   }
 
   /// Pre-emptively evicts lower-value keyframe (approximate) entries first,
   /// reducing cache usage down towards 75% capacity to prevent eviction churn.
   void _evictPreemptively() {
-    final targetBytes = (maxBytes * 0.75).round();
-    final targetCount = (maxEntries * 0.75).round();
-
-    final keyframeKeys = _entries.entries
-        .where((e) => e.value.quality == SeekPreviewQuality.keyframe)
-        .map((e) => e.key)
-        .toList(growable: false);
-
-    for (final key in keyframeKeys) {
-      if (_currentBytes <= targetBytes && _entries.length <= targetCount) break;
-      final evicted = _entries.remove(key);
-      if (evicted != null) {
-        _currentBytes -= evicted.byteLength;
-      }
-    }
-
-    while (_entries.isNotEmpty &&
-        (_currentBytes > targetBytes || _entries.length > targetCount)) {
-      final oldestKey = _entries.keys.first;
-      final evicted = _entries.remove(oldestKey);
-      if (evicted != null) {
-        _currentBytes -= evicted.byteLength;
-      }
-    }
+    _cache.evictUnderPressure(
+      prefer: (key, frame) => frame.quality == SeekPreviewQuality.keyframe,
+    );
   }
 
   /// Trims cached frames under external memory pressure.
@@ -233,8 +185,7 @@ class SeekPreviewLRUCache {
 
   /// Clears all cached frames immediately.
   void clear() {
-    _entries.clear();
-    _currentBytes = 0;
+    _cache.clear();
   }
 }
 
@@ -417,20 +368,17 @@ class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
         'dither': 'no',
         'vf': 'scale=w=320:h=320:force_original_aspect_ratio=decrease',
       };
-      await Future.wait([
-        for (final entry in properties.entries)
-          () async {
-            try {
-              await native.setProperty(entry.key, entry.value);
-            } on Object catch (error) {
-              _record(
-                'preview.configure',
-                message: 'Could not set ${entry.key}',
-                error: error,
-              );
-            }
-          }(),
-      ]);
+      await applyNativePlayerProperties(
+        native,
+        properties,
+        onError: (key, error) {
+          _record(
+            'preview.configure',
+            message: 'Could not set $key',
+            error: error,
+          );
+        },
+      );
     }
 
     final vcFactory = videoControllerFactory;

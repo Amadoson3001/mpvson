@@ -81,14 +81,12 @@ class TransportButtons extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           if (showShuffleRepeat) ...[
-            ListenableBuilder(
-              listenable: controller,
-              builder: (context, _) => ControlToggleButton(
-                tooltip: controller.shuffle
-                    ? 'Turn shuffle off'
-                    : 'Turn shuffle on',
+            ValueListenableBuilder<PlaybackMode>(
+              valueListenable: controller.playbackModeListenable,
+              builder: (context, mode, _) => ControlToggleButton(
+                tooltip: mode.shuffle ? 'Turn shuffle off' : 'Turn shuffle on',
                 icon: Icons.shuffle_rounded,
-                active: controller.shuffle,
+                active: mode.shuffle,
                 onPressed: controller.toggleShuffle,
               ),
             ),
@@ -121,22 +119,21 @@ class TransportButtons extends StatelessWidget {
           ),
           if (showShuffleRepeat) ...[
             SizedBox(width: gap),
-            ListenableBuilder(
-              listenable: controller,
-              builder: (context, _) {
-                final mode = controller.repeatMode;
-                final icon = mode == 'one'
+            ValueListenableBuilder<PlaybackMode>(
+              valueListenable: controller.playbackModeListenable,
+              builder: (context, mode, _) {
+                final icon = mode.repeat == PlayerRepeatMode.one
                     ? Icons.repeat_one_rounded
                     : Icons.repeat_rounded;
-                final tip = mode == 'off'
+                final tip = mode.repeat == PlayerRepeatMode.off
                     ? 'Enable repeat'
-                    : mode == 'all'
+                    : mode.repeat == PlayerRepeatMode.all
                     ? 'Repeat current'
                     : 'Disable repeat';
                 return ControlToggleButton(
                   tooltip: tip,
                   icon: icon,
-                  active: mode != 'off',
+                  active: mode.repeat != PlayerRepeatMode.off,
                   onPressed: controller.cycleRepeat,
                 );
               },

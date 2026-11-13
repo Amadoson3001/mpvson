@@ -11,6 +11,7 @@ import 'tokens/type.dart';
 export 'tokens/colors.dart';
 export 'tokens/layout.dart';
 export 'tokens/opacity.dart';
+export 'tokens/player_colors.dart';
 export 'tokens/radii.dart';
 export 'tokens/space.dart';
 export 'tokens/type.dart';

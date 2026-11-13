@@ -1,12 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 // Public constructor names intentionally differ from private backing fields.
 // ignore_for_file: prefer_initializing_formals
 
-import 'package:crypto/crypto.dart' as crypto;
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -19,6 +17,7 @@ import '../../domain/updates/engine_update_channel.dart';
 import '../../domain/updates/engine_selection.dart';
 import '../../domain/updates/mpv_github_release.dart';
 import '../../domain/updates/semantic_version.dart' as app_version;
+import 'download_manager.dart';
 import 'http_response_length.dart';
 
 enum EngineUpdatePlatform {
@@ -70,9 +69,12 @@ class EngineUpdateService extends ChangeNotifier {
        _bundledVersion = currentVersion,
        _currentVersion = currentVersion,
        _requestTimeout = requestTimeout,
-       _maxDownloadDuration = maxDownloadDuration,
        _maxManifestBytes = maxManifestBytes,
-       _maxDownloadBytes = maxDownloadBytes {
+       _maxDownloadBytes = maxDownloadBytes,
+       _downloadManager = DownloadManager(
+         idleTimeout: requestTimeout,
+         maxDuration: maxDownloadDuration,
+       ) {
     _preferencesRepository =
         preferencesRepository ??
         EngineUpdatePreferencesRepository(
@@ -163,9 +165,9 @@ class EngineUpdateService extends ChangeNotifier {
   late final EngineUpdatePreferencesRepository _preferencesRepository;
   final EngineUpdatePlatform Function() _platformProvider;
   final Duration _requestTimeout;
-  final Duration _maxDownloadDuration;
   final int _maxManifestBytes;
   final int _maxDownloadBytes;
+  final DownloadManager _downloadManager;
   final String _bundledVersion;
 
   late final bool _usesOfficialMpvSource;
@@ -1033,137 +1035,53 @@ class EngineUpdateService extends ChangeNotifier {
     required int expectedBytes,
     required String expectedSha256,
   }) async {
-    final completer = Completer<void>();
-    final stopwatch = Stopwatch()..start();
-    var received = 0;
-    var finished = false;
-    Timer? idleTimer;
-    StreamSubscription<List<int>>? subscription;
-    IOSink? sink;
-    final hashAccumulator = _DigestSink();
-    final hashInput = crypto.sha256.startChunkedConversion(hashAccumulator);
-
-    void fail(Object error) {
-      if (finished) return;
-      finished = true;
-      idleTimer?.cancel();
-      subscription?.cancel();
-      if (!completer.isCompleted) completer.completeError(error);
+    void Function()? abortCallback;
+    void registerAbort(void Function() cb) {
+      abortCallback = cb;
+      _abortBodyReads.add(cb);
     }
-
-    void resetIdleTimer() {
-      idleTimer?.cancel();
-      idleTimer = Timer(_requestTimeout, () {
-        fail(const _EngineUpdateException('Engine response stream timed out.'));
-      });
-    }
-
-    void abortRead() => fail(const _EngineCancelled());
-    _abortBodyReads.add(abortRead);
 
     try {
-      sink = destinationFile.openWrite();
-      resetIdleTimer();
-
-      final createdSubscription = stream.listen(
-        (chunk) {
-          if (_disposed || abort.isCompleted) {
-            fail(const _EngineCancelled());
-            return;
-          }
-          resetIdleTimer();
-          if (stopwatch.elapsed > _maxDownloadDuration) {
-            fail(
-              const _EngineUpdateException(
-                'Engine response exceeded the time limit.',
-              ),
-            );
-            return;
-          }
-          received += chunk.length;
-          if (received > maxBytes || received > expectedBytes) {
-            fail(
-              const _EngineUpdateException(
-                'Engine response exceeds the size limit.',
-              ),
-            );
-            return;
-          }
-          hashInput.add(chunk);
-          sink?.add(chunk);
+      await _downloadManager.streamToFile(
+        stream,
+        destinationFile,
+        abort: abort,
+        maxBytes: maxBytes,
+        expectedBytes: expectedBytes,
+        expectedSha256: expectedSha256,
+        onProgress: (frac, received, total) {
           if (expectedBytes > 0) {
             _setProgress(received / expectedBytes);
           }
         },
-        onError: (Object error, StackTrace stackTrace) {
-          fail(error);
-        },
-        onDone: () async {
-          if (finished) return;
-          finished = true;
-          idleTimer?.cancel();
-          if (stopwatch.elapsed > _maxDownloadDuration) {
-            completer.completeError(
-              const _EngineUpdateException(
-                'Engine response exceeded the time limit.',
-              ),
-            );
-            return;
-          }
-          try {
-            hashInput.close();
-            final activeSink = sink;
-            sink = null;
-            if (activeSink != null) {
-              await activeSink.flush();
-              await activeSink.close();
-            }
-
-            if (received != expectedBytes) {
-              completer.completeError(
-                const _EngineUpdateException(
-                  'Engine package size does not match its declared size.',
-                ),
-              );
-              return;
-            }
-
-            final actualHash = hashAccumulator.digest.toString().toLowerCase();
-            if (actualHash != expectedSha256.toLowerCase()) {
-              completer.completeError(
-                const _EngineUpdateException(
-                  'Engine package failed its SHA-256 integrity check.',
-                ),
-              );
-              return;
-            }
-
-            completer.complete();
-          } on Object catch (error) {
-            completer.completeError(error);
-          }
-        },
-        cancelOnError: true,
+        isDisposed: () => _disposed,
+        registerAbortCallback: registerAbort,
       );
-
-      subscription = createdSubscription;
-      _activeSubscriptions.add(createdSubscription);
-
-      await completer.future;
+    } on DownloadCancelledException {
+      throw const _EngineCancelled();
+    } on DownloadIdleTimeoutException {
+      throw const _EngineUpdateException('Engine response stream timed out.');
+    } on DownloadDurationExceededException {
+      throw const _EngineUpdateException(
+        'Engine response exceeded the time limit.',
+      );
+    } on DownloadSizeLimitException {
+      throw const _EngineUpdateException(
+        'Engine response exceeds the size limit.',
+      );
+    } on DownloadSizeMismatchException {
+      throw const _EngineUpdateException(
+        'Engine package size does not match its declared size.',
+      );
+    } on DownloadHashMismatchException {
+      throw const _EngineUpdateException(
+        'Engine package failed its SHA-256 integrity check.',
+      );
+    } on DownloadException catch (e) {
+      throw _EngineUpdateException(e.message);
     } finally {
-      idleTimer?.cancel();
-      _abortBodyReads.remove(abortRead);
-      if (subscription != null) {
-        _activeSubscriptions.remove(subscription);
-        await subscription.cancel();
-      }
-      final cleanupSink = sink;
-      if (cleanupSink != null) {
-        try {
-          await cleanupSink.close();
-        } on Object {
-          // Sink close error on cleanup is ignored.
-        }
+      if (abortCallback != null) {
+        _abortBodyReads.remove(abortCallback);
       }
     }
   }
@@ -1175,101 +1093,55 @@ class EngineUpdateService extends ChangeNotifier {
     int? expectedBytes,
     int? contentLength,
   }) async {
-    final completer = Completer<Uint8List>();
-    final buffer = BytesBuilder(copy: false);
-    final stopwatch = Stopwatch()..start();
-    var received = 0;
-    var finished = false;
-    Timer? idleTimer;
-    StreamSubscription<List<int>>? subscription;
-
-    void fail(Object error) {
-      if (finished) return;
-      finished = true;
-      idleTimer?.cancel();
-      subscription?.cancel();
-      if (!completer.isCompleted) completer.completeError(error);
+    void Function()? abortCallback;
+    void registerAbort(void Function() cb) {
+      abortCallback = cb;
+      _abortBodyReads.add(cb);
     }
 
-    void resetIdleTimer() {
-      idleTimer?.cancel();
-      idleTimer = Timer(_requestTimeout, () {
-        fail(const _EngineUpdateException('Engine response stream timed out.'));
-      });
-    }
-
-    void abortRead() => fail(const _EngineCancelled());
-    _abortBodyReads.add(abortRead);
-    resetIdleTimer();
-    final createdSubscription = stream.listen(
-      (chunk) {
-        if (_disposed || abort.isCompleted) {
-          fail(const _EngineCancelled());
-          return;
-        }
-        resetIdleTimer();
-        if (stopwatch.elapsed > _maxDownloadDuration) {
-          fail(
-            const _EngineUpdateException(
-              'Engine response exceeded the time limit.',
-            ),
-          );
-          return;
-        }
-        received += chunk.length;
-        if (received > maxBytes ||
-            (expectedBytes != null && received > expectedBytes)) {
-          fail(
-            const _EngineUpdateException(
-              'Engine response exceeds the size limit.',
-            ),
-          );
-          return;
-        }
-        buffer.add(chunk);
-        if (expectedBytes != null && expectedBytes > 0) {
-          _setProgress(received / expectedBytes);
-        }
-      },
-      onError: (Object error, StackTrace stackTrace) {
-        fail(error);
-      },
-      onDone: () {
-        if (finished) return;
-        finished = true;
-        idleTimer?.cancel();
-        if (stopwatch.elapsed > _maxDownloadDuration) {
-          completer.completeError(
-            const _EngineUpdateException(
-              'Engine response exceeded the time limit.',
-            ),
-          );
-          return;
-        }
-        completer.complete(buffer.takeBytes());
-      },
-      cancelOnError: true,
-    );
-    subscription = createdSubscription;
-    _activeSubscriptions.add(createdSubscription);
     try {
-      final bytes = await completer.future;
+      final result = await _downloadManager.streamToBytes(
+        stream,
+        abort: abort,
+        maxBytes: maxBytes,
+        expectedBytes: expectedBytes ?? contentLength,
+        onProgress: (frac, received, total) {
+          if (expectedBytes != null && expectedBytes > 0) {
+            _setProgress(received / expectedBytes);
+          }
+        },
+        isDisposed: () => _disposed,
+        registerAbortCallback: registerAbort,
+      );
+      final bytes = result.bytes ?? Uint8List(0);
       if (contentLength != null && bytes.length != contentLength) {
         throw const _EngineUpdateException(
           'Engine response ended before its declared length.',
         );
       }
-      if (expectedBytes != null && bytes.length != expectedBytes) {
-        throw const _EngineUpdateException(
-          'Engine package size does not match its declared size.',
-        );
-      }
       return bytes;
+    } on DownloadCancelledException {
+      throw const _EngineCancelled();
+    } on DownloadIdleTimeoutException {
+      throw const _EngineUpdateException('Engine response stream timed out.');
+    } on DownloadDurationExceededException {
+      throw const _EngineUpdateException(
+        'Engine response exceeded the time limit.',
+      );
+    } on DownloadSizeLimitException {
+      throw const _EngineUpdateException(
+        'Engine response exceeds the size limit.',
+      );
+    } on DownloadSizeMismatchException {
+      throw const _EngineUpdateException(
+        'Engine package size does not match its declared size.',
+      );
+    } on DownloadException catch (e) {
+      throw _EngineUpdateException(e.message);
     } finally {
-      idleTimer?.cancel();
-      _abortBodyReads.remove(abortRead);
-      _activeSubscriptions.remove(subscription);
-      await createdSubscription.cancel();
+      if (abortCallback != null) {
+        _abortBodyReads.remove(abortCallback);
+      }
     }
   }
 
@@ -1352,13 +1224,4 @@ class _EngineUpdateException implements Exception {
 
 class _EngineCancelled implements Exception {
   const _EngineCancelled();
-}
-
-final class _DigestSink implements Sink<crypto.Digest> {
-  crypto.Digest? _digest;
-  crypto.Digest get digest => _digest!;
-  @override
-  void add(crypto.Digest data) => _digest = data;
-  @override
-  void close() {}
 }

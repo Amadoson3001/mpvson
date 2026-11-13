@@ -133,14 +133,14 @@ class _QueuePanelState extends State<QueuePanel> {
                         ],
                       ),
                     ),
-                    AnimatedBuilder(
-                      animation: widget.controller,
-                      builder: (context, _) => IconButton(
+                    ValueListenableBuilder<PlaybackMode>(
+                      valueListenable: widget.controller.playbackModeListenable,
+                      builder: (context, mode, _) => IconButton(
                         key: const ValueKey('queue-shuffle-toggle'),
-                        tooltip: widget.controller.shuffle
+                        tooltip: mode.shuffle
                             ? 'Turn shuffle off'
                             : 'Turn shuffle on',
-                        isSelected: widget.controller.shuffle,
+                        isSelected: mode.shuffle,
                         onPressed: () =>
                             unawaited(widget.controller.toggleShuffle()),
                         icon: const Icon(Icons.shuffle_rounded, size: 19),

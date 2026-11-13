@@ -73,6 +73,8 @@ class PlaybackSettings {
         'linear-downscaling': 'no',
         'sigmoid-upscaling': 'no',
         'hdr-compute-peak': 'no',
+        // The Flutter texture is BGRA8; 16-bit scaler FBOs double bandwidth.
+        'fbo-format': 'rgba8',
       },
       PlaybackQualityPreset.quality => const <String, String>{
         'scale': 'lanczos',

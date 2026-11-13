@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 
 import '../../../../domain/models/media_thumbnail.dart';
@@ -5,44 +7,9 @@ import '../../../../ui/core/app_motion.dart';
 import '../../../../ui/core/app_theme.dart';
 import '../../../../utils/format.dart';
 import '../../player_controller.dart';
+import 'seek_preview_metrics.dart';
 
-class CaretPainter extends CustomPainter {
-  const CaretPainter({required this.color, required this.borderColor});
-
-  final Color color;
-  final Color borderColor;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final fillPath = Path()
-      ..moveTo(0, 0)
-      ..lineTo(size.width / 2, size.height)
-      ..lineTo(size.width, 0)
-      ..close();
-    canvas.drawPath(
-      fillPath,
-      Paint()
-        ..color = color
-        ..style = PaintingStyle.fill,
-    );
-
-    final strokePath = Path()
-      ..moveTo(0, 0)
-      ..lineTo(size.width / 2, size.height)
-      ..lineTo(size.width, 0);
-    canvas.drawPath(
-      strokePath,
-      Paint()
-        ..color = borderColor
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1,
-    );
-  }
-
-  @override
-  bool shouldRepaint(CaretPainter oldDelegate) =>
-      oldDelegate.color != color || oldDelegate.borderColor != borderColor;
-}
+export 'seek_preview_metrics.dart';
 
 class SeekPreview extends StatelessWidget {
   const SeekPreview({
@@ -50,25 +17,51 @@ class SeekPreview extends StatelessWidget {
     required this.label,
     required this.width,
     required this.caretOffset,
-    required this.previewRatio,
     required this.previewTime,
     required this.currentPosition,
     required this.controller,
     required this.previewState,
     required this.thumbnail,
     this.chapterTitle,
+    this.compact = false,
   });
+
+  static const double videoWidth = SeekPreviewMetrics.videoWidth;
+  static const double audioWidth = SeekPreviewMetrics.audioWidth;
+
+  static Widget switchLayout(Widget? current, List<Widget> previous) => Stack(
+    alignment: Alignment.bottomCenter,
+    clipBehavior: Clip.none,
+    children: [...previous, ?current],
+  );
+
+  static Widget switchTransition(
+    BuildContext context,
+    Widget child,
+    Animation<double> animation,
+  ) {
+    if (AppMotion.reduce(context)) return child;
+    final curved = animation.drive(CurveTween(curve: AppMotion.enter));
+    return FadeTransition(
+      opacity: curved,
+      child: ScaleTransition(
+        scale: Tween<double>(begin: 0.94, end: 1).animate(curved),
+        alignment: Alignment.bottomCenter,
+        child: child,
+      ),
+    );
+  }
 
   final String label;
   final double width;
   final double caretOffset;
-  final double previewRatio;
   final Duration previewTime;
   final Duration currentPosition;
   final PlayerController controller;
   final SeekPreviewState? previewState;
   final MediaThumbnail? thumbnail;
   final String? chapterTitle;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -81,16 +74,11 @@ class SeekPreview extends StatelessWidget {
         : '';
     final entry = controller.current;
     final title = entry?.title ?? controller.currentMetadata.title;
-
-    final borderColor = context.palette.border.withValues(alpha: 0.85);
-
-    final cardContent = isAudio
-        ? _buildAudioContent(context, title, diffText, isAhead)
-        : _buildVideoContent(context, title, diffText, isAhead);
-
-    final clampedCaret = (caretOffset - 5).clamp(
+    final cardColor = isAudio ? context.palette.card : const Color(0xFF101014);
+    final borderColor = Colors.white.withValues(alpha: isAudio ? 0.10 : 0.14);
+    final caretLeft = (caretOffset - SeekPreviewMetrics.caretWidth / 2).clamp(
       8.0,
-      (width - 18.0) > 8.0 ? (width - 18.0) : 8.0,
+      (width - SeekPreviewMetrics.caretWidth - 8.0).clamp(8.0, width),
     );
 
     return Column(
@@ -101,288 +89,270 @@ class SeekPreview extends StatelessWidget {
           width: width,
           clipBehavior: Clip.antiAlias,
           decoration: BoxDecoration(
-            color: context.palette.card,
-            borderRadius: BorderRadius.circular(AppRadii.control),
+            color: cardColor,
+            borderRadius: BorderRadius.circular(
+              compact ? AppRadii.control : AppRadii.artwork,
+            ),
             border: Border.all(color: borderColor),
             boxShadow: AppMotion.lowPower(context)
                 ? null
                 : [
                     BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.45),
-                      blurRadius: 14,
-                      spreadRadius: 1,
-                      offset: const Offset(0, 4),
+                      color: Colors.black.withValues(
+                        alpha: compact ? 0.42 : 0.55,
+                      ),
+                      blurRadius: compact ? 12 : 22,
+                      spreadRadius: 0,
+                      offset: Offset(0, compact ? 4 : 8),
                     ),
                   ],
           ),
-          child: cardContent,
+          child: isAudio
+              ? _AudioPreview(
+                  title: title,
+                  label: label,
+                  diffText: diffText,
+                  isAhead: isAhead,
+                  thumbnail: thumbnail,
+                  chapterTitle: chapterTitle,
+                )
+              : _VideoPreview(
+                  width: width,
+                  compact: compact,
+                  label: label,
+                  diffText: diffText,
+                  isAhead: isAhead,
+                  previewState: previewState,
+                  thumbnail: thumbnail,
+                  chapterTitle: chapterTitle,
+                ),
         ),
         Transform.translate(
           offset: const Offset(0, -1),
           child: Padding(
-            padding: EdgeInsets.only(left: clampedCaret),
+            padding: EdgeInsets.only(left: caretLeft),
             child: CustomPaint(
-              size: const Size(10, 5),
-              painter: CaretPainter(
-                color: context.palette.card,
-                borderColor: borderColor,
+              size: const Size(
+                SeekPreviewMetrics.caretWidth,
+                SeekPreviewMetrics.caretHeight,
               ),
+              painter: CaretPainter(color: cardColor, borderColor: borderColor),
             ),
           ),
         ),
       ],
     );
   }
+}
 
-  Widget _buildVideoContent(
-    BuildContext context,
-    String? title,
-    String diffText,
-    bool isAhead,
-  ) {
-    final frameHeight = ((width - 2) * 9 / 16).clamp(54.0, 96.0);
+class _VideoPreview extends StatelessWidget {
+  const _VideoPreview({
+    required this.width,
+    required this.compact,
+    required this.label,
+    required this.diffText,
+    required this.isAhead,
+    required this.previewState,
+    required this.thumbnail,
+    required this.chapterTitle,
+  });
+
+  final double width;
+  final bool compact;
+  final String label;
+  final String diffText;
+  final bool isAhead;
+  final SeekPreviewState? previewState;
+  final MediaThumbnail? thumbnail;
+  final String? chapterTitle;
+
+  @override
+  Widget build(BuildContext context) {
     final frame = previewState?.currentFrame;
     final isFailed = previewState?.status == SeekPreviewStatus.failed;
     final isLoading = previewState?.status == SeekPreviewStatus.loading;
-    final isUpdating = previewState?.isUpdating == true;
-    final showLoadingIndicator = isUpdating || (isLoading && frame == null);
+    final showSpinner =
+        previewState?.isUpdating == true || (isLoading && frame == null);
+    final frameHeight = compact
+        ? width * 9 / 16
+        : (width * 9 / 16).clamp(88.0, 144.0);
+    final inset = compact ? 6.0 : 10.0;
+    final accent = Theme.of(context).colorScheme.primary;
 
-    const topRadius = BorderRadius.vertical(
-      top: Radius.circular(AppRadii.control),
-    );
-    Widget imageSurface;
+    Widget image;
     if (frame != null && frame.bytes.isNotEmpty) {
-      imageSurface = ClipRRect(
-        borderRadius: topRadius,
-        child: Image.memory(
-          frame.bytes,
-          cacheWidth: 320,
-          cacheHeight: 180,
-          filterQuality: FilterQuality.low,
-          fit: BoxFit.cover,
-          gaplessPlayback: true,
-          errorBuilder: (_, _, _) => const _PreviewPlaceholderFrame(),
-        ),
-      );
+      image = _PreviewBitmap(bytes: frame.bytes);
     } else if (isFailed) {
-      imageSurface = const ClipRRect(
-        borderRadius: topRadius,
-        child: _PreviewUnavailableFrame(),
-      );
+      image = const _PreviewUnavailableFrame();
     } else if (thumbnail != null && thumbnail!.bytes.isNotEmpty) {
-      imageSurface = ClipRRect(
-        borderRadius: topRadius,
-        child: Image.memory(
-          thumbnail!.bytes,
-          cacheWidth: 320,
-          cacheHeight: 180,
-          filterQuality: FilterQuality.low,
-          fit: BoxFit.cover,
-          gaplessPlayback: true,
-          errorBuilder: (_, _, _) => const _PreviewPlaceholderFrame(),
-        ),
-      );
+      image = _PreviewBitmap(bytes: thumbnail!.bytes);
     } else {
-      imageSurface = const ClipRRect(
-        borderRadius: topRadius,
-        child: _PreviewPlaceholderFrame(),
-      );
+      image = const _PreviewPlaceholderFrame();
     }
 
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        SizedBox(
-          height: frameHeight,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              imageSurface,
-              if (isFailed && frame != null)
-                Positioned.fill(
-                  child: Container(
-                    color: Colors.black.withValues(alpha: 0.68),
-                    alignment: Alignment.center,
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: AppSpace.xs,
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.max,
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          const Icon(
-                            Icons.hide_image_outlined,
-                            size: 14,
-                            color: Colors.white,
-                          ),
-                          const SizedBox(width: 5),
-                          Flexible(
-                            child: Text(
-                              'Preview unavailable',
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              textAlign: TextAlign.center,
-                              style: Theme.of(context).textTheme.labelSmall
-                                  ?.copyWith(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
+    return SizedBox(
+      height: frameHeight,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          image,
+          const DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [Color(0x00000000), Color(0xCC000000)],
+                stops: [0.42, 1],
+              ),
+            ),
+          ),
+          if (showSpinner)
+            Positioned(
+              top: compact ? 5 : 8,
+              right: compact ? 5 : 8,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.55),
+                  shape: BoxShape.circle,
                 ),
-              if (showLoadingIndicator)
-                Positioned(
-                  top: 6,
-                  right: 6,
-                  child: Container(
-                    padding: const EdgeInsets.all(3),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.6),
-                      shape: BoxShape.circle,
-                    ),
-                    child: SizedBox(
-                      width: 10,
-                      height: 10,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 1.5,
-                        color: Theme.of(context).colorScheme.primary,
-                      ),
-                    ),
-                  ),
-                ),
-              Positioned(
-                left: 0,
-                right: 0,
-                bottom: 0,
-                child: Container(
-                  height: 2.5,
-                  color: Colors.black.withValues(alpha: 0.5),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: FractionallySizedBox(
-                      widthFactor: previewRatio,
-                      child: Container(
-                        color: Theme.of(context).colorScheme.primary,
-                      ),
+                child: Padding(
+                  padding: const EdgeInsets.all(5),
+                  child: SizedBox(
+                    width: 12,
+                    height: 12,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 1.6,
+                      color: accent,
                     ),
                   ),
                 ),
               ),
-            ],
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.symmetric(
-            horizontal: AppSpace.xs,
-            vertical: 5,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    label,
-                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: context.palette.text,
-                      fontWeight: FontWeight.w600,
-                      fontFeatures: const [FontFeature.tabularFigures()],
-                    ),
-                  ),
-                  if (diffText.isNotEmpty)
-                    Text(
-                      diffText,
+            ),
+          Positioned(
+            left: inset,
+            right: inset,
+            bottom: compact ? 6 : 9,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (chapterTitle case final chapter? when chapter.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 5),
+                    child: Text(
+                      chapter,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        color: isAhead
-                            ? Theme.of(context).colorScheme.primary
-                            : context.palette.muted,
+                        color: Colors.white.withValues(alpha: 0.86),
                         fontSize: AppType.caption,
                         fontWeight: FontWeight.w500,
-                        fontFeatures: const [FontFeature.tabularFigures()],
                       ),
                     ),
-                ],
-              ),
-              if (chapterTitle case final title? when title.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(top: 2),
-                  child: Text(
-                    title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: context.palette.secondaryText,
-                      fontSize: AppType.caption,
-                      fontWeight: FontWeight.w500,
+                  ),
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.72),
+                    borderRadius: BorderRadius.circular(AppRadii.pill),
+                  ),
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: compact ? 8 : 10,
+                      vertical: compact ? 3 : 4,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          label,
+                          style: Theme.of(context).textTheme.labelSmall
+                              ?.copyWith(
+                                color: Colors.white,
+                                fontSize: compact
+                                    ? AppType.caption
+                                    : AppType.small,
+                                fontWeight: FontWeight.w600,
+                                fontFeatures: const [
+                                  FontFeature.tabularFigures(),
+                                ],
+                              ),
+                        ),
+                        if (diffText.isNotEmpty) ...[
+                          const SizedBox(width: 7),
+                          Text(
+                            diffText,
+                            style: Theme.of(context).textTheme.labelSmall
+                                ?.copyWith(
+                                  color: isAhead
+                                      ? accent
+                                      : Colors.white.withValues(alpha: 0.72),
+                                  fontSize: AppType.caption,
+                                  fontWeight: FontWeight.w600,
+                                  fontFeatures: const [
+                                    FontFeature.tabularFigures(),
+                                  ],
+                                ),
+                          ),
+                        ],
+                      ],
                     ),
                   ),
                 ),
-            ],
+              ],
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
+}
 
-  Widget _buildAudioContent(
-    BuildContext context,
-    String? title,
-    String diffText,
-    bool isAhead,
-  ) {
+class _AudioPreview extends StatelessWidget {
+  const _AudioPreview({
+    required this.title,
+    required this.label,
+    required this.diffText,
+    required this.isAhead,
+    required this.thumbnail,
+    required this.chapterTitle,
+  });
+
+  final String? title;
+  final String label;
+  final String diffText;
+  final bool isAhead;
+  final MediaThumbnail? thumbnail;
+  final String? chapterTitle;
+
+  @override
+  Widget build(BuildContext context) {
     final bytes = thumbnail?.bytes;
+    final accent = Theme.of(context).colorScheme.primary;
     return Padding(
-      padding: const EdgeInsets.all(6),
+      padding: const EdgeInsets.all(8),
       child: Row(
         children: [
           Container(
-            width: 32,
-            height: 32,
+            width: 40,
+            height: 40,
             decoration: BoxDecoration(
               color: context.palette.surface,
               borderRadius: BorderRadius.circular(AppRadii.control),
-              border: Border.all(color: context.palette.border),
             ),
+            clipBehavior: Clip.antiAlias,
             child: (bytes != null && bytes.isNotEmpty)
-                ? ClipRRect(
-                    borderRadius: BorderRadius.circular(AppRadii.control),
-                    child: Image.memory(
-                      bytes,
-                      cacheWidth: 64,
-                      cacheHeight: 64,
-                      filterQuality: FilterQuality.low,
-                      fit: BoxFit.cover,
-                      gaplessPlayback: true,
-                      errorBuilder: (context, error, stackTrace) => Icon(
-                        Icons.music_note_rounded,
-                        size: 18,
-                        color: Theme.of(context).colorScheme.primary,
-                      ),
-                    ),
-                  )
-                : Icon(
-                    Icons.music_note_rounded,
-                    size: 18,
-                    color: Theme.of(context).colorScheme.primary,
-                  ),
+                ? _PreviewBitmap(bytes: bytes, square: true)
+                : Icon(Icons.music_note_rounded, size: 20, color: accent),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 10),
           Expanded(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (title != null && title.trim().isNotEmpty)
+                if (title != null && title!.trim().isNotEmpty)
                   Text(
-                    title,
+                    title!,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
@@ -392,42 +362,38 @@ class SeekPreview extends StatelessWidget {
                     ),
                   ),
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
                       label,
                       style: Theme.of(context).textTheme.labelSmall?.copyWith(
                         color: context.palette.text,
+                        fontSize: AppType.small,
                         fontWeight: FontWeight.w600,
                         fontFeatures: const [FontFeature.tabularFigures()],
                       ),
                     ),
-                    if (diffText.isNotEmpty)
+                    if (diffText.isNotEmpty) ...[
+                      const SizedBox(width: 8),
                       Text(
                         diffText,
                         style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                          color: isAhead
-                              ? Theme.of(context).colorScheme.primary
-                              : context.palette.muted,
+                          color: isAhead ? accent : context.palette.muted,
                           fontSize: AppType.caption,
-                          fontWeight: FontWeight.w500,
+                          fontWeight: FontWeight.w600,
                           fontFeatures: const [FontFeature.tabularFigures()],
                         ),
                       ),
+                    ],
                   ],
                 ),
                 if (chapterTitle case final chapter? when chapter.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 1),
-                    child: Text(
-                      chapter,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        color: context.palette.secondaryText,
-                        fontSize: AppType.caption,
-                        fontWeight: FontWeight.w500,
-                      ),
+                  Text(
+                    chapter,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: context.palette.secondaryText,
+                      fontSize: AppType.caption,
                     ),
                   ),
               ],
@@ -439,24 +405,31 @@ class SeekPreview extends StatelessWidget {
   }
 }
 
+class _PreviewBitmap extends StatelessWidget {
+  const _PreviewBitmap({required this.bytes, this.square = false});
+
+  final Uint8List bytes;
+  final bool square;
+
+  @override
+  Widget build(BuildContext context) => Image.memory(
+    bytes,
+    cacheWidth: square ? 80 : 480,
+    filterQuality: FilterQuality.medium,
+    fit: BoxFit.cover,
+    gaplessPlayback: true,
+    errorBuilder: (_, _, _) => const _PreviewPlaceholderFrame(),
+  );
+}
+
 class _PreviewPlaceholderFrame extends StatelessWidget {
   const _PreviewPlaceholderFrame();
 
   @override
-  Widget build(BuildContext context) => DecoratedBox(
-    decoration: BoxDecoration(
-      gradient: LinearGradient(
-        begin: Alignment.topCenter,
-        end: Alignment.bottomCenter,
-        colors: [context.palette.surface, context.palette.card],
-      ),
-    ),
+  Widget build(BuildContext context) => const ColoredBox(
+    color: Color(0xFF16161C),
     child: Center(
-      child: Icon(
-        Icons.play_circle_fill_rounded,
-        size: 26,
-        color: context.palette.secondaryText.withValues(alpha: 0.35),
-      ),
+      child: Icon(Icons.movie_outlined, size: 28, color: Color(0x66FFFFFF)),
     ),
   );
 }
@@ -465,28 +438,22 @@ class _PreviewUnavailableFrame extends StatelessWidget {
   const _PreviewUnavailableFrame();
 
   @override
-  Widget build(BuildContext context) => DecoratedBox(
-    decoration: BoxDecoration(
-      gradient: LinearGradient(
-        begin: Alignment.topCenter,
-        end: Alignment.bottomCenter,
-        colors: [context.palette.surface, context.palette.card],
-      ),
-    ),
+  Widget build(BuildContext context) => ColoredBox(
+    color: const Color(0xFF16161C),
     child: Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(
+          const Icon(
             Icons.videocam_off_rounded,
-            size: 20,
-            color: context.palette.secondaryText.withValues(alpha: 0.5),
+            size: 22,
+            color: Color(0x99FFFFFF),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 6),
           Text(
             'Preview unavailable',
             style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: context.palette.secondaryText,
+              color: Colors.white.withValues(alpha: 0.72),
               fontSize: AppType.caption,
               fontWeight: FontWeight.w500,
             ),

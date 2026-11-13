@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:window_manager/window_manager.dart';
 
+import '../../domain/models/media_catalog.dart';
 import '../../domain/models/media_entry.dart';
 import '../../domain/models/open_request.dart';
 import '../../ui/player/player_controller.dart';
@@ -14,6 +15,7 @@ import '../repositories/media_library_repository.dart';
 import 'desktop_integration_service.dart';
 import 'media_probe_service.dart';
 import 'open_request_coordinator.dart';
+import 'process_runner.dart';
 
 /// Implementation of [DesktopIntegrationService] bridging OS platform channels,
 /// [PlayerController], and [OpenRequestCoordinator].
@@ -293,7 +295,7 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
 
     if (Platform.isWindows) {
       try {
-        await Process.run('explorer.exe', [settingsUriString]);
+        await ProcessRunner.standard.run('explorer.exe', [settingsUriString]);
       } on Object {
         // Best effort.
       }
@@ -405,34 +407,8 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
     if (lastDot > 0 &&
         !entry.path.startsWith('http://') &&
         !entry.path.startsWith('https://')) {
-      final ext = title.substring(lastDot).toLowerCase();
-      const knownExtensions = <String>{
-        '.mp3',
-        '.flac',
-        '.wav',
-        '.aac',
-        '.ogg',
-        '.m4a',
-        '.wma',
-        '.opus',
-        '.alac',
-        '.aiff',
-        '.ape',
-        '.dsf',
-        '.mp4',
-        '.mkv',
-        '.avi',
-        '.mov',
-        '.wmv',
-        '.flv',
-        '.webm',
-        '.m4v',
-        '.ts',
-        '.3gp',
-        '.vob',
-        '.ogv',
-      };
-      if (knownExtensions.contains(ext)) {
+      final ext = title.substring(lastDot + 1).toLowerCase();
+      if (MediaCatalog.supportedExtensions.contains(ext)) {
         title = title.substring(0, lastDot);
       }
     }

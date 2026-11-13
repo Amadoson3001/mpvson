@@ -13,6 +13,7 @@ import 'package:sqlite3/sqlite3.dart';
 import '../../../domain/models/library_models.dart';
 import '../../../domain/models/media_catalog.dart';
 import '../../../domain/models/media_entry.dart';
+import '../../../domain/models/media_query.dart';
 
 /// Data payload for batch metadata updates.
 @immutable
@@ -2693,54 +2694,16 @@ List<Map<String, Object?>> _queryMediaRows(
     sql.write(' AND media.is_available = ?');
     args.add(isAvailable ? 1 : 0);
   }
-  if (sortBy == 'last_played_at' || sortBy == 'lastPlayedAt') {
+  final sortField = MediaSortField.tryParse(sortBy);
+  if (sortField?.requiresLastPlayed == true) {
     sql.write(' AND media.last_played_at IS NOT NULL');
   }
 
   final dir = ascending ? 'ASC' : 'DESC';
-  switch (sortBy) {
-    case 'title':
-      sql.write(' ORDER BY media.title COLLATE NOCASE $dir');
-      break;
-    case 'artist':
-      sql.write(
-        ' ORDER BY media.artist COLLATE NOCASE $dir, media.track_number ASC',
-      );
-      break;
-    case 'album':
-      sql.write(
-        ' ORDER BY media.album COLLATE NOCASE $dir, media.disc_number ASC, media.track_number ASC',
-      );
-      break;
-    case 'duration':
-    case 'duration_ms':
-      sql.write(' ORDER BY media.duration_ms $dir');
-      break;
-    case 'added_at':
-    case 'addedAt':
-      sql.write(' ORDER BY media.added_at $dir');
-      break;
-    case 'last_played_at':
-    case 'lastPlayedAt':
-      sql.write(' ORDER BY media.last_played_at $dir');
-      break;
-    case 'play_count':
-    case 'playCount':
-      sql.write(' ORDER BY media.play_count $dir');
-      break;
-    case 'fileSize':
-      sql.write(' ORDER BY media.file_size $dir');
-      break;
-    case 'trackNumber':
-      sql.write(
-        ' ORDER BY coalesce(media.disc_number, 1) $dir, coalesce(media.track_number, 0) $dir, lower(media.title) ASC',
-      );
-      break;
-    case 'year':
-      sql.write(' ORDER BY media.year $dir');
-      break;
-    default:
-      sql.write(' ORDER BY media.added_at DESC');
+  if (sortField == null) {
+    sql.write(' ORDER BY media.added_at DESC');
+  } else {
+    sql.write(' ORDER BY ${sortField.sqlOrderBy(dir)}');
   }
 
   if (limit != null) {

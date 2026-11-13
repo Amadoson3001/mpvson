@@ -389,6 +389,10 @@ VideoOutput* video_output_new(FlTextureRegistrar* texture_registrar,
   self->configuration.enable_hardware_acceleration = TRUE;
 #endif
   mpv_set_option_string(self->handle, "video-sync", "audio");
+  mpv_set_option_string(self->handle, "opengl-es", "yes");
+  mpv_set_option_string(self->handle, "framedrop", "vo");
+  mpv_set_option_string(self->handle, "vd-lavc-dr", "yes");
+  mpv_set_option_string(self->handle, "hwdec-extra-frames", "4");
   // Causes frame drops with `pulse` audio output. (SlotSun/dart_simple_live#42)
   // mpv_set_option_string(self->handle, "video-timing-offset", "0");
   gboolean hardware_acceleration_supported = FALSE;

@@ -180,6 +180,11 @@ class NativeVideoController extends PlatformVideoController {
             'vo': configuration.vo!,
             'hwdec': configuration.hwdec!,
             'vid': 'auto',
+            'hwdec-codecs': 'h264,hevc,mpeg2video,vp9,av1,vp8,mpeg4,vc1',
+            'vd-lavc-dr': 'yes',
+            'framedrop': 'vo',
+            'hwdec-extra-frames': '4',
+            if (Platform.isWindows || Platform.isLinux) 'opengl-es': 'yes',
           },
         );
         await _channel.invokeMethod(

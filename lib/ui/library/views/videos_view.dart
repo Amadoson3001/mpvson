@@ -4,6 +4,7 @@ import '../../../data/repositories/media_library_repository.dart';
 import '../../../domain/models/library_models.dart';
 import '../../../domain/models/media_entry.dart';
 import '../../../domain/models/media_thumbnail.dart';
+import '../../../data/services/diagnostic_log.dart';
 import '../../../utils/file_utils.dart';
 import '../../../utils/format.dart';
 import '../../player/player_controller.dart';
@@ -13,6 +14,7 @@ import '../../core/toast/app_toast.dart';
 import '../../core/components/app_popup_menu_item.dart';
 import '../../core/components/media_row.dart';
 import '../../core/components/empty_state.dart';
+import '../../core/components/hover_builder.dart';
 import '../library_browse_constants.dart';
 import '../paged_media_loader.dart';
 import '../widgets/add_to_playlist_dialog.dart';
@@ -57,7 +59,6 @@ class _VideosViewState extends State<VideosView> {
   Future<void>? _reloadFuture;
   bool _reloadAgain = false;
   Timer? _reloadThrottle;
-  Timer? _searchReload;
 
   @override
   void initState() {
@@ -98,7 +99,7 @@ class _VideosViewState extends State<VideosView> {
         _loadingMoreBrowse = false;
       });
     } catch (error) {
-      debugPrint('Videos view could not load more: $error');
+      diagnosticDebug('videos.loadMore', error: error);
       if (mounted && epoch == _browseEpoch) {
         setState(() => _loadingMoreBrowse = false);
       }
@@ -113,11 +114,8 @@ class _VideosViewState extends State<VideosView> {
       widget.repository.addListener(_onRepoChanged);
       _reload();
     } else if (oldWidget.searchQuery != widget.searchQuery) {
-      _searchReload?.cancel();
-      _searchReload = Timer(const Duration(milliseconds: 150), () {
-        _searchReload = null;
-        if (mounted) _reload();
-      });
+      // The shell already debounces typing; apply the committed query now.
+      _reload();
     }
   }
 
@@ -126,21 +124,21 @@ class _VideosViewState extends State<VideosView> {
     _browseScrollController.removeListener(_onBrowseScroll);
     _browseScrollController.dispose();
     _reloadThrottle?.cancel();
-    _searchReload?.cancel();
     widget.repository.removeListener(_onRepoChanged);
     super.dispose();
   }
 
   void _onRepoChanged() {
-    // Scan progress notifies frequently; coalesce those into one refresh.
-    if (_reloadThrottle?.isActive ?? false) {
-      _reloadAgain = true;
+    if (widget.repository.scanStatus.isScanning) {
+      _reloadThrottle ??= Timer(kLibraryScanReloadThrottle, () {
+        _reloadThrottle = null;
+        if (mounted) _reload();
+      });
       return;
     }
-    _reloadThrottle = Timer(const Duration(milliseconds: 200), () {
-      _reloadThrottle = null;
-      if (mounted) _reload();
-    });
+    _reloadThrottle?.cancel();
+    _reloadThrottle = null;
+    if (mounted) _reload();
   }
 
   Future<void> _reload() {
@@ -159,11 +157,11 @@ class _VideosViewState extends State<VideosView> {
   }
 
   Future<void> _drainReloads() async {
-    if (mounted) {
-      setState(() {
-        _isLoading = true;
-        _loadingMoreBrowse = false;
-      });
+    final showLoader = _videos == null;
+    _isLoading = true;
+    _loadingMoreBrowse = false;
+    if (mounted && showLoader) {
+      setState(() {});
     }
     try {
       do {
@@ -189,10 +187,11 @@ class _VideosViewState extends State<VideosView> {
         });
       } while (_reloadAgain && mounted);
     } catch (error) {
-      debugPrint('Videos view could not refresh: $error');
+      diagnosticDebug('videos.refresh', error: error);
       if (mounted) setState(() => _error = error);
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      _isLoading = false;
+      if (mounted && showLoader) setState(() {});
     }
   }
 
@@ -911,14 +910,6 @@ class _VideoGridCard extends StatefulWidget {
 }
 
 class _VideoGridCardState extends State<_VideoGridCard> {
-  final ValueNotifier<bool> _hovered = ValueNotifier<bool>(false);
-
-  @override
-  void dispose() {
-    _hovered.dispose();
-    super.dispose();
-  }
-
   @override
   Widget build(BuildContext context) {
     final video = widget.video;
@@ -926,10 +917,8 @@ class _VideoGridCardState extends State<_VideoGridCard> {
     final accent = Theme.of(context).colorScheme.primary;
     final progress = widget.resumeProgress;
 
-    return MouseRegion(
-      onEnter: (_) => _hovered.value = true,
-      onExit: (_) => _hovered.value = false,
-      child: MediaRow(
+    return HoverListenable(
+      builder: (context, hovered) => MediaRow(
         key: ValueKey(video.id),
         onSelect: widget.onSelect,
         onPlay: widget.onPlay,
@@ -968,7 +957,7 @@ class _VideoGridCardState extends State<_VideoGridCard> {
                       vertical: 2,
                     ),
                     decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.75),
+                      color: PlayerColors.scrim,
                       borderRadius: BorderRadius.circular(AppRadii.control),
                     ),
                     child: Text(
@@ -1033,7 +1022,7 @@ class _VideoGridCardState extends State<_VideoGridCard> {
                     // Video Thumbnail Stage
                     RepaintBoundary(
                       child: ValueListenableBuilder<bool>(
-                        valueListenable: _hovered,
+                        valueListenable: hovered,
                         child: staticStage,
                         builder: (context, isHovered, stageChild) {
                           final showPlayOverlay =

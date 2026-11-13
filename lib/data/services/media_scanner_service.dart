@@ -4,7 +4,6 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:watcher/watcher.dart';
 
@@ -12,6 +11,7 @@ import '../../domain/models/library_models.dart';
 import '../../domain/models/media_catalog.dart';
 import '../../domain/models/media_entry.dart';
 import '../repositories/database/library_database.dart';
+import 'diagnostic_log.dart';
 import 'media_probe_service.dart';
 
 typedef DiscoveredFilesCallback = Future<void> Function(List<String> paths);
@@ -586,9 +586,7 @@ class MediaScannerService {
       _updateStatus(
         _status.copyWith(phase: ScanPhase.error, errorMessage: e.toString()),
       );
-      if (kDebugMode) {
-        debugPrint('MediaScannerService scan error: $e\n$st');
-      }
+      diagnosticDebug('MediaScannerService.scan', error: '$e\n$st');
     } finally {
       if (identical(_currentScanFuture, scan)) _currentScanFuture = null;
       if (!scanCompleter.isCompleted) {
@@ -672,7 +670,7 @@ class MediaScannerService {
     bool Function(String path)? shouldContinue,
     bool ignoreScanCancellation = false,
     bool skipUnchanged = false,
-    VoidCallback? onItemCompleted,
+    void Function()? onItemCompleted,
   }) async {
     final epoch = _cancellationEpoch;
     bool stopped() {
@@ -840,11 +838,10 @@ class MediaScannerService {
               if (error is StateError && error.toString().contains('closed')) {
                 return;
               }
-              if (kDebugMode) {
-                debugPrint(
-                  'MediaScannerService watcher availability error: $error\n$stackTrace',
-                );
-              }
+              diagnosticDebug(
+                'MediaScannerService.watcherAvailability',
+                error: '$error\n$stackTrace',
+              );
             }),
       );
     }
@@ -962,9 +959,10 @@ class MediaScannerService {
       Object error,
       StackTrace stackTrace,
     ) {
-      if (kDebugMode) {
-        debugPrint('MediaScannerService watcher error: $error\n$stackTrace');
-      }
+      diagnosticDebug(
+        'MediaScannerService.watcher',
+        error: '$error\n$stackTrace',
+      );
     });
     _watcherDrains[rootFolder] = drain;
     unawaited(

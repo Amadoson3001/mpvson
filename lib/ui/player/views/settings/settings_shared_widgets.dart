@@ -11,11 +11,11 @@ class SettingsContentContainer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => SingleChildScrollView(
-    padding: const EdgeInsets.fromLTRB(40, 8, 40, 36),
+    padding: const EdgeInsets.fromLTRB(28, 8, 28, 40),
     child: Align(
       alignment: Alignment.topCenter,
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 820),
+        constraints: const BoxConstraints(maxWidth: 640),
         child: child,
       ),
     ),
@@ -38,9 +38,9 @@ class SettingsCardGroup extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final palette = context.palette;
     return Padding(
-      padding: const EdgeInsets.only(bottom: 22),
+      padding: const EdgeInsets.only(bottom: 28),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -49,43 +49,30 @@ class SettingsCardGroup extends StatelessWidget {
               alignment: WrapAlignment.spaceBetween,
               crossAxisAlignment: WrapCrossAlignment.center,
               spacing: 12,
-              runSpacing: 6,
+              runSpacing: 8,
               children: [
                 Text(
                   title!,
-                  style: theme.textTheme.titleSmall?.copyWith(
+                  style: palette.sectionTitle.copyWith(
+                    fontSize: AppType.small,
+                    color: palette.muted,
                     fontWeight: FontWeight.w600,
-                    letterSpacing: -0.1,
-                    fontSize: 13.5,
-                    color: theme.colorScheme.onSurface,
                   ),
                 ),
                 ?trailing,
               ],
             ),
             if (description != null) ...[
-              const SizedBox(height: 3),
-              Text(
-                description!,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant.withValues(
-                    alpha: 0.85,
-                  ),
-                  height: 1.35,
-                  fontSize: 12,
-                ),
-              ),
+              const SizedBox(height: 4),
+              Text(description!, style: palette.rowSecondary),
             ],
             const SizedBox(height: 10),
           ],
           Material(
-            color: theme.colorScheme.surfaceContainer.withValues(alpha: 0.65),
+            color: palette.card,
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
-              side: BorderSide(
-                color: theme.colorScheme.outlineVariant.withValues(alpha: 0.35),
-                width: 1,
-              ),
+              borderRadius: BorderRadius.circular(AppRadii.artwork),
+              side: BorderSide(color: palette.border.withValues(alpha: 0.7)),
             ),
             clipBehavior: Clip.antiAlias,
             child: Column(
@@ -96,9 +83,7 @@ class SettingsCardGroup extends StatelessWidget {
                     Divider(
                       height: 1,
                       thickness: 1,
-                      color: theme.colorScheme.outlineVariant.withValues(
-                        alpha: 0.22,
-                      ),
+                      color: palette.border.withValues(alpha: 0.55),
                     ),
                   children[i],
                 ],
@@ -129,35 +114,17 @@ class SettingsSwitchTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final palette = context.palette;
     return InkWell(
       onTap: () => onChanged(!value),
-      hoverColor: theme.colorScheme.surfaceContainerHighest.withValues(
-        alpha: 0.3,
-      ),
+      hoverColor: palette.hover.withValues(alpha: 0.45),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
         child: Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             if (icon != null) ...[
-              Container(
-                width: 32,
-                height: 32,
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.surfaceContainerHighest.withValues(
-                    alpha: 0.45,
-                  ),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                alignment: Alignment.center,
-                child: Icon(
-                  icon,
-                  size: 16,
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
-              const SizedBox(width: 14),
+              Icon(icon, size: 18, color: palette.muted),
+              const SizedBox(width: 12),
             ],
             Expanded(
               child: Column(
@@ -166,30 +133,143 @@ class SettingsSwitchTile extends StatelessWidget {
                 children: [
                   Text(
                     title,
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      fontWeight: FontWeight.w600,
-                      color: theme.colorScheme.onSurface,
-                      fontSize: 13.5,
+                    style: palette.rowPrimary.copyWith(
+                      fontWeight: FontWeight.w500,
                     ),
                   ),
                   if (subtitle != null && subtitle!.isNotEmpty) ...[
                     const SizedBox(height: 2),
-                    Text(
-                      subtitle!,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant.withValues(
-                          alpha: 0.85,
-                        ),
-                        height: 1.35,
-                        fontSize: 12,
-                      ),
-                    ),
+                    Text(subtitle!, style: palette.rowSecondary),
                   ],
                 ],
               ),
             ),
-            const SizedBox(width: 14),
+            const SizedBox(width: 12),
             AppToggleSwitch(value: value, onChanged: onChanged),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class SettingsRow extends StatelessWidget {
+  const SettingsRow({
+    super.key,
+    this.icon,
+    required this.title,
+    this.subtitle,
+    required this.trailing,
+    this.onTap,
+  });
+
+  final IconData? icon;
+  final String title;
+  final String? subtitle;
+  final Widget trailing;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final content = Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: Row(
+        children: [
+          if (icon != null) ...[
+            Icon(icon, size: 18, color: palette.muted),
+            const SizedBox(width: 12),
+          ],
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  title,
+                  style: palette.rowPrimary.copyWith(
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                if (subtitle != null && subtitle!.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(subtitle!, style: palette.rowSecondary),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          trailing,
+        ],
+      ),
+    );
+
+    if (onTap != null) {
+      return InkWell(
+        onTap: onTap,
+        hoverColor: palette.hover.withValues(alpha: 0.45),
+        child: content,
+      );
+    }
+    return content;
+  }
+}
+
+class SettingsActionTile extends StatelessWidget {
+  const SettingsActionTile({
+    super.key,
+    this.icon,
+    required this.title,
+    this.subtitle,
+    this.trailing,
+    required this.onTap,
+  });
+
+  final IconData? icon;
+  final String title;
+  final String? subtitle;
+  final Widget? trailing;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    return InkWell(
+      onTap: onTap,
+      hoverColor: palette.hover.withValues(alpha: 0.45),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+        child: Row(
+          children: [
+            if (icon != null) ...[
+              Icon(icon, size: 18, color: palette.muted),
+              const SizedBox(width: 12),
+            ],
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    title,
+                    style: palette.rowPrimary.copyWith(
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  if (subtitle != null && subtitle!.isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Text(subtitle!, style: palette.rowSecondary),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            trailing ??
+                Icon(
+                  Icons.chevron_right_rounded,
+                  size: 18,
+                  color: palette.muted,
+                ),
           ],
         ),
       ),
@@ -221,12 +301,11 @@ class ModernSliderTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final accent = theme.colorScheme.primary;
+    final palette = context.palette;
     final display = formatValue(value);
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
       child: Column(
         children: [
           Row(
@@ -234,32 +313,17 @@ class ModernSliderTile extends StatelessWidget {
               Expanded(
                 child: Text(
                   label,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 13.5,
+                  style: palette.rowPrimary.copyWith(
+                    fontWeight: FontWeight.w500,
                   ),
                 ),
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.surfaceContainerHighest.withValues(
-                    alpha: 0.5,
-                  ),
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(
-                    color: theme.colorScheme.outlineVariant.withValues(
-                      alpha: 0.4,
-                    ),
-                  ),
-                ),
-                child: Text(
-                  display,
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    fontWeight: FontWeight.w600,
-                    color: value != 0 ? accent : theme.colorScheme.onSurface,
-                    fontFeatures: const [FontFeature.tabularFigures()],
-                  ),
+              Text(
+                display,
+                style: palette.metadata.copyWith(
+                  color: value != 0 ? palette.accent : palette.muted,
+                  fontWeight: FontWeight.w600,
+                  fontFeatures: const [FontFeature.tabularFigures()],
                 ),
               ),
             ],
@@ -300,61 +364,32 @@ class DropdownSettingTile<T> extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final palette = context.palette;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       child: Row(
         children: [
-          Container(
-            width: 32,
-            height: 32,
-            decoration: BoxDecoration(
-              color: theme.colorScheme.surfaceContainerHighest.withValues(
-                alpha: 0.45,
-              ),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            alignment: Alignment.center,
-            child: Icon(
-              icon,
-              size: 16,
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
-          const SizedBox(width: 14),
+          Icon(icon, size: 18, color: palette.muted),
+          const SizedBox(width: 12),
           Expanded(
             child: Text(
               label,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                fontWeight: FontWeight.w600,
-                fontSize: 13.5,
-              ),
+              style: palette.rowPrimary.copyWith(fontWeight: FontWeight.w500),
             ),
           ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
-            decoration: BoxDecoration(
-              color: theme.colorScheme.surfaceContainerHighest.withValues(
-                alpha: 0.35,
+          DropdownButtonHideUnderline(
+            child: DropdownButton<T>(
+              value: value,
+              items: items,
+              onChanged: onChanged,
+              isDense: true,
+              borderRadius: BorderRadius.circular(AppRadii.control),
+              icon: Icon(
+                Icons.expand_more_rounded,
+                size: 18,
+                color: palette.muted,
               ),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(
-                color: theme.colorScheme.outlineVariant.withValues(alpha: 0.4),
-                width: 1,
-              ),
-            ),
-            child: DropdownButtonHideUnderline(
-              child: DropdownButton<T>(
-                value: value,
-                borderRadius: BorderRadius.circular(AppRadii.control),
-                items: items,
-                onChanged: onChanged,
-                isDense: true,
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  fontWeight: FontWeight.w600,
-                  color: theme.colorScheme.onSurface,
-                ),
-              ),
+              style: palette.rowPrimary.copyWith(fontWeight: FontWeight.w500),
             ),
           ),
         ],
@@ -383,7 +418,7 @@ class TrackSettingTile<T> extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final palette = context.palette;
     T? selectedValue;
     for (final track in tracks) {
       if (track == selected) {
@@ -396,75 +431,46 @@ class TrackSettingTile<T> extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       child: Row(
         children: [
-          Container(
-            width: 32,
-            height: 32,
-            decoration: BoxDecoration(
-              color: theme.colorScheme.surfaceContainerHighest.withValues(
-                alpha: 0.45,
-              ),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            alignment: Alignment.center,
-            child: Icon(
-              icon,
-              size: 16,
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
-          const SizedBox(width: 14),
+          Icon(icon, size: 18, color: palette.muted),
+          const SizedBox(width: 12),
           Expanded(
             child: Text(
               label,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                fontWeight: FontWeight.w600,
-                fontSize: 13.5,
-              ),
+              style: palette.rowPrimary.copyWith(fontWeight: FontWeight.w500),
             ),
           ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
-            decoration: BoxDecoration(
-              color: theme.colorScheme.surfaceContainerHighest.withValues(
-                alpha: 0.35,
+          DropdownButtonHideUnderline(
+            child: DropdownButton<T>(
+              value: selectedValue,
+              hint: const Text('Unavailable'),
+              isDense: true,
+              borderRadius: BorderRadius.circular(AppRadii.control),
+              icon: Icon(
+                Icons.expand_more_rounded,
+                size: 18,
+                color: palette.muted,
               ),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(
-                color: theme.colorScheme.outlineVariant.withValues(alpha: 0.4),
-                width: 1,
-              ),
-            ),
-            child: DropdownButtonHideUnderline(
-              child: DropdownButton<T>(
-                value: selectedValue,
-                hint: const Text('Unavailable'),
-                borderRadius: BorderRadius.circular(AppRadii.control),
-                isDense: true,
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  fontWeight: FontWeight.w600,
-                  color: theme.colorScheme.onSurface,
-                ),
-                items: tracks.map<DropdownMenuItem<T>>((track) {
-                  final itemText = trackLabel(track);
-                  final isSelected = track == selectedValue;
-                  return DropdownMenuItem<T>(
-                    value: track,
-                    child: Semantics(
-                      selected: isSelected,
-                      label: isSelected ? '$itemText, selected' : itemText,
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 190),
-                        child: Text(itemText, overflow: TextOverflow.ellipsis),
-                      ),
+              style: palette.rowPrimary.copyWith(fontWeight: FontWeight.w500),
+              items: tracks.map<DropdownMenuItem<T>>((track) {
+                final itemText = trackLabel(track);
+                final isSelected = track == selectedValue;
+                return DropdownMenuItem<T>(
+                  value: track,
+                  child: Semantics(
+                    selected: isSelected,
+                    label: isSelected ? '$itemText, selected' : itemText,
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 190),
+                      child: Text(itemText, overflow: TextOverflow.ellipsis),
                     ),
-                  );
-                }).toList(),
-                onChanged: tracks.isEmpty
-                    ? null
-                    : (track) {
-                        if (track != null) onSelected(track);
-                      },
-              ),
+                  ),
+                );
+              }).toList(),
+              onChanged: tracks.isEmpty
+                  ? null
+                  : (track) {
+                      if (track != null) onSelected(track);
+                    },
             ),
           ),
         ],

@@ -1414,7 +1414,7 @@ class MediaProbeServiceImpl implements MediaProbeService {
     if (!await parentDir.exists()) return null;
 
     const names = ['cover', 'front', 'folder', 'album', 'art'];
-    const extensions = ['jpg', 'jpeg', 'png', 'webp', 'bmp'];
+    final extensions = MediaCatalog.imageExtensions;
 
     // 1. Direct match
     for (final name in names) {

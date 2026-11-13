@@ -342,69 +342,48 @@ class AppPreferencesRepository extends ChangeNotifier {
     if (_saveError != null) throw _saveError!;
   }
 
-  Future<void> setOpenBehavior(OpenBehaviorPreference preference) async {
-    await updatePreferences(_preferences.copyWith(openBehavior: preference));
-  }
+  Future<void> _patch(
+    DesktopPreferences Function(DesktopPreferences current) update,
+  ) => updatePreferences(update(_preferences));
 
-  Future<void> setKeepAwake(bool keepAwake) async {
-    await updatePreferences(
-      _preferences.copyWith(keepAwakeDuringPlayback: keepAwake),
-    );
-  }
+  Future<void> setOpenBehavior(OpenBehaviorPreference preference) =>
+      _patch((p) => p.copyWith(openBehavior: preference));
 
-  Future<void> setGraphicsSettings(GraphicsSettings settings) async {
-    await updatePreferences(
-      _preferences.copyWith(graphics: settings.normalized()),
-    );
-  }
+  Future<void> setKeepAwake(bool keepAwake) =>
+      _patch((p) => p.copyWith(keepAwakeDuringPlayback: keepAwake));
+
+  Future<void> setGraphicsSettings(GraphicsSettings settings) =>
+      _patch((p) => p.copyWith(graphics: settings.normalized()));
 
   Future<void> setSeekStep(int seconds) async {
     if (!DesktopPreferences.seekStepOptions.contains(seconds)) return;
-    await updatePreferences(_preferences.copyWith(seekStepSeconds: seconds));
+    await _patch((p) => p.copyWith(seekStepSeconds: seconds));
   }
 
   Future<void> setSyncStep(int milliseconds) async {
     if (!DesktopPreferences.syncStepOptions.contains(milliseconds)) return;
-    await updatePreferences(_preferences.copyWith(syncStepMs: milliseconds));
+    await _patch((p) => p.copyWith(syncStepMs: milliseconds));
   }
 
-  Future<void> setHotkey(PlayerAction action, HotkeyBinding binding) async {
-    await updatePreferences(
-      _preferences.copyWith(
-        hotkeyOverrides: _preferences.hotkeys.withBinding(action, binding),
-      ),
-    );
-  }
+  Future<void> setHotkey(PlayerAction action, HotkeyBinding binding) => _patch(
+    (p) => p.copyWith(hotkeyOverrides: p.hotkeys.withBinding(action, binding)),
+  );
 
-  Future<void> setThemeMode(ThemeMode mode) async {
-    await updatePreferences(_preferences.copyWith(themeMode: mode));
-  }
+  Future<void> setThemeMode(ThemeMode mode) =>
+      _patch((p) => p.copyWith(themeMode: mode));
 
-  Future<void> setAccentPreset(String preset) async {
-    await updatePreferences(_preferences.copyWith(accentPreset: preset));
-  }
+  Future<void> setAccentPreset(String preset) =>
+      _patch((p) => p.copyWith(accentPreset: preset));
 
-  Future<void> setDynamicArtworkColor(bool enabled) async {
-    await updatePreferences(
-      _preferences.copyWith(dynamicArtworkColor: enabled),
-    );
-  }
+  Future<void> setDynamicArtworkColor(bool enabled) =>
+      _patch((p) => p.copyWith(dynamicArtworkColor: enabled));
 
-  Future<void> setOledBlack(bool enabled) async {
-    await updatePreferences(_preferences.copyWith(oledBlack: enabled));
-  }
+  Future<void> setOledBlack(bool enabled) =>
+      _patch((p) => p.copyWith(oledBlack: enabled));
 
-  Future<void> updatePlayerControls(
-    PlayerControlsPreferences playerControls,
-  ) async {
-    await updatePreferences(
-      _preferences.copyWith(playerControls: playerControls),
-    );
-  }
+  Future<void> updatePlayerControls(PlayerControlsPreferences playerControls) =>
+      _patch((p) => p.copyWith(playerControls: playerControls));
 
-  Future<void> resetHotkeys() async {
-    await updatePreferences(
-      _preferences.copyWith(hotkeyOverrides: PlayerHotkeys.defaults),
-    );
-  }
+  Future<void> resetHotkeys() =>
+      _patch((p) => p.copyWith(hotkeyOverrides: PlayerHotkeys.defaults));
 }

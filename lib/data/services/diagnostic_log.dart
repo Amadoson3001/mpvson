@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:developer' as developer;
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -142,4 +143,16 @@ String _collapse(String value) {
   return collapsed.length <= 500
       ? collapsed
       : '${collapsed.substring(0, 500)}…';
+}
+
+/// Local debug record that never leaves the machine. Prefer this over
+/// ad-hoc `print` / `debugPrint` in services and views.
+void diagnosticDebug(String stage, {String? message, Object? error}) {
+  developer.log(
+    [
+      if (message != null && message.isNotEmpty) message,
+      if (error != null) error.toString(),
+    ].join('\n'),
+    name: stage,
+  );
 }

@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
+import '../../domain/models/media_catalog.dart';
+
 typedef ThumbnailImageHeaderCheck = bool Function(Uint8List bytes);
 typedef ThumbnailImageDecoder = Future<bool> Function(Uint8List bytes);
 
@@ -35,11 +37,8 @@ class ThumbnailImagePoller {
     this.pollInterval = const Duration(milliseconds: 35),
   });
 
-  static const Set<String> supportedExtensions = <String>{
-    '.jpg',
-    '.jpeg',
-    '.png',
-    '.webp',
+  static final Set<String> supportedExtensions = <String>{
+    for (final ext in MediaCatalog.imageExtensions) '.$ext',
   };
 
   final int maximumBytes;

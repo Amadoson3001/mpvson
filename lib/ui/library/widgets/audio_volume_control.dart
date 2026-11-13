@@ -4,6 +4,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/app_theme.dart';
+import '../../core/components/player_slider_theme.dart';
 import '../../player/player_controller.dart';
 
 /// Compact mute button and responsive slider shared by Now Playing and the library mini player.
@@ -186,22 +187,12 @@ class _AudioVolumeControlState extends State<AudioVolumeControl> {
                     message: 'Volume ${volume.round()}% (scroll to adjust)',
                     waitDuration: const Duration(milliseconds: 600),
                     child: SliderTheme(
-                      data: SliderTheme.of(context).copyWith(
-                        trackHeight: 3,
-                        thumbShape: RoundSliderThumbShape(
-                          enabledThumbRadius: widget.compact ? 4 : 5,
-                        ),
-                        overlayShape: RoundSliderOverlayShape(
-                          overlayRadius: widget.compact ? 10 : 14,
-                        ),
-                        activeTrackColor: Theme.of(context).colorScheme.primary,
-                        inactiveTrackColor: Theme.of(
-                          context,
-                        ).colorScheme.outlineVariant,
+                      data: PlayerSliderTheme.volume(
+                        context,
+                        compact: widget.compact,
+                        inactiveColor:
+                            Theme.of(context).colorScheme.outlineVariant,
                         thumbColor: Theme.of(context).colorScheme.primary,
-                        overlayColor: Theme.of(
-                          context,
-                        ).colorScheme.primary.withValues(alpha: 0.14),
                       ),
                       child: Slider(
                         value: volume,

@@ -8,7 +8,7 @@
 #include "angle_surface_manager.h"
 
 #include <EGL/eglext_angle.h>
-#include <dxgi1_3.h>
+#include <dxgi1_6.h>
 
 #include <iostream>
 #include <stdexcept>
@@ -27,6 +27,36 @@
   }
 
 int ANGLESurfaceManager::instance_count_ = 0;
+
+static bool TryHighPerformanceAdapter(
+    Microsoft::WRL::ComPtr<IDXGIAdapter>& adapter) {
+  Microsoft::WRL::ComPtr<IDXGIFactory1> factory;
+  if (FAILED(::CreateDXGIFactory1(IID_PPV_ARGS(factory.GetAddressOf()))) ||
+      !factory) {
+    return false;
+  }
+  Microsoft::WRL::ComPtr<IDXGIFactory6> factory6;
+  if (FAILED(factory.As(&factory6)) || !factory6) {
+    return false;
+  }
+  Microsoft::WRL::ComPtr<IDXGIAdapter1> adapter1;
+  if (FAILED(factory6->EnumAdapterByGpuPreference(
+          0, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,
+          IID_PPV_ARGS(adapter1.GetAddressOf()))) ||
+      !adapter1) {
+    return false;
+  }
+  DXGI_ADAPTER_DESC1 desc{};
+  if (SUCCEEDED(adapter1->GetDesc1(&desc))) {
+    if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) {
+      return false;
+    }
+    std::wcout << L"media_kit: ANGLESurfaceManager: GPU: " << desc.Description
+               << std::endl;
+  }
+  adapter = adapter1;
+  return true;
+}
 
 ANGLESurfaceManager::ANGLESurfaceManager(int32_t width, int32_t height)
     : width_(width), height_(height) {
@@ -293,15 +323,18 @@ bool ANGLESurfaceManager::CreateD3DTexture() {
     Microsoft::WRL::ComPtr<IDXGIAdapter> adapter;
     D3D_DRIVER_TYPE driver_type = D3D_DRIVER_TYPE_UNKNOWN;
 
-    // NOTE: Automatically selecting adapter on Windows 10 RTM or greater.
-    if (Utils::IsWindows10RTMOrGreater()) {
+    // Prefer the discrete GPU so decode, ANGLE, and Flutter stay on one
+    // adapter. D3D_DRIVER_TYPE_HARDWARE follows the Windows default, which
+    // is often the iGPU on hybrid laptops.
+    if (TryHighPerformanceAdapter(adapter)) {
+      driver_type = D3D_DRIVER_TYPE_UNKNOWN;
+    } else if (Utils::IsWindows10RTMOrGreater()) {
       driver_type = D3D_DRIVER_TYPE_HARDWARE;
     } else {
       Microsoft::WRL::ComPtr<IDXGIFactory> dxgi;
-      // As far as my experience goes, this is the safest approach. Passing NULL
-      // (so-called default) seems to cause issues on Windows 7 or maybe some
-      // older graphics drivers. First adapter is the default.
-      // D3D_DRIVER_TYPE_UNKNOWN| must be passed with manual adapter selection.
+      // Passing NULL (so-called default) seems to cause issues on Windows 7
+      // or maybe some older graphics drivers. First adapter is the default.
+      // D3D_DRIVER_TYPE_UNKNOWN must be passed with manual adapter selection.
       if (SUCCEEDED(
               ::CreateDXGIFactory(IID_PPV_ARGS(dxgi.GetAddressOf()))) &&
           dxgi) {

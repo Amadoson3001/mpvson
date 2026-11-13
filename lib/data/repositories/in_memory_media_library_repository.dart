@@ -2,6 +2,7 @@ import 'dart:async';
 import '../../domain/models/library_models.dart';
 import '../../domain/models/media_catalog.dart';
 import '../../domain/models/media_entry.dart';
+import '../../domain/models/media_query.dart';
 import 'media_library_repository.dart';
 
 extension _FirstWhereOrNullExt<T> on Iterable<T> {
@@ -181,51 +182,9 @@ class InMemoryMediaLibraryRepository extends MediaLibraryRepository {
     }
 
     if (sortBy != null) {
+      final field = MediaSortField.tryParse(sortBy) ?? MediaSortField.title;
       result.sort((a, b) {
-        int comparison;
-        switch (sortBy) {
-          case 'title':
-            comparison = a.title.toLowerCase().compareTo(b.title.toLowerCase());
-            break;
-          case 'artist':
-            comparison = a.artist.toLowerCase().compareTo(
-              b.artist.toLowerCase(),
-            );
-            break;
-          case 'album':
-            comparison = a.album.toLowerCase().compareTo(b.album.toLowerCase());
-            break;
-          case 'duration':
-            comparison = a.metadata.duration.compareTo(b.metadata.duration);
-            break;
-          case 'fileSize':
-            comparison = a.fileSize.compareTo(b.fileSize);
-            break;
-          case 'addedAt':
-            comparison = a.addedAt.compareTo(b.addedAt);
-            break;
-          case 'lastPlayedAt':
-            final aTime =
-                a.lastPlayedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
-            final bTime =
-                b.lastPlayedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
-            comparison = aTime.compareTo(bTime);
-            break;
-          case 'trackNumber':
-            final discCompare = (a.metadata.discNumber ?? 1).compareTo(
-              b.metadata.discNumber ?? 1,
-            );
-            if (discCompare != 0) {
-              comparison = discCompare;
-            } else {
-              comparison = (a.metadata.trackNumber ?? 0).compareTo(
-                b.metadata.trackNumber ?? 0,
-              );
-            }
-            break;
-          default:
-            comparison = a.title.toLowerCase().compareTo(b.title.toLowerCase());
-        }
+        final comparison = field.compare(a, b);
         return ascending ? comparison : -comparison;
       });
     }

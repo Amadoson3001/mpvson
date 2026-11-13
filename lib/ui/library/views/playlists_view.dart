@@ -7,6 +7,7 @@ import '../../../domain/models/library_models.dart';
 import '../../../domain/models/media_catalog.dart';
 import '../../../domain/models/media_entry.dart';
 import '../../../domain/models/media_thumbnail.dart';
+import '../../../data/services/diagnostic_log.dart';
 import '../../../utils/format.dart';
 import '../../player/player_controller.dart';
 import '../../core/app_theme.dart';
@@ -48,7 +49,6 @@ class _PlaylistsViewState extends State<PlaylistsView> {
   Future<void>? _reloadFuture;
   bool _reloadAgain = false;
   Timer? _reloadThrottle;
-  Timer? _searchReload;
   bool _isDragging = false;
   int _probeGeneration = 0;
 
@@ -114,17 +114,14 @@ class _PlaylistsViewState extends State<PlaylistsView> {
       _previewRecords.clear();
       _reload();
     } else if (oldWidget.searchQuery != widget.searchQuery) {
-      _searchReload?.cancel();
-      _searchReload = Timer(const Duration(milliseconds: 150), () {
-        if (mounted) setState(() {});
-      });
+      // The shell already debounces typing; refilter immediately.
+      if (mounted) setState(() {});
     }
   }
 
   @override
   void dispose() {
     _probeGeneration++;
-    _searchReload?.cancel();
     _reloadThrottle?.cancel();
     widget.repository.removeListener(_onRepositoryChanged);
     super.dispose();
@@ -136,11 +133,16 @@ class _PlaylistsViewState extends State<PlaylistsView> {
   }
 
   void _scheduleReload() {
-    if (_reloadThrottle != null) return;
-    _reloadThrottle = Timer(const Duration(milliseconds: 200), () {
-      _reloadThrottle = null;
-      if (mounted) _reload();
-    });
+    if (widget.repository.scanStatus.isScanning) {
+      _reloadThrottle ??= Timer(kLibraryScanReloadThrottle, () {
+        _reloadThrottle = null;
+        if (mounted) _reload();
+      });
+      return;
+    }
+    _reloadThrottle?.cancel();
+    _reloadThrottle = null;
+    if (mounted) _reload();
   }
 
   Future<void> _reload() {
@@ -158,7 +160,9 @@ class _PlaylistsViewState extends State<PlaylistsView> {
   }
 
   Future<void> _drainReloads() async {
-    if (mounted) setState(() => _isLoading = true);
+    final showLoader = _playlists == null && _entries == null;
+    _isLoading = true;
+    if (mounted && showLoader) setState(() {});
     try {
       do {
         _reloadAgain = false;
@@ -186,10 +190,11 @@ class _PlaylistsViewState extends State<PlaylistsView> {
         }
       } while (_reloadAgain && mounted);
     } catch (error) {
-      debugPrint('Playlists view could not refresh: $error');
+      diagnosticDebug('playlists.refresh', error: error);
       if (mounted) setState(() => _error = error);
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      _isLoading = false;
+      if (mounted && showLoader) setState(() {});
     }
   }
 
@@ -393,7 +398,7 @@ class _PlaylistsViewState extends State<PlaylistsView> {
         await _addPaths(pl, paths);
       }
     } catch (e) {
-      debugPrint('Error picking files for playlist: $e');
+      diagnosticDebug('playlists.pickFiles', error: e);
     }
   }
 
@@ -484,7 +489,7 @@ class _PlaylistsViewState extends State<PlaylistsView> {
           _previewRecords.remove(pl.id);
         })
         .catchError((Object error) {
-          debugPrint('Playlist reorder could not persist: $error');
+          diagnosticDebug('playlists.reorder', error: error);
           if (mounted) _reload();
         });
   }
@@ -1393,7 +1398,7 @@ class _AddFromLibraryDialogState extends State<_AddFromLibraryDialog> {
 
   void _onSearchChanged(String value) {
     _searchDebounce?.cancel();
-    _searchDebounce = Timer(const Duration(milliseconds: 200), () {
+    _searchDebounce = Timer(kLibrarySearchDebounce, () {
       if (!mounted) return;
       final trimmed = value.trim();
       if (trimmed == _activeSearch) return;

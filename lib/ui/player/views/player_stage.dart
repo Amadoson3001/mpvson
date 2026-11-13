@@ -1,22 +1,17 @@
-import 'dart:async';
-
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
-import '../../../domain/models/media_catalog.dart';
 import '../../../domain/models/media_entry.dart';
 import '../../../domain/models/player_hotkeys.dart';
 import '../../core/app_motion.dart';
 import '../../core/app_theme.dart';
-import '../../core/toast/app_toast.dart';
 import '../../core/toast/toast_layout.dart';
 import '../player_controller.dart';
-import '../widgets/empty_library.dart';
-import '../widgets/media_ready.dart';
 import '../widgets/playback_feedback.dart';
 import '../widgets/player_actions.dart';
 import '../widgets/player_context_menu.dart';
 import '../widgets/player_controls.dart';
+import '../widgets/player_stage_media.dart';
 import 'player_drag_drop.dart';
 import 'player_top_bar.dart';
 import '../../../../data/repositories/app_preferences_repository.dart';
@@ -75,6 +70,7 @@ class PlayerStage extends StatelessWidget {
     this.videoSettingsOpen = false,
     this.videoSettingsMounted = false,
     this.miniProgress = 0.0,
+    this.miniProgressAnimation,
     this.onExpandFromMini,
     this.onDismissMini,
     this.onCloseVideoSettings,
@@ -106,6 +102,7 @@ class PlayerStage extends StatelessWidget {
   final bool videoSettingsOpen;
   final bool videoSettingsMounted;
   final double miniProgress;
+  final Animation<double>? miniProgressAnimation;
   final VoidCallback? onExpandFromMini;
   final VoidCallback? onDismissMini;
   final VoidCallback? onCloseVideoSettings;
@@ -142,77 +139,65 @@ class PlayerStage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final current = controller.current;
-    final audioEntry =
-        controller.isAudio ||
-        (current != null &&
-            MediaCatalog.kindFromExtension(current.path).isAudio);
+    final media = _buildMediaContent(context);
+    final animation = miniProgressAnimation;
+    if (animation != null) {
+      return AnimatedBuilder(
+        animation: animation,
+        child: media.surface,
+        builder: (context, child) => _composeStage(
+          context,
+          contentState: media.state,
+          media: child!,
+          progress: animation.value,
+        ),
+      );
+    }
+    return _composeStage(
+      context,
+      contentState: media.state,
+      media: media.surface,
+      progress: miniProgress,
+    );
+  }
 
+  ({String state, Widget surface}) _buildMediaContent(BuildContext context) =>
+      buildPlayerStageMedia(
+        context: context,
+        controller: controller,
+        videoBuilder: videoBuilder,
+        onOpenFiles: onOpenFiles,
+        onOpenUrl: onOpenUrl,
+        onOpenRecent: onOpenRecent,
+        draggingFiles: draggingFiles,
+        onOpenLibrary: onOpenLibrary,
+      );
+
+  Widget _composeStage(
+    BuildContext context, {
+    required String contentState,
+    required Widget media,
+    required double progress,
+  }) {
+    final current = controller.current;
     final Widget content;
-    final String contentState;
-    if (current == null) {
-      contentState = 'empty';
-      content = Padding(
-        padding: const EdgeInsets.only(bottom: 60),
-        child: EmptyLibrary(
-          recent: controller.recent,
-          onOpenFiles: onOpenFiles,
-          onOpenUrl: onOpenUrl,
-          onOpenRecent: onOpenRecent,
-          onRemoveRecent: (MediaEntry entry) {
-            final restored = controller.removeRecent(entry);
-            if (restored != null && context.mounted) {
-              AppToast.show(
-                context,
-                'Removed from recently played',
-                actionLabel: 'Undo',
-                onAction: () =>
-                    controller.restoreRecent(restored.$1, restored.$2),
-              );
-            }
-          },
-          isDragging: draggingFiles,
-          onOpenLibrary: onOpenLibrary,
-        ),
-      );
-    } else if (!controller.hasMedia) {
-      contentState = 'ready';
-      content = Padding(
-        padding: const EdgeInsets.only(bottom: 60),
-        child: AnimatedBuilder(
-          animation: Listenable.merge(<Listenable>[
-            controller.displayPositionListenable,
-            controller.durationListenable,
-            controller.bufferingListenable,
-          ]),
-          builder: (context, _) => MediaReady(
-            entry: controller.current ?? current,
-            position: controller.displayPosition,
-            duration: controller.duration,
-            isOpening: controller.isBuffering,
-            onPlay: () => unawaited(controller.togglePlayPause()),
-          ),
-        ),
-      );
-    } else if (audioEntry) {
-      contentState = 'audio';
-      content = const ColoredBox(color: AppTheme.stage);
-    } else {
-      contentState = 'video';
+    if (contentState == 'video') {
       content = ColoredBox(
         color: AppTheme.stage,
         child: LayoutBuilder(
           builder: (context, constraints) {
-            if (miniProgress <= 0.001) {
+            if (progress <= 0.001) {
               onUpdateViewportDimensions(context, constraints);
             }
-            return RepaintBoundary(child: videoBuilder(context, controller));
+            return RepaintBoundary(child: media);
           },
         ),
       );
+    } else {
+      content = media;
     }
 
-    final fullControlsOpacity = (1.0 - miniProgress * 3.5).clamp(0.0, 1.0);
+    final fullControlsOpacity = (1.0 - progress * 3.5).clamp(0.0, 1.0);
     final showFullControls = fullControlsOpacity > 0.01;
 
     final stageBody = Stack(
@@ -247,7 +232,7 @@ class PlayerStage extends StatelessWidget {
                 behavior: HitTestBehavior.opaque,
                 onTap: controller.hasMedia
                     ? () {
-                        if (miniProgress > 0.01 && onExpandFromMini != null) {
+                        if (progress > 0.01 && onExpandFromMini != null) {
                           onExpandFromMini!();
                           return;
                         }
@@ -258,7 +243,7 @@ class PlayerStage extends StatelessWidget {
                         onVideoTap();
                       }
                     : null,
-                onDoubleTap: desktopWindow && miniProgress <= 0.01
+                onDoubleTap: desktopWindow && progress <= 0.01
                     ? onVideoDoubleTap
                     : null,
                 child: AnimatedSwitcher(
@@ -444,28 +429,28 @@ class PlayerStage extends StatelessWidget {
               onExitSettled: onVideoSettingsExitEnd,
             ),
           ),
-        if (miniProgress > 0.35 && controller.hasMedia && controller.isVideo)
+        if (progress > 0.35 && controller.hasMedia && controller.isVideo)
           Positioned.fill(
             child: MiniPlayerOverlay(
               controller: controller,
               onExpand: onExpandFromMini ?? () {},
               onDismiss: onDismissMini ?? () {},
-              visualOpacity: ((miniProgress - 0.35) * 1.54).clamp(0.0, 1.0),
+              visualOpacity: ((progress - 0.35) * 1.54).clamp(0.0, 1.0),
             ),
           ),
       ],
     );
 
-    if (miniProgress > 0.01) {
+    if (progress > 0.01) {
       final borderRadius = BorderRadius.circular(
-        AppLayout.dockedMiniVideoRadius * miniProgress,
+        AppLayout.dockedMiniVideoRadius * progress,
       );
       return DecoratedBox(
         decoration: BoxDecoration(
           borderRadius: borderRadius,
           border: Border.all(
             color: context.palette.border.withValues(
-              alpha: miniProgress.clamp(0.0, 1.0),
+              alpha: progress.clamp(0.0, 1.0),
             ),
             width: 1,
           ),

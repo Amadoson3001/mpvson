@@ -1,3 +1,4 @@
+import 'dart:collection';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -9,6 +10,10 @@ import 'media_catalog.dart';
 /// Queue entries carry a unique [id], even when two entries refer to the same
 /// file. History entries use [canonicalSource] as their id so repeated plays
 /// of the same source update one row instead of creating duplicates.
+///
+/// [title], [position], and [duration] are session/queue fields. Probed
+/// library properties (artist, album, artwork, codec) live on
+/// [MediaMetadata], owned by [MediaItemRecord.metadata].
 class MediaEntry {
   const MediaEntry({
     required this.id,
@@ -176,26 +181,50 @@ class MediaEntry {
   /// filesystem using [Directory.resolveSymbolicLinksSync] or
   /// [File.resolveSymbolicLinksSync], falling back to [source] if unavailable
   /// or on any error.
+  static final LinkedHashMap<String, String> _displayPathCache =
+      LinkedHashMap<String, String>();
+  static const int _maxDisplayPathCache = 256;
+
   static String formatDisplayPath(String source) {
     final trimmed = source.trim();
     if (trimmed.isEmpty || isNetworkUrl(trimmed)) {
       return source;
     }
+    final cached = _displayPathCache.remove(trimmed);
+    if (cached != null) {
+      _displayPathCache[trimmed] = cached;
+      return cached;
+    }
     try {
       final dir = Directory(trimmed);
       if (dir.existsSync()) {
-        final resolved = dir.resolveSymbolicLinksSync();
-        return p.normalize(stripLongPathPrefix(resolved));
+        final resolved = p.normalize(
+          stripLongPathPrefix(dir.resolveSymbolicLinksSync()),
+        );
+        _recordDisplayPath(trimmed, resolved);
+        return resolved;
       }
       final file = File(trimmed);
       if (file.existsSync()) {
-        final resolved = file.resolveSymbolicLinksSync();
-        return p.normalize(stripLongPathPrefix(resolved));
+        final resolved = p.normalize(
+          stripLongPathPrefix(file.resolveSymbolicLinksSync()),
+        );
+        _recordDisplayPath(trimmed, resolved);
+        return resolved;
       }
     } catch (_) {
       // Fallback on any error (e.g. drive disconnected, permission denied).
     }
+    // Cache misses too so list rebuilds do not keep hitting existsSync.
+    _recordDisplayPath(trimmed, source);
     return source;
+  }
+
+  static void _recordDisplayPath(String source, String resolved) {
+    _displayPathCache[source] = resolved;
+    while (_displayPathCache.length > _maxDisplayPathCache) {
+      _displayPathCache.remove(_displayPathCache.keys.first);
+    }
   }
 
   /// Alias for [formatDisplayPath] retrieving the filesystem's canonical case.

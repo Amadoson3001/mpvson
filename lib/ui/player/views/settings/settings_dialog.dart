@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../../../data/repositories/app_preferences_repository.dart';
@@ -6,15 +8,20 @@ import '../../../../data/services/desktop_integration_service.dart';
 import '../../../../data/services/engine_update_service.dart';
 import '../../../../data/services/update_service.dart';
 import '../../../core/app_motion.dart';
+import '../../../core/app_theme.dart';
+import '../../../core/components/app_dialog.dart';
 import '../../player_controller.dart';
 import 'settings_animation_section.dart';
 import 'settings_appearance_section.dart';
 import 'settings_desktop_section.dart';
+import 'settings_empty_fallbacks.dart';
 import 'settings_library_section.dart';
 import 'settings_playback_section.dart';
 import 'settings_player_controls_section.dart';
 import 'settings_shortcuts_section.dart';
 import 'settings_update_section.dart';
+
+export 'settings_library_section.dart' show LibraryFoldersView;
 
 enum SettingsSection {
   appearance,
@@ -42,24 +49,15 @@ extension SettingsSectionX on SettingsSection {
   };
 
   String get description => switch (this) {
-    SettingsSection.appearance =>
-      'Customize themes, dynamic accents, and control density.',
-    SettingsSection.animation =>
-      'Choose how panels and the video move, with a simple off switch for older PCs.',
-    SettingsSection.playerControls =>
-      'Customize control bar style, glass blur, opacity, seekbar, and layout.',
-    SettingsSection.playback =>
-      'Manage playback behaviors, repeat, speed, and media tracks.',
-    SettingsSection.videoAudio =>
-      'Fine-tune video quality, color calibration, and timing delays.',
-    SettingsSection.desktopIntegration =>
-      'Configure file opening behavior and OS power settings.',
-    SettingsSection.mediaLibrary =>
-      'Manage indexed folders and monitor library status.',
-    SettingsSection.shortcuts =>
-      'Rebind player hotkeys and review mouse shortcuts.',
-    SettingsSection.about =>
-      'Inspect application version, engine build, and check for updates.',
+    SettingsSection.appearance => 'Theme, accent, and control size.',
+    SettingsSection.animation => 'Motion for panels, sheets, and video.',
+    SettingsSection.playerControls => 'Bar layout, blur, and seek bar.',
+    SettingsSection.playback => 'Repeat, speed, and media tracks.',
+    SettingsSection.videoAudio => 'Quality, color, and timing.',
+    SettingsSection.desktopIntegration => 'File opening and power.',
+    SettingsSection.mediaLibrary => 'Indexed folders and scan status.',
+    SettingsSection.shortcuts => 'Keyboard and mouse bindings.',
+    SettingsSection.about => 'Version, engine, and updates.',
   };
 
   IconData get icon => switch (this) {
@@ -121,24 +119,17 @@ class _SettingsDialogViewState extends State<SettingsDialogView> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
     if (widget.useRail) {
       return Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           SizedBox(
-            width: 216,
+            width: 200,
             child: DecoratedBox(
               decoration: BoxDecoration(
-                color: theme.colorScheme.surfaceContainerLow,
+                color: context.palette.background,
                 border: Border(
-                  right: BorderSide(
-                    color: theme.colorScheme.outlineVariant.withValues(
-                      alpha: 0.35,
-                    ),
-                    width: 1,
-                  ),
+                  right: BorderSide(color: context.palette.border, width: 1),
                 ),
               ),
               child: SettingsNavigation(
@@ -178,10 +169,7 @@ class _SettingsDialogViewState extends State<SettingsDialogView> {
           showMediaLibrary: !widget.embedded,
           onSelected: _selectSection,
         ),
-        Divider(
-          height: 1,
-          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.35),
-        ),
+        Divider(height: 1, color: context.palette.border),
         Expanded(
           child: SettingsContentPane(
             section: _section,
@@ -244,8 +232,8 @@ class SettingsNavigation extends StatelessWidget {
       );
     }
 
-    return Container(
-      color: Theme.of(context).colorScheme.surfaceContainerLow,
+    return ColoredBox(
+      color: context.palette.background,
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
@@ -271,8 +259,11 @@ class SettingsNavigationItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final accent = theme.colorScheme.primary;
+    final palette = context.palette;
+    final labelStyle = palette.rowPrimary.copyWith(
+      color: selected ? palette.text : palette.muted,
+      fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+    );
 
     return Semantics(
       selected: selected,
@@ -280,21 +271,17 @@ class SettingsNavigationItem extends StatelessWidget {
         color: Colors.transparent,
         child: InkWell(
           onTap: onPressed,
-          borderRadius: BorderRadius.circular(10),
-          hoverColor: theme.colorScheme.surfaceContainerHighest.withValues(
-            alpha: 0.35,
-          ),
+          borderRadius: BorderRadius.circular(AppRadii.control),
+          hoverColor: palette.hover.withValues(alpha: 0.55),
           child: AnimatedContainer(
             duration: AppMotion.duration(context, AppMotion.quick),
             padding: EdgeInsets.symmetric(
               horizontal: wide ? 12 : 14,
-              vertical: wide ? 9 : 8,
+              vertical: wide ? 8 : 7,
             ),
             decoration: BoxDecoration(
-              color: selected
-                  ? accent.withValues(alpha: 0.12)
-                  : Colors.transparent,
-              borderRadius: BorderRadius.circular(10),
+              color: selected ? palette.hover : Colors.transparent,
+              borderRadius: BorderRadius.circular(AppRadii.control),
             ),
             child: Row(
               mainAxisSize: wide ? MainAxisSize.max : MainAxisSize.min,
@@ -302,30 +289,16 @@ class SettingsNavigationItem extends StatelessWidget {
                 Icon(
                   section.icon,
                   size: 18,
-                  color: selected
-                      ? accent
-                      : theme.colorScheme.onSurfaceVariant.withValues(
-                          alpha: 0.85,
-                        ),
+                  color: selected ? palette.text : palette.muted,
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: 10),
                 if (wide)
                   Expanded(
                     child: Text(
                       section.label,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: selected
-                            ? (theme.brightness == Brightness.dark
-                                  ? Colors.white
-                                  : theme.colorScheme.onSurface)
-                            : theme.colorScheme.onSurfaceVariant,
-                        fontWeight: selected
-                            ? FontWeight.w600
-                            : FontWeight.w500,
-                        fontSize: 13.5,
-                      ),
+                      style: labelStyle,
                     ),
                   )
                 else
@@ -333,15 +306,7 @@ class SettingsNavigationItem extends StatelessWidget {
                     section.label,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: selected
-                          ? (theme.brightness == Brightness.dark
-                                ? Colors.white
-                                : theme.colorScheme.onSurface)
-                          : theme.colorScheme.onSurfaceVariant,
-                      fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-                      fontSize: 13.5,
-                    ),
+                    style: labelStyle,
                   ),
               ],
             ),
@@ -382,45 +347,27 @@ class SettingsContentPane extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final palette = context.palette;
     return ColoredBox(
-      color: theme.colorScheme.surfaceContainerLowest,
+      color: palette.background,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Container(
-            padding: const EdgeInsets.fromLTRB(40, 24, 40, 8),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(28, 22, 28, 4),
             child: Align(
               alignment: Alignment.topCenter,
               child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 820),
-                child: Row(
+                constraints: const BoxConstraints(maxWidth: 640),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            section.label,
-                            style: theme.textTheme.headlineSmall?.copyWith(
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: -0.4,
-                              fontSize: 22,
-                            ),
-                          ),
-                          const SizedBox(height: 3),
-                          Text(
-                            section.description,
-                            style: theme.textTheme.bodyMedium?.copyWith(
-                              color: theme.colorScheme.onSurfaceVariant
-                                  .withValues(alpha: 0.85),
-                              fontSize: 13,
-                              height: 1.35,
-                            ),
-                          ),
-                        ],
-                      ),
+                    Text(
+                      section.label,
+                      style: palette.albumTitle.copyWith(fontSize: 20),
                     ),
+                    const SizedBox(height: 4),
+                    Text(section.description, style: palette.rowSecondary),
                   ],
                 ),
               ),
@@ -475,4 +422,197 @@ class SettingsContentPane extends StatelessWidget {
       ),
     );
   }
+}
+
+/// A modern, desktop-first settings experience featuring fluid navigation,
+/// dynamic accent & theme personalization, and responsive controls.
+class SettingsDialog extends StatefulWidget {
+  const SettingsDialog({
+    super.key,
+    required this.controller,
+    required this.updates,
+    required this.engineUpdates,
+    required this.pickSubtitle,
+    this.appPreferences,
+    this.desktopIntegration,
+    this.libraryRepository,
+    this.pickDirectory,
+    this.showMediaLibrary = false,
+    this.embedded = false,
+    this.onClose,
+  });
+
+  final PlayerController controller;
+  final UpdateService updates;
+  final EngineUpdateService engineUpdates;
+  final Future<String?> Function() pickSubtitle;
+  final AppPreferencesRepository? appPreferences;
+  final DesktopIntegrationService? desktopIntegration;
+  final MediaLibraryRepository? libraryRepository;
+  final Future<String?> Function()? pickDirectory;
+  final bool showMediaLibrary;
+  final bool embedded;
+  final VoidCallback? onClose;
+
+  static Future<void> show({
+    required BuildContext context,
+    required PlayerController controller,
+    required UpdateService updates,
+    required EngineUpdateService engineUpdates,
+    required Future<String?> Function() pickSubtitle,
+    AppPreferencesRepository? appPreferences,
+    DesktopIntegrationService? desktopIntegration,
+    MediaLibraryRepository? libraryRepository,
+    Future<String?> Function()? pickDirectory,
+    bool showMediaLibrary = false,
+    VoidCallback? onClose,
+  }) => AppDialog.show<void>(
+    context: context,
+    builder: (_) => SettingsDialog(
+      controller: controller,
+      updates: updates,
+      engineUpdates: engineUpdates,
+      pickSubtitle: pickSubtitle,
+      appPreferences: appPreferences,
+      desktopIntegration: desktopIntegration,
+      libraryRepository: libraryRepository,
+      pickDirectory: pickDirectory,
+      showMediaLibrary: showMediaLibrary,
+      onClose: onClose,
+    ),
+  );
+
+  @override
+  State<SettingsDialog> createState() => _SettingsDialogState();
+}
+
+class _SettingsDialogState extends State<SettingsDialog> {
+  AppPreferencesRepository? _fallbackPreferences;
+  DesktopIntegrationService? _fallbackDesktopIntegration;
+  MediaLibraryRepository? _fallbackLibraryRepository;
+
+  AppPreferencesRepository get _preferences =>
+      widget.appPreferences ??
+      (_fallbackPreferences ??= AppPreferencesRepository());
+
+  DesktopIntegrationService get _desktopIntegration =>
+      widget.desktopIntegration ??
+      (_fallbackDesktopIntegration ??= EmptyDesktopIntegrationService());
+
+  MediaLibraryRepository get _libraryRepository =>
+      widget.libraryRepository ??
+      (_fallbackLibraryRepository ??= EmptyMediaLibraryRepository());
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.appPreferences == null) {
+      unawaited(_preferences.load());
+    }
+  }
+
+  @override
+  void dispose() {
+    _fallbackPreferences?.dispose();
+    _fallbackDesktopIntegration?.dispose();
+    _fallbackLibraryRepository?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.embedded) {
+      return _buildBody(context);
+    }
+
+    return AppDialog(
+      maxWidth: 840,
+      maxHeight: 720,
+      insetPadding: const EdgeInsets.all(AppSpace.lg),
+      child: _buildBody(context),
+    );
+  }
+
+  Widget _buildBody(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final screenHeight = MediaQuery.sizeOf(context).height;
+      final availableWidth = constraints.maxWidth;
+      final availableHeight = constraints.maxHeight.isFinite
+          ? constraints.maxHeight
+          : screenHeight - 48;
+      final dialogWidth = widget.embedded
+          ? availableWidth
+          : availableWidth.isFinite
+          ? (availableWidth < 840 ? availableWidth : 840.0)
+          : 840.0;
+      final dialogHeight = widget.embedded
+          ? availableHeight
+          : (availableHeight < 720 ? availableHeight : 720.0);
+      final useRail = availableWidth >= 700;
+      final compactViewport = dialogHeight <= 540;
+
+      return ColoredBox(
+        color: context.palette.background,
+        child: SizedBox(
+          width: dialogWidth,
+          height: dialogHeight,
+          child: Column(
+            children: [
+              if (!widget.embedded) ...[
+                SizedBox(
+                  height: AppLayout.settingsHeaderHeight,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Settings',
+                        style: context.palette.sectionTitle.copyWith(
+                          fontSize: AppType.body,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                Divider(height: 1, color: context.palette.border),
+              ],
+              Expanded(
+                child: SettingsDialogView(
+                  controller: widget.controller,
+                  updates: widget.updates,
+                  engineUpdates: widget.engineUpdates,
+                  pickSubtitle: widget.pickSubtitle,
+                  preferences: _preferences,
+                  desktopIntegration: _desktopIntegration,
+                  libraryRepository: _libraryRepository,
+                  pickDirectory: widget.pickDirectory,
+                  showMediaLibrary: widget.showMediaLibrary,
+                  embedded: widget.embedded,
+                  compactViewport: compactViewport,
+                  useRail: useRail,
+                ),
+              ),
+              if (!widget.embedded) ...[
+                Divider(height: 1, color: context.palette.border),
+                SizedBox(
+                  height: 48,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton(
+                        onPressed:
+                            widget.onClose ?? () => Navigator.of(context).pop(),
+                        child: const Text('Done'),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      );
+    },
+  );
 }

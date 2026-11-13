@@ -10,7 +10,7 @@ import '../../library/views/library_shell.dart';
 import '../player_controller.dart';
 import 'player_chrome_controller.dart';
 import 'player_media_coordinator.dart';
-import 'settings_dialog.dart';
+import 'settings/settings_dialog.dart';
 
 /// The library shell layered onto the player surface while the in-app library
 /// is showing, wired to the player's media coordinator and chrome.

@@ -46,8 +46,7 @@ class AppearanceSettingsSection extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     SettingsCardGroup(
-                      title: 'Theme mode',
-                      description: 'Select your preferred visual appearance.',
+                      title: 'Theme',
                       children: [
                         Padding(
                           padding: const EdgeInsets.all(12),
@@ -101,26 +100,10 @@ class AppearanceSettingsSection extends StatelessWidget {
                     ),
                     SettingsCardGroup(
                       title: 'Accent color',
-                      description:
-                          'Curated palettes for highlights, timeline bars, and buttons.',
                       children: [
                         if (isArtworkSyncActive)
-                          Container(
-                            margin: const EdgeInsets.fromLTRB(14, 12, 14, 4),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 14,
-                              vertical: 10,
-                            ),
-                            decoration: BoxDecoration(
-                              color: accent.withValues(alpha: 0.08),
-                              borderRadius: BorderRadius.circular(
-                                AppRadii.control,
-                              ),
-                              border: Border.all(
-                                color: accent.withValues(alpha: 0.25),
-                                width: 1,
-                              ),
-                            ),
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
                             child: Row(
                               children: [
                                 Icon(
@@ -130,33 +113,11 @@ class AppearanceSettingsSection extends StatelessWidget {
                                 ),
                                 const SizedBox(width: 10),
                                 Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        'Dynamic artwork color active',
-                                        style: theme.textTheme.labelMedium
-                                            ?.copyWith(
-                                              color: accent,
-                                              fontWeight: FontWeight.w600,
-                                            ),
-                                      ),
-                                      const SizedBox(height: 1),
-                                      Text(
-                                        'Colors adapt automatically to playing media. Pick a preset below to switch to custom accent.',
-                                        style: theme.textTheme.bodySmall
-                                            ?.copyWith(
-                                              color: theme
-                                                  .colorScheme
-                                                  .onSurfaceVariant,
-                                              fontSize: 11.5,
-                                            ),
-                                      ),
-                                    ],
+                                  child: Text(
+                                    'Following artwork color. Choose a preset to lock one.',
+                                    style: context.palette.rowSecondary,
                                   ),
                                 ),
-                                const SizedBox(width: 8),
                                 TextButton(
                                   style: TextButton.styleFrom(
                                     visualDensity: VisualDensity.compact,
@@ -171,10 +132,7 @@ class AppearanceSettingsSection extends StatelessWidget {
                                       false,
                                     ),
                                   ),
-                                  child: const Text(
-                                    'Use preset',
-                                    style: TextStyle(fontSize: 12),
-                                  ),
+                                  child: const Text('Use preset'),
                                 ),
                               ],
                             ),
@@ -216,13 +174,13 @@ class AppearanceSettingsSection extends StatelessWidget {
                       ],
                     ),
                     SettingsCardGroup(
-                      title: 'Personalization & Display',
+                      title: 'Display',
                       children: [
                         SettingsSwitchTile(
                           icon: Icons.auto_awesome_rounded,
                           title: 'Sync with media artwork',
                           subtitle:
-                              'Extracts colors from active video thumbnails or music album covers to dynamically tint the player.',
+                              'Tint the interface from the current artwork.',
                           value: prefs.dynamicArtworkColor,
                           onChanged: (val) => unawaited(
                             appPreferences!.setDynamicArtworkColor(val),
@@ -231,8 +189,7 @@ class AppearanceSettingsSection extends StatelessWidget {
                         SettingsSwitchTile(
                           icon: Icons.contrast_rounded,
                           title: 'OLED pure black',
-                          subtitle:
-                              'Renders true pitch-black surfaces in dark mode for OLED displays and battery efficiency.',
+                          subtitle: 'True black surfaces in dark mode.',
                           value: prefs.oledBlack,
                           onChanged: (val) =>
                               unawaited(appPreferences!.setOledBlack(val)),
@@ -244,7 +201,7 @@ class AppearanceSettingsSection extends StatelessWidget {
               },
             ),
           ListenableBuilder(
-            listenable: controller,
+            listenable: controller.structureListenable,
             builder: (context, _) {
               final isCompact =
                   controller.controlDensity == ControlDensity.compact;

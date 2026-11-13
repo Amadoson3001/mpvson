@@ -273,6 +273,7 @@ class _PlayerContentState extends State<PlayerContent>
 
   Widget _buildStage({
     double miniProgress = 0.0,
+    Animation<double>? miniProgressAnimation,
     VoidCallback? onExpandFromMini,
     VoidCallback? onDismissMini,
   }) {
@@ -299,6 +300,7 @@ class _PlayerContentState extends State<PlayerContent>
       hasLibraryRepository: widget.libraryRepository != null,
       hotkeys: _hotkeys,
       miniProgress: miniProgress,
+      miniProgressAnimation: miniProgressAnimation,
       onExpandFromMini: onExpandFromMini,
       onDismissMini: onDismissMini,
       onPointerSignal: _handlePointerSignal,
@@ -427,7 +429,12 @@ class _PlayerContentState extends State<PlayerContent>
 
             return AnimatedBuilder(
               animation: _miniPlayerCurved,
-              builder: (context, _) {
+              child: _buildStage(
+                miniProgressAnimation: _miniPlayerCurved,
+                onExpandFromMini: _returnToPlayerAnimated,
+                onDismissMini: _dismissMiniPlayer,
+              ),
+              builder: (context, stage) {
                 final t = _miniPlayerCurved.value;
                 final currentRect = Rect.lerp(fullRect, miniRect, t)!;
 
@@ -437,13 +444,7 @@ class _PlayerContentState extends State<PlayerContent>
                     ? (!_miniPlayerDismissed || t < 0.999)
                     : !widget.isShowingLibrary;
 
-                final Widget stage = _buildStage(
-                  miniProgress: t,
-                  onExpandFromMini: _returnToPlayerAnimated,
-                  onDismissMini: _dismissMiniPlayer,
-                );
-
-                if (library == null) return stage;
+                if (library == null) return stage!;
                 return Stack(
                   fit: StackFit.expand,
                   children: [

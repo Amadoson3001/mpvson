@@ -2,10 +2,11 @@
 
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
 import '../../domain/models/library_models.dart';
+import '../../utils/debouncer.dart';
+import '../services/diagnostic_log.dart';
 import '../services/media_probe_service.dart';
 import '../services/media_scanner_service.dart';
 import 'database/library_database.dart';
@@ -49,16 +50,14 @@ class MediaLibraryRepositoryImpl extends MediaLibraryRepository {
   String? _initializationError;
   bool _isDisposed = false;
   Future<void>? _initializationFuture;
-  Timer? _notifyDebounceTimer;
+  final Coalescer _notifyCoalescer = Coalescer(
+    delay: const Duration(milliseconds: 150),
+  );
 
   void _notifyDebounced() {
     if (_isDisposed) return;
-    if (_notifyDebounceTimer?.isActive ?? false) return;
-    _notifyDebounceTimer = Timer(const Duration(milliseconds: 150), () {
-      _notifyDebounceTimer = null;
-      if (!_isDisposed) {
-        notifyListeners();
-      }
+    _notifyCoalescer.schedule(() {
+      if (!_isDisposed) notifyListeners();
     });
   }
 
@@ -176,7 +175,7 @@ class MediaLibraryRepositoryImpl extends MediaLibraryRepository {
       _folders = folders;
       notifyListeners();
     } catch (e) {
-      debugPrint('Failed to refresh folders: $e');
+      diagnosticDebug('library.refreshFolders', error: e);
     }
   }
 
@@ -511,8 +510,7 @@ class MediaLibraryRepositoryImpl extends MediaLibraryRepository {
   Future<void> dispose() async {
     if (_isDisposed) return;
     _isDisposed = true;
-    _notifyDebounceTimer?.cancel();
-    _notifyDebounceTimer = null;
+    _notifyCoalescer.dispose();
 
     final initialization = _initializationFuture;
     if (initialization != null) {

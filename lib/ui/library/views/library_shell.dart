@@ -10,6 +10,8 @@ import '../../core/toast/toast_layout.dart';
 import '../../core/components/playback_pulse.dart';
 import '../../player/widgets/queue_panel.dart';
 import '../../player/views/player_queue_layout.dart';
+import '../../../utils/debouncer.dart';
+import '../library_browse_constants.dart';
 import '../widgets/library_status_banner.dart';
 import 'library_navigation.dart';
 import 'library_section.dart';
@@ -82,6 +84,7 @@ class _LibraryShellState extends State<LibraryShell>
   /// scope sits below [CallbackShortcuts], and key events bubble through it.
   final _shellFocusScope = FocusScopeNode(debugLabel: 'Library shell');
   String _searchQuery = '';
+  final Debouncer _searchDebounce = Debouncer(delay: kLibrarySearchDebounce);
   bool _isOnDemandQueueOpen = false;
 
   /// Bumped on every explicit section change. Async section restores (the
@@ -258,6 +261,7 @@ class _LibraryShellState extends State<LibraryShell>
     _miniPlayerVisibilityController.dispose();
     widget.controller.structureListenable.removeListener(_onPlaybackChanged);
     _searchController.removeListener(_onSearchChanged);
+    _searchDebounce.dispose();
     _searchController.dispose();
     _searchFocus.dispose();
     _shellFocusScope.dispose();
@@ -302,8 +306,19 @@ class _LibraryShellState extends State<LibraryShell>
   }
 
   void _onSearchChanged() {
-    setState(() {
-      _searchQuery = _searchController.text;
+    final next = _searchController.text;
+    // Clearing search must update the stage immediately so the unfiltered
+    // collection returns without waiting out the debounce.
+    if (next.isEmpty) {
+      _searchDebounce.runNow(() {
+        if (!mounted || _searchQuery.isEmpty) return;
+        setState(() => _searchQuery = '');
+      });
+      return;
+    }
+    _searchDebounce.run(() {
+      if (!mounted || _searchQuery == next) return;
+      setState(() => _searchQuery = next);
     });
   }
 
@@ -549,22 +564,19 @@ class _LibraryShellState extends State<LibraryShell>
                   ),
                 ),
               ),
-              // Top bar (search & compact drawer trigger).
-              if (_currentSection != LibrarySection.settings)
-                LibraryTopBar(
-                  section: _currentSection,
-                  compact: isCompact,
-                  canDockQueue: !isCompact,
-                  queueOpen: _isQueueOpen,
-                  searchController: _searchController,
-                  searchFocus: _searchFocus,
-                  onOpenNavigation: () =>
-                      _scaffoldKey.currentState?.openDrawer(),
-                  onToggleQueue: () => _setQueueOpen(!_isQueueOpen),
-                  onBackToPlayer: widget.onBackToPlayer,
-                  onOpenFiles: widget.onOpenFiles,
-                  onOpenUrl: widget.onOpenUrl,
-                ),
+              LibraryTopBar(
+                section: _currentSection,
+                compact: isCompact,
+                canDockQueue: !isCompact,
+                queueOpen: _isQueueOpen,
+                searchController: _searchController,
+                searchFocus: _searchFocus,
+                onOpenNavigation: () => _scaffoldKey.currentState?.openDrawer(),
+                onToggleQueue: () => _setQueueOpen(!_isQueueOpen),
+                onBackToPlayer: widget.onBackToPlayer,
+                onOpenFiles: widget.onOpenFiles,
+                onOpenUrl: widget.onOpenUrl,
+              ),
               // Main Stage View
               Expanded(child: _buildContentStage()),
             ],
@@ -657,7 +669,16 @@ class _LibraryShellState extends State<LibraryShell>
   Widget _buildNowPlayingMorphOverlay() {
     return AnimatedBuilder(
       animation: _nowPlayingMorphCurve,
-      builder: (context, _) {
+      // Keep the sheet widget stable across animation ticks so metadata,
+      // artwork and controls are not rebuilt 60 times a second.
+      child: NowPlayingView(
+        controller: widget.controller,
+        repository: widget.repository,
+        onBack: _closeNowPlaying,
+        onOpenQueue: _showCompactQueue,
+        onAddQueueFiles: widget.onAddQueueFiles,
+      ),
+      builder: (context, child) {
         final progress = _nowPlayingMorphCurve.value;
         if (progress <= 0.0001) return const SizedBox.shrink();
 
@@ -675,13 +696,7 @@ class _LibraryShellState extends State<LibraryShell>
                     top: BorderSide(color: context.palette.border),
                   ),
                 ),
-                child: NowPlayingView(
-                  controller: widget.controller,
-                  repository: widget.repository,
-                  onBack: _closeNowPlaying,
-                  onOpenQueue: _showCompactQueue,
-                  onAddQueueFiles: widget.onAddQueueFiles,
-                ),
+                child: child,
               ),
             ),
           ),

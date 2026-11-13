@@ -5,14 +5,15 @@ import 'package:flutter/material.dart';
 import '../../../../domain/models/media_thumbnail.dart';
 import '../../../../domain/models/playback_chapter.dart';
 import '../../../../domain/models/player_controls_preferences.dart';
-import '../../../../ui/core/app_motion.dart';
 import '../../../../ui/core/app_theme.dart';
+import '../../../../ui/core/components/player_slider_theme.dart';
 import '../../../../ui/core/slider_overlay.dart';
 import '../../../../utils/format.dart';
 import '../../player_controller.dart';
 import '../player_control_style.dart';
 import 'seek_bar_track_shape.dart';
 import 'seek_preview.dart';
+import 'seek_preview_layer.dart';
 
 void _notifyInteractionOnDispose(ValueChanged<bool>? callback) {
   if (callback == null) return;
@@ -51,6 +52,7 @@ class SharedSeekBarState extends State<SharedSeekBar> {
   bool _focused = false;
   bool _pointerIsDown = false;
   bool _interactionActive = false;
+  double _lastBubbleLeft = 0;
   MediaThumbnail? _entryThumbnail;
   String? _thumbnailEntryId;
   List<PlaybackChapter>? _cachedChapters;
@@ -320,11 +322,17 @@ class SharedSeekBarState extends State<SharedSeekBar> {
             ? _chapterFractionsFor(chapters, durationMs)
             : const <double>[];
 
-        var bubbleLeft = 0.0;
-        var actualBubbleWidth = 160.0;
+        var bubbleLeft = _lastBubbleLeft;
+        final compact = PlayerControlStyle.of(context).compact;
+        final preferredWidth = SeekPreviewMetrics.bubbleWidth(
+          compact: compact,
+          audio: controller.isAudio,
+        );
+        var actualBubbleWidth = width > 0 && preferredWidth > width
+            ? width
+            : preferredWidth;
         var previewLabel = '';
         var caretOffset = 0.0;
-        var previewRatio = 0.0;
         var previewTime = Duration.zero;
         String? previewChapterTitle;
 
@@ -334,19 +342,13 @@ class SharedSeekBarState extends State<SharedSeekBar> {
               : (_hoverPositionMs ?? positionMs);
           previewTime = Duration(milliseconds: previewMs.round());
           previewLabel = formatTime(previewTime);
-          final bubbleWidth = controller.isAudio ? 144.0 : 160.0;
-          actualBubbleWidth = width > 0
-              ? (bubbleWidth > width ? width : bubbleWidth)
-              : bubbleWidth;
-          previewRatio = durationMs > 0
-              ? (previewMs / durationMs).clamp(0.0, 1.0)
-              : 0.0;
           final previewX = _dragging || _keyboardSeeking
               ? _trackXForValue(previewMs, width, durationMs)
               : _hoverTrackX;
           bubbleLeft = (previewX - actualBubbleWidth / 2)
               .clamp(0.0, (width - actualBubbleWidth).clamp(0.0, width))
               .toDouble();
+          _lastBubbleLeft = bubbleLeft;
           final maxCaret = (actualBubbleWidth - 14.0) > 14.0
               ? (actualBubbleWidth - 14.0)
               : 14.0;
@@ -358,7 +360,7 @@ class SharedSeekBarState extends State<SharedSeekBar> {
               : null;
         }
 
-        return Listener(
+        final track = Listener(
           onPointerDown: (_) => _pointerIsDown = true,
           onPointerUp: (_) => _pointerIsDown = false,
           onPointerCancel: (_) {
@@ -379,39 +381,36 @@ class SharedSeekBarState extends State<SharedSeekBar> {
                 children: [
                   Positioned.fill(
                     child: SliderTheme(
-                      data: SliderTheme.of(context).copyWith(
-                        trackHeight: (_pointerInside || _dragging || _focused)
-                            ? widget.thickness.hoverHeight
-                            : widget.thickness.restingHeight,
-                        trackShape: const UniformRoundedSliderTrackShape(),
-                        trackGap: 0,
-                        thumbShape: canSeek
-                            ? RoundSliderThumbShape(
-                                enabledThumbRadius: thumbVisible
-                                    ? ((_pointerInside || _dragging || _focused)
-                                          ? widget.thickness.hoverThumbRadius
-                                          : widget.thickness.restingThumbRadius)
-                                    : 0,
-                                disabledThumbRadius: 3,
-                                elevation: 2,
-                                pressedElevation: 4,
-                              )
-                            : SliderComponentShape.noThumb,
-                        overlayShape: const RoundSliderOverlayShape(
-                          overlayRadius: 14,
-                        ),
-                        activeTrackColor: Theme.of(context).colorScheme.primary,
-                        inactiveTrackColor: Colors.white.withValues(
-                          alpha: 0.25,
-                        ),
-                        disabledActiveTrackColor: context.palette.muted,
-                        disabledInactiveTrackColor: context.palette.border,
-                        overlayColor: Theme.of(
-                          context,
-                        ).colorScheme.primary.withValues(alpha: 0.16),
-                        thumbColor: Theme.of(context).colorScheme.primary,
-                        padding: EdgeInsets.zero,
-                      ),
+                      data:
+                          PlayerSliderTheme.seek(
+                            context,
+                            trackHeight:
+                                (_pointerInside || _dragging || _focused)
+                                ? widget.thickness.hoverHeight
+                                : widget.thickness.restingHeight,
+                            trackShape: const UniformRoundedSliderTrackShape(),
+                            thumbShape: canSeek
+                                ? RoundSliderThumbShape(
+                                    enabledThumbRadius: thumbVisible
+                                        ? ((_pointerInside ||
+                                                  _dragging ||
+                                                  _focused)
+                                              ? widget
+                                                    .thickness
+                                                    .hoverThumbRadius
+                                              : widget
+                                                    .thickness
+                                                    .restingThumbRadius)
+                                        : 0,
+                                    disabledThumbRadius: 3,
+                                    elevation: 2,
+                                    pressedElevation: 4,
+                                  )
+                                : SliderComponentShape.noThumb,
+                          ).copyWith(
+                            disabledActiveTrackColor: context.palette.muted,
+                            disabledInactiveTrackColor: context.palette.border,
+                          ),
                       child: SliderOverlay(
                         child: Slider(
                           key: const ValueKey('seek-slider'),
@@ -448,64 +447,32 @@ class SharedSeekBarState extends State<SharedSeekBar> {
                         ),
                       ),
                     ),
-                  Positioned(
-                    key: const ValueKey('seek-preview'),
-                    left: bubbleLeft,
-                    bottom: PlayerControlStyle.of(context).seekHitHeight + 8,
-                    child: IgnorePointer(
-                      child: AnimatedSwitcher(
-                        duration: AppMotion.duration(context, AppMotion.quick),
-                        switchInCurve: AppMotion.enter,
-                        switchOutCurve: AppMotion.exit,
-                        transitionBuilder: (child, animation) {
-                          if (AppMotion.reduce(context)) return child;
-                          // CurveTween keeps this transient: no
-                          // CurvedAnimation to outlive the switcher.
-                          final curved = animation.drive(
-                            CurveTween(curve: AppMotion.enter),
-                          );
-                          return FadeTransition(
-                            opacity: curved,
-                            child: ScaleTransition(
-                              scale: Tween<double>(
-                                begin: 0.88,
-                                end: 1.0,
-                              ).animate(curved),
-                              alignment: Alignment.bottomCenter,
-                              child: SlideTransition(
-                                position: Tween<Offset>(
-                                  begin: const Offset(0, 0.08),
-                                  end: Offset.zero,
-                                ).animate(curved),
-                                child: child,
-                              ),
-                            ),
-                          );
-                        },
-                        child: showPreview
-                            ? RepaintBoundary(
-                                key: const ValueKey('seek-preview-content'),
-                                child: SeekPreview(
-                                  label: previewLabel,
-                                  width: actualBubbleWidth,
-                                  caretOffset: caretOffset,
-                                  previewRatio: previewRatio,
-                                  previewTime: previewTime,
-                                  currentPosition: controller.displayPosition,
-                                  controller: controller,
-                                  previewState: controller.seekPreview.state,
-                                  thumbnail: _entryThumbnail,
-                                  chapterTitle: previewChapterTitle,
-                                ),
-                              )
-                            : const SizedBox.shrink(),
-                      ),
-                    ),
-                  ),
                 ],
               ),
             ),
           ),
+        );
+
+        return SeekPreviewLayer(
+          left: bubbleLeft,
+          lift: SeekPreviewMetrics.gap(compact: compact),
+          visible: showPreview,
+          preview: RepaintBoundary(
+            key: const ValueKey('seek-preview-content'),
+            child: SeekPreview(
+              label: previewLabel,
+              width: actualBubbleWidth,
+              caretOffset: caretOffset,
+              previewTime: previewTime,
+              currentPosition: controller.displayPosition,
+              controller: controller,
+              previewState: controller.seekPreview.state,
+              thumbnail: _entryThumbnail,
+              chapterTitle: previewChapterTitle,
+              compact: compact,
+            ),
+          ),
+          child: track,
         );
       },
     );

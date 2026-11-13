@@ -17,6 +17,7 @@ import 'data/repositories/session_repository.dart';
 import 'data/services/desktop_integration_service.dart';
 import 'data/services/desktop_integration_service_impl.dart';
 import 'data/services/diagnostic_log.dart';
+import 'data/services/engine_path_resolver.dart';
 import 'data/services/engine_update_service.dart';
 import 'data/services/gpu_info_service.dart';
 import 'data/services/media_probe_service.dart';
@@ -24,6 +25,7 @@ import 'data/services/media_probe_service_impl.dart';
 import 'data/services/library_playback_tracker.dart';
 import 'data/services/open_request_coordinator.dart';
 import 'data/services/playback_service.dart';
+import 'data/services/process_runner.dart';
 import 'data/services/thumbnail_service.dart';
 import 'data/services/update_service.dart';
 import 'domain/models/graphics_settings.dart';
@@ -52,9 +54,7 @@ Future<EngineBootSelection?> _tryBundledEngineAfterBootFailure(
   required String? bundledEnginePath,
   required List<String> arguments,
 }) async {
-  if (bundledEnginePath == null) return null;
-  final bundledFile = File(bundledEnginePath);
-  if (!await bundledFile.exists()) return null;
+  if (!await EnginePathResolver.engineExists(bundledEnginePath)) return null;
   final bundled = EngineBootSelection(
     libraryPath: bundledEnginePath,
     version: bundledEngineVersion,
@@ -146,7 +146,7 @@ Future<Never> _recoverEngineProcess(
   }
   // MediaKit and its native initializers retain process-wide bindings. A fresh
   // process ensures every player and rendering call uses the fallback module.
-  await Process.start(
+  await ProcessRunner.standard.start(
     Platform.resolvedExecutable,
     [
       ...arguments.where((value) => !value.startsWith('--engine-recovery=')),
@@ -156,6 +156,35 @@ Future<Never> _recoverEngineProcess(
     mode: ProcessStartMode.detached,
   );
   exit(0);
+}
+
+Future<void> _applyGpuLaunchPreference(GraphicsSettings settings) async {
+  if (!Platform.isWindows) return;
+  var onAcPower = true;
+  if (settings.preferredGpu == GpuPreferenceMode.automatic) {
+    try {
+      onAcPower =
+          await const MethodChannel(
+            'mpvson/power',
+          ).invokeMethod<bool>('isOnAcPower') ??
+          true;
+    } on Object {
+      onAcPower = true;
+    }
+  }
+  final resolved = settings.resolvePreferredGpu(onAcPower: onAcPower);
+  final level = resolved.registryLevel;
+  if (level == null) return;
+  final gpu = GpuInfoService();
+  try {
+    if (level == 0) {
+      await gpu.clearPreference();
+    } else {
+      await gpu.setPreference(level);
+    }
+  } on Object {
+    // Flutter already requested the high-performance compositor GPU.
+  }
 }
 
 Future<void> main(List<String> arguments) async {
@@ -188,9 +217,7 @@ Future<void> main(List<String> arguments) async {
 
   final currentVersion = await versionFuture;
 
-  final bundledEnginePath = Platform.isWindows
-      ? p.join(File(Platform.resolvedExecutable).parent.path, 'libmpv-2.dll')
-      : null;
+  final bundledEnginePath = EnginePathResolver.resolveBundledEnginePath();
   final engineUpdates = EngineUpdateService(
     appVersion: currentVersion,
     currentVersion: bundledEngineVersion,
@@ -302,6 +329,7 @@ Future<void> main(List<String> arguments) async {
     await appPreferences.load();
     final graphicsSettings = appPreferences.graphicsSettings;
     readyController.applyGraphicsSettings(graphicsSettings);
+    await _applyGpuLaunchPreference(graphicsSettings);
 
     final mediaProbeService = MediaProbeServiceImpl();
     // The library is optional: a path-provider failure degrades to an in-memory
@@ -495,7 +523,7 @@ Future<void> main(List<String> arguments) async {
       );
     }
   } catch (error, stack) {
-    debugPrint('Fatal error during app startup: $error\n$stack');
+    diagnosticDebug('app.startup', error: '$error\n$stack');
     readyUpdates.dispose();
     engineUpdates.dispose();
     readyController.dispose();

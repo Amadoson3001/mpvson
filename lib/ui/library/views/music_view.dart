@@ -1,9 +1,9 @@
 import 'dart:async';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../../../data/repositories/media_library_repository.dart';
 import '../../../domain/models/library_models.dart';
 import '../../../domain/models/media_entry.dart';
+import '../../../data/services/diagnostic_log.dart';
 import '../../../utils/file_utils.dart';
 import '../../../utils/format.dart';
 import '../../player/player_controller.dart';
@@ -14,6 +14,7 @@ import '../../core/components/media_tile.dart';
 import '../../core/components/media_row.dart';
 import '../../core/components/media_accent_scope.dart';
 import '../../core/components/empty_state.dart';
+import '../../core/components/hover_builder.dart';
 import '../../core/components/playback_pulse.dart';
 import '../library_browse_constants.dart';
 import '../paged_media_loader.dart';
@@ -73,7 +74,6 @@ class _MusicViewState extends State<MusicView> {
   Future<void>? _reloadFuture;
   bool _reloadAgain = false;
   Timer? _reloadThrottle;
-  Timer? _searchReload;
   String? _currentRowPath;
   bool _currentRowPlaying = false;
   late Listenable _playbackListenable;
@@ -162,11 +162,8 @@ class _MusicViewState extends State<MusicView> {
         _albumTracks = null;
         _artistSongs = null;
       }
-      _searchReload?.cancel();
-      _searchReload = Timer(const Duration(milliseconds: 150), () {
-        _searchReload = null;
-        if (mounted) _reload();
-      });
+      // The shell already debounces typing; apply the committed query now.
+      _reload();
     }
     if (oldWidget.controller != widget.controller) {
       _playbackListenable.removeListener(_onPlaybackChanged);
@@ -180,7 +177,6 @@ class _MusicViewState extends State<MusicView> {
     _scrollController.removeListener(_onBrowseScroll);
     _scrollController.dispose();
     _reloadThrottle?.cancel();
-    _searchReload?.cancel();
     _music.removeListener(_onMusicChanged);
     _music.dispose();
     widget.repository.removeListener(_onRepoChanged);
@@ -198,18 +194,19 @@ class _MusicViewState extends State<MusicView> {
   }
 
   void _onRepoChanged() {
-    // A scan publishes progress frequently. Reloading every collection on each
-    // notification staled the visible rows and flooded the database isolate, so
-    // coalesce bursts into one refresh per interval.
-    if (_reloadThrottle?.isActive ?? false) {
-      _reloadAgain = true;
+    // Scan progress notifies many times a second. Refreshing the visible
+    // collection that often floods the database isolate and rebuilds the
+    // list, so while a scan is running we wait out a longer throttle.
+    if (widget.repository.scanStatus.isScanning) {
+      _reloadThrottle ??= Timer(kLibraryScanReloadThrottle, () {
+        _reloadThrottle = null;
+        if (mounted) _reload();
+      });
       return;
     }
-    _reloadThrottle = Timer(const Duration(milliseconds: 200), () {
-      _reloadThrottle = null;
-      if (!mounted) return;
-      _reload();
-    });
+    _reloadThrottle?.cancel();
+    _reloadThrottle = null;
+    if (mounted) _reload();
   }
 
   Future<void> _reload() {
@@ -244,11 +241,16 @@ class _MusicViewState extends State<MusicView> {
   }
 
   Future<void> _drainReloads() async {
-    if (mounted) {
-      setState(() {
-        _isLoading = true;
-        _loadingMoreBrowse = false;
-      });
+    final showLoader =
+        _items.isEmpty &&
+        _albumSummaries == null &&
+        _artistSummaries == null &&
+        _albumTracks == null &&
+        _artistSongs == null;
+    _isLoading = true;
+    _loadingMoreBrowse = false;
+    if (mounted && showLoader) {
+      setState(() {});
     }
     try {
       do {
@@ -340,10 +342,11 @@ class _MusicViewState extends State<MusicView> {
         });
       } while (_reloadAgain && mounted);
     } catch (error) {
-      debugPrint('Music view could not refresh: $error');
+      diagnosticDebug('music.refresh', error: error);
       if (mounted) setState(() => _error = error);
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      _isLoading = false;
+      if (mounted && showLoader) setState(() {});
     }
   }
 
@@ -639,7 +642,7 @@ class _MusicViewState extends State<MusicView> {
         _loadingMoreBrowse = false;
       });
     } catch (error) {
-      debugPrint('Music view could not load more: $error');
+      diagnosticDebug('music.loadMore', error: error);
       if (mounted && epoch == _browseEpoch) {
         setState(() => _loadingMoreBrowse = false);
       }
@@ -870,7 +873,7 @@ class _MusicViewState extends State<MusicView> {
     final isCurrent = widget.controller.current?.path == song.path;
     final isUnavailable = !song.isAvailable;
     final isSelected = _selectedSongPath == song.path;
-    return _HoverRegion(
+    return HoverListenable(
       key: ValueKey(song.id),
       builder: (context, hoveredListenable) => MediaRow(
         onSelect: () {
@@ -1803,34 +1806,6 @@ class _SubtabPill extends StatelessWidget {
       ),
     );
   }
-}
-
-/// Tracks hover for one row and rebuilds only that row.
-class _HoverRegion extends StatefulWidget {
-  const _HoverRegion({super.key, required this.builder});
-
-  final Widget Function(BuildContext context, ValueListenable<bool> hovered)
-  builder;
-
-  @override
-  State<_HoverRegion> createState() => _HoverRegionState();
-}
-
-class _HoverRegionState extends State<_HoverRegion> {
-  final ValueNotifier<bool> _hovered = ValueNotifier<bool>(false);
-
-  @override
-  void dispose() {
-    _hovered.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => MouseRegion(
-    onEnter: (_) => _hovered.value = true,
-    onExit: (_) => _hovered.value = false,
-    child: widget.builder(context, _hovered),
-  );
 }
 
 /// Track number cell that reveals a play button on hover.

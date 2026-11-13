@@ -423,6 +423,29 @@ class _LazyFilteredIndexedView
       throw UnsupportedError('Cannot modify an unmodifiable list');
 }
 
+/// Shuffle and repeat, independent of transport and position ticks.
+@immutable
+class PlaybackMode {
+  const PlaybackMode({
+    this.shuffle = false,
+    this.repeat = PlayerRepeatMode.off,
+  });
+
+  static const PlaybackMode initial = PlaybackMode();
+
+  final bool shuffle;
+  final PlayerRepeatMode repeat;
+
+  @override
+  bool operator ==(Object other) =>
+      other is PlaybackMode &&
+      other.shuffle == shuffle &&
+      other.repeat == repeat;
+
+  @override
+  int get hashCode => Object.hash(shuffle, repeat);
+}
+
 /// Transport state of the current source, separate from the queue.
 class TransportState {
   const TransportState({
@@ -686,6 +709,10 @@ class PlayerController extends ChangeNotifier {
 
   /// Volume of the current source, independent of transport ticks.
   final ValueNotifier<double> volumeListenable = ValueNotifier<double>(100);
+
+  /// Shuffle and repeat, independent of transport ticks.
+  final ValueNotifier<PlaybackMode> playbackModeListenable =
+      ValueNotifier<PlaybackMode>(PlaybackMode.initial);
 
   /// Fires only when the player's structural presentation changes (current
   /// entry, media kind, error, density, recent list). Volume/rate/transport
@@ -1091,6 +1118,7 @@ class PlayerController extends ChangeNotifier {
       }
       unawaited(_applyPlaybackSettings(_playbackSettings));
       _publishTransport();
+      _publishPlaybackMode();
       _notifyIfOpen();
 
       if (migrate) {
@@ -2322,6 +2350,7 @@ class PlayerController extends ChangeNotifier {
     _shufflePreferenceRevision++;
     _shufflePreferenceSequence = ++_queuePreferenceSequence;
     _scheduleSave();
+    _publishPlaybackMode();
     _notifyIfOpen();
     return _drainQueuePreferences();
   }
@@ -2350,6 +2379,7 @@ class PlayerController extends ChangeNotifier {
     _repeatPreferenceRevision++;
     _repeatPreferenceSequence = ++_queuePreferenceSequence;
     _scheduleSave();
+    _publishPlaybackMode();
     _notifyIfOpen();
     return _drainQueuePreferences();
   }
@@ -2421,6 +2451,7 @@ class PlayerController extends ChangeNotifier {
           _shufflePreferenceRevision++;
           _appliedShufflePreferenceRevision = _shufflePreferenceRevision;
           _scheduleSave();
+          _publishPlaybackMode();
           _setError('Could not change shuffle: $exception');
           continue;
         }
@@ -2444,6 +2475,7 @@ class PlayerController extends ChangeNotifier {
         _repeatPreferenceRevision++;
         _appliedRepeatPreferenceRevision = _repeatPreferenceRevision;
         _scheduleSave();
+        _publishPlaybackMode();
         _setError('Could not change repeat mode: $exception');
         continue;
       }
@@ -2611,6 +2643,7 @@ class PlayerController extends ChangeNotifier {
     queueListenable.dispose();
     transportListenable.dispose();
     volumeListenable.dispose();
+    playbackModeListenable.dispose();
     _structureNotifier.dispose();
   }
 
@@ -3569,6 +3602,14 @@ class PlayerController extends ChangeNotifier {
       currentId: currentEntry?.id,
     );
     if (!_notifierDisposed) queueListenable.value = _queueSnapshot;
+  }
+
+  void _publishPlaybackMode() {
+    if (_notifierDisposed) return;
+    final next = PlaybackMode(shuffle: _shuffleEnabled, repeat: _repeatMode);
+    if (playbackModeListenable.value != next) {
+      playbackModeListenable.value = next;
+    }
   }
 
   void _publishTransport() {

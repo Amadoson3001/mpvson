@@ -19,7 +19,7 @@ import '../../core/toast/app_toast.dart';
 import '../player_controller.dart';
 import '../widgets/open_url_dialog.dart';
 import 'playback_info_dialog.dart';
-import 'settings_dialog.dart';
+import 'settings/settings_dialog.dart';
 
 typedef MediaFilePicker = Future<List<String>> Function();
 typedef SubtitleFilePicker = Future<String?> Function();

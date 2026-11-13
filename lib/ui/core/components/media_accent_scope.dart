@@ -1,10 +1,10 @@
+import 'dart:collection';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import '../../../app.dart' show AppPreferencesScope;
 import '../../player/player_controller.dart';
 import '../../../domain/models/media_entry.dart';
 import '../app_theme.dart';
-import '../tokens/motion.dart';
 
 /// Follows the active media and animates its accessible artwork color.
 class MediaAccentScope extends StatefulWidget {
@@ -40,6 +40,9 @@ class MediaAccentScope extends StatefulWidget {
 class _MediaAccentScopeState extends State<MediaAccentScope> {
   static final Map<String, (Color, MediaAccentPalette)> _paletteCache = {};
   static const int _maxPaletteCache = 64;
+  static final LinkedHashMap<(Brightness, Color, Color, bool), ThemeData>
+  _themeCache = LinkedHashMap<(Brightness, Color, Color, bool), ThemeData>();
+  static const int _maxThemeCache = 24;
 
   String? _path;
   Color? _color;
@@ -242,6 +245,36 @@ class _MediaAccentScopeState extends State<MediaAccentScope> {
     }
   }
 
+  ThemeData _themeFor({
+    required Color color,
+    required MediaAccentPalette palette,
+    required Brightness brightness,
+    required bool oledBlack,
+  }) {
+    final key = (brightness, color, palette.vibrant, oledBlack);
+    final cached = _themeCache.remove(key);
+    if (cached != null) {
+      _themeCache[key] = cached;
+      return cached;
+    }
+    final theme =
+        AppTheme.buildTheme(
+          brightness: brightness,
+          accent: color,
+          oledBlack: oledBlack,
+        ).copyWith(
+          extensions: [
+            MediaAccent(color: color),
+            palette,
+          ],
+        );
+    if (_themeCache.length >= _maxThemeCache) {
+      _themeCache.remove(_themeCache.keys.first);
+    }
+    _themeCache[key] = theme;
+    return theme;
+  }
+
   @override
   Widget build(BuildContext context) {
     if (!_isDynamicEnabled || _color == null) {
@@ -266,24 +299,15 @@ class _MediaAccentScopeState extends State<MediaAccentScope> {
 
     final prefs = AppPreferencesScope.of(context);
     final oledBlack = prefs?.oledBlack ?? false;
-    final dynamicTheme =
-        AppTheme.buildTheme(
-          brightness: theme.brightness,
-          accent: color,
-          oledBlack: oledBlack,
-        ).copyWith(
-          extensions: [
-            MediaAccent(color: color),
-            palette,
-          ],
-        );
-
-    return AnimatedTheme(
-      duration: AppMotion.reduce(context) || AppMotion.lowPower(context)
-          ? Duration.zero
-          : const Duration(milliseconds: 180),
-      data: dynamicTheme,
-      child: widget.child,
+    final dynamicTheme = _themeFor(
+      color: color,
+      palette: palette,
+      brightness: theme.brightness,
+      oledBlack: oledBlack,
     );
+
+    // Instant swap: interpolating ThemeData rebuilds the whole app for 180ms
+    // and is the main source of hitching when the track changes.
+    return Theme(data: dynamicTheme, child: widget.child);
   }
 }

@@ -90,8 +90,6 @@ class _AppToggleSwitchState extends State<AppToggleSwitch>
         : const Color(0xFFCDD0D8);
     final activeBorder = primary;
 
-    final maxOffset = _trackWidth - _thumbSize - (_thumbPadding * 2);
-
     return Semantics(
       toggled: widget.value,
       enabled: widget.enabled,
@@ -146,59 +144,68 @@ class _AppToggleSwitchState extends State<AppToggleSwitch>
                       (_controller.isAnimating && !AppMotion.reduce(context)))
                   ? 3.0
                   : 0.0;
-              final baseThumbSize = 15.0 + (3.0 * t);
-              final currentThumbWidth = baseThumbSize + stretch;
-              final currentThumbHeight = baseThumbSize;
-              final thumbLeft = _thumbPadding + (t * (maxOffset - stretch));
-              final thumbTop = (_trackHeight - currentThumbHeight) / 2;
+              final currentThumbWidth = _thumbSize + stretch;
+              const currentThumbHeight = _thumbSize;
 
-              return Container(
+              final minLeft = _thumbPadding;
+              final maxLeft = _trackWidth - _thumbPadding - currentThumbWidth;
+              final thumbLeft = minLeft + (maxLeft - minLeft) * t;
+
+              return SizedBox(
                 width: _trackWidth,
                 height: _trackHeight,
-                decoration: BoxDecoration(
-                  color: widget.enabled
-                      ? trackColor
-                      : trackColor.withValues(alpha: 0.5),
-                  borderRadius: BorderRadius.circular(_trackHeight / 2),
-                  border: Border.all(
-                    color: _hovered && widget.enabled
-                        ? theme.colorScheme.outline
-                        : borderColor,
-                    width: 1.2,
-                  ),
-                  boxShadow: _focused && widget.enabled
-                      ? [
-                          BoxShadow(
-                            color: primary.withValues(alpha: 0.4),
-                            spreadRadius: 2,
-                            blurRadius: 3,
-                          ),
-                        ]
-                      : null,
-                ),
                 child: Stack(
+                  clipBehavior: Clip.none,
+                  alignment: Alignment.centerLeft,
                   children: [
-                    Positioned(
-                      left: thumbLeft.clamp(
-                        _thumbPadding,
-                        _trackWidth - currentThumbWidth - _thumbPadding,
-                      ),
-                      top: thumbTop,
-                      child: Container(
-                        width: currentThumbWidth,
-                        height: currentThumbHeight,
+                    // Track background with border and focus glow
+                    Positioned.fill(
+                      child: DecoratedBox(
                         decoration: BoxDecoration(
-                          color: thumbColor,
-                          borderRadius: BorderRadius.circular(
-                            currentThumbHeight / 2,
+                          color: widget.enabled
+                              ? trackColor
+                              : trackColor.withValues(alpha: 0.5),
+                          borderRadius: BorderRadius.circular(_trackHeight / 2),
+                          border: Border.all(
+                            color: _hovered && widget.enabled
+                                ? theme.colorScheme.outline
+                                : borderColor,
+                            width: 1.0,
                           ),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.3),
-                              blurRadius: 3.5,
-                              offset: const Offset(0, 1.2),
+                          boxShadow: _focused && widget.enabled
+                              ? [
+                                  BoxShadow(
+                                    color: primary.withValues(alpha: 0.4),
+                                    spreadRadius: 2,
+                                    blurRadius: 3,
+                                  ),
+                                ]
+                              : null,
+                        ),
+                      ),
+                    ),
+                    // Perfectly centered thumb
+                    Positioned(
+                      left: thumbLeft,
+                      top: 0,
+                      bottom: 0,
+                      child: Center(
+                        child: Container(
+                          width: currentThumbWidth,
+                          height: currentThumbHeight,
+                          decoration: BoxDecoration(
+                            color: thumbColor,
+                            borderRadius: BorderRadius.circular(
+                              currentThumbHeight / 2,
                             ),
-                          ],
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.25),
+                                blurRadius: 2.5,
+                                offset: const Offset(0, 0.8),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     ),

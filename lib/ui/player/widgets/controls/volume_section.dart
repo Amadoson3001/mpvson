@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../../../../ui/core/app_motion.dart';
 import '../../../../ui/core/app_theme.dart';
 import '../../../../ui/core/components/app_dialog.dart';
+import '../../../../ui/core/components/player_slider_theme.dart';
 import '../../../../ui/core/slider_overlay.dart';
 import '../../player_controller.dart';
 import '../player_control_style.dart';
@@ -207,22 +208,13 @@ class _InlineVolumeControlState extends State<InlineVolumeControl> {
               width: sliderWidth,
               height: buttonExtent,
               child: SliderTheme(
-                data: SliderTheme.of(context).copyWith(
-                  trackHeight: 3.2,
-                  trackShape: const UniformRoundedSliderTrackShape(),
-                  trackGap: 0,
-                  thumbShape: const RoundSliderThumbShape(
-                    enabledThumbRadius: 4.5,
-                    elevation: 1,
-                    pressedElevation: 2.5,
-                  ),
-                  overlayShape: const RoundSliderOverlayShape(overlayRadius: 9),
-                  activeTrackColor: Theme.of(context).colorScheme.primary,
-                  inactiveTrackColor: Colors.white.withValues(alpha: 0.22),
+                data: PlayerSliderTheme.volume(
+                  context,
+                  compact: true,
                   thumbColor: Colors.white,
-                  overlayColor: Theme.of(
-                    context,
-                  ).colorScheme.primary.withValues(alpha: 0.16),
+                  inactiveColor: Colors.white.withValues(alpha: 0.22),
+                ).copyWith(
+                  trackShape: const UniformRoundedSliderTrackShape(),
                   padding: EdgeInsets.zero,
                 ),
                 child: SliderOverlay(

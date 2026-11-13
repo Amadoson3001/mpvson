@@ -52,7 +52,12 @@ class AudioTechnicalInfo {
   }
 }
 
-/// Metadata describing a media file or stream.
+/// Probed properties of a library file or stream.
+///
+/// Canonical owner of title, duration, artwork, and technical audio info for
+/// indexed library rows. Queue/history rows keep their own
+/// [MediaEntry.title]/[MediaEntry.duration] because they persist independently
+/// of the library index.
 @immutable
 class MediaMetadata {
   const MediaMetadata({

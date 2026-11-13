@@ -32,10 +32,12 @@ class HardwareProfile {
   static const int _mib = 1024 * 1024;
 
   /// Conservative baseline used synchronously before async GPU probing settles.
+  ///
+  /// Assume balanced until DXGI reports otherwise. Treating 4-core hosts as
+  /// low enables `gpu-dumb-mode` for the first seconds of playback.
   factory HardwareProfile.initial({required int cpuCount}) {
     final safeCpu = math.max(1, cpuCount);
-    final tier = safeCpu <= 4 ? HardwareTier.low : HardwareTier.balanced;
-    return HardwareProfile(tier: tier, cpuCount: safeCpu);
+    return HardwareProfile(tier: HardwareTier.balanced, cpuCount: safeCpu);
   }
 
   /// Classifies host capabilities from CPU count and optional DXGI diagnostics.
@@ -68,10 +70,7 @@ class HardwareProfile {
     final HardwareTier tier;
     if (isSoftware ||
         safeCpu <= 2 ||
-        (ramBytes != null && ramBytes > 0 && ramBytes <= 4 * _gib) ||
-        (safeCpu <= 4 &&
-            !hasDiscrete &&
-            (ramBytes == null || ramBytes <= 8 * _gib))) {
+        (ramBytes != null && ramBytes > 0 && ramBytes <= 4 * _gib)) {
       tier = HardwareTier.low;
     } else if ((hasDiscrete &&
             effectiveVram >= 1536 * _mib &&

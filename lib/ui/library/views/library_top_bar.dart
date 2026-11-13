@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../../core/app_theme.dart';
 import '../../core/components/page_header.dart';
+import '../../core/components/player_icon_button.dart';
 import 'library_section.dart';
 
 /// Top bar of the library shell.
@@ -61,7 +62,7 @@ class LibraryTopBar extends StatelessWidget {
             child: Row(
               children: [
                 if (compact)
-                  IconButton(
+                  PlayerIconButton(
                     icon: const Icon(Icons.menu_rounded),
                     tooltip: 'Open navigation',
                     color: palette.primaryText,
@@ -78,7 +79,7 @@ class LibraryTopBar extends StatelessWidget {
                       ),
                     )
                   else
-                    IconButton(
+                    PlayerIconButton(
                       onPressed: onBackToPlayer,
                       tooltip: 'Return to video',
                       icon: const Icon(Icons.arrow_back_rounded),
@@ -104,14 +105,14 @@ class LibraryTopBar extends StatelessWidget {
                       : const SizedBox.shrink(),
                 ),
                 if (_showActions && onOpenFiles != null)
-                  IconButton(
+                  PlayerIconButton(
                     onPressed: onOpenFiles,
                     tooltip: 'Open file',
                     color: palette.secondaryText,
                     icon: const Icon(Icons.file_open_rounded),
                   ),
                 if (_showActions && onOpenUrl != null)
-                  IconButton(
+                  PlayerIconButton(
                     onPressed: onOpenUrl,
                     tooltip: 'Open URL',
                     color: palette.secondaryText,

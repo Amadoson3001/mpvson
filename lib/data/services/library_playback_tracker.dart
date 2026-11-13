@@ -1,9 +1,8 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
-
 import '../../ui/player/player_controller.dart';
 import '../repositories/media_library_repository.dart';
+import 'diagnostic_log.dart';
 
 /// Records a library item once it has played for a meaningful amount of time.
 class LibraryPlaybackTracker {
@@ -64,7 +63,7 @@ class LibraryPlaybackTracker {
     _recorded = true;
     unawaited(
       repository.recordPlayback(entry.path).catchError((Object error) {
-        if (kDebugMode) debugPrint('Could not record library playback: $error');
+        diagnosticDebug('library.recordPlayback', error: error);
       }),
     );
   }

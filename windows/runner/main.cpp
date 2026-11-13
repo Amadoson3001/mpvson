@@ -43,9 +43,13 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
       GetCommandLineArguments();
 
   project.set_dart_entrypoint_arguments(std::move(command_line_arguments));
-  // Flutter on Windows 3.44.0 defaults to Skia/ANGLE, avoiding Vulkan
-  // Impeller shared-handle video flicker; dart_project.h has no
-  // set_impeller_switch API in this SDK.
+  // Impeller's Windows compositor stutters DXGI shared-handle video textures
+  // even on discrete GPUs. Skia/ANGLE keeps the media_kit present path.
+  project.set_impeller_switch(flutter::ImpellerSwitch::Disabled);
+  // Prefer the discrete GPU so Flutter's compositor and the video renderer
+  // stay on the same adapter on hybrid laptops.
+  project.set_gpu_preference(
+      flutter::GpuPreference::HighPerformancePreference);
 
   FlutterWindow window(project, std::move(single_instance));
   Win32Window::Point origin(10, 10);

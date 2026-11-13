@@ -15,6 +15,7 @@ import '../../domain/models/playback_chapter.dart';
 import '../../domain/models/playback_settings.dart';
 import '../../domain/models/video_output_policy.dart';
 import 'diagnostic_log.dart';
+import 'engine_path_resolver.dart';
 import 'native_media_events.dart';
 import 'playback_source_identity.dart';
 import 'snapshot_emitter.dart';
@@ -266,7 +267,7 @@ class MediaKitPlaybackService
              configuration: const PlayerConfiguration(
                title: 'Mpvson',
                libass: true,
-               bufferSize: 16 * 1024 * 1024,
+               bufferSize: 64 * 1024 * 1024,
              ),
            ),
        _nativeEvents = nativeEvents,
@@ -858,10 +859,7 @@ class MediaKitPlaybackService
                   .timeout(const Duration(seconds: 3)))
               .trim();
       if (version.isNotEmpty && !_disposed) {
-        final cleanVersion = version
-            .replaceAll(RegExp(r'-dev[-+.0-9a-zA-Z]*'), '')
-            .trim();
-        _engineVersion = 'libmpv $cleanVersion';
+        _engineVersion = EnginePathResolver.formatVersion(version);
         _diagnostics?.record('engine.version', message: _engineVersion);
       }
     } on Object {
@@ -887,8 +885,9 @@ class MediaKitPlaybackService
     if (nativePlayer is! NativePlayer) return;
     try {
       if (!isNetwork) {
-        // Ordinary local files: disable network-style caching and use 1s
-        // read-ahead. Byte caps come from the graphics settings.
+        // Ordinary local files: disable network-style caching. Byte caps
+        // come from the graphics settings; readahead is long enough for
+        // high-bitrate files without turning into a network cache.
         await nativePlayer
             .setProperty('cache', 'no', waitForInitialization: false)
             .timeout(const Duration(seconds: 1));
@@ -898,7 +897,7 @@ class MediaKitPlaybackService
         await nativePlayer
             .setProperty(
               'demuxer-readahead-secs',
-              '1',
+              lowSpec ? '2' : '8',
               waitForInitialization: false,
             )
             .timeout(const Duration(seconds: 1));
@@ -1142,6 +1141,9 @@ class MediaKitPlaybackService
 
     final properties = <String, String>{
       'hwdec': _resolveHwdec(settings.preferHardwareDecoding),
+      ...enginePlaybackProperties(
+        openGlEs: Platform.isWindows || Platform.isLinux,
+      ),
       ...settings.rendererProperties,
       'brightness': settings.brightness.toString(),
       'contrast': settings.contrast.toString(),

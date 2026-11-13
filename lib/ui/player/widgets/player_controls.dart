@@ -130,10 +130,29 @@ class _PlayerControlsState extends State<PlayerControls> {
     const <Listenable>[],
   );
   Duration? _scrubPosition;
+  Listenable? _timeline;
+  PlayerController? _timelineController;
+  bool _timelineActive = true;
 
   void _updateScrubPosition(Duration? position) {
     if (!mounted || _scrubPosition == position) return;
     setState(() => _scrubPosition = position);
+  }
+
+  Listenable _timelineFor(PlayerController controller) {
+    if (!widget.timelineActive) return _idleTimeline;
+    if (identical(_timelineController, controller) &&
+        _timelineActive &&
+        _timeline != null) {
+      return _timeline!;
+    }
+    _timelineController = controller;
+    _timelineActive = true;
+    _timeline = Listenable.merge(<Listenable>[
+      controller.displayPositionListenable,
+      controller.durationListenable,
+    ]);
+    return _timeline!;
   }
 
   @override
@@ -153,12 +172,7 @@ class _PlayerControlsState extends State<PlayerControls> {
         AppPreferencesScope.of(context)?.playerControls ??
         const PlayerControlsPreferences();
 
-    final timeline = widget.timelineActive
-        ? Listenable.merge(<Listenable>[
-            controller.displayPositionListenable,
-            controller.durationListenable,
-          ])
-        : _idleTimeline;
+    final timeline = _timelineFor(controller);
 
     if (!widget.showPlaybackControls) {
       if (actionWidget == null) return const SizedBox.shrink();
@@ -202,33 +216,33 @@ class _PlayerControlsState extends State<PlayerControls> {
                     ),
                     if (prefs.showShuffleRepeat) ...[
                       SizedBox(width: dense ? 6 : 10),
-                      ListenableBuilder(
-                        listenable: controller,
-                        builder: (context, _) => Row(
+                      ValueListenableBuilder<PlaybackMode>(
+                        valueListenable: controller.playbackModeListenable,
+                        builder: (context, mode, _) => Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             ControlToggleButton(
                               key: const ValueKey('shuffle-toggle'),
-                              tooltip: controller.shuffle
+                              tooltip: mode.shuffle
                                   ? 'Turn shuffle off'
                                   : 'Turn shuffle on',
                               icon: Icons.shuffle_rounded,
-                              active: controller.shuffle,
+                              active: mode.shuffle,
                               onPressed: () =>
                                   unawaited(controller.toggleShuffle()),
                             ),
                             SizedBox(width: dense ? 2 : 4),
                             ControlToggleButton(
                               key: const ValueKey('repeat-toggle'),
-                              tooltip: switch (controller.repeatMode) {
-                                'one' => 'Repeat current video',
-                                'all' => 'Repeat queue',
-                                _ => 'Repeat off',
+                              tooltip: switch (mode.repeat) {
+                                PlayerRepeatMode.one => 'Repeat current video',
+                                PlayerRepeatMode.all => 'Repeat queue',
+                                PlayerRepeatMode.off => 'Repeat off',
                               },
-                              icon: controller.repeatMode == 'one'
+                              icon: mode.repeat == PlayerRepeatMode.one
                                   ? Icons.repeat_one_rounded
                                   : Icons.repeat_rounded,
-                              active: controller.repeatMode != 'off',
+                              active: mode.repeat != PlayerRepeatMode.off,
                               onPressed: () =>
                                   unawaited(controller.cycleRepeat()),
                             ),
@@ -364,15 +378,12 @@ class _PlayerControlsState extends State<PlayerControls> {
       PlayerControlBarStyle.floatingPill => BoxDecoration(
         color: const Color(0xFF0F1117).withValues(alpha: opacity),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: Colors.white.withValues(alpha: 0.12),
-          width: 1,
-        ),
+        border: Border.all(color: PlayerColors.hoverWhite, width: 1),
         boxShadow: lowPower
             ? null
             : [
                 BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.38),
+                  color: PlayerColors.overlayMedium,
                   blurRadius: 24,
                   offset: const Offset(0, 8),
                   spreadRadius: -2,
@@ -395,16 +406,13 @@ class _PlayerControlsState extends State<PlayerControls> {
       PlayerControlBarStyle.frostedDocked => BoxDecoration(
         color: const Color(0xFF0F1117).withValues(alpha: opacity),
         border: Border(
-          top: BorderSide(
-            color: Colors.white.withValues(alpha: 0.12),
-            width: 1,
-          ),
+          top: BorderSide(color: PlayerColors.hoverWhite, width: 1),
         ),
         boxShadow: lowPower
             ? null
             : [
                 BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.28),
+                  color: PlayerColors.overlayLight,
                   blurRadius: 16,
                   offset: const Offset(0, -2),
                 ),

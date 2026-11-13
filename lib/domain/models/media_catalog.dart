@@ -18,6 +18,16 @@ class MediaCatalog {
     'aiff',
     'aif',
     'ape',
+    'alac',
+    'dsf',
+  };
+
+  static const Set<String> imageExtensions = <String>{
+    'jpg',
+    'jpeg',
+    'png',
+    'webp',
+    'bmp',
   };
 
   static const Set<String> videoExtensions = <String>{
@@ -50,6 +60,8 @@ class MediaCatalog {
     'aiff': 'audio/x-aiff',
     'aif': 'audio/x-aiff',
     'ape': 'audio/x-ape',
+    'alac': 'audio/alac',
+    'dsf': 'audio/x-dsf',
     // Video
     'mp4': 'video/mp4',
     'mkv': 'video/x-matroska',
@@ -76,6 +88,12 @@ class MediaCatalog {
   static bool isSupportedFile(String filePath) {
     final ext = p.extension(filePath).toLowerCase().replaceFirst('.', '');
     return supportedExtensions.contains(ext);
+  }
+
+  /// Returns whether a given file path has a supported image extension.
+  static bool isSupportedImage(String filePath) {
+    final ext = p.extension(filePath).toLowerCase().replaceFirst('.', '');
+    return imageExtensions.contains(ext);
   }
 
   /// Initial hint of media kind based on file extension.

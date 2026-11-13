@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import '../../../core/app_motion.dart';
 import '../../../core/app_theme.dart';
 import '../../../core/components/app_mark.dart';
+import '../../../../data/services/engine_path_resolver.dart';
 import '../../../../data/services/engine_update_service.dart';
 import '../../../../data/services/update_service.dart';
 import '../update_center_dialog.dart';
@@ -260,12 +261,8 @@ class AboutSettingsSection extends StatelessWidget {
         : 'Flutter · $platform · $architecture';
   }
 
-  static String _formatEngineVersion(String raw) {
-    final clean = raw.trim();
-    if (clean.isEmpty) return 'libmpv';
-    if (clean.toLowerCase().startsWith('libmpv')) return clean;
-    return 'libmpv $clean';
-  }
+  static String _formatEngineVersion(String raw) =>
+      EnginePathResolver.formatVersion(raw);
 }
 
 class _AboutTile extends StatelessWidget {
