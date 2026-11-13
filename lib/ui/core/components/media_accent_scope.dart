@@ -49,7 +49,7 @@ class _MediaAccentScopeState extends State<MediaAccentScope> {
   @override
   void initState() {
     super.initState();
-    widget.controller.addListener(_changed);
+    widget.controller.structureListenable.addListener(_changed);
   }
 
   @override
@@ -57,8 +57,8 @@ class _MediaAccentScopeState extends State<MediaAccentScope> {
     super.didUpdateWidget(oldWidget);
     var needsRefresh = false;
     if (oldWidget.controller != widget.controller) {
-      oldWidget.controller.removeListener(_changed);
-      widget.controller.addListener(_changed);
+      oldWidget.controller.structureListenable.removeListener(_changed);
+      widget.controller.structureListenable.addListener(_changed);
       needsRefresh = true;
     }
     if (oldWidget.entryOverride?.path != widget.entryOverride?.path ||
@@ -73,7 +73,7 @@ class _MediaAccentScopeState extends State<MediaAccentScope> {
 
   @override
   void dispose() {
-    widget.controller.removeListener(_changed);
+    widget.controller.structureListenable.removeListener(_changed);
     _generation++;
     super.dispose();
   }

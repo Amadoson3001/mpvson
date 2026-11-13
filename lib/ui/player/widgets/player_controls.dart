@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../../../app.dart' show AppPreferencesScope;
 import '../../../domain/models/control_density.dart';
 import '../../../domain/models/player_controls_preferences.dart';
+import '../../../ui/core/app_motion.dart';
 import '../../../ui/core/app_theme.dart';
 import '../../../utils/format.dart';
 import '../player_controller.dart';
@@ -194,28 +195,38 @@ class _PlayerControlsState extends State<PlayerControls> {
                     ),
                     if (prefs.showShuffleRepeat) ...[
                       SizedBox(width: dense ? 6 : 10),
-                      ControlToggleButton(
-                        key: const ValueKey('shuffle-toggle'),
-                        tooltip: controller.shuffle
-                            ? 'Turn shuffle off'
-                            : 'Turn shuffle on',
-                        icon: Icons.shuffle_rounded,
-                        active: controller.shuffle,
-                        onPressed: () => unawaited(controller.toggleShuffle()),
-                      ),
-                      SizedBox(width: dense ? 2 : 4),
-                      ControlToggleButton(
-                        key: const ValueKey('repeat-toggle'),
-                        tooltip: switch (controller.repeatMode) {
-                          'one' => 'Repeat current video',
-                          'all' => 'Repeat queue',
-                          _ => 'Repeat off',
-                        },
-                        icon: controller.repeatMode == 'one'
-                            ? Icons.repeat_one_rounded
-                            : Icons.repeat_rounded,
-                        active: controller.repeatMode != 'off',
-                        onPressed: () => unawaited(controller.cycleRepeat()),
+                      ListenableBuilder(
+                        listenable: controller,
+                        builder: (context, _) => Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            ControlToggleButton(
+                              key: const ValueKey('shuffle-toggle'),
+                              tooltip: controller.shuffle
+                                  ? 'Turn shuffle off'
+                                  : 'Turn shuffle on',
+                              icon: Icons.shuffle_rounded,
+                              active: controller.shuffle,
+                              onPressed: () =>
+                                  unawaited(controller.toggleShuffle()),
+                            ),
+                            SizedBox(width: dense ? 2 : 4),
+                            ControlToggleButton(
+                              key: const ValueKey('repeat-toggle'),
+                              tooltip: switch (controller.repeatMode) {
+                                'one' => 'Repeat current video',
+                                'all' => 'Repeat queue',
+                                _ => 'Repeat off',
+                              },
+                              icon: controller.repeatMode == 'one'
+                                  ? Icons.repeat_one_rounded
+                                  : Icons.repeat_rounded,
+                              active: controller.repeatMode != 'off',
+                              onPressed: () =>
+                                  unawaited(controller.cycleRepeat()),
+                            ),
+                          ],
+                        ),
                       ),
                     ],
                     SizedBox(width: dense ? 6 : 10),
@@ -291,23 +302,26 @@ class _PlayerControlsState extends State<PlayerControls> {
       child: Padding(padding: padding, child: child),
     );
 
-    if (prefs.enableBlur) {
-      if (isFloating) {
-        shell = ClipRRect(
-          borderRadius: radius,
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-            child: shell,
-          ),
-        );
-      } else if (barStyle == PlayerControlBarStyle.frostedDocked) {
-        shell = ClipRect(
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-            child: shell,
-          ),
+    final allowBlur =
+        prefs.enableBlur &&
+        !AppMotion.lowPower(context) &&
+        !widget.controller.isPlaying;
+
+    if (isFloating) {
+      if (allowBlur) {
+        shell = BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+          child: shell,
         );
       }
+      shell = ClipRRect(borderRadius: radius, child: shell);
+    } else if (allowBlur && barStyle == PlayerControlBarStyle.frostedDocked) {
+      shell = ClipRect(
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+          child: shell,
+        ),
+      );
     }
 
     if (isFloating) {

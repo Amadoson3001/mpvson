@@ -141,9 +141,18 @@ class _InlineVolumeControlState extends State<InlineVolumeControl> {
 
   @override
   Widget build(BuildContext context) {
-    final volume = (_pendingVolume ?? widget.controller.volume)
-        .clamp(0.0, 100.0)
-        .toDouble();
+    return ValueListenableBuilder<double>(
+      valueListenable: widget.controller.volumeListenable,
+      builder: (context, listedVolume, _) {
+        final volume = (_pendingVolume ?? listedVolume)
+            .clamp(0.0, 100.0)
+            .toDouble();
+        return _buildControl(context, volume);
+      },
+    );
+  }
+
+  Widget _buildControl(BuildContext context, double volume) {
     final style = PlayerControlStyle.of(context);
     final buttonExtent = style.buttonExtent;
     final controlWidth = style.compact ? 116.0 : 144.0;
@@ -259,46 +268,52 @@ class VolumeMenu extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final style = PlayerControlStyle.of(context);
-    final icon = controller.volume <= 0
-        ? Icons.volume_off_rounded
-        : controller.volume < 50
-        ? Icons.volume_down_rounded
-        : Icons.volume_up_rounded;
-    return IconButton(
-      tooltip: 'Volume ${controller.volume.round()}%',
-      style: style.buttonStyle,
-      onPressed: () {
-        onMenuVisibilityChanged?.call(true);
-        unawaited(
-          AppDialog.show<void>(
-            context: context,
-            builder: (_) => VolumeDialog(
-              controller: controller,
-              onInteractionChanged: onInteractionChanged,
-              onVolumeChanged: onVolumeChanged,
+    return ValueListenableBuilder<double>(
+      valueListenable: controller.volumeListenable,
+      builder: (context, listedVolume, _) {
+        final volume = listedVolume.clamp(0.0, 100.0);
+        final style = PlayerControlStyle.of(context);
+        final icon = volume <= 0
+            ? Icons.volume_off_rounded
+            : volume < 50
+            ? Icons.volume_down_rounded
+            : Icons.volume_up_rounded;
+        return IconButton(
+          tooltip: 'Volume ${volume.round()}%',
+          style: style.buttonStyle,
+          onPressed: () {
+            onMenuVisibilityChanged?.call(true);
+            unawaited(
+              AppDialog.show<void>(
+                context: context,
+                builder: (_) => VolumeDialog(
+                  controller: controller,
+                  onInteractionChanged: onInteractionChanged,
+                  onVolumeChanged: onVolumeChanged,
+                ),
+              ).whenComplete(() => onMenuVisibilityChanged?.call(false)),
+            );
+          },
+          icon: SizedBox.square(
+            dimension: style.iconSize,
+            child: AnimatedSwitcher(
+              duration: AppMotion.duration(context, AppMotion.quick),
+              switchInCurve: AppMotion.enter,
+              switchOutCurve: AppMotion.exit,
+              transitionBuilder: (child, animation) {
+                if (AppMotion.reduce(context)) return child;
+                return FadeTransition(opacity: animation, child: child);
+              },
+              child: Icon(
+                icon,
+                key: ValueKey<IconData>(icon),
+                size: style.iconSize,
+              ),
             ),
-          ).whenComplete(() => onMenuVisibilityChanged?.call(false)),
+          ),
+          padding: EdgeInsets.zero,
         );
       },
-      icon: SizedBox.square(
-        dimension: style.iconSize,
-        child: AnimatedSwitcher(
-          duration: AppMotion.duration(context, AppMotion.quick),
-          switchInCurve: AppMotion.enter,
-          switchOutCurve: AppMotion.exit,
-          transitionBuilder: (child, animation) {
-            if (AppMotion.reduce(context)) return child;
-            return FadeTransition(opacity: animation, child: child);
-          },
-          child: Icon(
-            icon,
-            key: ValueKey<IconData>(icon),
-            size: style.iconSize,
-          ),
-        ),
-      ),
-      padding: EdgeInsets.zero,
     );
   }
 }
@@ -402,10 +417,10 @@ class _VolumeDialogState extends State<VolumeDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => AnimatedBuilder(
-    animation: widget.controller,
-    builder: (context, _) {
-      final volume = (_pendingVolume ?? widget.controller.volume)
+  Widget build(BuildContext context) => ValueListenableBuilder<double>(
+    valueListenable: widget.controller.volumeListenable,
+    builder: (context, listedVolume, _) {
+      final volume = (_pendingVolume ?? listedVolume)
           .clamp(0.0, 100.0)
           .toDouble();
       return AppDialog(

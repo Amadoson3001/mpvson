@@ -25,7 +25,8 @@ class VideoOutputPolicy {
   final int? physicalHeight;
 
   /// Fits mpv's display-corrected dimensions inside the physical viewport.
-  /// Never allocates an upscaled texture or rounds a narrow edge down to zero.
+  /// Never allocates an upscaled texture, and snaps each edge to an even
+  /// pixel count so D3D/YUV surfaces do not recreate on odd-pixel jitter.
   ({int width, int height})? fitVideo({
     required int? width,
     required int? height,
@@ -47,9 +48,25 @@ class VideoOutputPolicy {
       math.min(viewportWidth / width, viewportHeight / height),
     );
     return (
-      width: math.max(1, (width * scale).round()),
-      height: math.max(1, (height * scale).round()),
+      width: _evenPixelSize((width * scale).round()),
+      height: _evenPixelSize((height * scale).round()),
     );
+  }
+
+  /// True when the fitted size moved enough to recreate GPU surfaces.
+  ///
+  /// One-pixel LayoutBuilder jitter and queue-slide animation frames stay on
+  /// the current texture; Flutter scales the few leftover pixels.
+  static bool significantSizeChange({
+    required int? previousWidth,
+    required int? previousHeight,
+    required int width,
+    required int height,
+    int slack = 8,
+  }) {
+    if (previousWidth == null || previousHeight == null) return true;
+    return (width - previousWidth).abs() >= slack ||
+        (height - previousHeight).abs() >= slack;
   }
 
   VideoOutputPolicy copyWith({
@@ -79,4 +96,9 @@ class VideoOutputPolicy {
   @override
   String toString() =>
       'VideoOutputPolicy(visible: $visible, physicalWidth: $physicalWidth, physicalHeight: $physicalHeight)';
+}
+
+int _evenPixelSize(int value) {
+  if (value <= 2) return math.max(1, value);
+  return value & ~1;
 }

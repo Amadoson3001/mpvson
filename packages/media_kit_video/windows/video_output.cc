@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <utility>
 
 // Limit the frame size to 1080p in software rendering.
@@ -49,7 +50,6 @@ VideoOutput::VideoOutput(int64_t handle,
   // instances (which will result in access violation).
   auto future = thread_pool_ref_->Post([&]() {
     mpv_set_option_string(handle_, "video-sync", "audio");
-    mpv_set_option_string(handle_, "video-timing-offset", "0");
     mpv_set_option_string(handle_, "interpolation", "no");
     // First try to initialize video playback with hardware acceleration &
     // |ANGLESurfaceManager|, use S/W API as fallback.
@@ -226,18 +226,25 @@ void VideoOutput::NotifyRender() {
       // mechanism without publishing Flutter texture frames.
       if (render_context_ != nullptr) {
         if (surface_manager_ != nullptr) {
-          surface_manager_->Draw([&]() {
-            int skip = 1;
-            mpv_render_param params[]{
-                {MPV_RENDER_PARAM_SKIP_RENDERING, &skip},
-                {MPV_RENDER_PARAM_INVALID, nullptr},
-            };
-            mpv_render_context_render(render_context_, params);
-          });
+          surface_manager_->Draw(
+              [&]() {
+                int skip = 1;
+                int block_for_target_time = 0;
+                mpv_render_param params[]{
+                    {MPV_RENDER_PARAM_SKIP_RENDERING, &skip},
+                    {MPV_RENDER_PARAM_BLOCK_FOR_TARGET_TIME,
+                     &block_for_target_time},
+                    {MPV_RENDER_PARAM_INVALID, nullptr},
+                };
+                mpv_render_context_render(render_context_, params);
+              },
+              false);
         } else if (pixel_buffer_ != nullptr) {
           int skip = 1;
+          int block_for_target_time = 0;
           mpv_render_param params[]{
               {MPV_RENDER_PARAM_SKIP_RENDERING, &skip},
+              {MPV_RENDER_PARAM_BLOCK_FOR_TARGET_TIME, &block_for_target_time},
               {MPV_RENDER_PARAM_INVALID, nullptr},
           };
           mpv_render_context_render(render_context_, params);
@@ -250,23 +257,32 @@ void VideoOutput::NotifyRender() {
   });
 }
 
+void VideoOutput::PresentHardwareFrame() {
+  if (surface_manager_ == nullptr || render_context_ == nullptr) {
+    return;
+  }
+  surface_manager_->Draw([&]() {
+    mpv_opengl_fbo fbo{
+        0,
+        surface_manager_->width(),
+        surface_manager_->height(),
+        0,
+    };
+    int block_for_target_time = 0;
+    mpv_render_param params[]{
+        {MPV_RENDER_PARAM_OPENGL_FBO, &fbo},
+        {MPV_RENDER_PARAM_BLOCK_FOR_TARGET_TIME, &block_for_target_time},
+        {MPV_RENDER_PARAM_INVALID, nullptr},
+    };
+    mpv_render_context_render(render_context_, params);
+  });
+}
+
 void VideoOutput::Render() {
   if (texture_id_) {
     // H/W
     if (surface_manager_ != nullptr) {
-      surface_manager_->Draw([&]() {
-        mpv_opengl_fbo fbo{
-            0,
-            surface_manager_->width(),
-            surface_manager_->height(),
-            0,
-        };
-        mpv_render_param params[]{
-            {MPV_RENDER_PARAM_OPENGL_FBO, &fbo},
-            {MPV_RENDER_PARAM_INVALID, nullptr},
-        };
-        mpv_render_context_render(render_context_, params);
-      });
+      PresentHardwareFrame();
     }
     // S/W
     if (pixel_buffer_ != nullptr) {
@@ -282,11 +298,13 @@ void VideoOutput::Render() {
         size[1] = static_cast<int32_t>(it->second->height);
       }
       auto pitch = 4 * size[0];
+      int block_for_target_time = 0;
       mpv_render_param params[]{
           {MPV_RENDER_PARAM_SW_SIZE, size},
           {MPV_RENDER_PARAM_SW_FORMAT, "rgb0"},
           {MPV_RENDER_PARAM_SW_STRIDE, &pitch},
           {MPV_RENDER_PARAM_SW_POINTER, pixel_buffer_.get()},
+          {MPV_RENDER_PARAM_BLOCK_FOR_TARGET_TIME, &block_for_target_time},
           {MPV_RENDER_PARAM_INVALID, nullptr},
       };
       mpv_render_context_render(render_context_, params);
@@ -346,7 +364,8 @@ void VideoOutput::SetSize(std::optional<int64_t> width,
 
 void VideoOutput::CheckAndResize() {
   // Check if a new texture with different dimensions is needed.
-  auto required_width = GetVideoWidth(), required_height = GetVideoHeight();
+  int64_t required_width = 0, required_height = 0;
+  GetVideoSize(&required_width, &required_height);
   if (required_width < 1 || required_height < 1) {
     // Invalid.
     return;
@@ -379,17 +398,42 @@ void VideoOutput::CheckAndResize() {
 }
 
 void VideoOutput::Resize(int64_t required_width, int64_t required_height) {
-  std::cout << required_width << " " << required_height << std::endl;
-  RetireTexture();
-  // The engine may still be opening the shared D3D handle after its texture
-  // callback returns. Keep the old backing resources until unregistration
-  // confirms that the engine has released that texture.
-  {
-    std::unique_lock<std::mutex> lock(retirement_mutex_);
-    retirement_cv_.wait(lock, [this]() {
-      return pending_texture_retirements_ == 0;
-    });
+  // Keep the Flutter texture ID across size changes. Unregistering it first
+  // leaves a black gap while the engine drops the old DXGI handle.
+  if (surface_manager_ != nullptr && texture_id_) {
+    surface_manager_->SetSize(static_cast<int32_t>(required_width),
+                              static_cast<int32_t>(required_height));
+    // Fill the new surface before publishing its HANDLE. Flutter then swaps
+    // from the previous complete frame to a complete frame at the new size.
+    PresentHardwareFrame();
+    {
+      std::lock_guard<std::mutex> texture_lock(textures_mutex_);
+      auto it = textures_.find(texture_id_);
+      if (it != textures_.end()) {
+        auto* texture = it->second.get();
+        texture->handle = surface_manager_->handle();
+        texture->width = texture->visible_width =
+            surface_manager_->published_width();
+        texture->height = texture->visible_height =
+            surface_manager_->published_height();
+      }
+    }
+    texture_update_callback_(texture_id_, required_width, required_height);
+    return;
   }
+  if (pixel_buffer_ != nullptr && texture_id_) {
+    {
+      std::lock_guard<std::mutex> texture_lock(textures_mutex_);
+      auto it = pixel_buffer_textures_.find(texture_id_);
+      if (it != pixel_buffer_textures_.end()) {
+        it->second->width = required_width;
+        it->second->height = required_height;
+      }
+    }
+    texture_update_callback_(texture_id_, required_width, required_height);
+    return;
+  }
+
   std::lock_guard<std::mutex> texture_lock(textures_mutex_);
   // H/W
   if (surface_manager_ != nullptr) {
@@ -412,8 +456,13 @@ void VideoOutput::Resize(int64_t required_width, int64_t required_height) {
               if (texture_id_) {
                 auto it = textures_.find(texture_id_);
                 if (it != textures_.end()) {
-                  surface_manager_->Read();
-                  return it->second.get();
+                  auto* texture = it->second.get();
+                  texture->handle = surface_manager_->handle();
+                  texture->width = texture->visible_width =
+                      surface_manager_->published_width();
+                  texture->height = texture->visible_height =
+                      surface_manager_->published_height();
+                  return texture;
                 }
               }
               return (FlutterDesktopGpuSurfaceDescriptor*)nullptr;
@@ -464,20 +513,22 @@ void VideoOutput::Resize(int64_t required_width, int64_t required_height) {
   }
 }
 
-int64_t VideoOutput::GetVideoWidth() {
-  // Fixed width.
-  if (width_) {
-    return width_.value();
+void VideoOutput::GetVideoSize(int64_t* width, int64_t* height) {
+  if (width_ && height_) {
+    *width = width_.value();
+    *height = height_.value();
+    if (pixel_buffer_ != nullptr) {
+      const auto fitted = FitSoftwareDimensions(*width, *height);
+      *width = fitted.first;
+      *height = fitted.second;
+    }
+    return;
   }
-  // Video resolution dependent width.
-  int64_t width = 0;
-  int64_t height = 0;
 
+  int64_t dw = 0, dh = 0, rotate = 0;
   mpv_node params{};
   const int status =
       mpv_get_property(handle_, "video-out-params", MPV_FORMAT_NODE, &params);
-
-  int64_t dw = 0, dh = 0, rotate = 0;
   if (status >= 0 && params.format == MPV_FORMAT_NODE_MAP) {
     for (int32_t i = 0; i < params.u.list->num; i++) {
       char* key = params.u.list->keys[i];
@@ -497,55 +548,23 @@ int64_t VideoOutput::GetVideoWidth() {
   }
   if (status >= 0) mpv_free_node_contents(&params);
 
-  width = rotate == 0 || rotate == 180 ? dw : dh;
-  height = rotate == 0 || rotate == 180 ? dh : dw;
-
+  *width = rotate == 0 || rotate == 180 ? dw : dh;
+  *height = rotate == 0 || rotate == 180 ? dh : dw;
   if (pixel_buffer_ != nullptr) {
-    return FitSoftwareDimensions(width, height).first;
+    const auto fitted = FitSoftwareDimensions(*width, *height);
+    *width = fitted.first;
+    *height = fitted.second;
   }
+}
 
+int64_t VideoOutput::GetVideoWidth() {
+  int64_t width = 0, height = 0;
+  GetVideoSize(&width, &height);
   return width;
 }
 
 int64_t VideoOutput::GetVideoHeight() {
-  // Fixed height.
-  if (height_) {
-    return height_.value();
-  }
-  // Video resolution dependent height.
-  int64_t width = 0;
-  int64_t height = 0;
-
-  mpv_node params{};
-  const int status =
-      mpv_get_property(handle_, "video-out-params", MPV_FORMAT_NODE, &params);
-
-  int64_t dw = 0, dh = 0, rotate = 0;
-  if (status >= 0 && params.format == MPV_FORMAT_NODE_MAP) {
-    for (int32_t i = 0; i < params.u.list->num; i++) {
-      char* key = params.u.list->keys[i];
-      auto value = params.u.list->values[i];
-      if (value.format == MPV_FORMAT_INT64) {
-        if (strcmp(key, "dw") == 0) {
-          dw = value.u.int64;
-        }
-        if (strcmp(key, "dh") == 0) {
-          dh = value.u.int64;
-        }
-        if (strcmp(key, "rotate") == 0) {
-          rotate = value.u.int64;
-        }
-      }
-    }
-  }
-  if (status >= 0) mpv_free_node_contents(&params);
-
-  width = rotate == 0 || rotate == 180 ? dw : dh;
-  height = rotate == 0 || rotate == 180 ? dh : dw;
-
-  if (pixel_buffer_ != NULL) {
-    return FitSoftwareDimensions(width, height).second;
-  }
-
+  int64_t width = 0, height = 0;
+  GetVideoSize(&width, &height);
   return height;
 }

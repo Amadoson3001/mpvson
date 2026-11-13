@@ -25,6 +25,9 @@ typedef UpdateMetadataCallback =
       required DateTime modifiedAt,
     });
 
+typedef BatchUpdateMetadataCallback =
+    Future<void> Function(List<MediaEnrichmentData> updates);
+
 typedef FolderAvailabilityCallback =
     Future<void> Function(String folderPath, bool isAvailable);
 
@@ -60,6 +63,7 @@ class MediaScannerService {
     LibraryDatabase? database,
     DiscoveredFilesCallback? onDiscoveredFiles,
     UpdateMetadataCallback? onUpdateMetadata,
+    BatchUpdateMetadataCallback? onBatchUpdateMetadata,
     FolderAvailabilityCallback? onFolderAvailabilityChanged,
     FolderScanCompletedCallback? onFolderScanCompleted,
     FileAvailabilityCallback? onFileAvailabilityChanged,
@@ -74,7 +78,10 @@ class MediaScannerService {
        _database = database,
        _onDiscoveredFiles =
            onDiscoveredFiles ?? database?.batchUpsertDiscoveredFiles,
-       _onUpdateMetadata = onUpdateMetadata ?? database?.updateMediaMetadata,
+       _onUpdateMetadata = onUpdateMetadata,
+       _onBatchUpdateMetadata =
+           onBatchUpdateMetadata ??
+           (onUpdateMetadata == null ? database?.batchUpdateMetadata : null),
        _onFolderAvailabilityChanged =
            onFolderAvailabilityChanged ?? database?.markFolderAvailability,
        _onFolderScanCompleted =
@@ -102,6 +109,7 @@ class MediaScannerService {
   final LibraryDatabase? _database;
   final DiscoveredFilesCallback? _onDiscoveredFiles;
   final UpdateMetadataCallback? _onUpdateMetadata;
+  final BatchUpdateMetadataCallback? _onBatchUpdateMetadata;
   final FolderAvailabilityCallback? _onFolderAvailabilityChanged;
   final FolderScanCompletedCallback? _onFolderScanCompleted;
   final FileAvailabilityCallback? _onFileAvailabilityChanged;
@@ -605,7 +613,8 @@ class MediaScannerService {
     }
   }
 
-  /// Enriches metadata in the background using [MediaProbeService] through a bounded queue.
+  /// Enriches metadata in the background using [MediaProbeService] through a bounded queue
+  /// with batched metadata persistence.
   Future<void> _enrichFiles(
     List<String> filePaths, {
     bool Function(String path)? shouldContinue,
@@ -623,7 +632,37 @@ class MediaScannerService {
 
     final queue = Queue<String>.from(filePaths);
     final activeWorkers = <Future<void>>[];
+    final pendingUpdates = <MediaEnrichmentData>[];
     int completed = 0;
+
+    Future<void> flushUpdates([List<MediaEnrichmentData>? force]) async {
+      final items = force ?? List<MediaEnrichmentData>.of(pendingUpdates);
+      if (force == null) pendingUpdates.clear();
+      if (items.isEmpty) return;
+
+      if (_onBatchUpdateMetadata != null) {
+        await _onBatchUpdateMetadata(items);
+      } else if (_onUpdateMetadata != null) {
+        for (final item in items) {
+          await _onUpdateMetadata(
+            item.canonicalSource,
+            kind: item.kind,
+            metadata: item.metadata,
+            fileSize: item.fileSize,
+            modifiedAt: item.modifiedAt,
+          );
+        }
+      }
+    }
+
+    Future<void> addAndFlushIfNeeded(MediaEnrichmentData data) async {
+      pendingUpdates.add(data);
+      if (pendingUpdates.length >= 32) {
+        final toFlush = List<MediaEnrichmentData>.of(pendingUpdates);
+        pendingUpdates.clear();
+        await flushUpdates(toFlush);
+      }
+    }
 
     Future<void> worker() async {
       while (queue.isNotEmpty && !stopped()) {
@@ -647,13 +686,14 @@ class MediaScannerService {
             break;
           }
 
-          await _onUpdateMetadata?.call(
-            probeResult.canonicalSource,
+          final data = MediaEnrichmentData(
+            canonicalSource: probeResult.canonicalSource,
             kind: probeResult.kind,
             metadata: probeResult.metadata,
             fileSize: probeResult.fileSize,
             modifiedAt: probeResult.modifiedAt,
           );
+          await addAndFlushIfNeeded(data);
         } catch (_) {
           if (stopped() || !(shouldContinue?.call(path) ?? true)) {
             break;
@@ -674,13 +714,14 @@ class MediaScannerService {
             }
             final kind = MediaCatalog.kindFromExtension(path);
             final title = _pathContext.basenameWithoutExtension(path);
-            await _onUpdateMetadata?.call(
-              path,
+            final data = MediaEnrichmentData(
+              canonicalSource: path,
               kind: kind,
               metadata: MediaMetadata(title: title),
               fileSize: stat.size,
               modifiedAt: stat.modified,
             );
+            await addAndFlushIfNeeded(data);
           } catch (_) {}
         } finally {
           if (!ignoreScanCancellation) {
@@ -698,6 +739,9 @@ class MediaScannerService {
     }
 
     await Future.wait(activeWorkers);
+    if (pendingUpdates.isNotEmpty) {
+      await flushUpdates();
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -736,6 +780,9 @@ class MediaScannerService {
               }
             })
             .catchError((Object error, StackTrace stackTrace) {
+              if (error is StateError && error.toString().contains('closed')) {
+                return;
+              }
               if (kDebugMode) {
                 debugPrint(
                   'MediaScannerService watcher availability error: $error\n$stackTrace',

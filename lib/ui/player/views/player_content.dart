@@ -12,7 +12,6 @@ import '../../../domain/models/media_entry.dart';
 import '../../../domain/models/open_request.dart';
 import '../../../domain/models/player_hotkeys.dart';
 import '../../core/app_motion.dart';
-import '../../core/components/media_accent_scope.dart';
 import '../../core/toast/toast_layout.dart';
 import '../../library/views/mini_player_bar.dart';
 import '../player_controller.dart';
@@ -134,7 +133,7 @@ class _PlayerContentState extends State<PlayerContent>
   void initState() {
     super.initState();
     _lastVideoId = widget.controller.current?.id;
-    widget.controller.addListener(_handlePlaybackChanges);
+    widget.controller.structureListenable.addListener(_handlePlaybackChanges);
     widget.layoutManager.isInAppMiniPlayerActive = () =>
         !_miniPlayerDismissed &&
         widget.controller.hasMedia &&
@@ -143,21 +142,23 @@ class _PlayerContentState extends State<PlayerContent>
 
   void _handlePlaybackChanges() {
     if (!mounted) return;
-    final current = widget.controller.current;
-    if (current?.id != _lastVideoId) {
-      _lastVideoId = current?.id;
-      _miniPlayerDismissed = false;
-      widget.layoutManager.syncVideoVisibilityForLibrary();
-    }
-    setState(() {});
+    final currentId = widget.controller.current?.id;
+    if (currentId == _lastVideoId) return;
+    _lastVideoId = currentId;
+    final resetDismissed = _miniPlayerDismissed;
+    _miniPlayerDismissed = false;
+    widget.layoutManager.syncVideoVisibilityForLibrary();
+    if (resetDismissed) setState(() {});
   }
 
   @override
   void didUpdateWidget(covariant PlayerContent oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.controller != widget.controller) {
-      oldWidget.controller.removeListener(_handlePlaybackChanges);
-      widget.controller.addListener(_handlePlaybackChanges);
+      oldWidget.controller.structureListenable.removeListener(
+        _handlePlaybackChanges,
+      );
+      widget.controller.structureListenable.addListener(_handlePlaybackChanges);
       _miniPlayerDismissed = false;
     }
     widget.layoutManager.isInAppMiniPlayerActive = () =>
@@ -195,7 +196,9 @@ class _PlayerContentState extends State<PlayerContent>
   void dispose() {
     _miniPlayerCurved.dispose();
     _miniPlayerController.dispose();
-    widget.controller.removeListener(_handlePlaybackChanges);
+    widget.controller.structureListenable.removeListener(
+      _handlePlaybackChanges,
+    );
     _wheelResetTimer?.cancel();
     super.dispose();
   }
@@ -384,78 +387,75 @@ class _PlayerContentState extends State<PlayerContent>
         onFilesDropped: (paths) => unawaited(
           widget.media.openPaths(paths, origin: OpenOrigin.dragAndDrop),
         ),
-        child: MediaAccentScope(
-          controller: widget.controller,
-          // Measure inside the queue layout: when the docked queue widens,
-          // the stage must follow the shrunken area, not the window width.
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final totalWidth = constraints.maxWidth;
-              final totalHeight = constraints.maxHeight;
+        // Accent theming is applied once at the app root. A second scope
+        // here rebuilt the whole stage on artwork extraction.
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final totalWidth = constraints.maxWidth;
+            final totalHeight = constraints.maxHeight;
 
-              // While the library is showing, the stage is mini or hidden and
-              // these full-area constraints do not describe the video
-              // viewport; the layout manager's own policy handles that case.
-              if (!widget.isShowingLibrary) {
-                widget.layoutManager.updateViewportDimensions(
-                  context,
-                  constraints,
+            // While the library is showing, the stage is mini or hidden and
+            // these full-area constraints do not describe the video
+            // viewport; the layout manager's own policy handles that case.
+            if (!widget.isShowingLibrary) {
+              widget.layoutManager.updateViewportDimensions(
+                context,
+                constraints,
+              );
+            }
+
+            // Docked mini video seats in the transport bar's artwork slot so
+            // the live video reads as part of the bar instead of overlapping
+            // it.
+            final fullRect = Rect.fromLTWH(0, 0, totalWidth, totalHeight);
+            final miniRect = MiniPlayerBar.dockedVideoRect(
+              totalHeight,
+              MediaQuery.textScalerOf(context),
+              dense: MediaQuery.sizeOf(context).height < 600,
+            );
+
+            return AnimatedBuilder(
+              animation: _miniPlayerCurved,
+              builder: (context, _) {
+                final t = _miniPlayerCurved.value;
+                final currentRect = Rect.lerp(fullRect, miniRect, t)!;
+
+                final showLibraryUnderneath =
+                    library != null && (widget.isShowingLibrary || t > 0.001);
+                final showVideoStage = isVideo
+                    ? (!_miniPlayerDismissed || t < 0.999)
+                    : !widget.isShowingLibrary;
+
+                final Widget stage = _buildStage(
+                  miniProgress: t,
+                  onExpandFromMini: _returnToPlayerAnimated,
+                  onDismissMini: _dismissMiniPlayer,
                 );
-              }
 
-              // Docked mini video seats in the transport bar's artwork slot so
-              // the live video reads as part of the bar instead of overlapping
-              // it.
-              final fullRect = Rect.fromLTWH(0, 0, totalWidth, totalHeight);
-              final miniRect = MiniPlayerBar.dockedVideoRect(
-                totalHeight,
-                MediaQuery.textScalerOf(context),
-                dense: MediaQuery.sizeOf(context).height < 600,
-              );
-
-              return AnimatedBuilder(
-                animation: _miniPlayerCurved,
-                builder: (context, _) {
-                  final t = _miniPlayerCurved.value;
-                  final currentRect = Rect.lerp(fullRect, miniRect, t)!;
-
-                  final showLibraryUnderneath =
-                      library != null && (widget.isShowingLibrary || t > 0.001);
-                  final showVideoStage = isVideo
-                      ? (!_miniPlayerDismissed || t < 0.999)
-                      : !widget.isShowingLibrary;
-
-                  final Widget stage = _buildStage(
-                    miniProgress: t,
-                    onExpandFromMini: _returnToPlayerAnimated,
-                    onDismissMini: _dismissMiniPlayer,
-                  );
-
-                  if (library == null) return stage;
-                  return Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      Offstage(
-                        offstage: !showLibraryUnderneath,
-                        child: TickerMode(
-                          enabled: showLibraryUnderneath,
-                          child: library,
-                        ),
+                if (library == null) return stage;
+                return Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Offstage(
+                      offstage: !showLibraryUnderneath,
+                      child: TickerMode(
+                        enabled: showLibraryUnderneath,
+                        child: library,
                       ),
-                      if (showVideoStage)
-                        Positioned(
-                          left: currentRect.left,
-                          top: currentRect.top,
-                          width: currentRect.width,
-                          height: currentRect.height,
-                          child: RepaintBoundary(child: stage),
-                        ),
-                    ],
-                  );
-                },
-              );
-            },
-          ),
+                    ),
+                    if (showVideoStage)
+                      Positioned(
+                        left: currentRect.left,
+                        top: currentRect.top,
+                        width: currentRect.width,
+                        height: currentRect.height,
+                        child: RepaintBoundary(child: stage),
+                      ),
+                  ],
+                );
+              },
+            );
+          },
         ),
       ),
       queuePanel: _queuePanel(),

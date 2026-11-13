@@ -89,6 +89,7 @@ class _PlayerScreenState extends State<PlayerScreen>
   bool _draggingFiles = false;
   String? _lastVideoEntryId;
   String? _preparedPausedVideoId;
+  Listenable? _playerEvents;
 
   bool get _nativeWindow =>
       widget.desktopWindow && widget.fullscreenSetter == null;
@@ -203,7 +204,7 @@ class _PlayerScreenState extends State<PlayerScreen>
     if (widget.controller.isVideo) {
       _lastVideoEntryId = widget.controller.current?.id;
     }
-    widget.controller.addListener(_handleControllerChange);
+    _bindPlayerEvents(widget.controller);
     WidgetsBinding.instance.addObserver(this);
     FocusManager.instance.addListener(_hotkeyHandler.handlePrimaryFocusChange);
     HardwareKeyboard.instance.addHandler(_chrome.recordKeyboardInput);
@@ -232,8 +233,7 @@ class _PlayerScreenState extends State<PlayerScreen>
   void didUpdateWidget(covariant PlayerScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.controller != widget.controller) {
-      oldWidget.controller.removeListener(_handleControllerChange);
-      widget.controller.addListener(_handleControllerChange);
+      _bindPlayerEvents(widget.controller);
     }
     _media
       ..controller = widget.controller
@@ -263,7 +263,8 @@ class _PlayerScreenState extends State<PlayerScreen>
       _hotkeyHandler.handlePrimaryFocusChange,
     );
     HardwareKeyboard.instance.removeHandler(_chrome.recordKeyboardInput);
-    widget.controller.removeListener(_handleControllerChange);
+    _playerEvents?.removeListener(_handleControllerChange);
+    _playerEvents = null;
     _chrome.removeListener(_onVisualStateChanged);
     _navigation.removeListener(_onVisualStateChanged);
     _navigation.dispose();
@@ -300,6 +301,15 @@ class _PlayerScreenState extends State<PlayerScreen>
   @override
   void didChangeMetrics() {
     _layoutManager.didChangeMetrics();
+  }
+
+  void _bindPlayerEvents(PlayerController controller) {
+    _playerEvents?.removeListener(_handleControllerChange);
+    _playerEvents = Listenable.merge(<Listenable>[
+      controller.structureListenable,
+      controller.transportListenable,
+    ]);
+    _playerEvents!.addListener(_handleControllerChange);
   }
 
   void _handleControllerChange() {

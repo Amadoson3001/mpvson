@@ -84,18 +84,21 @@ class SeekPreviewState {
   }
 }
 
-/// In-memory LRU cache capped at 256 frames or 8 MiB.
+/// In-memory LRU cache capped at 128 frames or 6 MiB with pre-emptive eviction
+/// when memory pressure thresholds are met.
 ///
 /// Tracks requested time, captured time, and approximate/exact quality.
 /// Results are never persisted to disk.
 class SeekPreviewLRUCache {
   SeekPreviewLRUCache({
-    this.maxEntries = 256,
-    this.maxBytes = 8 * 1024 * 1024, // 8 MiB
+    this.maxEntries = 128,
+    this.maxBytes = 6 * 1024 * 1024, // 6 MiB tuned bound
+    this.pressureThreshold = 0.8,
   });
 
   final int maxEntries;
   final int maxBytes;
+  final double pressureThreshold;
 
   final LinkedHashMap<int, SeekPreviewFrame> _entries =
       LinkedHashMap<int, SeekPreviewFrame>();
@@ -161,8 +164,9 @@ class SeekPreviewLRUCache {
     return nearest;
   }
 
-  /// Inserts a newly completed frame into the LRU cache, evicting oldest entries
-  /// when exceeding [maxEntries] or [maxBytes].
+  /// Inserts a newly completed frame into the LRU cache, pre-emptively evicting
+  /// lower-priority keyframe entries when nearing memory pressure thresholds,
+  /// and strictly evicting oldest entries when exceeding [maxEntries] or [maxBytes].
   void put(SeekPreviewFrame frame) {
     final key = frame.quality == SeekPreviewQuality.exact
         ? _exactKey(frame.requestedTime)
@@ -176,6 +180,13 @@ class SeekPreviewLRUCache {
     _entries[key] = frame;
     _currentBytes += frame.byteLength;
 
+    // Pre-emptive eviction when memory pressure threshold is met
+    if (_entries.length > (maxEntries * pressureThreshold) ||
+        _currentBytes > (maxBytes * pressureThreshold)) {
+      _evictPreemptively();
+    }
+
+    // Hard ceiling enforcement
     while (_entries.length > maxEntries || _currentBytes > maxBytes) {
       if (_entries.isEmpty) break;
       final oldestKey = _entries.keys.first;
@@ -184,6 +195,40 @@ class SeekPreviewLRUCache {
         _currentBytes -= evicted.byteLength;
       }
     }
+  }
+
+  /// Pre-emptively evicts lower-value keyframe (approximate) entries first,
+  /// reducing cache usage down towards 75% capacity to prevent eviction churn.
+  void _evictPreemptively() {
+    final targetBytes = (maxBytes * 0.75).round();
+    final targetCount = (maxEntries * 0.75).round();
+
+    final keyframeKeys = _entries.entries
+        .where((e) => e.value.quality == SeekPreviewQuality.keyframe)
+        .map((e) => e.key)
+        .toList(growable: false);
+
+    for (final key in keyframeKeys) {
+      if (_currentBytes <= targetBytes && _entries.length <= targetCount) break;
+      final evicted = _entries.remove(key);
+      if (evicted != null) {
+        _currentBytes -= evicted.byteLength;
+      }
+    }
+
+    while (_entries.isNotEmpty &&
+        (_currentBytes > targetBytes || _entries.length > targetCount)) {
+      final oldestKey = _entries.keys.first;
+      final evicted = _entries.remove(oldestKey);
+      if (evicted != null) {
+        _currentBytes -= evicted.byteLength;
+      }
+    }
+  }
+
+  /// Trims cached frames under external memory pressure.
+  void trimMemory() {
+    _evictPreemptively();
   }
 
   /// Clears all cached frames immediately.
@@ -214,6 +259,9 @@ abstract interface class SeekPreviewBackend {
     required bool exact,
     Duration timeout = const Duration(seconds: 3),
   });
+
+  /// Cancels in-flight frame extraction, if supported.
+  void cancelExtraction();
 
   /// Pauses the preview worker decoder.
   Future<void> pause();
@@ -273,6 +321,12 @@ class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
   bool _seekObservationActive = false;
   bool _sawSeekingTrue = false;
   bool _sawSeekingComplete = false;
+  int _extractGeneration = 0;
+
+  @override
+  void cancelExtraction() {
+    _extractGeneration++;
+  }
 
   Future<Player> _ensurePlayer() async {
     if (_player != null) return _player!;
@@ -591,6 +645,7 @@ class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
     Duration timeout = const Duration(seconds: 3),
   }) async {
     if (_disposed || _player == null) return null;
+    final currentGen = ++_extractGeneration;
     final player = _player!;
     final completedFrame = _matchingCompletedFrame(target, exact: exact);
     if (completedFrame != null) {
@@ -626,6 +681,7 @@ class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
           before: before,
           startSeekingEvent: startSeekingEvent,
           startPositionEvent: startPositionEvent,
+          extractGen: currentGen,
           timeout: readinessBudget.isNegative ? Duration.zero : readinessBudget,
         );
       } finally {
@@ -641,8 +697,14 @@ class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
       capturedPosition = player.state.position;
     }
 
+    if (_disposed || _extractGeneration != currentGen) return null;
     final bytes = await player.screenshot(format: 'image/jpeg');
-    if (bytes == null || bytes.isEmpty) return null;
+    if (_disposed ||
+        _extractGeneration != currentGen ||
+        bytes == null ||
+        bytes.isEmpty) {
+      return null;
+    }
 
     final frame = SeekPreviewFrame(
       bytes: bytes,
@@ -741,6 +803,7 @@ class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
     required Duration? before,
     required int startSeekingEvent,
     required int startPositionEvent,
+    required int extractGen,
     required Duration timeout,
   }) async {
     final limit = timeout;
@@ -748,7 +811,9 @@ class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
     var stableSamples = 0;
     Duration? previousPosition;
     while (stopwatch.elapsed < limit) {
-      if (_disposed) throw StateError('Preview backend disposed during seek');
+      if (_disposed || _extractGeneration != extractGen) {
+        throw StateError('Preview seek cancelled');
+      }
       final seeking = await _readProperty(native, 'seeking');
       final position = await _readTimePosition(native);
       if (seeking != null) {
@@ -990,6 +1055,9 @@ class DisabledSeekPreviewBackend implements SeekPreviewBackend {
   }) async => null;
 
   @override
+  void cancelExtraction() {}
+
+  @override
   Future<void> pause() async {}
 
   @override
@@ -1202,8 +1270,14 @@ class SeekPreviewService {
   }
 
   void _cancelActiveRequest() {
-    if (_isExtracting) _activeRequestCancelled = true;
+    if (_isExtracting) {
+      _activeRequestCancelled = true;
+      _backend?.cancelExtraction();
+    }
   }
+
+  /// Trims cached frames to relieve memory pressure.
+  void trimMemory() => _cache.trimMemory();
 
   /// Updates the current active media source.
   ///
@@ -1349,6 +1423,13 @@ class SeekPreviewService {
       );
       _scheduleIdleRefinement(target);
       return;
+    }
+
+    // Cancel in-flight extraction if user scrubbed to a different time bucket
+    if (_isExtracting &&
+        (_activeExtractionTarget == null ||
+            _activeExtractionTarget!.inSeconds != currentBucket)) {
+      _cancelActiveRequest();
     }
 
     // Replace pending target with newest pointer position

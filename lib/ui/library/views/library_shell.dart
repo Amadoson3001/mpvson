@@ -180,7 +180,7 @@ class _LibraryShellState extends State<LibraryShell>
     );
     _lastDisplayEntry = widget.controller.current;
     _searchController.addListener(_onSearchChanged);
-    widget.controller.addListener(_onPlaybackChanged);
+    widget.controller.structureListenable.addListener(_onPlaybackChanged);
   }
 
   @override
@@ -199,8 +199,10 @@ class _LibraryShellState extends State<LibraryShell>
   void didUpdateWidget(LibraryShell oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.controller != widget.controller) {
-      oldWidget.controller.removeListener(_onPlaybackChanged);
-      widget.controller.addListener(_onPlaybackChanged);
+      oldWidget.controller.structureListenable.removeListener(
+        _onPlaybackChanged,
+      );
+      widget.controller.structureListenable.addListener(_onPlaybackChanged);
     }
     if (widget.queueOpen != oldWidget.queueOpen && widget.queueOpen != null) {
       _isOnDemandQueueOpen = widget.queueOpen!;
@@ -254,7 +256,7 @@ class _LibraryShellState extends State<LibraryShell>
     _miniPlayerVisibilityCurve.dispose();
     _nowPlayingMorphController.dispose();
     _miniPlayerVisibilityController.dispose();
-    widget.controller.removeListener(_onPlaybackChanged);
+    widget.controller.structureListenable.removeListener(_onPlaybackChanged);
     _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
     _searchFocus.dispose();

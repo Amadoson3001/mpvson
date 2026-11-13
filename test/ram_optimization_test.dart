@@ -46,6 +46,9 @@ class FakeSeekPreviewBackend implements SeekPreviewBackend {
   }
 
   @override
+  void cancelExtraction() {}
+
+  @override
   Future<void> pause() async {}
 
   @override

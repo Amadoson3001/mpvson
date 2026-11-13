@@ -61,6 +61,25 @@ enum ControllerClosingState {
   closed,
 }
 
+/// Strongly typed repeat modes supported by the player.
+enum PlayerRepeatMode {
+  off('off'),
+  all('all'),
+  one('one');
+
+  const PlayerRepeatMode(this.value);
+
+  /// String wire / session representation of the repeat mode.
+  final String value;
+
+  /// Parses a repeat mode from its string representation.
+  static PlayerRepeatMode fromString(String? value) => switch (value) {
+    'all' => PlayerRepeatMode.all,
+    'one' => PlayerRepeatMode.one,
+    _ => PlayerRepeatMode.off,
+  };
+}
+
 /// Immutable queue contents with a structural revision.
 ///
 /// The revision only changes when the queue contents or the current entry
@@ -533,9 +552,16 @@ class PlayerController extends ChangeNotifier {
 
   final Random _random = Random();
   final List<MediaEntry> _queue = <MediaEntry>[];
-  final Map<String, MediaEntry> _queueEntryById = <String, MediaEntry>{};
-  final Map<String, int> _queueIndexById = <String, int>{};
+  final Map<String, int> _queueIdToIndex = <String, int>{};
   final Map<String, int> _recentIndexById = <String, int>{};
+
+  void _rebuildQueueIndex([int startIndex = 0]) {
+    final start = startIndex.clamp(0, _queue.length);
+    for (var i = start; i < _queue.length; i++) {
+      _queueIdToIndex[_queue[i].id] = i;
+    }
+  }
+
   final List<MediaEntry> _recent = <MediaEntry>[];
   StreamSubscription<PlaybackSnapshot>? _stateSubscription;
   Timer? _saveTimer;
@@ -584,8 +610,8 @@ class PlayerController extends ChangeNotifier {
   bool _checkpointRequested = false;
   Completer<void>? _checkpointDrain;
   bool _saveNetworkUrls = false;
-  String _repeatMode = 'off';
-  String _confirmedRepeatMode = 'off';
+  PlayerRepeatMode _repeatMode = PlayerRepeatMode.off;
+  PlayerRepeatMode _confirmedRepeatMode = PlayerRepeatMode.off;
   bool _shuffleEnabled = false;
   bool _confirmedShuffle = false;
   int _queuePreferenceSequence = 0;
@@ -655,6 +681,9 @@ class PlayerController extends ChangeNotifier {
   /// Transport state of the current source.
   final ValueNotifier<TransportState> transportListenable =
       ValueNotifier<TransportState>(TransportState.idle);
+
+  /// Volume of the current source, independent of transport ticks.
+  final ValueNotifier<double> volumeListenable = ValueNotifier<double>(100);
 
   /// Fires only when the player's structural presentation changes (current
   /// entry, media kind, error, density, recent list). Volume/rate/transport
@@ -731,13 +760,20 @@ class PlayerController extends ChangeNotifier {
 
   /// Cached filtered queue matching [query] for the current [queueRevision].
   List<MediaEntry> filterQueue(String query) => _queueSnapshot.filter(query);
-  List<MediaEntry> filteredQueue(String query) => _queueSnapshot.filter(query);
+
+  /// Alias for [filterQueue] returning filtered queue matching [query].
+  List<MediaEntry> filteredQueue(String query) => filterQueue(query);
 
   /// Cached indexed queue entries `(originalIndex, entry)` matching [query].
   List<(int, MediaEntry)> filterQueueIndexed(String query) =>
       _queueSnapshot.filterIndexed(query);
+
+  /// Alias for [filterQueueIndexed] returning indexed queue entries matching [query].
   List<(int, MediaEntry)> filteredQueueIndexed(String query) =>
-      _queueSnapshot.filterIndexed(query);
+      filterQueueIndexed(query);
+
+  /// Looks up a queue entry by its unique [id] in O(1) time.
+  MediaEntry? entryById(String id) => _entryById(id);
 
   /// Whether the native engine currently has a source loaded.
   ///
@@ -763,7 +799,12 @@ class PlayerController extends ChangeNotifier {
   double get rate => _desiredRate ?? _playbackState.rate;
   String? get error => _error;
   bool get shuffle => _shuffleEnabled;
-  String get repeatMode => _repeatMode;
+
+  /// Current repeat mode as a string ('off', 'all', 'one') for backwards compatibility.
+  String get repeatMode => _repeatMode.value;
+
+  /// Strongly typed current repeat mode.
+  PlayerRepeatMode get playerRepeatMode => _repeatMode;
   ControlDensity get controlDensity => _controlDensity;
   PlaybackSettings get playbackSettings => _playbackSettings;
   String? get playbackSettingsError => _playbackSettingsError;
@@ -778,8 +819,12 @@ class PlayerController extends ChangeNotifier {
   MediaKind get currentMediaKind => _mediaKind;
   bool get isAudio => _mediaKind == MediaKind.audio;
   bool get isVideo => _mediaKind == MediaKind.video;
+
+  /// Current media metadata.
   MediaMetadata get metadata => _metadata;
-  MediaMetadata get currentMetadata => _metadata;
+
+  /// Alias for [metadata] returning current media metadata.
+  MediaMetadata get currentMetadata => metadata;
   void updateMetadata(MediaMetadata metadata) {
     if (_metadata == metadata) return;
     _metadata = metadata;
@@ -892,6 +937,8 @@ class PlayerController extends ChangeNotifier {
           _queue
             ..clear()
             ..addAll(scrubbed.queue);
+          _queueIdToIndex.clear();
+          _rebuildQueueIndex(0);
           _currentIndex = scrubbed.currentIndex;
           if (_queue.isNotEmpty) _queueStructureRevision++;
         }
@@ -903,7 +950,7 @@ class PlayerController extends ChangeNotifier {
           _rebuildRecentEntryIndices();
         }
         if (_repeatPreferenceRevision == repeatRevisionAtStart) {
-          _repeatMode = scrubbed.repeatMode;
+          _repeatMode = PlayerRepeatMode.fromString(scrubbed.repeatMode);
         }
         if (_shufflePreferenceRevision == shuffleRevisionAtStart) {
           _shuffleEnabled = scrubbed.shuffle;
@@ -1068,7 +1115,7 @@ class PlayerController extends ChangeNotifier {
     if (checkpoint.revision < sessionRevision) return;
     final id = checkpoint.entryId!;
     var applied = false;
-    final queueIndex = _queueIndexById[id] ?? -1;
+    final queueIndex = _queueIdToIndex[id] ?? -1;
     if (queueIndex >= 0) {
       _queue[queueIndex] = _queue[queueIndex].copyWith(
         position: checkpoint.position,
@@ -1125,7 +1172,7 @@ class PlayerController extends ChangeNotifier {
       volume: volume,
       rate: rate,
       shuffle: shuffle,
-      repeatMode: _repeatMode,
+      repeatMode: _repeatMode.value,
       controlDensity: _controlDensity,
       playbackSettings: _playbackSettings,
       saveNetworkUrls: _saveNetworkUrls,
@@ -1470,6 +1517,8 @@ class PlayerController extends ChangeNotifier {
       _queue
         ..clear()
         ..addAll(stagedEntries);
+      _queueIdToIndex.clear();
+      _rebuildQueueIndex(0);
       _queueStructureRevision++;
       _currentIndex = -1;
       _engineHasMedia = false;
@@ -1492,6 +1541,7 @@ class PlayerController extends ChangeNotifier {
         _currentIndex < _queue.length) {
       final insertIndex = _currentIndex + 1;
       _queue.insertAll(insertIndex, stagedEntries);
+      _rebuildQueueIndex(insertIndex);
       _queueStructureRevision++;
       if (shuffle) {
         for (final entry in stagedEntries.reversed) {
@@ -1500,7 +1550,9 @@ class PlayerController extends ChangeNotifier {
         }
       }
     } else {
+      final oldLength = _queue.length;
       _queue.addAll(stagedEntries);
+      _rebuildQueueIndex(oldLength);
       _queueStructureRevision++;
       if (shuffle) _prepareShuffleRemaining();
     }
@@ -1673,8 +1725,9 @@ class PlayerController extends ChangeNotifier {
     );
     _queueStructureRevision++;
     _queue.removeAt(index);
+    _queueIdToIndex.remove(removedEntry.id);
+    _rebuildQueueIndex(index);
     _removeNavigationEntry(removedEntry.id);
-    _publishQueue();
 
     if (_queue.isEmpty) {
       _cancelPendingOpen(reason: 'queue emptied');
@@ -1754,9 +1807,8 @@ class PlayerController extends ChangeNotifier {
     _queueStructureRevision++;
     final entry = _queue.removeAt(oldIndex);
     _queue.insert(newIndex, entry);
-    _currentIndex = currentId == null
-        ? -1
-        : _queue.indexWhere((item) => item.id == currentId);
+    _rebuildQueueIndex(min(oldIndex, newIndex));
+    _currentIndex = currentId == null ? -1 : (_queueIdToIndex[currentId] ?? -1);
     _publishQueue();
     _scheduleSave();
     _notifyIfOpen();
@@ -1768,10 +1820,11 @@ class PlayerController extends ChangeNotifier {
     _queueStructureRevision++;
     final insertIndex = undo.index.clamp(0, _queue.length);
     _queue.insert(insertIndex, undo.entry);
+    _rebuildQueueIndex(insertIndex);
     if (shuffle) _prepareShuffleRemaining();
     final restoredIndex = undo.previousCurrentId == null
         ? -1
-        : _queue.indexWhere((entry) => entry.id == undo.previousCurrentId);
+        : (_queueIdToIndex[undo.previousCurrentId] ?? -1);
     _currentIndex = restoredIndex >= 0
         ? restoredIndex
         : (insertIndex <= _currentIndex ? _currentIndex + 1 : _currentIndex);
@@ -1791,7 +1844,6 @@ class PlayerController extends ChangeNotifier {
     _engineEntryId = null;
     _mediaKind = MediaKind.unknown;
     _metadata = MediaMetadata.empty;
-    _publishQueue();
     if (_currentIndex >= 0) {
       final entry = _queue[_currentIndex];
       _playbackState = _playbackState.copyWith(
@@ -1826,8 +1878,7 @@ class PlayerController extends ChangeNotifier {
     _cancelPendingOpen(reason: 'queue cleared');
     _markSourceDisplaced();
     _queue.clear();
-    _queueEntryById.clear();
-    _queueIndexById.clear();
+    _queueIdToIndex.clear();
     _navigationHistory.clear();
     _navigationCursor = -1;
     _pendingNavigationEntryId = null;
@@ -2007,6 +2058,13 @@ class PlayerController extends ChangeNotifier {
 
   Future<void> seekRelative(Duration delta) => seek(position + delta);
 
+  void _publishVolume() {
+    if (_notifierDisposed) return;
+    final value = volume;
+    if (volumeListenable.value == value) return;
+    volumeListenable.value = value;
+  }
+
   Future<void> setVolume(double value, {bool scheduleSave = true}) async {
     if (!_acceptsCommands) return;
     final target = _normalizeVolume(value);
@@ -2018,6 +2076,7 @@ class PlayerController extends ChangeNotifier {
     }
     _desiredVolume = target;
     _volumeRevision++;
+    _publishVolume();
     if (scheduleSave) _scheduleSave();
     final pendingWrite = _drainVolumeWrites();
     _notifyIfOpen();
@@ -2055,6 +2114,7 @@ class PlayerController extends ChangeNotifier {
         } on Object catch (exception) {
           if (revision == _volumeRevision) {
             _desiredVolume = _confirmedVolume;
+            _publishVolume();
             if (_confirmedVolume > 0) {
               _lastAudibleVolume = _confirmedVolume;
             }
@@ -2167,9 +2227,8 @@ class PlayerController extends ChangeNotifier {
       step: 1,
     );
     if (nextHistoryCursor >= 0) {
-      final index = _queue.indexWhere(
-        (entry) => entry.id == _navigationHistory[nextHistoryCursor],
-      );
+      final index =
+          _queueIdToIndex[_navigationHistory[nextHistoryCursor]] ?? -1;
       if (index >= 0) {
         await _openIndex(index, navigationCursor: nextHistoryCursor);
         return;
@@ -2210,9 +2269,8 @@ class PlayerController extends ChangeNotifier {
       step: -1,
     );
     if (previousHistoryCursor >= 0) {
-      final index = _queue.indexWhere(
-        (entry) => entry.id == _navigationHistory[previousHistoryCursor],
-      );
+      final index =
+          _queueIdToIndex[_navigationHistory[previousHistoryCursor]] ?? -1;
       if (index >= 0) {
         if (isOpeningOrUnconfirmed) {
           _cancelPendingOpen(reason: 'navigated previous');
@@ -2229,7 +2287,7 @@ class PlayerController extends ChangeNotifier {
       await playIndex(_currentIndex - 1);
       return;
     }
-    if (_repeatMode == 'all' && !shuffle) {
+    if (_repeatMode == PlayerRepeatMode.all && !shuffle) {
       if (isOpeningOrUnconfirmed) {
         _cancelPendingOpen(reason: 'navigated previous');
       }
@@ -2256,26 +2314,37 @@ class PlayerController extends ChangeNotifier {
     return _drainQueuePreferences();
   }
 
-  Future<void> cycleRepeat() => setRepeatMode(switch (_repeatMode) {
-    'off' => 'all',
-    'all' => 'one',
-    _ => 'off',
+  Future<void> cycleRepeat() => setPlayerRepeatMode(switch (_repeatMode) {
+    PlayerRepeatMode.off => PlayerRepeatMode.all,
+    PlayerRepeatMode.all => PlayerRepeatMode.one,
+    PlayerRepeatMode.one => PlayerRepeatMode.off,
   });
 
-  Future<void> setRepeatMode(String mode) {
-    if (!_acceptsCommands ||
-        !const {'off', 'all', 'one'}.contains(mode) ||
-        mode == _repeatMode) {
+  /// Sets repeat mode using either a [PlayerRepeatMode] or string ('off', 'all', 'one').
+  Future<void> setRepeatMode(Object mode) {
+    final PlayerRepeatMode targetMode;
+    if (mode is PlayerRepeatMode) {
+      targetMode = mode;
+    } else if (mode is String && const {'off', 'all', 'one'}.contains(mode)) {
+      targetMode = PlayerRepeatMode.fromString(mode);
+    } else {
+      return Future<void>.value();
+    }
+    if (!_acceptsCommands || targetMode == _repeatMode) {
       return Future<void>.value();
     }
     _transportCommandRevision++;
-    _repeatMode = mode;
+    _repeatMode = targetMode;
     _repeatPreferenceRevision++;
     _repeatPreferenceSequence = ++_queuePreferenceSequence;
     _scheduleSave();
     _notifyIfOpen();
     return _drainQueuePreferences();
   }
+
+  /// Strongly typed alias for [setRepeatMode].
+  Future<void> setPlayerRepeatMode(PlayerRepeatMode mode) =>
+      setRepeatMode(mode);
 
   void _setShuffleIntent(bool target) {
     if (_shuffleEnabled == target) return;
@@ -2350,7 +2419,7 @@ class PlayerController extends ChangeNotifier {
       }
 
       final revision = _repeatPreferenceRevision;
-      final target = _repeatMode;
+      final target = _repeatMode.value;
       try {
         await _playback.setRepeatMode(target);
       } on Object catch (exception) {
@@ -2367,7 +2436,7 @@ class PlayerController extends ChangeNotifier {
         continue;
       }
       if (!_acceptsCommands) return;
-      _confirmedRepeatMode = target;
+      _confirmedRepeatMode = _repeatMode;
       _appliedRepeatPreferenceRevision = revision;
     }
   }
@@ -2510,20 +2579,20 @@ class PlayerController extends ChangeNotifier {
     chaptersListenable.dispose();
     queueListenable.dispose();
     transportListenable.dispose();
+    volumeListenable.dispose();
     _structureNotifier.dispose();
   }
 
   Future<void> _advance({required bool fromCompletion}) async {
     if (_queue.isEmpty || _currentIndex < 0) return;
-    if (fromCompletion && _repeatMode == 'one') {
+    if (fromCompletion && _repeatMode == PlayerRepeatMode.one) {
       await playIndex(_currentIndex);
       return;
     }
     final historyCursor = _findHistoryCursor(_navigationCursor + 1, step: 1);
     if (historyCursor >= 0) {
-      final historyIndex = _queue.indexWhere(
-        (entry) => entry.id == _navigationHistory[historyCursor],
-      );
+      final historyIndex =
+          _queueIdToIndex[_navigationHistory[historyCursor]] ?? -1;
       if (historyIndex >= 0) {
         await _openIndex(historyIndex, navigationCursor: historyCursor);
         return;
@@ -2536,7 +2605,7 @@ class PlayerController extends ChangeNotifier {
       return;
     }
     if (nextIndex >= _queue.length) {
-      if (_repeatMode == 'all') {
+      if (_repeatMode == PlayerRepeatMode.all) {
         await playIndex(0);
         return;
       } else {
@@ -2551,7 +2620,7 @@ class PlayerController extends ChangeNotifier {
     if (_queue.isEmpty) return null;
     _prepareShuffleRemaining();
     if (_shuffleRemaining.isEmpty) {
-      if (_repeatMode != 'all') return null;
+      if (_repeatMode != PlayerRepeatMode.all) return null;
       _shuffleVisited.clear();
       final currentId = _currentQueueId;
       if (currentId != null) _shuffleVisited.add(currentId);
@@ -2560,20 +2629,19 @@ class PlayerController extends ChangeNotifier {
         ..addAll(_queue.map((entry) => entry.id).where((id) => id != currentId))
         ..shuffle(_random);
       if (_shuffleRemaining.isEmpty && currentId != null) {
-        return _queue.indexWhere((entry) => entry.id == currentId);
+        return _queueIdToIndex[currentId] ?? -1;
       }
     }
     if (_shuffleRemaining.isEmpty) return null;
     final nextId = _shuffleRemaining.removeLast();
-    return _queue.indexWhere((entry) => entry.id == nextId);
+    return _queueIdToIndex[nextId] ?? -1;
   }
 
   void _prepareShuffleRemaining() {
     final currentId = _currentQueueId;
-    final queueIds = _queue.map((entry) => entry.id).toSet();
     _shuffleRemaining.removeWhere(
       (id) =>
-          !queueIds.contains(id) ||
+          !_queueIdToIndex.containsKey(id) ||
           id == currentId ||
           _shuffleVisited.contains(id),
     );
@@ -2626,7 +2694,7 @@ class PlayerController extends ChangeNotifier {
       cursor += step
     ) {
       final id = _navigationHistory[cursor];
-      if (_queue.any((entry) => entry.id == id)) return cursor;
+      if (_queueIdToIndex.containsKey(id)) return cursor;
     }
     return -1;
   }
@@ -2787,6 +2855,7 @@ class PlayerController extends ChangeNotifier {
     if (_desiredVolume == null) {
       _confirmedVolume = _normalizeVolume(snapshot.volume);
       if (_confirmedVolume > 0) _lastAudibleVolume = _confirmedVolume;
+      _publishVolume();
     }
 
     if (snapshot.error != null && snapshot.error!.isNotEmpty) {
@@ -3238,8 +3307,9 @@ class PlayerController extends ChangeNotifier {
   }
 
   void _syncCurrentProgress() {
-    if (_engineEntryId == null) return;
-    final progressIndex = _queueIndexById[_engineEntryId!] ?? -1;
+    final engineId = _engineEntryId;
+    if (engineId == null) return;
+    final progressIndex = _queueIdToIndex[engineId] ?? -1;
     if (progressIndex < 0 || progressIndex >= _queue.length) return;
     final entry = _queue[progressIndex];
     var position = _playbackState.position;
@@ -3271,7 +3341,6 @@ class PlayerController extends ChangeNotifier {
       return;
     }
     _queue[index] = updated;
-    _queueEntryById[updated.id] = updated;
     final recentIndex =
         _recentIndexById[updated.id] ??
         _recentIndexById[MediaEntry.canonicalSource(updated.path)] ??
@@ -3410,7 +3479,13 @@ class PlayerController extends ChangeNotifier {
     return result;
   }
 
-  MediaEntry? _entryById(String id) => _queueEntryById[id];
+  MediaEntry? _entryById(String id) {
+    final index = _queueIdToIndex[id];
+    if (index != null && index >= 0 && index < _queue.length) {
+      return _queue[index];
+    }
+    return null;
+  }
 
   String _sourceForEntry(String id) => _entryById(id)?.path ?? '';
 
@@ -3450,12 +3525,6 @@ class PlayerController extends ChangeNotifier {
   }
 
   void _updateQueueSnapshotEntries() {
-    _queueEntryById
-      ..clear()
-      ..addEntries(_queue.map((entry) => MapEntry(entry.id, entry)));
-    _queueIndexById
-      ..clear()
-      ..addEntries(_queue.indexed.map((pair) => MapEntry(pair.$2.id, pair.$1)));
     final currentEntry = _currentIndex >= 0 && _currentIndex < _queue.length
         ? _queue[_currentIndex]
         : null;
@@ -3646,7 +3715,7 @@ class PlayerController extends ChangeNotifier {
     final firstRecent = recent.isEmpty ? null : recent.first.id;
     final next =
         '${entry?.id}|${entry?.path}|${entry?.title}|'
-        '$hasMedia|$isVideo|$isAudio|${_error ?? ''}|'
+        '$hasMedia|$isVideo|$isAudio|$isStopped|${_error ?? ''}|'
         '${recent.length}|$firstRecent|${controlDensity.name}';
     if (next == _structureKey) return;
     _structureKey = next;

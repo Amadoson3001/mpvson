@@ -7,9 +7,11 @@
 // LICENSE file.
 #include "angle_surface_manager.h"
 
+#include <EGL/eglext_angle.h>
 #include <dxgi1_3.h>
 
 #include <iostream>
+#include <stdexcept>
 
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "d3d11.lib")
@@ -45,23 +47,90 @@ void ANGLESurfaceManager::SetSize(int32_t width, int32_t height) {
   }
   width_ = width;
   height_ = height;
-  Create();
+  RecreateSurface();
 }
 
-void ANGLESurfaceManager::Draw(std::function<void()> callback) {
+void ANGLESurfaceManager::Draw(std::function<void()> callback, bool present) {
   std::lock_guard<std::mutex> lock(mutex_);
   MakeCurrent(true);
   callback();
+  if (!present) {
+    MakeCurrent(false);
+    return;
+  }
   SwapBuffers();
+  // Copy into the public texture Flutter is not sampling. The raster thread
+  // only loads the published HANDLE, so this never blocks UI.
+  const int back = 1 - front_index_;
+  if (d3d_11_device_context_ != nullptr && internal_d3d_11_texture_2D_ &&
+      public_texture_[back]) {
+    d3d_11_device_context_->CopyResource(public_texture_[back].Get(),
+                                         internal_d3d_11_texture_2D_.Get());
+    d3d_11_device_context_->Flush();
+    Publish(back);
+  }
   MakeCurrent(false);
 }
 
+void ANGLESurfaceManager::Publish(int index) {
+  published_width_.store(width_, std::memory_order_relaxed);
+  published_height_.store(height_, std::memory_order_relaxed);
+  published_handle_.store(public_handle_[index], std::memory_order_release);
+  front_index_ = index;
+}
+
 void ANGLESurfaceManager::Read() {
-  std::lock_guard<std::mutex> lock(mutex_);
-  if (d3d_11_device_context_ != nullptr) {
-    d3d_11_device_context_->CopyResource(d3d_11_texture_2D_.Get(),
-                                         internal_d3d_11_texture_2D_.Get());
-    d3d_11_device_context_->Flush();
+  // Flutter samples the published DXGI handle after this callback returns.
+  // Do not wait on |mutex_|: |Draw| holds it for the whole GL submit.
+}
+
+void ANGLESurfaceManager::ReleasePreviousTextures() {
+  previous_internal_d3d_11_texture_2D_.Reset();
+  previous_public_texture_[0].Reset();
+  previous_public_texture_[1].Reset();
+}
+
+void ANGLESurfaceManager::DestroyEGLSurface() {
+  if (display_ != EGL_NO_DISPLAY && surface_ != EGL_NO_SURFACE &&
+      tex_id_ != 0) {
+    MakeCurrent(true);
+    eglReleaseTexImage(display_, surface_, EGL_BACK_BUFFER);
+    glDeleteTextures(1, &tex_id_);
+    tex_id_ = 0;
+    MakeCurrent(false);
+  }
+  if (display_ != EGL_NO_DISPLAY) {
+    eglMakeCurrent(display_, EGL_NO_SURFACE, EGL_NO_SURFACE, context_);
+  }
+  if (display_ != EGL_NO_DISPLAY && surface_ != EGL_NO_SURFACE) {
+    eglDestroySurface(display_, surface_);
+  }
+  surface_ = EGL_NO_SURFACE;
+}
+
+void ANGLESurfaceManager::RecreateSurface() {
+  DestroyEGLSurface();
+  // Keep the generation Flutter is still sampling until the next |Draw|
+  // publishes a filled texture at the new size.
+  ReleasePreviousTextures();
+  previous_internal_d3d_11_texture_2D_ = internal_d3d_11_texture_2D_;
+  previous_public_texture_[0] = public_texture_[0];
+  previous_public_texture_[1] = public_texture_[1];
+  internal_d3d_11_texture_2D_.Reset();
+  public_texture_[0].Reset();
+  public_texture_[1].Reset();
+  internal_handle_ = nullptr;
+  public_handle_[0] = nullptr;
+  public_handle_[1] = nullptr;
+  if (!CreateD3DTexture()) {
+    throw std::runtime_error("Unable to create Windows Direct3D device.");
+  }
+  if (!CreateAndBindEGLSurface()) {
+    throw std::runtime_error("Unable to create ANGLE EGL surface.");
+  }
+  if (internal_handle_ == nullptr || public_handle_[0] == nullptr ||
+      public_handle_[1] == nullptr) {
+    throw std::runtime_error("Unable to retrieve Direct3D shared HANDLE.");
   }
 }
 
@@ -89,9 +158,13 @@ void ANGLESurfaceManager::MakeCurrent(bool value) {
 }
 
 void ANGLESurfaceManager::SwapBuffers() {
-  // |Read| copies the shared texture from another D3D11 device context. Wait
-  // for the ANGLE draw to complete so the copy cannot observe a partial frame.
-  glFinish();
+  // Same-device ANGLE can submit with glFlush; CopyResource then waits on the
+  // GPU. Separate devices still need glFinish so the copy is not stale.
+  if (angle_shares_d3d_device_) {
+    glFlush();
+  } else {
+    glFinish();
+  }
 }
 
 void ANGLESurfaceManager::Create() {
@@ -108,7 +181,8 @@ void ANGLESurfaceManager::Create() {
     throw std::runtime_error("Unable to create ANGLE EGL surface.");
     return;
   }
-  if (internal_handle_ == nullptr || handle_ == nullptr) {
+  if (internal_handle_ == nullptr || public_handle_[0] == nullptr ||
+      public_handle_[1] == nullptr) {
     throw std::runtime_error("Unable to retrieve Direct3D shared HANDLE.");
     return;
   }
@@ -172,12 +246,14 @@ void ANGLESurfaceManager::CleanUp(bool release_context) {
     surface_ = EGL_NO_SURFACE;
   }
   // Release D3D 11 texture(s).
-  if (internal_d3d_11_texture_2D_) {
-    internal_d3d_11_texture_2D_.Reset();
-  }
-  if (d3d_11_texture_2D_) {
-    d3d_11_texture_2D_.Reset();
-  }
+  internal_d3d_11_texture_2D_.Reset();
+  public_texture_[0].Reset();
+  public_texture_[1].Reset();
+  internal_handle_ = nullptr;
+  public_handle_[0] = nullptr;
+  public_handle_[1] = nullptr;
+  published_handle_.store(nullptr, std::memory_order_release);
+  ReleasePreviousTextures();
 }
 
 bool ANGLESurfaceManager::CreateD3DTexture() {
@@ -245,69 +321,114 @@ bool ANGLESurfaceManager::CreateD3DTexture() {
   d3d11_texture2D_desc.CPUAccessFlags = 0;
   d3d11_texture2D_desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
 
-  // The general idea is to create two textures, one that is used to |Draw|
-  // using ANGLE & another one that is used for |Read| the rendered content
-  // using |handle|.
-  // The internal texture is copied to the public texture once a frame is
-  // requested using |ID3D11DeviceContext::CopyResource|. This prevents any kind
-  // of synchronization issues.
+  // Internal texture is the ANGLE draw target. Two public textures ping-pong
+  // so Flutter can sample a complete frame while the next copy runs.
+  if (!CreateSharedTexture(internal_d3d_11_texture_2D_, &internal_handle_,
+                           d3d11_texture2D_desc)) {
+    return false;
+  }
+  if (!CreateSharedTexture(public_texture_[0], &public_handle_[0],
+                           d3d11_texture2D_desc)) {
+    return false;
+  }
+  if (!CreateSharedTexture(public_texture_[1], &public_handle_[1],
+                           d3d11_texture2D_desc)) {
+    return false;
+  }
+  // First construction publishes an empty 1x1. Resizes keep the previous
+  // HANDLE until |Draw| fills and publishes a new one.
+  if (published_handle_.load(std::memory_order_acquire) == nullptr) {
+    Publish(0);
+  }
+  return true;
+}
 
-  // Internal.
-  auto hr = d3d_11_device_->CreateTexture2D(&d3d11_texture2D_desc, nullptr,
-                                            &internal_d3d_11_texture_2D_);
+bool ANGLESurfaceManager::CreateSharedTexture(
+    Microsoft::WRL::ComPtr<ID3D11Texture2D>& texture,
+    HANDLE* handle,
+    const D3D11_TEXTURE2D_DESC& desc) {
+  auto hr = d3d_11_device_->CreateTexture2D(&desc, nullptr, &texture);
   CHECK_HRESULT("ID3D11Device::CreateTexture2D");
   auto resource = Microsoft::WRL::ComPtr<IDXGIResource>{};
-  hr = internal_d3d_11_texture_2D_.As(&resource);
+  hr = texture.As(&resource);
   CHECK_HRESULT("ID3D11Texture2D::As");
-  // Retrieve the shared |HANDLE| for interop.
-  hr = resource->GetSharedHandle(&internal_handle_);
+  hr = resource->GetSharedHandle(handle);
   CHECK_HRESULT("IDXGIResource::GetSharedHandle");
-
-  // External.
-  hr = d3d_11_device_->CreateTexture2D(&d3d11_texture2D_desc, nullptr,
-                                       &d3d_11_texture_2D_);
-  CHECK_HRESULT("ID3D11Device::CreateTexture2D");
-  hr = d3d_11_texture_2D_.As(&resource);
-  CHECK_HRESULT("ID3D11Texture2D::As");
-  // Retrieve the shared |HANDLE| for interop.
-  hr = resource->GetSharedHandle(&handle_);
-  CHECK_HRESULT("IDXGIResource::GetSharedHandle");
-
   return true;
 }
 
 bool ANGLESurfaceManager::CreateEGLDisplay() {
-  if (display_ == EGL_NO_DISPLAY) {
-    auto eglGetPlatformDisplayEXT =
-        reinterpret_cast<PFNEGLGETPLATFORMDISPLAYEXTPROC>(
-            eglGetProcAddress("eglGetPlatformDisplayEXT"));
-    if (eglGetPlatformDisplayEXT) {
-      display_ = eglGetPlatformDisplayEXT(EGL_PLATFORM_ANGLE_ANGLE,
-                                          EGL_DEFAULT_DISPLAY,
-                                          kD3D11DisplayAttributes);
-      if (eglInitialize(display_, 0, 0) == EGL_FALSE) {
-        display_ = eglGetPlatformDisplayEXT(EGL_PLATFORM_ANGLE_ANGLE,
-                                            EGL_DEFAULT_DISPLAY,
-                                            kD3D11_9_3DisplayAttributes);
-        if (eglInitialize(display_, 0, 0) == EGL_FALSE) {
-          display_ = eglGetPlatformDisplayEXT(EGL_PLATFORM_ANGLE_ANGLE,
-                                              EGL_DEFAULT_DISPLAY,
-                                              kD3D9DisplayAttributes);
-          if (eglInitialize(display_, 0, 0) == EGL_FALSE) {
-            display_ = eglGetPlatformDisplayEXT(EGL_PLATFORM_ANGLE_ANGLE,
-                                                EGL_DEFAULT_DISPLAY,
-                                                kWrapDisplayAttributes);
-            if (eglInitialize(display_, 0, 0) == EGL_FALSE) {
-              FAIL("eglGetPlatformDisplayEXT");
-            }
-          }
+  if (display_ != EGL_NO_DISPLAY) {
+    return true;
+  }
+  auto eglGetPlatformDisplayEXT =
+      reinterpret_cast<PFNEGLGETPLATFORMDISPLAYEXTPROC>(
+          eglGetProcAddress("eglGetPlatformDisplayEXT"));
+  if (!eglGetPlatformDisplayEXT) {
+    FAIL("eglGetProcAddress");
+  }
+
+  auto try_display = [&](void* native_display, const EGLint* attribs) {
+    display_ = eglGetPlatformDisplayEXT(EGL_PLATFORM_ANGLE_ANGLE,
+                                        native_display, attribs);
+    if (display_ != EGL_NO_DISPLAY &&
+        eglInitialize(display_, 0, 0) != EGL_FALSE) {
+      return true;
+    }
+    if (display_ != EGL_NO_DISPLAY) {
+      eglTerminate(display_);
+    }
+    display_ = EGL_NO_DISPLAY;
+    return false;
+  };
+
+  // Prefer wrapping the existing D3D device so CopyResource is same-device
+  // and does not need a CPU stall.
+  auto eglCreateDeviceANGLE =
+      reinterpret_cast<PFNEGLCREATEDEVICEANGLEPROC>(
+          eglGetProcAddress("eglCreateDeviceANGLE"));
+  auto eglReleaseDeviceANGLE =
+      reinterpret_cast<PFNEGLRELEASEDEVICEANGLEPROC>(
+          eglGetProcAddress("eglReleaseDeviceANGLE"));
+  if (eglCreateDeviceANGLE && d3d_11_device_ != nullptr) {
+    EGLDeviceEXT device = eglCreateDeviceANGLE(
+        EGL_D3D11_DEVICE_ANGLE, d3d_11_device_, nullptr);
+    if (device != EGL_NO_DEVICE_EXT) {
+      auto try_device_display = [&](const EGLint* attribs) {
+        display_ = eglGetPlatformDisplayEXT(EGL_PLATFORM_DEVICE_EXT, device,
+                                            attribs);
+        if (display_ != EGL_NO_DISPLAY &&
+            eglInitialize(display_, 0, 0) != EGL_FALSE) {
+          return true;
         }
+        if (display_ != EGL_NO_DISPLAY) {
+          eglTerminate(display_);
+        }
+        display_ = EGL_NO_DISPLAY;
+        return false;
+      };
+      if (try_device_display(kD3D11DisplayAttributes) ||
+          try_device_display(nullptr)) {
+        angle_shares_d3d_device_ = true;
+        std::cout
+            << "media_kit: ANGLESurfaceManager: ANGLE shares the D3D11 device."
+            << std::endl;
+        return true;
       }
-    } else {
-      FAIL("eglGetProcAddress");
+      if (eglReleaseDeviceANGLE) {
+        eglReleaseDeviceANGLE(device);
+      }
     }
   }
-  return true;
+
+  angle_shares_d3d_device_ = false;
+  if (try_display(EGL_DEFAULT_DISPLAY, kD3D11DisplayAttributes) ||
+      try_display(EGL_DEFAULT_DISPLAY, kD3D11_9_3DisplayAttributes) ||
+      try_display(EGL_DEFAULT_DISPLAY, kD3D9DisplayAttributes) ||
+      try_display(EGL_DEFAULT_DISPLAY, kWrapDisplayAttributes)) {
+    return true;
+  }
+  FAIL("eglGetPlatformDisplayEXT");
 }
 
 bool ANGLESurfaceManager::CreateAndBindEGLSurface() {
