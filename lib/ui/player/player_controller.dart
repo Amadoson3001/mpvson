@@ -630,6 +630,8 @@ class PlayerController extends ChangeNotifier {
   String? _playbackSettingsError;
   int _playbackSettingsApplyRevision = 0;
   int _playbackSettingsRevision = 0;
+  bool _hasRestoredPlaybackSettings = false;
+  PlaybackQualityPreset? _recommendedQualityPreset;
   final List<String> _navigationHistory = <String>[];
   int _navigationCursor = -1;
   int? _pendingNavigationCursor;
@@ -958,6 +960,7 @@ class PlayerController extends ChangeNotifier {
         if (_controlDensityRevision == controlDensityRevisionAtStart) {
           _controlDensity = scrubbed.controlDensity;
         }
+        _hasRestoredPlaybackSettings = true;
         if (_playbackSettingsRevision == playbackSettingsRevisionAtStart) {
           _playbackSettings = scrubbed.playbackSettings.normalized();
         }
@@ -1077,6 +1080,14 @@ class PlayerController extends ChangeNotifier {
           ..add(_queue[_currentIndex].id);
         _navigationCursor = 0;
         if (shuffle) _resetShuffleCycle();
+      }
+      if (loaded == null &&
+          _playbackSettingsRevision == playbackSettingsRevisionAtStart &&
+          _recommendedQualityPreset != null &&
+          _playbackSettings.qualityPreset != _recommendedQualityPreset) {
+        _playbackSettings = _playbackSettings.copyWith(
+          qualityPreset: _recommendedQualityPreset,
+        );
       }
       unawaited(_applyPlaybackSettings(_playbackSettings));
       _publishTransport();
@@ -1213,6 +1224,7 @@ class PlayerController extends ChangeNotifier {
       try {
         _recent.removeWhere((entry) => MediaEntry.isNetworkUrl(entry.path));
         _unmodifiableRecent = List<MediaEntry>.unmodifiable(_recent);
+        _rebuildRecentEntryIndices();
         _progressTimer?.cancel();
         _progressTimer = null;
         // Let any write that captured the old consent setting finish before
@@ -2448,6 +2460,25 @@ class PlayerController extends ChangeNotifier {
     _controlDensityRevision++;
     _scheduleSave();
     _notifyIfOpen();
+  }
+
+  /// Applies an adaptive quality preset only when the session has not
+  /// loaded or customized playback settings yet.
+  Future<void> applyRecommendedQualityIfDefault(
+    PlaybackQualityPreset preset,
+  ) async {
+    _recommendedQualityPreset = preset;
+    if (!_acceptsCommands ||
+        _hasRestoredPlaybackSettings ||
+        _playbackSettingsRevision > 0 ||
+        _playbackSettings.qualityPreset == preset) {
+      return;
+    }
+    _playbackSettings = _playbackSettings.copyWith(qualityPreset: preset);
+    _notifyIfOpen();
+    if (_initialized) {
+      await _applyPlaybackSettings(_playbackSettings);
+    }
   }
 
   /// Saves bounded playback preferences and applies them to native mpv.

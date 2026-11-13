@@ -100,10 +100,12 @@ class PlayerContent extends StatefulWidget {
 
 class _PlayerContentState extends State<PlayerContent>
     with SingleTickerProviderStateMixin {
+  static const Duration _dockExpandDuration = Duration(milliseconds: 200);
+
   late final AnimationController _miniPlayerController = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 280),
-    reverseDuration: const Duration(milliseconds: 260),
+    duration: AppMotion.emphasized,
+    reverseDuration: _dockExpandDuration,
     value:
         (widget.isShowingLibrary &&
             widget.controller.hasMedia &&
@@ -114,11 +116,13 @@ class _PlayerContentState extends State<PlayerContent>
 
   late final CurvedAnimation _miniPlayerCurved = CurvedAnimation(
     parent: _miniPlayerController,
-    curve: Curves.easeInOutCubic,
-    reverseCurve: Curves.easeInOutCubic,
+    curve: AppMotion.standardCurve,
+    reverseCurve: AppMotion.enter,
   );
 
   bool _miniPlayerDismissed = false;
+  late bool _libraryMounted =
+      widget.isShowingLibrary || _miniPlayerController.value > 0.001;
   String? _lastVideoId;
 
   Widget? _queuePanelCache;
@@ -166,25 +170,22 @@ class _PlayerContentState extends State<PlayerContent>
         widget.controller.hasMedia &&
         widget.controller.isVideo;
 
+    final dockDuration = AppMotion.scaled(context, AppMotion.emphasized);
+    final expandDuration = AppMotion.scaled(context, _dockExpandDuration);
+    _miniPlayerController.duration = dockDuration;
+    _miniPlayerController.reverseDuration = expandDuration;
+
     final isVideo = widget.controller.hasMedia && widget.controller.isVideo;
     if (widget.isShowingLibrary != oldWidget.isShowingLibrary) {
       if (widget.isShowingLibrary) {
-        if (isVideo && !_miniPlayerDismissed) {
-          if (AppMotion.reduce(context)) {
-            _miniPlayerController.value = 1.0;
-          } else {
-            _miniPlayerController.forward();
-          }
+        if (isVideo && !_miniPlayerDismissed && dockDuration > Duration.zero) {
+          _miniPlayerController.forward();
         } else {
           _miniPlayerController.value = 1.0;
         }
       } else {
-        if (isVideo) {
-          if (AppMotion.reduce(context)) {
-            _miniPlayerController.value = 0.0;
-          } else {
-            _miniPlayerController.reverse();
-          }
+        if (isVideo && expandDuration > Duration.zero) {
+          _miniPlayerController.reverse();
         } else {
           _miniPlayerController.value = 0.0;
         }
@@ -206,16 +207,19 @@ class _PlayerContentState extends State<PlayerContent>
   void _returnToPlayerAnimated() {
     _miniPlayerDismissed = false;
     widget.layoutManager.syncVideoVisibilityForLibrary();
-    if (AppMotion.reduce(context)) {
+    final expandDuration = AppMotion.scaled(context, _dockExpandDuration);
+    _miniPlayerController.reverseDuration = expandDuration;
+    if (expandDuration == Duration.zero) {
       _miniPlayerController.value = 0.0;
       widget.onReturnToPlayer();
-    } else {
-      _miniPlayerController.reverse().then((_) {
-        if (mounted) {
-          widget.onReturnToPlayer();
-        }
-      });
+      return;
     }
+    if (_miniPlayerController.status == AnimationStatus.reverse) return;
+    _miniPlayerController.reverse().then((_) {
+      if (mounted) {
+        widget.onReturnToPlayer();
+      }
+    });
   }
 
   void _dismissMiniPlayer() {
@@ -333,7 +337,9 @@ class _PlayerContentState extends State<PlayerContent>
       onAdjustVolume: _adjustVolume,
       onUpdateViewportDimensions: layout.updateViewportDimensions,
       videoSettingsOpen: chrome.videoSettingsOpen,
+      videoSettingsMounted: chrome.videoSettingsMounted,
       onCloseVideoSettings: chrome.closeVideoSettings,
+      onVideoSettingsExitEnd: chrome.handleVideoSettingsExitEnd,
       onOpenFullSettings: widget.onSettingsOpened,
       appPreferences: widget.appPreferences,
       onPickSubtitle: widget.media.pickSubtitle,
@@ -377,7 +383,12 @@ class _PlayerContentState extends State<PlayerContent>
   @override
   Widget build(BuildContext context) {
     final repository = widget.libraryRepository;
-    final library = repository == null ? null : _buildLibrary(repository);
+    if (widget.isShowingLibrary || _miniPlayerCurved.value > 0.001) {
+      _libraryMounted = true;
+    }
+    final library = _libraryMounted && repository != null
+        ? _buildLibrary(repository)
+        : null;
     final isVideo = widget.controller.hasMedia && widget.controller.isVideo;
 
     return PlayerQueueLayout(

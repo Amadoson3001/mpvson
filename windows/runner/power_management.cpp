@@ -1,6 +1,7 @@
 #include "power_management.h"
 
 #include <flutter/standard_method_codec.h>
+#include <timeapi.h>
 
 PowerManagement::PowerManagement() {
   REASON_CONTEXT context = {};
@@ -35,6 +36,7 @@ void PowerManagement::Initialize(flutter::BinaryMessenger* messenger) {
 
 void PowerManagement::CleanUp() {
   Reset();
+  SetHighResolutionTimer(false);
   if (request_handle_ != INVALID_HANDLE_VALUE && request_handle_ != nullptr) {
     ::CloseHandle(request_handle_);
     request_handle_ = INVALID_HANDLE_VALUE;
@@ -78,6 +80,17 @@ void PowerManagement::SetDisplayKeepAwake(bool enable) {
 void PowerManagement::Reset() {
   SetSystemKeepAwake(false);
   SetDisplayKeepAwake(false);
+}
+
+void PowerManagement::SetHighResolutionTimer(bool enable) {
+  if (enable && !high_res_timer_enabled_) {
+    if (::timeBeginPeriod(1) == TIMERR_NOERROR) {
+      high_res_timer_enabled_ = true;
+    }
+  } else if (!enable && high_res_timer_enabled_) {
+    ::timeEndPeriod(1);
+    high_res_timer_enabled_ = false;
+  }
 }
 
 void PowerManagement::OnMethodCall(
@@ -158,8 +171,18 @@ void PowerManagement::OnMethodCall(
     } else {
       result->Success(flutter::EncodableValue());
     }
+  } else if (method == "setHighResolutionTimer") {
+    bool enable = false;
+    if (arguments != nullptr) {
+      if (const auto* b = std::get_if<bool>(arguments)) {
+        enable = *b;
+      }
+    }
+    SetHighResolutionTimer(enable);
+    result->Success();
   } else if (method == "reset") {
     Reset();
+    SetHighResolutionTimer(false);
     result->Success();
   } else {
     result->NotImplemented();

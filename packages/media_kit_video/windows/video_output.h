@@ -98,9 +98,9 @@ class VideoOutput {
 
   void PresentHardwareFrame();
 
-  void CheckAndResize();
+  bool CheckAndResize();
 
-  void Resize(int64_t required_width, int64_t required_height);
+  bool Resize(int64_t required_width, int64_t required_height);
 
   void RetireTexture();
 

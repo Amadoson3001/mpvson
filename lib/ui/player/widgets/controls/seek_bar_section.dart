@@ -53,6 +53,32 @@ class SharedSeekBarState extends State<SharedSeekBar> {
   bool _interactionActive = false;
   MediaThumbnail? _entryThumbnail;
   String? _thumbnailEntryId;
+  List<PlaybackChapter>? _cachedChapters;
+  int _cachedChaptersDurationMs = -1;
+  List<double> _cachedChapterFractions = const <double>[];
+
+  List<double> _chapterFractionsFor(
+    List<PlaybackChapter> chapters,
+    int durationMs,
+  ) {
+    if (durationMs <= 0 || chapters.isEmpty) {
+      return const <double>[];
+    }
+    if (identical(chapters, _cachedChapters) &&
+        durationMs == _cachedChaptersDurationMs) {
+      return _cachedChapterFractions;
+    }
+    final fractions = <double>[];
+    for (final chapter in chapters) {
+      final startMs = chapter.start.inMilliseconds;
+      if (startMs <= 0 || startMs >= durationMs) continue;
+      fractions.add(startMs / durationMs);
+    }
+    _cachedChapters = chapters;
+    _cachedChaptersDurationMs = durationMs;
+    _cachedChapterFractions = List<double>.unmodifiable(fractions);
+    return _cachedChapterFractions;
+  }
 
   @override
   void initState() {
@@ -285,47 +311,52 @@ class SharedSeekBarState extends State<SharedSeekBar> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final width = constraints.maxWidth;
-        final previewMs = _dragging || _keyboardSeeking
-            ? (_scrubPositionMs ?? positionMs)
-            : (_hoverPositionMs ?? positionMs);
-        final previewTime = Duration(milliseconds: previewMs.round());
-        final previewLabel = formatTime(previewTime);
-        final isAudio = controller.isAudio;
-        final bubbleWidth = isAudio ? 144.0 : 160.0;
-        final actualBubbleWidth = width > 0
-            ? (bubbleWidth > width ? width : bubbleWidth)
-            : bubbleWidth;
-        final previewRatio = durationMs > 0
-            ? (previewMs / durationMs).clamp(0.0, 1.0)
-            : 0.0;
-        final previewX = _dragging || _keyboardSeeking
-            ? _trackXForValue(previewMs, width, durationMs)
-            : _hoverTrackX;
-        final bubbleLeft = (previewX - actualBubbleWidth / 2)
-            .clamp(0.0, (width - actualBubbleWidth).clamp(0.0, width))
-            .toDouble();
-        final maxCaret = (actualBubbleWidth - 14.0) > 14.0
-            ? (actualBubbleWidth - 14.0)
-            : 14.0;
-        final caretOffset = (previewX - bubbleLeft)
-            .clamp(14.0, maxCaret)
-            .toDouble();
         final showPreview =
             hasTimeline && (_pointerInside || _dragging || _keyboardSeeking);
         final thumbVisible =
             canSeek && (_pointerInside || _dragging || _focused);
         final chapters = controller.chaptersListenable.value;
-        final chapterFractions = <double>[];
-        if (hasTimeline) {
-          for (final chapter in chapters) {
-            final startMs = chapter.start.inMilliseconds;
-            if (startMs <= 0 || startMs >= durationMs) continue;
-            chapterFractions.add(startMs / durationMs);
-          }
+        final chapterFractions = hasTimeline
+            ? _chapterFractionsFor(chapters, durationMs)
+            : const <double>[];
+
+        var bubbleLeft = 0.0;
+        var actualBubbleWidth = 160.0;
+        var previewLabel = '';
+        var caretOffset = 0.0;
+        var previewRatio = 0.0;
+        var previewTime = Duration.zero;
+        String? previewChapterTitle;
+
+        if (showPreview) {
+          final previewMs = _dragging || _keyboardSeeking
+              ? (_scrubPositionMs ?? positionMs)
+              : (_hoverPositionMs ?? positionMs);
+          previewTime = Duration(milliseconds: previewMs.round());
+          previewLabel = formatTime(previewTime);
+          final bubbleWidth = controller.isAudio ? 144.0 : 160.0;
+          actualBubbleWidth = width > 0
+              ? (bubbleWidth > width ? width : bubbleWidth)
+              : bubbleWidth;
+          previewRatio = durationMs > 0
+              ? (previewMs / durationMs).clamp(0.0, 1.0)
+              : 0.0;
+          final previewX = _dragging || _keyboardSeeking
+              ? _trackXForValue(previewMs, width, durationMs)
+              : _hoverTrackX;
+          bubbleLeft = (previewX - actualBubbleWidth / 2)
+              .clamp(0.0, (width - actualBubbleWidth).clamp(0.0, width))
+              .toDouble();
+          final maxCaret = (actualBubbleWidth - 14.0) > 14.0
+              ? (actualBubbleWidth - 14.0)
+              : 14.0;
+          caretOffset = (previewX - bubbleLeft)
+              .clamp(14.0, maxCaret)
+              .toDouble();
+          previewChapterTitle = chapters.isNotEmpty
+              ? _chapterTitleAt(chapters, previewTime)
+              : null;
         }
-        final previewChapterTitle = showPreview && chapters.isNotEmpty
-            ? _chapterTitleAt(chapters, previewTime)
-            : null;
 
         return Listener(
           onPointerDown: (_) => _pointerIsDown = true,

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../../../data/repositories/media_library_repository.dart';
 import '../../../domain/models/library_models.dart';
@@ -59,8 +60,9 @@ class _MusicViewState extends State<MusicView> {
   int _browseOffset = 0;
   bool _hasMoreBrowse = true;
   bool _loadingMoreBrowse = false;
-  List<String>? _albumNames;
-  List<String>? _artistNames;
+  int _browseEpoch = 0;
+  List<MediaCollectionSummary>? _albumSummaries;
+  List<MediaCollectionSummary>? _artistSummaries;
   int _albumGridVisible = _kGridNamePageSize;
   int _artistGridVisible = _kGridNamePageSize;
   final Map<String, MediaItemRecord?> _albumPreviewCache = {};
@@ -116,8 +118,8 @@ class _MusicViewState extends State<MusicView> {
         _browseOffset = 0;
         _hasMoreBrowse = true;
         _loadingMoreBrowse = false;
-        _albumNames = null;
-        _artistNames = null;
+        _albumSummaries = null;
+        _artistSummaries = null;
         _albumGridVisible = _kGridNamePageSize;
         _artistGridVisible = _kGridNamePageSize;
       });
@@ -206,13 +208,13 @@ class _MusicViewState extends State<MusicView> {
     _reloadThrottle = Timer(const Duration(milliseconds: 200), () {
       _reloadThrottle = null;
       if (!mounted) return;
-      unawaited(_music.refreshLibraryMetadata());
       _reload();
     });
   }
 
   Future<void> _reload() {
     if (!mounted) return Future<void>.value();
+    _browseEpoch++;
     _reloadAgain = true;
     final active = _reloadFuture;
     if (active != null) return active;
@@ -242,9 +244,15 @@ class _MusicViewState extends State<MusicView> {
   }
 
   Future<void> _drainReloads() async {
-    if (mounted) setState(() => _isLoading = true);
+    if (mounted) {
+      setState(() {
+        _isLoading = true;
+        _loadingMoreBrowse = false;
+      });
+    }
     try {
       do {
+        _browseEpoch++;
         _reloadAgain = false;
         final album = _selectedAlbum;
         final albumArtist = _selectedAlbumArtist;
@@ -274,27 +282,27 @@ class _MusicViewState extends State<MusicView> {
         } else {
           switch (_music.currentSubtab) {
             case MusicSubtab.albums:
-              final names = await widget.repository.getDistinctAlbums();
+              final summaries = await widget.repository.getAlbumSummaries();
               if (!mounted) return;
               if (_reloadAgain) continue;
               setState(() {
                 _error = null;
-                _albumNames = names;
-                _artistNames = null;
+                _albumSummaries = summaries;
+                _artistSummaries = null;
                 _items = [];
                 _albumGridVisible = _kGridNamePageSize;
               });
               continue;
             case MusicSubtab.artists:
-              final names = await widget.repository.getDistinctArtists(
+              final summaries = await widget.repository.getArtistSummaries(
                 kind: MediaKind.audio,
               );
               if (!mounted) return;
               if (_reloadAgain) continue;
               setState(() {
                 _error = null;
-                _artistNames = names;
-                _albumNames = null;
+                _artistSummaries = summaries;
+                _albumSummaries = null;
                 _items = [];
                 _artistGridVisible = _kGridNamePageSize;
               });
@@ -311,8 +319,8 @@ class _MusicViewState extends State<MusicView> {
               if (_reloadAgain) continue;
               setState(() {
                 _error = null;
-                _albumNames = null;
-                _artistNames = null;
+                _albumSummaries = null;
+                _artistSummaries = null;
                 _items = List<MediaItemRecord>.from(batch.items);
                 _browseOffset = batch.items.length;
                 _hasMoreBrowse = batch.hasMore;
@@ -418,15 +426,15 @@ class _MusicViewState extends State<MusicView> {
         subtab == MusicSubtab.albums || subtab == MusicSubtab.artists;
     final items = _items;
     final gridEmpty = switch (subtab) {
-      MusicSubtab.albums => (_albumNames ?? const []).isEmpty,
-      MusicSubtab.artists => (_artistNames ?? const []).isEmpty,
+      MusicSubtab.albums => (_albumSummaries ?? const []).isEmpty,
+      MusicSubtab.artists => (_artistSummaries ?? const []).isEmpty,
       _ => false,
     };
     final gridNamesLoading =
         isGridSubtab &&
         _isLoading &&
-        _albumNames == null &&
-        _artistNames == null;
+        _albumSummaries == null &&
+        _artistSummaries == null;
     final showInitialLoader =
         _isLoading && ((isSongSubtab && items.isEmpty) || gridNamesLoading);
 
@@ -610,7 +618,7 @@ class _MusicViewState extends State<MusicView> {
   }
 
   Future<void> _loadMoreBrowse() async {
-    if (_loadingMoreBrowse || !_hasMoreBrowse) return;
+    if (_isLoading || _loadingMoreBrowse || !_hasMoreBrowse) return;
     if (_selectedAlbum != null || _selectedArtist != null) return;
     final subtab = _music.currentSubtab;
     if (subtab != MusicSubtab.songs &&
@@ -619,10 +627,11 @@ class _MusicViewState extends State<MusicView> {
         subtab != MusicSubtab.recentlyPlayed) {
       return;
     }
+    final epoch = _browseEpoch;
     setState(() => _loadingMoreBrowse = true);
     try {
       final batch = await _fetchMediaPageForSubtab(offset: _browseOffset);
-      if (!mounted) return;
+      if (!mounted || epoch != _browseEpoch) return;
       setState(() {
         _items.addAll(batch.items);
         _browseOffset += batch.items.length;
@@ -631,22 +640,28 @@ class _MusicViewState extends State<MusicView> {
       });
     } catch (error) {
       debugPrint('Music view could not load more: $error');
-      if (mounted) setState(() => _loadingMoreBrowse = false);
+      if (mounted && epoch == _browseEpoch) {
+        setState(() => _loadingMoreBrowse = false);
+      }
     }
   }
 
-  List<String> _filteredAlbumNames() {
-    final names = _albumNames ?? const <String>[];
+  List<MediaCollectionSummary> _filteredAlbumSummaries() {
+    final summaries = _albumSummaries ?? const <MediaCollectionSummary>[];
     final query = widget.searchQuery?.trim().toLowerCase();
-    if (query == null || query.isEmpty) return names;
-    return names.where((name) => name.toLowerCase().contains(query)).toList();
+    if (query == null || query.isEmpty) return summaries;
+    return summaries
+        .where((s) => s.name.toLowerCase().contains(query))
+        .toList();
   }
 
-  List<String> _filteredArtistNames() {
-    final names = _artistNames ?? const <String>[];
+  List<MediaCollectionSummary> _filteredArtistSummaries() {
+    final summaries = _artistSummaries ?? const <MediaCollectionSummary>[];
     final query = widget.searchQuery?.trim().toLowerCase();
-    if (query == null || query.isEmpty) return names;
-    return names.where((name) => name.toLowerCase().contains(query)).toList();
+    if (query == null || query.isEmpty) return summaries;
+    return summaries
+        .where((s) => s.name.toLowerCase().contains(query))
+        .toList();
   }
 
   bool _onGridScroll(ScrollNotification notification) {
@@ -665,7 +680,7 @@ class _MusicViewState extends State<MusicView> {
   void _loadMoreGridNames() {
     final subtab = _music.currentSubtab;
     if (subtab == MusicSubtab.albums) {
-      final total = _filteredAlbumNames().length;
+      final total = _filteredAlbumSummaries().length;
       if (_albumGridVisible >= total) return;
       setState(() {
         _albumGridVisible = (_albumGridVisible + _kGridNamePageSize).clamp(
@@ -674,7 +689,7 @@ class _MusicViewState extends State<MusicView> {
         );
       });
     } else if (subtab == MusicSubtab.artists) {
-      final total = _filteredArtistNames().length;
+      final total = _filteredArtistSummaries().length;
       if (_artistGridVisible >= total) return;
       setState(() {
         _artistGridVisible = (_artistGridVisible + _kGridNamePageSize).clamp(
@@ -735,39 +750,79 @@ class _MusicViewState extends State<MusicView> {
     List<MediaItemRecord> songs, {
     bool enablePaging = false,
   }) {
-    final footerCount = enablePaging && _loadingMoreBrowse ? 1 : 0;
-    return ListView.separated(
+    final showFooter = enablePaging && _loadingMoreBrowse;
+    final textScale = (MediaQuery.textScalerOf(context).scale(14) / 14.0).clamp(
+      1.0,
+      2.2,
+    );
+    final rowExtent = (66.0 * textScale).ceilToDouble();
+    final dividerColor = context.palette.surface;
+    final headerBorder = context.palette.border;
+
+    return CustomScrollView(
       controller: _scrollController,
-      addAutomaticKeepAlives: false,
-      addRepaintBoundaries: true,
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpace.lg,
-        vertical: AppSpace.md,
-      ),
-      itemCount: songs.length + 1 + footerCount,
-      separatorBuilder: (_, index) => index == 0
-          ? Divider(height: 16, thickness: 1, color: context.palette.border)
-          : Divider(height: 1, color: context.palette.surface),
-      itemBuilder: (context, index) {
-        if (index == 0) {
-          return _buildTableHeaderRow();
-        }
-        if (footerCount > 0 && index == songs.length + 1) {
-          return const Padding(
-            padding: EdgeInsets.symmetric(vertical: AppSpace.md),
-            child: Center(
-              child: SizedBox(
-                width: 22,
-                height: 22,
-                child: CircularProgressIndicator(strokeWidth: 2),
+      slivers: [
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(
+            AppSpace.lg,
+            AppSpace.md,
+            AppSpace.lg,
+            0,
+          ),
+          sliver: SliverToBoxAdapter(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _buildTableHeaderRow(),
+                Divider(height: 16, thickness: 1, color: headerBorder),
+              ],
+            ),
+          ),
+        ),
+        SliverPadding(
+          padding: EdgeInsets.fromLTRB(
+            AppSpace.lg,
+            0,
+            AppSpace.lg,
+            showFooter ? 0 : AppSpace.md,
+          ),
+          sliver: SliverFixedExtentList(
+            itemExtent: rowExtent,
+            delegate: SliverChildBuilderDelegate(
+              (context, songIndex) {
+                final song = songs[songIndex];
+                return Column(
+                  children: [
+                    Expanded(child: _buildSongRow(songs, song, songIndex)),
+                    Divider(height: 1, thickness: 1, color: dividerColor),
+                  ],
+                );
+              },
+              childCount: songs.length,
+              addAutomaticKeepAlives: false,
+              addRepaintBoundaries: true,
+            ),
+          ),
+        ),
+        if (showFooter)
+          const SliverPadding(
+            padding: EdgeInsets.fromLTRB(
+              AppSpace.lg,
+              AppSpace.md,
+              AppSpace.lg,
+              AppSpace.md,
+            ),
+            sliver: SliverToBoxAdapter(
+              child: Center(
+                child: SizedBox(
+                  width: 22,
+                  height: 22,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
               ),
             ),
-          );
-        }
-        final songIndex = index - 1;
-        final song = songs[songIndex];
-        return _buildSongRow(songs, song, songIndex);
-      },
+          ),
+      ],
     );
   }
 
@@ -817,7 +872,7 @@ class _MusicViewState extends State<MusicView> {
     final isSelected = _selectedSongPath == song.path;
     return _HoverRegion(
       key: ValueKey(song.id),
-      builder: (context, hovered) => MediaRow(
+      builder: (context, hoveredListenable) => MediaRow(
         onSelect: () {
           if (_selectedSongPath != song.path) {
             setState(() => _selectedSongPath = song.path);
@@ -859,14 +914,17 @@ class _MusicViewState extends State<MusicView> {
                         // Track index or playing indicator
                         SizedBox(
                           width: 36,
-                          child: _TrackIndexCell(
-                            index: index,
-                            isCurrent: isCurrent,
-                            isPlaying: widget.controller.isPlaying,
-                            isUnavailable: isUnavailable,
-                            hovered: hovered,
-                            onPlay: () =>
-                                _playSongCollection(collection, index),
+                          child: ValueListenableBuilder<bool>(
+                            valueListenable: hoveredListenable,
+                            builder: (context, hovered, _) => _TrackIndexCell(
+                              index: index,
+                              isCurrent: isCurrent,
+                              isPlaying: widget.controller.isPlaying,
+                              isUnavailable: isUnavailable,
+                              hovered: hovered,
+                              onPlay: () =>
+                                  _playSongCollection(collection, index),
+                            ),
                           ),
                         ),
                         // Title & Artist + Missing file indicator
@@ -1021,7 +1079,12 @@ class _MusicViewState extends State<MusicView> {
             await _music.addToQueue(song.path);
             break;
           case 'toggle_favorite':
-            await _music.toggleFavorite(song);
+            final next = !song.isFavorite;
+            await _music.toggleFavorite(song, next);
+            if (!mounted) return;
+            setState(() {
+              _patchFavoriteInLoadedLists(song.id, next);
+            });
             break;
           case 'add_playlist':
             final added = await AddToPlaylistDialog.show(
@@ -1095,7 +1158,7 @@ class _MusicViewState extends State<MusicView> {
   // --- Albums View ---
 
   Widget _buildAlbumsGridView() {
-    final albums = _filteredAlbumNames();
+    final albums = _filteredAlbumSummaries();
     final visibleCount = _albumGridVisible.clamp(0, albums.length);
     final visibleAlbums = albums.take(visibleCount).toList();
 
@@ -1123,10 +1186,12 @@ class _MusicViewState extends State<MusicView> {
             ),
             itemCount: visibleAlbums.length,
             itemBuilder: (context, index) {
-              final albumName = visibleAlbums[index];
+              final album = visibleAlbums[index];
+              final albumName = album.name;
               return _AlbumGridTile(
                 key: ValueKey(albumName),
                 albumName: albumName,
+                summary: album,
                 repository: widget.repository,
                 previewCache: _albumPreviewCache,
                 onOpen: () {
@@ -1340,7 +1405,7 @@ class _MusicViewState extends State<MusicView> {
   // --- Artists View ---
 
   Widget _buildArtistsGridView() {
-    final artists = _filteredArtistNames();
+    final artists = _filteredArtistSummaries();
     final visibleCount = _artistGridVisible.clamp(0, artists.length);
     final visibleArtists = artists.take(visibleCount).toList();
 
@@ -1368,10 +1433,12 @@ class _MusicViewState extends State<MusicView> {
             ),
             itemCount: visibleArtists.length,
             itemBuilder: (context, index) {
-              final artistName = visibleArtists[index];
+              final artist = visibleArtists[index];
+              final artistName = artist.name;
               return _ArtistGridTile(
                 key: ValueKey(artistName),
                 artistName: artistName,
+                summary: artist,
                 repository: widget.repository,
                 onOpen: () {
                   setState(() {
@@ -1508,10 +1575,34 @@ class _MusicViewState extends State<MusicView> {
   }
 }
 
+bool _hasCollectionBatchSummary(MediaCollectionSummary? summary) =>
+    summary != null &&
+    (summary.samplePath != null ||
+        summary.artworkUri != null ||
+        summary.trackCount > 0);
+
+String _pluralize(int count, String singular) =>
+    count == 1 ? '1 $singular' : '$count ${singular}s';
+
+String _formatAlbumSubtitle(String artist, int trackCount) {
+  final countLabel = trackCount > 0 ? _pluralize(trackCount, 'track') : '';
+  if (artist.isNotEmpty && countLabel.isNotEmpty) {
+    return '$artist • $countLabel';
+  }
+  return artist.isNotEmpty ? artist : countLabel;
+}
+
+String _formatArtistSubtitle(int trackCount, int albumCount) {
+  final songsLabel = _pluralize(trackCount, 'song');
+  if (albumCount <= 0) return songsLabel;
+  return '$songsLabel • ${_pluralize(albumCount, 'album')}';
+}
+
 class _AlbumGridTile extends StatefulWidget {
   const _AlbumGridTile({
     super.key,
     required this.albumName,
+    this.summary,
     required this.repository,
     required this.previewCache,
     required this.onOpen,
@@ -1519,6 +1610,7 @@ class _AlbumGridTile extends StatefulWidget {
   });
 
   final String albumName;
+  final MediaCollectionSummary? summary;
   final MediaLibraryRepository repository;
   final Map<String, MediaItemRecord?> previewCache;
   final VoidCallback onOpen;
@@ -1531,9 +1623,14 @@ class _AlbumGridTile extends StatefulWidget {
 class _AlbumGridTileState extends State<_AlbumGridTile> {
   MediaItemRecord? _preview;
 
+  bool get _hasBatchSummary => _hasCollectionBatchSummary(widget.summary);
+
   @override
   void initState() {
     super.initState();
+    if (_hasBatchSummary) {
+      return;
+    }
     if (widget.previewCache.containsKey(widget.albumName)) {
       _preview = widget.previewCache[widget.albumName];
     } else {
@@ -1558,13 +1655,21 @@ class _AlbumGridTileState extends State<_AlbumGridTile> {
 
   @override
   Widget build(BuildContext context) {
+    final summary = widget.summary;
     final preview = _preview;
-    final subtitle =
-        preview?.metadata.effectiveAlbumArtist ?? preview?.artist ?? '';
+    final artworkUri = _hasBatchSummary
+        ? summary!.artworkUri
+        : preview?.metadata.artworkUri;
+    final samplePath = _hasBatchSummary ? summary!.samplePath : preview?.path;
+    final artistLabel = _hasBatchSummary
+        ? summary!.subtitle
+        : (preview?.metadata.effectiveAlbumArtist ?? preview?.artist ?? '');
+    final trackCount = _hasBatchSummary ? summary!.trackCount : 0;
+    final subtitle = _formatAlbumSubtitle(artistLabel, trackCount);
     return MediaTile(
       artwork: LibraryArtwork(
-        path: preview?.metadata.artworkUri,
-        mediaPath: preview?.path,
+        path: artworkUri,
+        mediaPath: samplePath,
         repository: widget.repository,
       ),
       title: widget.albumName,
@@ -1586,11 +1691,13 @@ class _ArtistGridTile extends StatefulWidget {
   const _ArtistGridTile({
     super.key,
     required this.artistName,
+    this.summary,
     required this.repository,
     required this.onOpen,
   });
 
   final String artistName;
+  final MediaCollectionSummary? summary;
   final MediaLibraryRepository repository;
   final VoidCallback onOpen;
 
@@ -1601,10 +1708,14 @@ class _ArtistGridTile extends StatefulWidget {
 class _ArtistGridTileState extends State<_ArtistGridTile> {
   MediaItemRecord? _preview;
 
+  bool get _hasBatchSummary => _hasCollectionBatchSummary(widget.summary);
+
   @override
   void initState() {
     super.initState();
-    unawaited(_loadPreview());
+    if (!_hasBatchSummary) {
+      unawaited(_loadPreview());
+    }
   }
 
   Future<void> _loadPreview() async {
@@ -1623,16 +1734,26 @@ class _ArtistGridTileState extends State<_ArtistGridTile> {
 
   @override
   Widget build(BuildContext context) {
+    final summary = widget.summary;
     final preview = _preview;
+    final artworkUri = _hasBatchSummary
+        ? summary!.artworkUri
+        : preview?.metadata.artworkUri;
+    final samplePath = _hasBatchSummary ? summary!.samplePath : preview?.path;
+    final subtitle = _hasBatchSummary && summary!.trackCount > 0
+        ? _formatArtistSubtitle(summary.trackCount, summary.albumCount)
+        : (_hasBatchSummary
+              ? summary!.subtitle
+              : (preview == null ? '' : preview.album));
     return MediaTile(
       artwork: LibraryArtwork(
-        path: preview?.metadata.artworkUri,
-        mediaPath: preview?.path,
+        path: artworkUri,
+        mediaPath: samplePath,
         repository: widget.repository,
         icon: Icons.person_rounded,
       ),
       title: widget.artistName,
-      subtitle: preview == null ? '' : preview.album,
+      subtitle: subtitle,
       onTap: widget.onOpen,
     );
   }
@@ -1688,23 +1809,26 @@ class _SubtabPill extends StatelessWidget {
 class _HoverRegion extends StatefulWidget {
   const _HoverRegion({super.key, required this.builder});
 
-  final Widget Function(BuildContext context, bool hovered) builder;
+  final Widget Function(BuildContext context, ValueListenable<bool> hovered)
+  builder;
 
   @override
   State<_HoverRegion> createState() => _HoverRegionState();
 }
 
 class _HoverRegionState extends State<_HoverRegion> {
-  bool _hovered = false;
+  final ValueNotifier<bool> _hovered = ValueNotifier<bool>(false);
+
+  @override
+  void dispose() {
+    _hovered.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) => MouseRegion(
-    onEnter: (_) {
-      if (!_hovered) setState(() => _hovered = true);
-    },
-    onExit: (_) {
-      if (_hovered) setState(() => _hovered = false);
-    },
+    onEnter: (_) => _hovered.value = true,
+    onExit: (_) => _hovered.value = false,
     child: widget.builder(context, _hovered),
   );
 }

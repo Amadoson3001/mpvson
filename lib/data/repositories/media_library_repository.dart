@@ -61,6 +61,26 @@ abstract class MediaLibraryRepository extends ChangeNotifier {
   Future<List<String>> getDistinctArtists({MediaKind? kind});
   Future<List<String>> getDistinctAlbums({String? artist});
 
+  /// Returns distinct artists with representative artwork metadata in one query.
+  Future<List<MediaCollectionSummary>> getArtistSummaries({
+    MediaKind? kind,
+  }) async {
+    final names = await getDistinctArtists(kind: kind);
+    return names
+        .map((name) => MediaCollectionSummary(name: name))
+        .toList(growable: false);
+  }
+
+  /// Returns distinct albums with representative artwork metadata in one query.
+  Future<List<MediaCollectionSummary>> getAlbumSummaries({
+    String? artist,
+  }) async {
+    final names = await getDistinctAlbums(artist: artist);
+    return names
+        .map((name) => MediaCollectionSummary(name: name))
+        .toList(growable: false);
+  }
+
   Future<void> markFolderAvailability(String folderPath, bool isAvailable);
   Future<void> rescanFolder(String folderPath);
   Future<void> rescanAll();

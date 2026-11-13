@@ -109,6 +109,7 @@ class PlayerControls extends StatefulWidget {
     this.onVolumeChanged,
     this.actions,
     this.showPlaybackControls = true,
+    this.timelineActive = true,
   });
 
   final PlayerController controller;
@@ -118,12 +119,16 @@ class PlayerControls extends StatefulWidget {
   final ValueChanged<double>? onVolumeChanged;
   final Widget? actions;
   final bool showPlaybackControls;
+  final bool timelineActive;
 
   @override
   State<PlayerControls> createState() => _PlayerControlsState();
 }
 
 class _PlayerControlsState extends State<PlayerControls> {
+  static final Listenable _idleTimeline = Listenable.merge(
+    const <Listenable>[],
+  );
   Duration? _scrubPosition;
 
   void _updateScrubPosition(Duration? position) {
@@ -148,10 +153,12 @@ class _PlayerControlsState extends State<PlayerControls> {
         AppPreferencesScope.of(context)?.playerControls ??
         const PlayerControlsPreferences();
 
-    final timeline = Listenable.merge(<Listenable>[
-      controller.displayPositionListenable,
-      controller.durationListenable,
-    ]);
+    final timeline = widget.timelineActive
+        ? Listenable.merge(<Listenable>[
+            controller.displayPositionListenable,
+            controller.durationListenable,
+          ])
+        : _idleTimeline;
 
     if (!widget.showPlaybackControls) {
       if (actionWidget == null) return const SizedBox.shrink();
@@ -296,33 +303,34 @@ class _PlayerControlsState extends State<PlayerControls> {
       dense ? 6 : 10,
     );
 
-    Widget shell = DecoratedBox(
-      key: const ValueKey('player-control-strip'),
-      decoration: _buildDecoration(context, prefs),
-      child: Padding(padding: padding, child: child),
-    );
-
     final allowBlur =
         prefs.enableBlur &&
         !AppMotion.lowPower(context) &&
         !widget.controller.isPlaying;
 
-    if (isFloating) {
-      if (allowBlur) {
-        shell = BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-          child: shell,
-        );
-      }
-      shell = ClipRRect(borderRadius: radius, child: shell);
-    } else if (allowBlur && barStyle == PlayerControlBarStyle.frostedDocked) {
-      shell = ClipRect(
+    Widget content = Padding(padding: padding, child: child);
+    if (isFloating && allowBlur) {
+      content = ClipRRect(
+        borderRadius: radius,
         child: BackdropFilter(
           filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-          child: shell,
+          child: content,
+        ),
+      );
+    } else if (allowBlur && barStyle == PlayerControlBarStyle.frostedDocked) {
+      content = ClipRect(
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+          child: content,
         ),
       );
     }
+
+    final shell = DecoratedBox(
+      key: const ValueKey('player-control-strip'),
+      decoration: _buildDecoration(context, prefs),
+      child: content,
+    );
 
     if (isFloating) {
       return Padding(
@@ -350,6 +358,7 @@ class _PlayerControlsState extends State<PlayerControls> {
   ) {
     final opacity = prefs.backgroundOpacity;
     final barStyle = prefs.barStyle;
+    final lowPower = AppMotion.lowPower(context);
 
     return switch (barStyle) {
       PlayerControlBarStyle.floatingPill => BoxDecoration(
@@ -359,14 +368,16 @@ class _PlayerControlsState extends State<PlayerControls> {
           color: Colors.white.withValues(alpha: 0.12),
           width: 1,
         ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.38),
-            blurRadius: 24,
-            offset: const Offset(0, 8),
-            spreadRadius: -2,
-          ),
-        ],
+        boxShadow: lowPower
+            ? null
+            : [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.38),
+                  blurRadius: 24,
+                  offset: const Offset(0, 8),
+                  spreadRadius: -2,
+                ),
+              ],
       ),
       PlayerControlBarStyle.cinematicGradient => BoxDecoration(
         gradient: LinearGradient(
@@ -389,13 +400,15 @@ class _PlayerControlsState extends State<PlayerControls> {
             width: 1,
           ),
         ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.28),
-            blurRadius: 16,
-            offset: const Offset(0, -2),
-          ),
-        ],
+        boxShadow: lowPower
+            ? null
+            : [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.28),
+                  blurRadius: 16,
+                  offset: const Offset(0, -2),
+                ),
+              ],
       ),
       PlayerControlBarStyle.minimal => BoxDecoration(
         gradient: LinearGradient(

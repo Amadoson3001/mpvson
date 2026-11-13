@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mpvson/ui/player/views/mini_player_overlay.dart';
@@ -44,7 +45,7 @@ void main() {
     await h.shutdown(tester);
   });
 
-  testWidgets('Slow drags do not dismiss and tap still expands', (
+  testWidgets('Tap expands immediately without double-tap delay', (
     tester,
   ) async {
     final h = Harness.create();
@@ -71,11 +72,9 @@ void main() {
     );
 
     await tester.tap(find.byType(MiniPlayerOverlay));
-    // onDoubleTap is registered, so a single tap resolves after the
-    // double-tap window elapses; pump past it.
-    await tester.pump(const Duration(milliseconds: 350));
-    await tester.pumpAndSettle();
+    await tester.pump();
     expect(expanded, isTrue);
+    expect(dismissed, isFalse);
 
     await tester.fling(
       find.byType(MiniPlayerOverlay),
@@ -83,6 +82,50 @@ void main() {
       300,
     );
     await tester.pumpAndSettle();
+    expect(dismissed, isFalse);
+
+    await h.shutdown(tester);
+  });
+
+  testWidgets('Mouse click with slight vertical jitter still expands', (
+    tester,
+  ) async {
+    final h = Harness.create();
+    var dismissed = false;
+    var expanded = false;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.bottomLeft,
+            child: SizedBox(
+              width: 88,
+              height: 50,
+              child: MiniPlayerOverlay(
+                controller: h.controller,
+                onExpand: () => expanded = true,
+                onDismiss: () => dismissed = true,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final center = tester.getCenter(find.byType(MiniPlayerOverlay));
+    final gesture = await tester.startGesture(
+      center,
+      kind: PointerDeviceKind.mouse,
+      buttons: kPrimaryMouseButton,
+    );
+    await tester.pump();
+    await gesture.moveBy(const Offset(1.5, 4.0));
+    await tester.pump();
+    await gesture.up();
+    await tester.pump();
+
+    expect(expanded, isTrue);
     expect(dismissed, isFalse);
 
     await h.shutdown(tester);

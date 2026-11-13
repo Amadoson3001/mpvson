@@ -26,6 +26,7 @@ class UpdateService extends ChangeNotifier {
     UpdatePlatform Function()? platformProvider,
     this.currentVersion = '0.1.0',
     Future<void> Function(String path)? openDownloadLocationForTesting,
+    Future<void> Function(IOSink sink)? flushDownloadSinkForTesting,
     Duration requestTimeoutForTesting = const Duration(seconds: 20),
     Duration maxDownloadDurationForTesting = const Duration(minutes: 30),
     int maxManifestBytesForTesting = 256 * 1024,
@@ -40,6 +41,7 @@ class UpdateService extends ChangeNotifier {
            supportDirectoryProvider ?? getApplicationSupportDirectory,
        _platformProvider = platformProvider ?? (() => UpdatePlatform.current),
        _openDownloadedArtifact = openDownloadLocationForTesting,
+       _flushDownloadSink = flushDownloadSinkForTesting,
        _requestTimeout = requestTimeoutForTesting,
        _maxDownloadDuration = maxDownloadDurationForTesting,
        _maxManifestBytes = maxManifestBytesForTesting,
@@ -60,6 +62,7 @@ class UpdateService extends ChangeNotifier {
   final UpdatePlatform Function() _platformProvider;
   final String currentVersion;
   final Future<void> Function(String path)? _openDownloadedArtifact;
+  final Future<void> Function(IOSink sink)? _flushDownloadSink;
   final Duration _requestTimeout;
   final Duration _maxDownloadDuration;
   final int _maxManifestBytes;
@@ -283,9 +286,13 @@ class UpdateService extends ChangeNotifier {
       var sinkBackpressure = false;
       void resumeAfterSink() {
         sinkBackpressure = false;
-        if (!_disposed) {
-          subscription?.resume();
+        if (_disposed ||
+            streamCompleter.isCompleted ||
+            abortCompleter.isCompleted) {
+          return;
         }
+        resetIdleTimer();
+        subscription?.resume();
       }
 
       subscription = response.stream.listen(
@@ -330,11 +337,11 @@ class UpdateService extends ChangeNotifier {
           final sink = output;
           if (!sinkBackpressure && sink != null) {
             sinkBackpressure = true;
+            idleTimer?.cancel();
+            idleTimer = null;
             subscription!.pause();
-            sink
-                .flush()
-                .whenComplete(resumeAfterSink)
-                .catchError((_) => resumeAfterSink());
+            final flushFuture = _flushDownloadSink?.call(sink) ?? sink.flush();
+            flushFuture.catchError((_) {}).whenComplete(resumeAfterSink);
           }
         },
         onError: (Object error, StackTrace stackTrace) {

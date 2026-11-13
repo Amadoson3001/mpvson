@@ -444,6 +444,22 @@ class MediaLibraryRepositoryImpl extends MediaLibraryRepository {
   }
 
   @override
+  Future<List<MediaCollectionSummary>> getArtistSummaries({
+    MediaKind? kind,
+  }) async {
+    _checkReady();
+    return _database!.getArtistSummaries(kind: kind);
+  }
+
+  @override
+  Future<List<MediaCollectionSummary>> getAlbumSummaries({
+    String? artist,
+  }) async {
+    _checkReady();
+    return _database!.getAlbumSummaries(artist: artist);
+  }
+
+  @override
   Future<void> markFolderAvailability(
     String folderPath,
     bool isAvailable,

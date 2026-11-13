@@ -289,6 +289,7 @@ class GpuSnapshot {
     this.adapters = const <GpuAdapter>[],
     this.displayAdapterLuid,
     this.preference,
+    this.totalPhysicalMemory,
   });
 
   final List<GpuAdapter> adapters;
@@ -299,6 +300,9 @@ class GpuSnapshot {
   /// Windows per-app preference: 0 = system default, 1 = power saving,
   /// 2 = high performance. Null means no explicit preference.
   final int? preference;
+
+  /// Installed physical system memory in bytes, when reported by the platform.
+  final int? totalPhysicalMemory;
 
   GpuAdapter? get displayAdapter => adapterForLuid(displayAdapterLuid);
 
@@ -322,12 +326,16 @@ class GpuSnapshot {
       }
     }
     final rawPreference = _readNullableInt(json['preference']);
+    final rawTotalMemory = _readNullableInt(json['totalPhysicalMemory']);
     return GpuSnapshot(
       adapters: List<GpuAdapter>.unmodifiable(adapters),
       displayAdapterLuid: _readNullableInt(json['displayAdapterLuid']),
       preference:
           rawPreference != null && rawPreference >= 0 && rawPreference <= 2
           ? rawPreference
+          : null,
+      totalPhysicalMemory: rawTotalMemory != null && rawTotalMemory > 0
+          ? rawTotalMemory
           : null,
     );
   }
@@ -336,6 +344,7 @@ class GpuSnapshot {
     'adapters': <Object?>[for (final adapter in adapters) adapter.toJson()],
     if (displayAdapterLuid != null) 'displayAdapterLuid': displayAdapterLuid,
     if (preference != null) 'preference': preference,
+    if (totalPhysicalMemory != null) 'totalPhysicalMemory': totalPhysicalMemory,
   };
 
   @override
@@ -345,16 +354,22 @@ class GpuSnapshot {
           runtimeType == other.runtimeType &&
           listEquals(adapters, other.adapters) &&
           displayAdapterLuid == other.displayAdapterLuid &&
-          preference == other.preference;
+          preference == other.preference &&
+          totalPhysicalMemory == other.totalPhysicalMemory;
 
   @override
-  int get hashCode =>
-      Object.hash(Object.hashAll(adapters), displayAdapterLuid, preference);
+  int get hashCode => Object.hash(
+    Object.hashAll(adapters),
+    displayAdapterLuid,
+    preference,
+    totalPhysicalMemory,
+  );
 
   @override
   String toString() =>
       'GpuSnapshot(adapters: $adapters, displayAdapterLuid: '
-      '$displayAdapterLuid, preference: $preference)';
+      '$displayAdapterLuid, preference: $preference, '
+      'totalPhysicalMemory: $totalPhysicalMemory)';
 }
 
 GpuAdapterKind _parseKind(Object? value) => switch (value) {

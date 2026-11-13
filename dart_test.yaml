@@ -3,7 +3,9 @@ tags:
     description: >-
       Slow UI layout matrix tests (screen sizes, themes, text scale). Run
       explicitly in CI or before release.
+    skip: 'Slow UI layout matrix; run with --run-skipped --tags=golden'
   benchmark:
     description: >-
       Library database performance baselines (1k–50k rows). Not part of fast
       regression runs.
+    skip: 'Slow DB benchmark; run with --run-skipped test/benchmark/'

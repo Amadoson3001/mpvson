@@ -281,150 +281,214 @@ void main() {
   );
 
   group('PlayerRepeatMode enum and API backwards compatibility', () {
-    test('supports strongly typed enum, string compatibility, and cycleRepeat', () async {
-      final controller = PlayerController(
-        playback: FakePlaybackService(),
-        sessions: SessionRepository(),
-      );
-      addTearDown(controller.dispose);
+    test(
+      'supports strongly typed enum, string compatibility, and cycleRepeat',
+      () async {
+        final controller = PlayerController(
+          playback: FakePlaybackService(),
+          sessions: SessionRepository(),
+        );
+        addTearDown(controller.dispose);
 
-      // Default is off
-      expect(controller.playerRepeatMode, PlayerRepeatMode.off);
-      expect(controller.repeatMode, 'off');
+        // Default is off
+        expect(controller.playerRepeatMode, PlayerRepeatMode.off);
+        expect(controller.repeatMode, 'off');
 
-      // Strongly typed setter
-      await controller.setPlayerRepeatMode(PlayerRepeatMode.all);
-      expect(controller.playerRepeatMode, PlayerRepeatMode.all);
-      expect(controller.repeatMode, 'all');
+        // Strongly typed setter
+        await controller.setPlayerRepeatMode(PlayerRepeatMode.all);
+        expect(controller.playerRepeatMode, PlayerRepeatMode.all);
+        expect(controller.repeatMode, 'all');
 
-      // cycleRepeat cycles from all to one
-      await controller.cycleRepeat();
-      expect(controller.playerRepeatMode, PlayerRepeatMode.one);
-      expect(controller.repeatMode, 'one');
+        // cycleRepeat cycles from all to one
+        await controller.cycleRepeat();
+        expect(controller.playerRepeatMode, PlayerRepeatMode.one);
+        expect(controller.repeatMode, 'one');
 
-      // cycleRepeat cycles from one to off
-      await controller.cycleRepeat();
-      expect(controller.playerRepeatMode, PlayerRepeatMode.off);
-      expect(controller.repeatMode, 'off');
+        // cycleRepeat cycles from one to off
+        await controller.cycleRepeat();
+        expect(controller.playerRepeatMode, PlayerRepeatMode.off);
+        expect(controller.repeatMode, 'off');
 
-      // String backwards-compatible setter
-      await controller.setRepeatMode('all');
-      expect(controller.playerRepeatMode, PlayerRepeatMode.all);
-      expect(controller.repeatMode, 'all');
+        // String backwards-compatible setter
+        await controller.setRepeatMode('all');
+        expect(controller.playerRepeatMode, PlayerRepeatMode.all);
+        expect(controller.repeatMode, 'all');
 
-      // Invalid string is rejected and leaves mode unchanged
-      await controller.setRepeatMode('invalid_mode');
-      expect(controller.playerRepeatMode, PlayerRepeatMode.all);
-      expect(controller.repeatMode, 'all');
-    });
+        // Invalid string is rejected and leaves mode unchanged
+        await controller.setRepeatMode('invalid_mode');
+        expect(controller.playerRepeatMode, PlayerRepeatMode.all);
+        expect(controller.repeatMode, 'all');
+      },
+    );
   });
 
   group('Redundant Snapshot & Notification Cascades', () {
-    test('removeAt and undoRemove publish queue snapshot strictly once', () async {
-      final controller = PlayerController(
-        playback: FakePlaybackService(),
-        sessions: SessionRepository(),
-      );
-      addTearDown(controller.dispose);
+    test(
+      'removeAt and undoRemove publish queue snapshot strictly once',
+      () async {
+        final controller = PlayerController(
+          playback: FakePlaybackService(),
+          sessions: SessionRepository(),
+        );
+        addTearDown(controller.dispose);
 
-      final file1 = await _createMediaFile('cascade1.mp4');
-      final file2 = await _createMediaFile('cascade2.mp4');
-      final file3 = await _createMediaFile('cascade3.mp4');
+        final file1 = await _createMediaFile('cascade1.mp4');
+        final file2 = await _createMediaFile('cascade2.mp4');
+        final file3 = await _createMediaFile('cascade3.mp4');
 
-      await controller.openPaths([file1.path, file2.path, file3.path]);
-      while (controller.isLoading) {
-        await Future<void>.delayed(const Duration(milliseconds: 5));
-      }
-      // Settle progress so initial load sync does not fire during remove
-      await controller.seek(Duration.zero);
+        await controller.openPaths([file1.path, file2.path, file3.path]);
+        while (controller.isLoading) {
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+        // Settle progress so initial load sync does not fire during remove
+        await controller.seek(Duration.zero);
 
-      var publishCount = 0;
-      controller.queueListenable.addListener(() {
-        publishCount++;
-      });
+        var publishCount = 0;
+        controller.queueListenable.addListener(() {
+          publishCount++;
+        });
 
-      // Remove non-playing item (index 1)
-      publishCount = 0;
-      await controller.removeAt(1);
-      expect(publishCount, 1, reason: 'removeAt must publish queue strictly once');
+        // Remove non-playing item (index 1)
+        publishCount = 0;
+        await controller.removeAt(1);
+        expect(
+          publishCount,
+          1,
+          reason: 'removeAt must publish queue strictly once',
+        );
 
-      // Undo remove
-      publishCount = 0;
-      await controller.undoRemove();
-      expect(publishCount, 1, reason: 'undoRemove must publish queue strictly once');
-    });
+        // Undo remove
+        publishCount = 0;
+        await controller.undoRemove();
+        expect(
+          publishCount,
+          1,
+          reason: 'undoRemove must publish queue strictly once',
+        );
+      },
+    );
   });
 
   group('O(1) Queue lookups and operations with 10,000 items', () {
-    test('lookups, reorders, and queue operations execute in sub-millisecond O(1) time', () async {
-      final fakePlayback = FakePlaybackService();
+    test(
+      'lookups, reorders, and queue operations execute in sub-millisecond O(1) time',
+      () async {
+        final fakePlayback = FakePlaybackService();
+        final controller = PlayerController(
+          playback: fakePlayback,
+          sessions: SessionRepository(),
+        );
+        addTearDown(controller.dispose);
+
+        final items = List.generate(
+          10000,
+          (i) => 'C:/media/file_${i.toString().padLeft(5, '0')}.mp4',
+        );
+
+        final loadStopwatch = Stopwatch()..start();
+        await controller.openPaths(items);
+        loadStopwatch.stop();
+
+        expect(controller.queue.length, 10000);
+        expect(controller.currentIndex, 0);
+
+        // Verify jump to the 9999th element (end of queue)
+        await controller.playIndex(9999);
+        expect(controller.currentIndex, 9999);
+        expect(controller.current?.id, controller.queue[9999].id);
+
+        // Verify lookups on entries throughout the queue (first, middle, end)
+        final firstId = controller.queue[0].id;
+        final middleId = controller.queue[5000].id;
+        final lastId = controller.queue[9999].id;
+
+        expect(controller.entryById(firstId)?.id, firstId);
+        expect(controller.entryById(middleId)?.id, middleId);
+        expect(controller.entryById(lastId)?.id, lastId);
+        expect(controller.entryById('non-existent-id'), isNull);
+
+        // Micro-benchmark: 10,000 lookups via entryById in a 10,000-item queue
+        final lookupStopwatch = Stopwatch()..start();
+        for (var i = 0; i < 10000; i++) {
+          final targetId = (i % 2 == 0) ? middleId : lastId;
+          final found = controller.entryById(targetId);
+          assert(found != null);
+        }
+        lookupStopwatch.stop();
+
+        final avgLookupMicros = lookupStopwatch.elapsedMicroseconds / 10000;
+        // In O(1), lookup takes well under 1ms (< 1000 microseconds, typically < 1 µs)
+        expect(
+          avgLookupMicros,
+          lessThan(100),
+          reason:
+              'Average lookup took ${avgLookupMicros.toStringAsFixed(2)} µs (expected < 100 µs for O(1))',
+        );
+
+        // Verify reorder maintains O(1) index integrity
+        final itemToMoveId = controller.queue[5000].id;
+        await controller.reorder(5000, 5005);
+        expect(controller.queue[5005].id, itemToMoveId);
+        expect(controller.entryById(itemToMoveId)?.id, itemToMoveId);
+
+        // Verify removeAt and undoRemove maintain index integrity on 10,000 items
+        final itemToRemove = controller.queue[7000].id;
+        await controller.removeAt(7000);
+        expect(controller.queue.length, 9999);
+        expect(controller.queue[7000].id, isNot(itemToRemove));
+        expect(controller.entryById(itemToRemove), isNull);
+
+        await controller.undoRemove();
+        expect(controller.queue.length, 10000);
+        expect(controller.queue[7000].id, itemToRemove);
+        expect(controller.entryById(itemToRemove)?.id, itemToRemove);
+      },
+    );
+  });
+
+  test(
+    'setSaveNetworkUrls(false) rebuilds recent indices before progress updates',
+    () async {
+      final playback = FakePlaybackService();
       final controller = PlayerController(
-        playback: fakePlayback,
+        playback: playback,
         sessions: SessionRepository(),
       );
       addTearDown(controller.dispose);
 
-      final items = List.generate(
-        10000,
-        (i) => 'C:/media/file_${i.toString().padLeft(5, '0')}.mp4',
-      );
+      final local1 = await _createMediaFile('local1.mp4');
+      final local2 = await _createMediaFile('local2.mp4');
+      await controller.openPaths([local1.path]);
+      await Future<void>.delayed(const Duration(milliseconds: 10));
 
-      final loadStopwatch = Stopwatch()..start();
-      await controller.openPaths(items);
-      loadStopwatch.stop();
+      await controller.setSaveNetworkUrls(true);
+      final active = controller.current!;
+      controller.restoreRecentList([
+        MediaEntry(
+          id: 'net-stream-1',
+          path: 'https://example.com/stream.m3u8',
+          title: 'Stream',
+          lastPlayed: DateTime(2026, 1, 3),
+        ),
+        active.copyWith(position: const Duration(seconds: 5)),
+        MediaEntry(
+          id: 'local-2',
+          path: local2.path,
+          title: 'Local Two',
+          duration: const Duration(minutes: 3),
+          position: const Duration(seconds: 20),
+          lastPlayed: DateTime(2026, 1, 1),
+        ),
+      ]);
 
-      expect(controller.queue.length, 10000);
-      expect(controller.currentIndex, 0);
+      await controller.setSaveNetworkUrls(false);
+      await controller.seek(const Duration(seconds: 95));
 
-      // Verify jump to the 9999th element (end of queue)
-      await controller.playIndex(9999);
-      expect(controller.currentIndex, 9999);
-      expect(controller.current?.id, controller.queue[9999].id);
-
-      // Verify lookups on entries throughout the queue (first, middle, end)
-      final firstId = controller.queue[0].id;
-      final middleId = controller.queue[5000].id;
-      final lastId = controller.queue[9999].id;
-
-      expect(controller.entryById(firstId)?.id, firstId);
-      expect(controller.entryById(middleId)?.id, middleId);
-      expect(controller.entryById(lastId)?.id, lastId);
-      expect(controller.entryById('non-existent-id'), isNull);
-
-      // Micro-benchmark: 10,000 lookups via entryById in a 10,000-item queue
-      final lookupStopwatch = Stopwatch()..start();
-      for (var i = 0; i < 10000; i++) {
-        final targetId = (i % 2 == 0) ? middleId : lastId;
-        final found = controller.entryById(targetId);
-        assert(found != null);
-      }
-      lookupStopwatch.stop();
-
-      final avgLookupMicros = lookupStopwatch.elapsedMicroseconds / 10000;
-      // In O(1), lookup takes well under 1ms (< 1000 microseconds, typically < 1 µs)
-      expect(
-        avgLookupMicros,
-        lessThan(100),
-        reason: 'Average lookup took ${avgLookupMicros.toStringAsFixed(2)} µs (expected < 100 µs for O(1))',
-      );
-
-      // Verify reorder maintains O(1) index integrity
-      final itemToMoveId = controller.queue[5000].id;
-      await controller.reorder(5000, 5005);
-      expect(controller.queue[5005].id, itemToMoveId);
-      expect(controller.entryById(itemToMoveId)?.id, itemToMoveId);
-
-      // Verify removeAt and undoRemove maintain index integrity on 10,000 items
-      final itemToRemove = controller.queue[7000].id;
-      await controller.removeAt(7000);
-      expect(controller.queue.length, 9999);
-      expect(controller.queue[7000].id, isNot(itemToRemove));
-      expect(controller.entryById(itemToRemove), isNull);
-
-      await controller.undoRemove();
-      expect(controller.queue.length, 10000);
-      expect(controller.queue[7000].id, itemToRemove);
-      expect(controller.entryById(itemToRemove)?.id, itemToRemove);
-    });
-  });
+      expect(controller.recent.length, 2);
+      expect(controller.recent[0].id, MediaEntry.canonicalSource(local1.path));
+      expect(controller.recent[0].position, const Duration(seconds: 95));
+      expect(controller.recent[1].id, MediaEntry.canonicalSource(local2.path));
+      expect(controller.recent[1].position, const Duration(seconds: 20));
+    },
+  );
 }

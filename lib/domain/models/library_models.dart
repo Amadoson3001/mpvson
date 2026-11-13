@@ -233,3 +233,23 @@ class PlaylistEntryRecord {
     );
   }
 }
+
+/// Lightweight representative metadata for an album or artist collection tile.
+@immutable
+class MediaCollectionSummary {
+  const MediaCollectionSummary({
+    required this.name,
+    this.subtitle = '',
+    this.artworkUri,
+    this.samplePath,
+    this.trackCount = 0,
+    this.albumCount = 0,
+  });
+
+  final String name;
+  final String subtitle;
+  final String? artworkUri;
+  final String? samplePath;
+  final int trackCount;
+  final int albumCount;
+}

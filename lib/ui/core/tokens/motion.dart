@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../../app.dart' show AppPreferencesScope;
+import '../../../domain/models/hardware_profile.dart';
 import 'motion_stub.dart' if (dart.library.io) 'motion_io.dart';
 
 /// Shared timing and reduced-motion behavior for the desktop interface.
@@ -49,20 +50,43 @@ abstract final class AppMotion {
   /// avoids a collision between a [Duration] and a [Curve] in Dart.
   static const Curve standardCurve = Curves.easeOutCubic;
 
-  static final bool _constrainedHardware = _detectConstrainedHardware();
+  static HardwareProfile _hardwareProfile = kIsWeb
+      ? const HardwareProfile(tier: HardwareTier.balanced, cpuCount: 8)
+      : _detectInitialHardwareProfile();
 
-  static bool _detectConstrainedHardware() {
-    if (kIsWeb) return false;
-    return detectConstrainedHardware();
+  static final ValueNotifier<bool> hardwareConstrainedListenable =
+      ValueNotifier<bool>(_hardwareProfile.isConstrained);
+
+  static HardwareProfile _detectInitialHardwareProfile() {
+    final constrained = detectConstrainedHardware();
+    final cpus = detectProcessorCount();
+    final initial = HardwareProfile.initial(cpuCount: cpus);
+    if (!constrained && initial.isConstrained) {
+      return HardwareProfile(tier: HardwareTier.balanced, cpuCount: cpus);
+    }
+    return initial;
+  }
+
+  /// Latest host hardware capability profile (CPU, GPU, and system RAM).
+  static HardwareProfile get hardwareProfile => _hardwareProfile;
+
+  /// Updates motion & effect heuristics once asynchronous GPU/RAM probes
+  /// finish on startup (no-op in tests unless explicitly invoked).
+  static void updateHardwareProfile(HardwareProfile profile) {
+    if (_hardwareProfile == profile) return;
+    _hardwareProfile = profile;
+    if (hardwareConstrainedListenable.value != profile.isConstrained) {
+      hardwareConstrainedListenable.value = profile.isConstrained;
+    }
   }
 
   static bool reduce(BuildContext context) =>
       MediaQuery.maybeOf(context)?.disableAnimations ?? false;
 
-  /// Reduced motion or a low-core machine. Decorative scale, blur and
-  /// multi-layer transitions can be skipped without changing layout.
+  /// Reduced motion or constrained CPU/GPU/RAM hardware. Decorative scale,
+  /// blur and multi-layer transitions are skipped without changing layout.
   static bool lowPower(BuildContext context) =>
-      reduce(context) || _constrainedHardware;
+      reduce(context) || _hardwareProfile.isConstrained;
 
   /// User-chosen pace from Settings → Animation (1.0 when unset).
   static double speedScale(BuildContext context) =>

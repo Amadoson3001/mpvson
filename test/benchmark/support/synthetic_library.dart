@@ -14,16 +14,8 @@ Future<void> seedSyntheticLibrary(
   required int rowCount,
   int libraryCount = 10,
 }) async {
-  if (rowCount <= 0) return;
-  final filesPerLib = (rowCount / libraryCount).ceil();
-  final paths = <String>[];
-  for (var lib = 0; lib < libraryCount && paths.length < rowCount; lib++) {
-    final remaining = rowCount - paths.length;
-    final batch = remaining < filesPerLib ? remaining : filesPerLib;
-    for (var track = 0; track < batch; track++) {
-      paths.add(benchmarkTrackPath(lib, track));
-    }
-  }
+  final paths = syntheticPaths(rowCount, libraryCount: libraryCount);
+  if (paths.isEmpty) return;
   await db.batchUpsertDiscoveredFiles(paths);
 }
 

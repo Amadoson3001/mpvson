@@ -56,6 +56,124 @@ void main() {
     expect(find.text('Video Settings'), findsOneWidget);
     // The near-opaque panel should not pay for a full-screen backdrop blur.
     expect(find.byType(BackdropFilter), findsNothing);
+    expect(
+      find.descendant(
+        of: find.byType(FloatingVideoSettings),
+        matching: find.byType(Opacity),
+      ),
+      findsNothing,
+    );
+    expect(
+      find.descendant(
+        of: find.byType(FloatingVideoSettings),
+        matching: find.byType(FadeTransition),
+      ),
+      findsNothing,
+    );
+
+    await h.shutdown(tester);
+  });
+
+  testWidgets('floating video settings slides as one surface, then slides out', (
+    tester,
+  ) async {
+    final h = Harness.create();
+    configureView(tester, size: const Size(1240, 780));
+    var open = true;
+    var exitSettled = false;
+
+    Widget host() => MaterialApp(
+      theme: AppTheme.darkTheme(),
+      home: Scaffold(
+        body: Stack(
+          children: [
+            FloatingVideoSettings(
+              controller: h.controller,
+              pickSubtitle: () async => null,
+              onClose: () {},
+              open: open,
+              onExitSettled: () => exitSettled = true,
+            ),
+          ],
+        ),
+      ),
+    );
+
+    await tester.pumpWidget(host());
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 40));
+
+    expect(find.text('Video Settings'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byType(FloatingVideoSettings),
+        matching: find.byType(Opacity),
+      ),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('floating-settings-slide')),
+      findsOneWidget,
+    );
+
+    await tester.pumpAndSettle();
+    open = false;
+    await tester.pumpWidget(host());
+    await tester.pump();
+    expect(find.text('Video Settings'), findsOneWidget);
+    expect(exitSettled, isFalse);
+
+    await tester.pumpAndSettle();
+    expect(exitSettled, isTrue);
+
+    await h.shutdown(tester);
+  });
+
+  testWidgets('floating video settings skips the slide when motion is reduced', (
+    tester,
+  ) async {
+    final h = Harness.create();
+    configureView(tester, size: const Size(1240, 780));
+    var open = true;
+    var exitSettled = false;
+
+    Widget host() => MaterialApp(
+      theme: AppTheme.darkTheme(),
+      home: MediaQuery(
+        data: const MediaQueryData(
+          size: Size(1240, 780),
+          disableAnimations: true,
+        ),
+        child: Scaffold(
+          body: Stack(
+            children: [
+              FloatingVideoSettings(
+                controller: h.controller,
+                pickSubtitle: () async => null,
+                onClose: () {},
+                open: open,
+                onExitSettled: () => exitSettled = true,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpWidget(host());
+    await tester.pump();
+
+    expect(find.text('Video Settings'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('floating-settings-slide')),
+      findsNothing,
+    );
+
+    open = false;
+    await tester.pumpWidget(host());
+    await tester.pump();
+    await tester.pump();
+    expect(exitSettled, isTrue);
 
     await h.shutdown(tester);
   });

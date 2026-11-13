@@ -245,9 +245,16 @@ void main() {
         await settle(tester);
 
         expect(find.byType(MiniPlayerOverlay), findsOneWidget);
+        final dockedRect = tester.getRect(find.byType(MiniPlayerOverlay));
 
-        // Tap directly on the docked mini video player
+        // Tap directly on the docked mini video player; expansion starts
+        // immediately without waiting on a double-tap disambiguation timer.
         await tester.tap(find.byType(MiniPlayerOverlay));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 32));
+        final expandingStageRect = tester.getRect(find.byType(PlayerStage));
+        expect(expandingStageRect.width, greaterThan(dockedRect.width));
+
         await settle(tester);
 
         // Video expands back to full screen

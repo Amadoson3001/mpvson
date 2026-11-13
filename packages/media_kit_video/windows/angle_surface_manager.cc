@@ -68,6 +68,12 @@ void ANGLESurfaceManager::Draw(std::function<void()> callback, bool present) {
                                          internal_d3d_11_texture_2D_.Get());
     d3d_11_device_context_->Flush();
     Publish(back);
+    if (previous_textures_frames_remaining_ > 0) {
+      --previous_textures_frames_remaining_;
+      if (previous_textures_frames_remaining_ == 0) {
+        ReleasePreviousTextures();
+      }
+    }
   }
   MakeCurrent(false);
 }
@@ -88,6 +94,7 @@ void ANGLESurfaceManager::ReleasePreviousTextures() {
   previous_internal_d3d_11_texture_2D_.Reset();
   previous_public_texture_[0].Reset();
   previous_public_texture_[1].Reset();
+  previous_textures_frames_remaining_ = 0;
 }
 
 void ANGLESurfaceManager::DestroyEGLSurface() {
@@ -116,6 +123,7 @@ void ANGLESurfaceManager::RecreateSurface() {
   previous_internal_d3d_11_texture_2D_ = internal_d3d_11_texture_2D_;
   previous_public_texture_[0] = public_texture_[0];
   previous_public_texture_[1] = public_texture_[1];
+  previous_textures_frames_remaining_ = 4;
   internal_d3d_11_texture_2D_.Reset();
   public_texture_[0].Reset();
   public_texture_[1].Reset();
@@ -136,6 +144,7 @@ void ANGLESurfaceManager::RecreateSurface() {
 
 void ANGLESurfaceManager::Trim() {
   std::lock_guard<std::mutex> lock(mutex_);
+  ReleasePreviousTextures();
   if (d3d_11_device_ != nullptr) {
     Microsoft::WRL::ComPtr<IDXGIDevice3> dxgi_device;
     if (SUCCEEDED(d3d_11_device_->QueryInterface(
@@ -151,8 +160,19 @@ void ANGLESurfaceManager::Trim() {
 
 void ANGLESurfaceManager::MakeCurrent(bool value) {
   if (value) {
+    if (eglGetCurrentDisplay() == display_ &&
+        eglGetCurrentContext() == context_ &&
+        eglGetCurrentSurface(EGL_DRAW) == surface_ &&
+        eglGetCurrentSurface(EGL_READ) == surface_) {
+      return;
+    }
     eglMakeCurrent(display_, surface_, surface_, context_);
   } else {
+    if (eglGetCurrentContext() == EGL_NO_CONTEXT &&
+        eglGetCurrentSurface(EGL_DRAW) == EGL_NO_SURFACE &&
+        eglGetCurrentSurface(EGL_READ) == EGL_NO_SURFACE) {
+      return;
+    }
     eglMakeCurrent(display_, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
   }
 }

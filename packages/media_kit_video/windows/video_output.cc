@@ -252,8 +252,14 @@ void VideoOutput::NotifyRender() {
       }
       return;
     }
-    CheckAndResize();
-    Render();
+    if (!CheckAndResize()) {
+      Render();
+    } else if (texture_id_) {
+      try {
+        registrar_->texture_registrar()->MarkTextureFrameAvailable(texture_id_);
+      } catch (...) {
+      }
+    }
   });
 }
 
@@ -356,19 +362,26 @@ void VideoOutput::SetSize(std::optional<int64_t> width,
       height_ = std::nullopt;
     }
     if (!destroyed_ && visible_.load()) {
-      CheckAndResize();
-      Render();
+      if (!CheckAndResize()) {
+        Render();
+      } else if (texture_id_) {
+        try {
+          registrar_->texture_registrar()->MarkTextureFrameAvailable(
+              texture_id_);
+        } catch (...) {
+        }
+      }
     }
   });
 }
 
-void VideoOutput::CheckAndResize() {
+bool VideoOutput::CheckAndResize() {
   // Check if a new texture with different dimensions is needed.
   int64_t required_width = 0, required_height = 0;
   GetVideoSize(&required_width, &required_height);
   if (required_width < 1 || required_height < 1) {
     // Invalid.
-    return;
+    return false;
   }
   int64_t current_width = -1, current_height = -1;
   if (surface_manager_ != nullptr) {
@@ -381,7 +394,7 @@ void VideoOutput::CheckAndResize() {
     if (it == pixel_buffer_textures_.end()) {
       // The texture is being retired; skip the comparison this frame. A
       // subsequent frame will find the freshly registered texture.
-      return;
+      return false;
     }
     current_width = it->second->width;
     current_height = it->second->height;
@@ -392,12 +405,12 @@ void VideoOutput::CheckAndResize() {
   assert(current_height > 0);
   if (required_width == current_width && required_height == current_height) {
     // No creation of new texture required.
-    return;
+    return false;
   }
-  Resize(required_width, required_height);
+  return Resize(required_width, required_height);
 }
 
-void VideoOutput::Resize(int64_t required_width, int64_t required_height) {
+bool VideoOutput::Resize(int64_t required_width, int64_t required_height) {
   // Keep the Flutter texture ID across size changes. Unregistering it first
   // leaves a black gap while the engine drops the old DXGI handle.
   if (surface_manager_ != nullptr && texture_id_) {
@@ -419,7 +432,7 @@ void VideoOutput::Resize(int64_t required_width, int64_t required_height) {
       }
     }
     texture_update_callback_(texture_id_, required_width, required_height);
-    return;
+    return true;
   }
   if (pixel_buffer_ != nullptr && texture_id_) {
     {
@@ -431,7 +444,7 @@ void VideoOutput::Resize(int64_t required_width, int64_t required_height) {
       }
     }
     texture_update_callback_(texture_id_, required_width, required_height);
-    return;
+    return false;
   }
 
   std::lock_guard<std::mutex> texture_lock(textures_mutex_);
@@ -511,6 +524,7 @@ void VideoOutput::Resize(int64_t required_width, int64_t required_height) {
     // Notify public texture update callback.
     texture_update_callback_(texture_id_, required_width, required_height);
   }
+  return false;
 }
 
 void VideoOutput::GetVideoSize(int64_t* width, int64_t* height) {

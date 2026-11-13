@@ -73,10 +73,12 @@ class PlayerStage extends StatelessWidget {
     required this.onAdjustVolume,
     required this.onUpdateViewportDimensions,
     this.videoSettingsOpen = false,
+    this.videoSettingsMounted = false,
     this.miniProgress = 0.0,
     this.onExpandFromMini,
     this.onDismissMini,
     this.onCloseVideoSettings,
+    this.onVideoSettingsExitEnd,
     this.onOpenFullSettings,
     this.appPreferences,
     this.onPickSubtitle,
@@ -102,10 +104,12 @@ class PlayerStage extends StatelessWidget {
   final bool hasLibraryRepository;
   final PlayerHotkeys hotkeys;
   final bool videoSettingsOpen;
+  final bool videoSettingsMounted;
   final double miniProgress;
   final VoidCallback? onExpandFromMini;
   final VoidCallback? onDismissMini;
   final VoidCallback? onCloseVideoSettings;
+  final VoidCallback? onVideoSettingsExitEnd;
   final VoidCallback? onOpenFullSettings;
   final AppPreferencesRepository? appPreferences;
   final Future<String?> Function()? onPickSubtitle;
@@ -243,7 +247,7 @@ class PlayerStage extends StatelessWidget {
                 behavior: HitTestBehavior.opaque,
                 onTap: controller.hasMedia
                     ? () {
-                        if (miniProgress > 0.8 && onExpandFromMini != null) {
+                        if (miniProgress > 0.01 && onExpandFromMini != null) {
                           onExpandFromMini!();
                           return;
                         }
@@ -254,7 +258,9 @@ class PlayerStage extends StatelessWidget {
                         onVideoTap();
                       }
                     : null,
-                onDoubleTap: desktopWindow ? onVideoDoubleTap : null,
+                onDoubleTap: desktopWindow && miniProgress <= 0.01
+                    ? onVideoDoubleTap
+                    : null,
                 child: AnimatedSwitcher(
                   duration: AppMotion.duration(context, AppMotion.reveal),
                   layoutBuilder: (currentChild, previousChildren) => Stack(
@@ -377,6 +383,9 @@ class PlayerStage extends StatelessWidget {
                                     onControlInteractionChanged,
                                 onVolumeChanged: onVolumeChanged,
                                 showPlaybackControls: controller.hasMedia,
+                                timelineActive:
+                                    controlsVisible &&
+                                    fullControlsOpacity > 0.01,
                                 actions: isMiniPlayer
                                     ? null
                                     : PlayerActions(
@@ -420,7 +429,7 @@ class PlayerStage extends StatelessWidget {
             ),
           ),
         if (showFullControls &&
-            videoSettingsOpen &&
+            (videoSettingsOpen || videoSettingsMounted) &&
             controller.hasMedia &&
             controller.isVideo)
           Positioned.fill(
@@ -431,17 +440,17 @@ class PlayerStage extends StatelessWidget {
               pickSubtitle: onPickSubtitle ?? () async => null,
               onClose: onCloseVideoSettings ?? () {},
               onOpenFullSettings: onOpenFullSettings,
+              open: videoSettingsOpen,
+              onExitSettled: onVideoSettingsExitEnd,
             ),
           ),
         if (miniProgress > 0.35 && controller.hasMedia && controller.isVideo)
           Positioned.fill(
-            child: Opacity(
-              opacity: ((miniProgress - 0.35) * 1.54).clamp(0.0, 1.0),
-              child: MiniPlayerOverlay(
-                controller: controller,
-                onExpand: onExpandFromMini ?? () {},
-                onDismiss: onDismissMini ?? () {},
-              ),
+            child: MiniPlayerOverlay(
+              controller: controller,
+              onExpand: onExpandFromMini ?? () {},
+              onDismiss: onDismissMini ?? () {},
+              visualOpacity: ((miniProgress - 0.35) * 1.54).clamp(0.0, 1.0),
             ),
           ),
       ],
@@ -460,15 +469,6 @@ class PlayerStage extends StatelessWidget {
             ),
             width: 1,
           ),
-          boxShadow: miniProgress > 0.1 && miniProgress < 0.95
-              ? [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.45 * miniProgress),
-                    blurRadius: 16 * miniProgress,
-                    offset: Offset(0, 4 * miniProgress),
-                  ),
-                ]
-              : null,
         ),
         child: ClipRRect(borderRadius: borderRadius, child: stageBody),
       );

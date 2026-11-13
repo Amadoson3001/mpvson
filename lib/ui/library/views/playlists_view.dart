@@ -1299,6 +1299,7 @@ class _AddFromLibraryDialogState extends State<_AddFromLibraryDialog> {
   final ScrollController _scrollController = ScrollController();
   Set<String> _existingIds = <String>{};
   int _browseOffset = 0;
+  int _browseEpoch = 0;
   bool _hasMore = true;
   bool _loading = true;
   bool _loadingMore = false;
@@ -1344,10 +1345,12 @@ class _AddFromLibraryDialogState extends State<_AddFromLibraryDialog> {
   }
 
   Future<void> _reload({required bool reset}) async {
+    final epoch = reset ? ++_browseEpoch : _browseEpoch;
     if (reset) {
       if (mounted) {
         setState(() {
           _loading = true;
+          _loadingMore = false;
           _browseOffset = 0;
           _hasMore = true;
           _items.clear();
@@ -1361,10 +1364,10 @@ class _AddFromLibraryDialogState extends State<_AddFromLibraryDialog> {
         searchQuery: _activeSearch.isEmpty ? null : _activeSearch,
         sortBy: 'title',
       );
+      if (!mounted || epoch != _browseEpoch) return;
       final page = batch.items
           .where((item) => !_existingIds.contains(item.id))
           .toList();
-      if (!mounted) return;
       setState(() {
         _items.addAll(page);
         _browseOffset += batch.items.length;
@@ -1373,7 +1376,7 @@ class _AddFromLibraryDialogState extends State<_AddFromLibraryDialog> {
         _loadingMore = false;
       });
     } catch (_) {
-      if (mounted) {
+      if (mounted && epoch == _browseEpoch) {
         setState(() {
           _loading = false;
           _loadingMore = false;

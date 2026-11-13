@@ -26,6 +26,9 @@ class _ScriptedClient extends http.BaseClient {
       throw http.ClientException('No scripted response for ${request.url}');
     }
     final Object result = route();
+    if (result is Stream<List<int>>) {
+      return http.StreamedResponse(result, 200);
+    }
     final bytes = result as List<int>;
     return http.StreamedResponse(
       Stream<List<int>>.value(bytes),
@@ -62,6 +65,8 @@ UpdateService _buildUpdateService(
   http.Client client,
   Directory supportDirectory, {
   Future<void> Function(String path)? opener,
+  Future<void> Function(IOSink sink)? flushDownloadSinkForTesting,
+  Duration requestTimeoutForTesting = const Duration(seconds: 5),
 }) {
   final service = UpdateService(
     manifestUri: Uri.parse(_manifestUrl),
@@ -70,7 +75,8 @@ UpdateService _buildUpdateService(
     platformProvider: () => UpdatePlatform.windows,
     currentVersion: '0.1.0',
     openDownloadLocationForTesting: opener,
-    requestTimeoutForTesting: const Duration(seconds: 5),
+    flushDownloadSinkForTesting: flushDownloadSinkForTesting,
+    requestTimeoutForTesting: requestTimeoutForTesting,
     maxDownloadDurationForTesting: const Duration(minutes: 5),
   );
   addTearDown(service.dispose);
@@ -368,4 +374,65 @@ void main() {
     expect(labels['engineCheck'], 'Check failed');
     expect(labels['engineApply'], 'Apply failed');
   });
+
+  test(
+    'slow disk flush under backpressure suspends idle timeout until resume',
+    () async {
+      final chunk1 = utf8.encode('mpvson-chunk-1-');
+      final chunk2 = utf8.encode('mpvson-chunk-2');
+      final fullBundle = <int>[...chunk1, ...chunk2];
+      final bundleSha = crypto.sha256.convert(fullBundle).toString();
+      const bundleUrl = 'https://updates.example.com/mpvson-slow-disk.zip';
+
+      late StreamController<List<int>> streamController;
+      var pauseCount = 0;
+      var resumeCount = 0;
+      streamController = StreamController<List<int>>(
+        onPause: () => pauseCount++,
+        onResume: () {
+          resumeCount++;
+          if (!streamController.isClosed) {
+            streamController.add(chunk2);
+            unawaited(streamController.close());
+          }
+        },
+      );
+
+      final flushCompleter = Completer<void>();
+      var flushCalls = 0;
+      final updates = _buildUpdateService(
+        _ScriptedClient({
+          _manifestUrl: () =>
+              utf8.encode(_appManifestBody(bundleUrl, bundleSha)),
+          bundleUrl: () {
+            scheduleMicrotask(() => streamController.add(chunk1));
+            return streamController.stream;
+          },
+        }),
+        _tempDirectory('mpvson-slow-flush-'),
+        requestTimeoutForTesting: const Duration(milliseconds: 50),
+        flushDownloadSinkForTesting: (sink) async {
+          flushCalls++;
+          await sink.flush();
+          if (flushCalls == 1) {
+            // Exceed the 50ms idle timeout while paused for disk flush.
+            await Future<void>.delayed(const Duration(milliseconds: 140));
+            if (!flushCompleter.isCompleted) flushCompleter.complete();
+          }
+        },
+      );
+
+      await updates.check();
+      expect(updates.status, 'available');
+
+      await updates.download();
+      await flushCompleter.future;
+
+      expect(pauseCount, greaterThanOrEqualTo(1));
+      expect(resumeCount, greaterThanOrEqualTo(1));
+      expect(updates.status, 'ready');
+      expect(updates.downloadPath, isNotNull);
+      expect(updates.error, isNull);
+    },
+  );
 }

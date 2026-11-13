@@ -7,6 +7,7 @@ import '../../../domain/models/media_catalog.dart';
 import '../../../domain/models/media_entry.dart';
 import '../../../domain/models/media_thumbnail.dart';
 import '../../../utils/format.dart';
+import '../../core/app_motion.dart';
 import '../../core/app_theme.dart';
 import '../../core/components/app_popup_menu_item.dart';
 import '../../core/components/page_header.dart';
@@ -225,13 +226,32 @@ class _RecentTile extends StatefulWidget {
 class _RecentTileState extends State<_RecentTile> {
   ThumbnailRequestHandle? _request;
   late Future<MediaThumbnail?> _thumbnail;
+  MediaThumbnail? _provisional;
+  final ValueNotifier<bool> _active = ValueNotifier<bool>(false);
   bool _hovered = false;
   bool _focused = false;
+
+  void _syncPreview() {
+    _provisional = widget.controller.peekThumbnail(widget.entry);
+    _thumbnail = _load();
+  }
+
+  void _setHover(bool value) {
+    if (_hovered == value) return;
+    _hovered = value;
+    _active.value = _hovered || _focused;
+  }
+
+  void _setFocus(bool value) {
+    if (_focused == value) return;
+    _focused = value;
+    _active.value = _hovered || _focused;
+  }
 
   @override
   void initState() {
     super.initState();
-    _thumbnail = _load();
+    _syncPreview();
   }
 
   @override
@@ -241,7 +261,7 @@ class _RecentTileState extends State<_RecentTile> {
         oldWidget.controller != widget.controller) {
       _request?.release();
       _request = null;
-      _thumbnail = _load();
+      _syncPreview();
     }
   }
 
@@ -257,6 +277,7 @@ class _RecentTileState extends State<_RecentTile> {
   @override
   void dispose() {
     _request?.release();
+    _active.dispose();
     super.dispose();
   }
 
@@ -338,8 +359,8 @@ class _RecentTileState extends State<_RecentTile> {
         onTap: widget.onOpen,
         onSecondaryTapDown: (details) =>
             _showContextMenu(context, details.globalPosition),
-        onHover: (value) => setState(() => _hovered = value),
-        onFocusChange: (value) => setState(() => _focused = value),
+        onHover: _setHover,
+        onFocusChange: _setFocus,
         borderRadius: BorderRadius.circular(AppRadii.artwork),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -354,7 +375,8 @@ class _RecentTileState extends State<_RecentTile> {
                     FutureBuilder<MediaThumbnail?>(
                       future: _thumbnail,
                       builder: (context, snapshot) {
-                        final bytes = snapshot.data?.bytes;
+                        final bytes =
+                            snapshot.data?.bytes ?? _provisional?.bytes;
                         Widget fallback() => LibraryArtwork(
                           mediaPath: entry.path,
                           repository: widget.repository,
@@ -367,47 +389,63 @@ class _RecentTileState extends State<_RecentTile> {
                                 bytes,
                                 fit: BoxFit.cover,
                                 filterQuality: FilterQuality.low,
-                                cacheWidth: 512,
+                                cacheWidth: 480,
                                 gaplessPlayback: true,
                                 errorBuilder: (_, _, _) => fallback(),
                               );
                       },
                     ),
-                    if (_hovered || _focused)
-                      ColoredBox(
-                        color: AppColors.lightScrim,
-                        child: const Center(
-                          child: Icon(
-                            Icons.play_circle_fill_rounded,
-                            color: AppColors.onStage,
-                            size: 44,
-                          ),
-                        ),
-                      ),
-                    if (widget.onRemove != null && (_hovered || _focused))
-                      Positioned(
-                        top: 0,
-                        right: 0,
-                        child: IconButton(
-                          onPressed: widget.onRemove,
-                          tooltip: 'Remove from recently played',
-                          color: AppColors.onStage,
-                          style: IconButton.styleFrom(
-                            backgroundColor: AppColors.scrim,
-                            shape: const CircleBorder(
-                              side: BorderSide(
-                                color: AppColors.onStage,
-                                width: 0.5,
+                    Positioned.fill(
+                      child: ValueListenableBuilder<bool>(
+                        valueListenable: _active,
+                        builder: (context, active, _) {
+                          if (!active) return const SizedBox.shrink();
+                          return Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              const ColoredBox(
+                                color: AppColors.lightScrim,
+                                child: Center(
+                                  child: Icon(
+                                    Icons.play_circle_fill_rounded,
+                                    color: AppColors.onStage,
+                                    size: 44,
+                                  ),
+                                ),
                               ),
-                            ),
-                            minimumSize: const Size.square(44),
-                            maximumSize: const Size.square(44),
-                            padding: EdgeInsets.zero,
-                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                          ),
-                          icon: const Icon(Icons.close_rounded, size: 16),
-                        ),
+                              if (widget.onRemove != null)
+                                Positioned(
+                                  top: 0,
+                                  right: 0,
+                                  child: IconButton(
+                                    onPressed: widget.onRemove,
+                                    tooltip: 'Remove from recently played',
+                                    color: AppColors.onStage,
+                                    style: IconButton.styleFrom(
+                                      backgroundColor: AppColors.scrim,
+                                      shape: const CircleBorder(
+                                        side: BorderSide(
+                                          color: AppColors.onStage,
+                                          width: 0.5,
+                                        ),
+                                      ),
+                                      minimumSize: const Size.square(44),
+                                      maximumSize: const Size.square(44),
+                                      padding: EdgeInsets.zero,
+                                      tapTargetSize:
+                                          MaterialTapTargetSize.shrinkWrap,
+                                    ),
+                                    icon: const Icon(
+                                      Icons.close_rounded,
+                                      size: 16,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          );
+                        },
                       ),
+                    ),
                     if (hasProgress)
                       Positioned(
                         left: 0,
@@ -616,20 +654,22 @@ class _DropZoneCard extends StatelessWidget {
               : palette.borderStrong,
           width: isDragging ? 2.0 : 1.0,
         ),
-        boxShadow: [
-          BoxShadow(
-            color: isDragging
-                ? primary.withValues(alpha: 0.25)
-                : primary.withValues(alpha: isDark ? 0.05 : 0.03),
-            blurRadius: isDragging ? 32 : 24,
-            offset: const Offset(0, 4),
-          ),
-          BoxShadow(
-            color: Colors.black.withValues(alpha: isDark ? 0.18 : 0.05),
-            blurRadius: isDark ? 16 : 24,
-            offset: const Offset(0, 4),
-          ),
-        ],
+        boxShadow: AppMotion.lowPower(context)
+            ? null
+            : [
+                BoxShadow(
+                  color: isDragging
+                      ? primary.withValues(alpha: 0.25)
+                      : primary.withValues(alpha: isDark ? 0.05 : 0.03),
+                  blurRadius: isDragging ? 32 : 24,
+                  offset: const Offset(0, 4),
+                ),
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: isDark ? 0.18 : 0.05),
+                  blurRadius: isDark ? 16 : 24,
+                  offset: const Offset(0, 4),
+                ),
+              ],
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -644,13 +684,15 @@ class _DropZoneCard extends StatelessWidget {
                 color: primary.withValues(alpha: 0.35),
                 width: 1.5,
               ),
-              boxShadow: [
-                BoxShadow(
-                  color: primary.withValues(alpha: 0.15),
-                  blurRadius: 18,
-                  spreadRadius: 1,
-                ),
-              ],
+              boxShadow: AppMotion.lowPower(context)
+                  ? null
+                  : [
+                      BoxShadow(
+                        color: primary.withValues(alpha: 0.15),
+                        blurRadius: 18,
+                        spreadRadius: 1,
+                      ),
+                    ],
             ),
             child: Center(
               child: Icon(

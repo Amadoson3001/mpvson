@@ -590,18 +590,20 @@ class _NowPlayingViewState extends State<NowPlayingView> {
         ),
         borderRadius: BorderRadius.circular(AppRadii.artworkHero),
         border: Border.all(color: primary.withValues(alpha: 0.38), width: 1.5),
-        boxShadow: [
-          BoxShadow(
-            color: primary.withValues(alpha: 0.35),
-            blurRadius: 56,
-            spreadRadius: 4,
-          ),
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.5),
-            blurRadius: 28,
-            offset: const Offset(0, 10),
-          ),
-        ],
+        boxShadow: AppMotion.lowPower(context)
+            ? null
+            : [
+                BoxShadow(
+                  color: primary.withValues(alpha: 0.35),
+                  blurRadius: 56,
+                  spreadRadius: 4,
+                ),
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.5),
+                  blurRadius: 28,
+                  offset: const Offset(0, 10),
+                ),
+              ],
       ),
       clipBehavior: Clip.antiAlias,
       child: AnimatedSwitcher(

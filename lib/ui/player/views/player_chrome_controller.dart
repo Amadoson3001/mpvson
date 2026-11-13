@@ -60,11 +60,13 @@ class PlayerChromeController extends ChangeNotifier {
   bool _queueMounted = false;
   String? _focusedQueueEntryId;
   bool _videoSettingsOpen = false;
+  bool _videoSettingsMounted = false;
 
   bool get queueOpen => _queueOpen;
   bool get queueMounted => _queueMounted;
   String? get focusedQueueEntryId => _focusedQueueEntryId;
   bool get videoSettingsOpen => _videoSettingsOpen;
+  bool get videoSettingsMounted => _videoSettingsMounted;
 
   void setFocusedQueueEntry(String? entryId) => _focusedQueueEntryId = entryId;
 
@@ -76,6 +78,7 @@ class PlayerChromeController extends ChangeNotifier {
     if (open) {
       _queueMounted = true;
       _videoSettingsOpen = false;
+      _videoSettingsMounted = false;
     }
     notifyListeners();
   }
@@ -87,6 +90,7 @@ class PlayerChromeController extends ChangeNotifier {
     if (_queueOpen) {
       _queueMounted = true;
       _videoSettingsOpen = false;
+      _videoSettingsMounted = false;
     } else if (reduceMotion()) {
       _queueMounted = false;
     }
@@ -107,8 +111,11 @@ class PlayerChromeController extends ChangeNotifier {
     final closing = _videoSettingsOpen;
     _videoSettingsOpen = !_videoSettingsOpen;
     if (_videoSettingsOpen) {
+      _videoSettingsMounted = true;
       _queueOpen = false;
       if (reduceMotion()) _queueMounted = false;
+    } else if (reduceMotion()) {
+      _videoSettingsMounted = false;
     }
     notifyListeners();
     if (closing) playerFocus.requestFocus();
@@ -117,6 +124,7 @@ class PlayerChromeController extends ChangeNotifier {
   void closeVideoSettings() {
     if (!_videoSettingsOpen) return;
     _videoSettingsOpen = false;
+    if (reduceMotion()) _videoSettingsMounted = false;
     notifyListeners();
     playerFocus.requestFocus();
   }
@@ -127,10 +135,21 @@ class PlayerChromeController extends ChangeNotifier {
     notifyListeners();
   }
 
+  void handleVideoSettingsExitEnd() {
+    if (_videoSettingsOpen || !_videoSettingsMounted) return;
+    _videoSettingsMounted = false;
+    notifyListeners();
+  }
+
   /// Immediate dismissal used when leaving the stage for the library.
   void dismissQueue() {
+    final settingsChanged = _videoSettingsOpen || _videoSettingsMounted;
     _videoSettingsOpen = false;
-    if (!_queueOpen && !_queueMounted) return;
+    _videoSettingsMounted = false;
+    if (!_queueOpen && !_queueMounted) {
+      if (settingsChanged) notifyListeners();
+      return;
+    }
     _queueOpen = false;
     _queueMounted = false;
     notifyListeners();
@@ -167,6 +186,7 @@ class PlayerChromeController extends ChangeNotifier {
       _openDialogs > 0 ||
       _backButtonFocused ||
       _videoSettingsOpen ||
+      _videoSettingsMounted ||
       (controlsFocusScope.hasFocus && _keyboardControlsFocus);
 
   bool recordKeyboardInput(KeyEvent event) {

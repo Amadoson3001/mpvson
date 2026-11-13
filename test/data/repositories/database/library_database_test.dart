@@ -3,8 +3,6 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mpvson/data/repositories/database/library_database.dart';
 import 'package:mpvson/domain/models/library_models.dart';
-import 'package:mpvson/domain/models/media_catalog.dart';
-import 'package:mpvson/domain/models/media_entry.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqlite3/sqlite3.dart';
 
@@ -106,10 +104,9 @@ void main() {
       };
 
       for (final entry in plans.entries) {
-        final rows = await db.selectRaw(
-          'EXPLAIN QUERY PLAN ${entry.value}',
-          ['audio'],
-        );
+        final rows = await db.selectRaw('EXPLAIN QUERY PLAN ${entry.value}', [
+          'audio',
+        ]);
         final detail = rows.map((r) => r['detail'].toString()).join('; ');
         final expectedIndex = expectedIndexes[entry.key]!;
         expect(
@@ -229,7 +226,9 @@ void main() {
     });
 
     test('migration creates new composite indexes without losing data', () async {
-      final migrationDir = await Directory.systemTemp.createTemp('mpvson-mig-idx-');
+      final migrationDir = await Directory.systemTemp.createTemp(
+        'mpvson-mig-idx-',
+      );
       addTearDown(() {
         try {
           migrationDir.deleteSync(recursive: true);
@@ -328,15 +327,101 @@ void main() {
 
       // 3. addPathsToPlaylist runs in single transaction
       final playlist = await db.createPlaylist('Test Playlist');
-      await db.addPathsToPlaylist(
-        playlist.id,
-        [
-          'c:\\music\\song1.mp3',
-          'c:\\music\\song2.mp3',
-        ],
-      );
+      await db.addPathsToPlaylist(playlist.id, [
+        'c:\\music\\song1.mp3',
+        'c:\\music\\song2.mp3',
+      ]);
       final entries = await db.getPlaylistEntries(playlist.id);
       expect(entries.length, 2);
     });
+
+    test(
+      'queryMedia last_played_at filters null rows in WHERE clause',
+      () async {
+        final now = DateTime.now();
+        await db.insertMedia(
+          MediaItemRecord(
+            id: 'unplayed',
+            canonicalSource: 'c:/music/unplayed.mp3',
+            path: 'c:\\music\\unplayed.mp3',
+            kind: MediaKind.audio,
+            metadata: const MediaMetadata(title: 'Unplayed', artist: 'A'),
+            fileSize: 100,
+            addedAt: now,
+          ),
+        );
+        await db.insertMedia(
+          MediaItemRecord(
+            id: 'played-older',
+            canonicalSource: 'c:/music/older.mp3',
+            path: 'c:\\music\\older.mp3',
+            kind: MediaKind.audio,
+            metadata: const MediaMetadata(title: 'Older', artist: 'A'),
+            fileSize: 100,
+            addedAt: now,
+            lastPlayedAt: now.subtract(const Duration(minutes: 10)),
+          ),
+        );
+        await db.insertMedia(
+          MediaItemRecord(
+            id: 'played-newer',
+            canonicalSource: 'c:/music/newer.mp3',
+            path: 'c:\\music\\newer.mp3',
+            kind: MediaKind.audio,
+            metadata: const MediaMetadata(title: 'Newer', artist: 'A'),
+            fileSize: 100,
+            addedAt: now,
+            lastPlayedAt: now,
+          ),
+        );
+
+        final recent = await db.queryMedia(
+          kind: MediaKind.audio,
+          sortBy: 'last_played_at',
+          ascending: false,
+        );
+        expect(recent.map((r) => r.id).toList(), [
+          'played-newer',
+          'played-older',
+        ]);
+      },
+    );
+
+    test(
+      'album and artist summaries report accurate track and album counts',
+      () async {
+        final now = DateTime.now();
+        for (var i = 0; i < 3; i++) {
+          await db.insertMedia(
+            MediaItemRecord(
+              id: 't$i',
+              canonicalSource: 'c:/music/t$i.mp3',
+              path: 'c:\\music\\t$i.mp3',
+              kind: MediaKind.audio,
+              metadata: MediaMetadata(
+                title: 'Track $i',
+                artist: 'Artist One',
+                album: i < 2 ? 'Album A' : 'Album B',
+              ),
+              fileSize: 100,
+              addedAt: now,
+            ),
+          );
+        }
+
+        final albums = await db.getAlbumSummaries();
+        expect(albums.length, 2);
+        expect(albums[0].name, 'Album A');
+        expect(albums[0].trackCount, 2);
+        expect(albums[1].name, 'Album B');
+        expect(albums[1].trackCount, 1);
+
+        final artists = await db.getArtistSummaries(kind: MediaKind.audio);
+        expect(artists.length, 1);
+        expect(artists.single.name, 'Artist One');
+        expect(artists.single.trackCount, 3);
+        expect(artists.single.albumCount, 2);
+      },
+    );
   });
 }

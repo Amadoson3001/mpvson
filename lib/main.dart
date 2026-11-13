@@ -27,11 +27,13 @@ import 'data/services/playback_service.dart';
 import 'data/services/thumbnail_service.dart';
 import 'data/services/update_service.dart';
 import 'domain/models/graphics_settings.dart';
+import 'domain/models/hardware_profile.dart';
 import 'domain/models/open_request.dart';
 import 'domain/updates/bundled_engine.dart';
 import 'domain/updates/engine_selection.dart';
 import 'ui/core/app_theme.dart';
 import 'ui/core/components/app_dialog.dart';
+import 'ui/core/tokens/motion.dart';
 import 'ui/player/player_controller.dart';
 import 'ui/player/views/open_preference_dialog.dart';
 
@@ -158,8 +160,13 @@ Future<Never> _recoverEngineProcess(
 
 Future<void> main(List<String> arguments) async {
   WidgetsFlutterBinding.ensureInitialized();
-  PaintingBinding.instance.imageCache.maximumSizeBytes = 8 * 1024 * 1024;
-  PaintingBinding.instance.imageCache.maximumSize = 100;
+  final initialProfile = HardwareProfile.initial(
+    cpuCount: Platform.numberOfProcessors,
+  );
+  PaintingBinding.instance.imageCache.maximumSizeBytes =
+      initialProfile.recommendedImageCacheBytes;
+  PaintingBinding.instance.imageCache.maximumSize =
+      initialProfile.recommendedImageCacheCount;
 
   final versionFuture = () async {
     try {
@@ -428,8 +435,22 @@ Future<void> main(List<String> arguments) async {
       diagnostics.record('startup.window_show', error: error);
     }
 
-    // The adapter probe creates a D3D11 device; keep it off the startup path.
-    unawaited(GpuInfoService().recordSnapshot(diagnostics));
+    // The adapter probe creates a D3D11 device; keep it off the startup path
+    // and refine motion, image cache, and uncustomized quality presets once
+    // GPU/RAM capabilities are known.
+    unawaited(() async {
+      final profile = await GpuInfoService().resolveHardwareProfileAndRecord(
+        diagnostics,
+      );
+      AppMotion.updateHardwareProfile(profile);
+      PaintingBinding.instance.imageCache.maximumSizeBytes =
+          profile.recommendedImageCacheBytes;
+      PaintingBinding.instance.imageCache.maximumSize =
+          profile.recommendedImageCacheCount;
+      await readyController.applyRecommendedQualityIfDefault(
+        profile.recommendedQualityPreset,
+      );
+    }());
 
     // Engine staging confirmation, native event observation, and update initialization
     // run concurrently without delaying the initial UI frame.

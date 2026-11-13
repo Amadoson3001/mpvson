@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../../domain/models/media_thumbnail.dart';
+import '../../../../ui/core/app_motion.dart';
 import '../../../../ui/core/app_theme.dart';
 import '../../../../utils/format.dart';
 import '../../player_controller.dart';
@@ -103,14 +104,16 @@ class SeekPreview extends StatelessWidget {
             color: context.palette.card,
             borderRadius: BorderRadius.circular(AppRadii.control),
             border: Border.all(color: borderColor),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.45),
-                blurRadius: 14,
-                spreadRadius: 1,
-                offset: const Offset(0, 4),
-              ),
-            ],
+            boxShadow: AppMotion.lowPower(context)
+                ? null
+                : [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.45),
+                      blurRadius: 14,
+                      spreadRadius: 1,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
           ),
           child: cardContent,
         ),

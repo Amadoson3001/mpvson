@@ -1,7 +1,6 @@
 #include <flutter/dart_project.h>
 #include <flutter/flutter_view_controller.h>
 #include <windows.h>
-#include <timeapi.h>
 
 #include "flutter_window.h"
 #include "single_instance.h"
@@ -9,9 +8,6 @@
 
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
                       _In_ wchar_t *command_line, _In_ int show_command) {
-  // Request 1ms timer precision to enable maximum refresh rates (120Hz, 144Hz, 240Hz+) in the UI.
-  ::timeBeginPeriod(1);
-
   // Attach to console when present (e.g., 'flutter run') or create a
   // new console when running with a debugger.
   if (!::AttachConsole(ATTACH_PARENT_PROCESS) && ::IsDebuggerPresent()) {
@@ -23,7 +19,6 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   // send paths to named pipe, bring main window to foreground, and exit with 0.
   auto single_instance = std::make_unique<SingleInstance>();
   if (!single_instance->AcquireOwnershipOrForward()) {
-    ::timeEndPeriod(1);
     return EXIT_SUCCESS;
   }
 
@@ -48,16 +43,14 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
       GetCommandLineArguments();
 
   project.set_dart_entrypoint_arguments(std::move(command_line_arguments));
-  // Impeller's Vulkan compositor flickers DXGI shared-handle video textures
-  // and is slower than Skia on older GPUs. Keep the Dart animation code; only
-  // the GPU backend changes.
-  project.set_impeller_switch(flutter::ImpellerSwitch::Disabled);
+  // Flutter on Windows 3.44.0 defaults to Skia/ANGLE, avoiding Vulkan
+  // Impeller shared-handle video flicker; dart_project.h has no
+  // set_impeller_switch API in this SDK.
 
   FlutterWindow window(project, std::move(single_instance));
   Win32Window::Point origin(10, 10);
   Win32Window::Size size(1280, 720);
   if (!window.Create(L"Mpvson", origin, size)) {
-    ::timeEndPeriod(1);
     ::CoUninitialize();
     return EXIT_FAILURE;
   }
@@ -69,7 +62,6 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
     ::DispatchMessage(&msg);
   }
 
-  ::timeEndPeriod(1);
   ::CoUninitialize();
   return EXIT_SUCCESS;
 }

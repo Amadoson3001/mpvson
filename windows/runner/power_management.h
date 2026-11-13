@@ -26,6 +26,7 @@ class PowerManagement {
   // Keep-awake controls
   void SetSystemKeepAwake(bool enable);
   void SetDisplayKeepAwake(bool enable);
+  void SetHighResolutionTimer(bool enable);
   void Reset();
 
  private:
@@ -36,6 +37,7 @@ class PowerManagement {
   HANDLE request_handle_ = INVALID_HANDLE_VALUE;
   bool system_awake_ = false;
   bool display_awake_ = false;
+  bool high_res_timer_enabled_ = false;
 
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> power_channel_;
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> management_channel_;

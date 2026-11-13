@@ -838,37 +838,74 @@ class MediaKitProbeEngine implements MediaProbeEngine {
         }
 
         // Player.open resets its state before loading the next source. Wait
-        // for its asynchronous track and duration notifications to arrive.
-        final watch = Stopwatch()..start();
+        // for its asynchronous track and duration notifications to arrive
+        // using streams directly instead of polling on a 50ms timer.
         final waitLimit = isAudioHint
             ? const Duration(milliseconds: 600)
             : const Duration(seconds: 3);
 
-        while (watch.elapsed < waitLimit) {
-          if (_disposed || (cancellationToken?.isCancelled ?? false)) {
-            return null;
+        final activePlayer = player;
+        bool tracksAndDurationReady() {
+          final state = activePlayer.state;
+          if (state.duration <= Duration.zero) return false;
+          if (isAudioHint) {
+            for (final t in state.tracks.audio) {
+              if (t.id != 'auto' && t.id != 'no' && t.codec != null) {
+                return true;
+              }
+            }
+            return false;
+          }
+          for (final t in state.tracks.video) {
+            if (t.id != 'auto' && t.id != 'no') return true;
+          }
+          for (final t in state.tracks.audio) {
+            if (t.id != 'auto' && t.id != 'no') return true;
+          }
+          return false;
+        }
+
+        if (!tracksAndDurationReady() &&
+            !_disposed &&
+            !(cancellationToken?.isCancelled ?? false)) {
+          final readyCompleter = Completer<void>();
+          void completeIfReady() {
+            if (readyCompleter.isCompleted) return;
+            if (_disposed ||
+                (cancellationToken?.isCancelled ?? false) ||
+                tracksAndDurationReady()) {
+              readyCompleter.complete();
+            }
           }
 
-          final videoTracks = player.state.tracks.video
-              .where((t) => t.id != 'auto' && t.id != 'no')
-              .toList();
-          final audioTracks = player.state.tracks.audio
-              .where((t) => t.id != 'auto' && t.id != 'no')
-              .toList();
-
-          if (isAudioHint &&
-              audioTracks.isNotEmpty &&
-              audioTracks.first.codec != null &&
-              player.state.duration > Duration.zero) {
-            // Duration and codec can arrive after the track list itself.
-            break;
+          final tracksSub = activePlayer.stream.tracks.listen(
+            (_) => completeIfReady(),
+          );
+          final durationSub = activePlayer.stream.duration.listen(
+            (_) => completeIfReady(),
+          );
+          Timer? cancelPoll;
+          if (cancellationToken != null) {
+            cancelPoll = Timer.periodic(
+              const Duration(milliseconds: 50),
+              (_) => completeIfReady(),
+            );
           }
-          if (!isAudioHint &&
-              (videoTracks.isNotEmpty || audioTracks.isNotEmpty) &&
-              player.state.duration > Duration.zero) {
-            break;
+          try {
+            // Re-check once after attaching listeners to close the microtask
+            // window between the initial check and stream subscription.
+            completeIfReady();
+            if (!readyCompleter.isCompleted) {
+              await readyCompleter.future.timeout(waitLimit, onTimeout: () {});
+            }
+          } finally {
+            cancelPoll?.cancel();
+            await tracksSub.cancel();
+            await durationSub.cancel();
           }
-          await Future<void>.delayed(const Duration(milliseconds: 50));
+        }
+        if (_disposed || (cancellationToken?.isCancelled ?? false)) {
+          return null;
         }
 
         final videoTracks = player.state.tracks.video

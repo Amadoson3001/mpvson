@@ -132,7 +132,10 @@ class _ShellSideNavState extends State<ShellSideNav>
   void _onScroll() {
     if (!_controller.isAnimating) {
       final measured = _measureItemRect(widget.section);
-      if (measured != null) {
+      if (measured != null &&
+          (measured != _currentRect ||
+              measured != _targetRect ||
+              measured != _startRect)) {
         setState(() {
           _startRect = measured;
           _targetRect = measured;
@@ -351,18 +354,21 @@ class _SlidingNavIndicator extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final radius = BorderRadius.circular(AppRadii.control);
+    final lowPower = AppMotion.lowPower(context);
     return DecoratedBox(
       decoration: BoxDecoration(
         color: accent.withValues(alpha: 0.14),
         borderRadius: radius,
         border: Border(left: BorderSide(color: accent, width: 3.0)),
-        boxShadow: [
-          BoxShadow(
-            color: accent.withValues(alpha: 0.12),
-            blurRadius: 10,
-            offset: const Offset(0, 1),
-          ),
-        ],
+        boxShadow: lowPower
+            ? null
+            : [
+                BoxShadow(
+                  color: accent.withValues(alpha: 0.12),
+                  blurRadius: 10,
+                  offset: const Offset(0, 1),
+                ),
+              ],
       ),
     );
   }

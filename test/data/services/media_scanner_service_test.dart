@@ -495,6 +495,122 @@ void main() {
       expect(b!.metadata.artist, 'Fake Artist');
     },
   );
+
+  test(
+    'multi-folder scan keeps enrichedCount monotonic and avoids backwards progress',
+    () async {
+      final rootA = await _createTempFolder();
+      final rootB = await _createTempFolder();
+      final a1 = p.join(rootA.path, 'a1.mp3');
+      final a2 = p.join(rootA.path, 'a2.mp3');
+      final b1 = p.join(rootB.path, 'b1.mp3');
+      final b2 = p.join(rootB.path, 'b2.mp3');
+      for (final filePath in [a1, a2, b1, b2]) {
+        await File(filePath).writeAsBytes(List<int>.filled(16, 7));
+      }
+
+      final db = await _openDb();
+      final gateB1 = Completer<void>();
+      final scanner = MediaScannerService(
+        probeService: _FakeProbeService(
+          gates: <String, Completer<void>>{
+            MediaEntry.canonicalSource(b1): gateB1,
+          },
+        ),
+        database: db,
+        maxConcurrentProbes: 1,
+      );
+      addTearDown(db.close);
+
+      final statuses = <LibraryScanStatus>[];
+      final sub = scanner.scanStatusStream.listen(statuses.add);
+      addTearDown(sub.cancel);
+
+      final scanFuture = scanner.scanAll(
+        folders: <String>[rootA.path, rootB.path],
+      );
+
+      // Hold right inside folder B after folder A's enrichment has completed
+      // and wait past the 100ms status throttle so folder B updates flush.
+      final deadline = DateTime.now().add(const Duration(seconds: 10));
+      while (scanner.scanStatus.currentFolder !=
+          MediaEntry.canonicalSource(rootB.path)) {
+        if (DateTime.now().isAfter(deadline)) {
+          fail('scan never reached rootB');
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      gateB1.complete();
+
+      await scanFuture;
+
+      var prevDiscovered = 0;
+      var prevEnriched = 0;
+      var prevProgress = 0.0;
+      for (final status in statuses) {
+        expect(status.discoveredCount, greaterThanOrEqualTo(prevDiscovered));
+        expect(status.enrichedCount, greaterThanOrEqualTo(prevEnriched));
+        if (status.totalToEnrich > 0) {
+          final progress = status.enrichedCount / status.totalToEnrich;
+          expect(progress, greaterThanOrEqualTo(prevProgress));
+          prevProgress = progress;
+        }
+        prevDiscovered = status.discoveredCount;
+        prevEnriched = status.enrichedCount;
+      }
+      expect(prevEnriched, 4);
+      expect(scanner.scanStatus.enrichedCount, 4);
+    },
+  );
+
+  test(
+    'chunked folder discovery processes bounded batches and reconciles deletions',
+    () async {
+      final root = await _createTempFolder();
+      final filePaths = <String>[];
+      for (var i = 0; i < 520; i++) {
+        final path = p.join(
+          root.path,
+          'track_${i.toString().padLeft(4, '0')}.mp3',
+        );
+        File(path).writeAsBytesSync(const <int>[1, 2, 3, 4]);
+        filePaths.add(path);
+      }
+
+      final stalePath = p.join(root.path, 'deleted_song.mp3');
+      final db = await _openDb();
+      await db.batchUpsertDiscoveredFiles([stalePath]);
+      addTearDown(db.close);
+
+      final discoveryBatchSizes = <int>[];
+      final scanner = MediaScannerService(
+        probeService: _FakeProbeService(),
+        database: db,
+        onDiscoveredFiles: (paths) async {
+          discoveryBatchSizes.add(paths.length);
+          await db.batchUpsertDiscoveredFiles(paths);
+        },
+        maxConcurrentProbes: 8,
+      );
+
+      await scanner.scanAll(folders: <String>[root.path]);
+
+      expect(discoveryBatchSizes.length, greaterThanOrEqualTo(2));
+      for (final size in discoveryBatchSizes) {
+        expect(size, lessThanOrEqualTo(500));
+      }
+      expect(discoveryBatchSizes.fold<int>(0, (sum, n) => sum + n), 520);
+
+      final stale = await db.getMediaByCanonicalSource(stalePath);
+      expect(stale, isNotNull);
+      expect(stale!.isAvailable, isFalse);
+
+      final present = await db.getMediaByCanonicalSource(filePaths.last);
+      expect(present, isNotNull);
+      expect(present!.isAvailable, isTrue);
+    },
+  );
 }
 
 String cFilePath(Directory root) => p.join(root.path, 'c.mp3');

@@ -312,9 +312,11 @@ class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
   int _mediaPathEvent = 0;
   int _trackListEvent = 0;
   int _durationEvent = 0;
+  int _seekableEvent = 0;
   String? _observedPath;
   String? _observedTrackList;
   String? _observedDuration;
+  String? _observedSeekable;
   int _seekingEvent = 0;
   int _timePositionEvent = 0;
   int _activeSeekingEventStart = 0;
@@ -322,10 +324,54 @@ class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
   bool _sawSeekingTrue = false;
   bool _sawSeekingComplete = false;
   int _extractGeneration = 0;
+  Completer<void>? _observerPulse;
+
+  int get _observerEpoch =>
+      _mediaPathEvent +
+      _trackListEvent +
+      _durationEvent +
+      _seekableEvent +
+      _seekingEvent +
+      _timePositionEvent;
+
+  void _notifyObserverPulse() {
+    final completer = _observerPulse;
+    if (completer != null && !completer.isCompleted) {
+      completer.complete();
+    }
+    _observerPulse = null;
+  }
+
+  Future<void> _waitForObserverOrTimeout(
+    int epochBeforeRead,
+    Duration fallbackDelay,
+  ) async {
+    if (_disposed || _observerEpoch != epochBeforeRead) {
+      return;
+    }
+    final completer = (_observerPulse != null && !_observerPulse!.isCompleted)
+        ? _observerPulse!
+        : (_observerPulse = Completer<void>());
+    Timer? timer;
+    timer = Timer(fallbackDelay, () {
+      if (!completer.isCompleted) {
+        completer.complete();
+      }
+      if (identical(_observerPulse, completer)) {
+        _observerPulse = null;
+      }
+    });
+    try {
+      await completer.future;
+    } finally {
+      timer.cancel();
+    }
+  }
 
   @override
   void cancelExtraction() {
     _extractGeneration++;
+    _notifyObserverPulse();
   }
 
   Future<Player> _ensurePlayer() async {
@@ -365,19 +411,26 @@ class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
         'demuxer-max-back-bytes': '1048576',
         'hls-bitrate': 'min',
         'hwdec': 'auto-safe',
+        'sws-scaler': 'fast-bilinear',
+        'dscale': 'bilinear',
+        'correct-downscaling': 'no',
+        'dither': 'no',
         'vf': 'scale=w=320:h=320:force_original_aspect_ratio=decrease',
       };
-      for (final entry in properties.entries) {
-        try {
-          await native.setProperty(entry.key, entry.value);
-        } on Object catch (error) {
-          _record(
-            'preview.configure',
-            message: 'Could not set ${entry.key}',
-            error: error,
-          );
-        }
-      }
+      await Future.wait([
+        for (final entry in properties.entries)
+          () async {
+            try {
+              await native.setProperty(entry.key, entry.value);
+            } on Object catch (error) {
+              _record(
+                'preview.configure',
+                message: 'Could not set ${entry.key}',
+                error: error,
+              );
+            }
+          }(),
+      ]);
     }
 
     final vcFactory = videoControllerFactory;
@@ -510,35 +563,44 @@ class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
     final stopwatch = Stopwatch()..start();
     while (stopwatch.elapsed < timeout) {
       if (_disposed) throw StateError('Preview backend disposed while opening');
+      final epoch = _observerEpoch;
       final path = await _readProperty(native, 'path');
       final trackList = await _readProperty(native, 'track-list');
       final duration = await _readProperty(native, 'duration');
       final seekable = await _readProperty(native, 'seekable');
       final currentPath = path ?? _observedPath;
+      final currentTrackList = trackList ?? _observedTrackList;
+      final currentDuration = duration ?? _observedDuration;
+      final currentSeekable = seekable ?? _observedSeekable;
       final pathMatches = _pathMatchesSource(currentPath, source);
       final pathChanged = _mediaPathEvent > pathEvent;
       final pathReady =
           pathMatches || (pathChanged && _isNonEmpty(currentPath));
       final tracksReady =
-          _hasMediaTracks(trackList ?? _observedTrackList) &&
+          _hasMediaTracks(currentTrackList) &&
           (_trackListEvent > trackListEvent || pathMatches);
       final durationReady =
-          _hasPositiveDuration(duration ?? _observedDuration) &&
+          _hasPositiveDuration(currentDuration) &&
           (_durationEvent > durationEvent || pathMatches);
       if (pathReady &&
           (tracksReady || durationReady) &&
-          _isYes(seekable ?? '')) {
+          _isYes(currentSeekable ?? '')) {
         _record(
           'preview.media_loaded',
           message:
               'Native media readiness confirmed in '
               '${stopwatch.elapsedMilliseconds} ms; '
-              'tracks=${_summarizeTrackList(trackList ?? _observedTrackList)}, '
-              'duration=${_durationSummary(duration ?? _observedDuration)}',
+              'tracks=${_summarizeTrackList(currentTrackList)}, '
+              'duration=${_durationSummary(currentDuration)}',
         );
         return;
       }
-      await Future<void>.delayed(const Duration(milliseconds: 20));
+      final remaining = timeout - stopwatch.elapsed;
+      if (remaining <= Duration.zero) break;
+      final delay = remaining < const Duration(milliseconds: 25)
+          ? remaining
+          : const Duration(milliseconds: 25);
+      await _waitForObserverOrTimeout(epoch, delay);
     }
     final snapshot = await _readReadinessSnapshot(native);
     _record(
@@ -749,33 +811,44 @@ class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
 
   Future<void> _ensureSeekObservers(NativePlayer native) async {
     if (_seekObserversReady) return;
-    await _observeProperty(native, 'path', (value) {
-      _mediaPathEvent++;
-      _observedPath = value;
-    });
-    await _observeProperty(native, 'track-list', (value) {
-      _trackListEvent++;
-      _observedTrackList = value;
-    });
-    await _observeProperty(native, 'duration', (value) {
-      _durationEvent++;
-      _observedDuration = value;
-    });
-    await _observeProperty(native, 'seeking', (value) {
-      _seekingEvent++;
-      if (!_seekObservationActive ||
-          _seekingEvent <= _activeSeekingEventStart) {
-        return;
-      }
-      if (_isYes(value)) {
-        _sawSeekingTrue = true;
-      } else if (_sawSeekingTrue) {
-        _sawSeekingComplete = true;
-      }
-    });
-    await _observeProperty(native, 'time-pos', (value) {
-      _timePositionEvent++;
-    });
+    await Future.wait([
+      _observeProperty(native, 'path', (value) {
+        _mediaPathEvent++;
+        _observedPath = value;
+        _notifyObserverPulse();
+      }),
+      _observeProperty(native, 'track-list', (value) {
+        _trackListEvent++;
+        _observedTrackList = value;
+        _notifyObserverPulse();
+      }),
+      _observeProperty(native, 'duration', (value) {
+        _durationEvent++;
+        _observedDuration = value;
+        _notifyObserverPulse();
+      }),
+      _observeProperty(native, 'seekable', (value) {
+        _seekableEvent++;
+        _observedSeekable = value;
+        _notifyObserverPulse();
+      }),
+      _observeProperty(native, 'seeking', (value) {
+        _seekingEvent++;
+        if (_seekObservationActive &&
+            _seekingEvent > _activeSeekingEventStart) {
+          if (_isYes(value)) {
+            _sawSeekingTrue = true;
+          } else if (_sawSeekingTrue) {
+            _sawSeekingComplete = true;
+          }
+        }
+        _notifyObserverPulse();
+      }),
+      _observeProperty(native, 'time-pos', (value) {
+        _timePositionEvent++;
+        _notifyObserverPulse();
+      }),
+    ]);
     _seekObserversReady = true;
   }
 
@@ -814,6 +887,7 @@ class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
       if (_disposed || _extractGeneration != extractGen) {
         throw StateError('Preview seek cancelled');
       }
+      final epoch = _observerEpoch;
       final seeking = await _readProperty(native, 'seeking');
       final position = await _readTimePosition(native);
       if (seeking != null) {
@@ -848,9 +922,15 @@ class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
           );
         }
         await Future<void>.delayed(const Duration(milliseconds: 24));
+        if (_disposed || _extractGeneration != extractGen) {
+          throw StateError('Preview seek cancelled');
+        }
         final settledSeeking = await _readProperty(native, 'seeking');
         if (settledSeeking == null || _isYes(settledSeeking)) {
-          await Future<void>.delayed(const Duration(milliseconds: 20));
+          await _waitForObserverOrTimeout(
+            epoch,
+            const Duration(milliseconds: 25),
+          );
           continue;
         }
         final settled = await _readTimePosition(native);
@@ -877,6 +957,9 @@ class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
           (!exact || withinTarget);
       if (fallbackReady) {
         await Future<void>.delayed(const Duration(milliseconds: 24));
+        if (_disposed || _extractGeneration != extractGen) {
+          throw StateError('Preview seek cancelled');
+        }
         final settledSeeking = await _readProperty(native, 'seeking');
         final settled = await _readTimePosition(native);
         if (settledSeeking != null &&
@@ -890,7 +973,12 @@ class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
           return settled;
         }
       }
-      await Future<void>.delayed(const Duration(milliseconds: 20));
+      final remaining = limit - stopwatch.elapsed;
+      if (remaining <= Duration.zero) break;
+      final delay = remaining < const Duration(milliseconds: 25)
+          ? remaining
+          : const Duration(milliseconds: 25);
+      await _waitForObserverOrTimeout(epoch, delay);
     }
     final snapshot = await _readReadinessSnapshot(native);
     _record(
@@ -1014,6 +1102,8 @@ class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
+    _extractGeneration++;
+    _notifyObserverPulse();
     _lastCapturedFrame = null;
     _resolvedSourceInput = null;
     _resolvedPlayerSource = null;

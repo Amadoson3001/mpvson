@@ -135,34 +135,23 @@ class PlayingEqualizerGlyph extends StatelessWidget {
   Widget build(BuildContext context) {
     final effectiveColor = color ?? Theme.of(context).colorScheme.primary;
 
-    final Widget glyph;
     final label = semanticLabel;
-    if (!isPlaying || AppMotion.reduce(context)) {
-      glyph = RepaintBoundary(
-        child: CustomPaint(
-          size: Size(size, size),
-          painter: _EqualizerPainter(
-            color: effectiveColor,
-            progress: 0.0,
-            index: index,
-            staticRest: true,
-          ),
+    final animate =
+        isPlaying && !AppMotion.reduce(context) && !AppMotion.lowPower(context);
+    final pulse = animate
+        ? context.getInheritedWidgetOfExactType<PlaybackPulse>()?.notifier
+        : null;
+    final glyph = RepaintBoundary(
+      child: CustomPaint(
+        size: Size(size, size),
+        painter: _EqualizerPainter(
+          color: effectiveColor,
+          pulse: pulse,
+          index: index,
+          staticRest: !animate || pulse == null,
         ),
-      );
-    } else {
-      final pulse = PlaybackPulse.valueOf(context, phaseIndex: index);
-      glyph = RepaintBoundary(
-        child: CustomPaint(
-          size: Size(size, size),
-          painter: _EqualizerPainter(
-            color: effectiveColor,
-            progress: pulse,
-            index: index,
-            staticRest: false,
-          ),
-        ),
-      );
-    }
+      ),
+    );
     if (label == null) return ExcludeSemantics(child: glyph);
     return Semantics(
       label: label,
@@ -176,13 +165,13 @@ class PlayingEqualizerGlyph extends StatelessWidget {
 class _EqualizerPainter extends CustomPainter {
   const _EqualizerPainter({
     required this.color,
-    required this.progress,
+    required this.pulse,
     required this.index,
     required this.staticRest,
-  });
+  }) : super(repaint: pulse);
 
   final Color color;
-  final double progress;
+  final Animation<double>? pulse;
   final int index;
   final bool staticRest;
 
@@ -197,6 +186,10 @@ class _EqualizerPainter extends CustomPainter {
     final gap = (size.width - (3 * barWidth)) / 2;
     final maxBarHeight = size.height * 0.9;
     final minBarHeight = size.height * 0.2;
+    final rawProgress = pulse?.value ?? 0.0;
+    final progress = index == 0
+        ? rawProgress
+        : (rawProgress + (index * 0.28)) % 1.0;
 
     for (var i = 0; i < 3; i++) {
       double factor;
@@ -223,7 +216,8 @@ class _EqualizerPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _EqualizerPainter old) =>
-      old.progress != progress ||
+      old.pulse != pulse ||
       old.color != color ||
+      old.index != index ||
       old.staticRest != staticRest;
 }

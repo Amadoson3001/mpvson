@@ -73,6 +73,7 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
   bool? _lastCanGoNext;
   bool? _lastCanGoPrevious;
   bool? _lastIsVideoPlaying;
+  bool _highResTimerEnabled = false;
 
   @override
   SystemPlaybackStatus get playbackStatus => _playbackStatus;
@@ -545,6 +546,14 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
   void _syncPowerLock() {
     if (_disposed) return;
     if (_controller == null) {
+      if (_highResTimerEnabled) {
+        _highResTimerEnabled = false;
+        unawaited(
+          powerChannel
+              .invokeMethod<void>('setHighResolutionTimer', false)
+              .catchError((Object _) {}),
+        );
+      }
       if (_isAwakeInhibited) {
         setKeepAwake(false, isVideoPlaying: false);
       }
@@ -561,6 +570,17 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
     final isVideo =
         _controller!.isVideo && _controller!.videoOutputPolicy.visible;
     final shouldKeepAwake = keepAwakePref && isPlaying && isVideo;
+
+    if (isPlaying != _highResTimerEnabled) {
+      _highResTimerEnabled = isPlaying;
+      unawaited(
+        powerChannel
+            .invokeMethod<void>('setHighResolutionTimer', isPlaying)
+            .catchError((Object _) {
+              // Ignore when platform power channel is unavailable (e.g. Linux/tests).
+            }),
+      );
+    }
 
     if (shouldKeepAwake != _isAwakeInhibited ||
         (shouldKeepAwake && isVideo != _lastIsVideoPlaying)) {
@@ -854,6 +874,15 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
+
+    if (_highResTimerEnabled) {
+      _highResTimerEnabled = false;
+      unawaited(
+        powerChannel
+            .invokeMethod<void>('setHighResolutionTimer', false)
+            .catchError((Object _) {}),
+      );
+    }
 
     if (_isAwakeInhibited) {
       _isAwakeInhibited = false;

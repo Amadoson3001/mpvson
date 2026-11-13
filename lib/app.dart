@@ -10,6 +10,7 @@ import 'data/services/update_service.dart';
 import 'ui/core/app_theme.dart';
 import 'ui/core/components/media_accent_scope.dart';
 import 'ui/core/toast/app_toast_host.dart';
+import 'ui/core/tokens/motion.dart';
 import 'ui/player/player_controller.dart';
 import 'ui/player/views/player_screen.dart'
     show PlayerScreen, PlayerVideoBuilder, FullscreenSetter, SubtitleFilePicker;
@@ -53,7 +54,10 @@ class MpvsonApp extends StatelessWidget {
     // repository is provided. A `ValueNotifier` stand-in here would allocate
     // (and leak) a fresh notifier on every build.
     return ListenableBuilder(
-      listenable: Listenable.merge(<Listenable?>[appPreferences]),
+      listenable: Listenable.merge(<Listenable?>[
+        appPreferences,
+        AppMotion.hardwareConstrainedListenable,
+      ]),
       builder: (context, _) {
         final prefs = appPreferences?.preferences;
         final themeMode = prefs?.themeMode ?? ThemeMode.dark;

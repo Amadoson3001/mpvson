@@ -27,6 +27,8 @@ class FloatingVideoSettings extends StatefulWidget {
     required this.pickSubtitle,
     required this.onClose,
     this.onOpenFullSettings,
+    this.open = true,
+    this.onExitSettled,
   });
 
   final PlayerController controller;
@@ -35,11 +37,18 @@ class FloatingVideoSettings extends StatefulWidget {
   final VoidCallback onClose;
   final VoidCallback? onOpenFullSettings;
 
+  /// When false, the panel slides out and then [onExitSettled] fires so the
+  /// parent can unmount it. Tests that pump this widget directly can leave
+  /// the default `true`.
+  final bool open;
+  final VoidCallback? onExitSettled;
+
   @override
   State<FloatingVideoSettings> createState() => _FloatingVideoSettingsState();
 }
 
-class _FloatingVideoSettingsState extends State<FloatingVideoSettings> {
+class _FloatingVideoSettingsState extends State<FloatingVideoSettings>
+    with SingleTickerProviderStateMixin {
   VideoSettingsTab _currentTab = VideoSettingsTab.audioSubs;
   late PlaybackSettings _draft = widget.controller.playbackSettings;
 
@@ -47,26 +56,93 @@ class _FloatingVideoSettingsState extends State<FloatingVideoSettings> {
   /// own commit is not mistaken for an external edit.
   PlaybackSettings? _lastSent;
 
+  late final AnimationController _motion = AnimationController(vsync: this);
+  late final CurvedAnimation _motionCurve = CurvedAnimation(
+    parent: _motion,
+    curve: AppMotion.sheetEnterCurve,
+    reverseCurve: AppMotion.sheetExitCurve,
+  );
+  bool _motionLaunched = false;
+
   @override
   void initState() {
     super.initState();
+    _motion.addStatusListener(_handleMotionStatus);
     widget.controller.addListener(_handleControllerChanged);
     _draft = widget.controller.playbackSettings;
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _syncMotionDurations();
+    if (_motionLaunched) return;
+    _motionLaunched = true;
+    if (!widget.open) {
+      _motion.value = 0;
+      return;
+    }
+    if (AppMotion.reduce(context)) {
+      _motion.value = 1;
+    } else {
+      _motion.forward();
+    }
+  }
+
+  @override
   void didUpdateWidget(covariant FloatingVideoSettings oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.controller == widget.controller) return;
-    oldWidget.controller.removeListener(_handleControllerChanged);
-    widget.controller.addListener(_handleControllerChanged);
-    _adoptControllerSettings();
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller.removeListener(_handleControllerChanged);
+      widget.controller.addListener(_handleControllerChanged);
+      _adoptControllerSettings();
+    }
+    if (oldWidget.open != widget.open) {
+      _syncOpen(widget.open);
+    }
   }
 
   @override
   void dispose() {
+    _motion.removeStatusListener(_handleMotionStatus);
+    _motionCurve.dispose();
+    _motion.dispose();
     widget.controller.removeListener(_handleControllerChanged);
     super.dispose();
+  }
+
+  void _syncMotionDurations() {
+    final reduced = AppMotion.reduce(context);
+    _motion.duration = reduced
+        ? Duration.zero
+        : AppMotion.scaled(context, AppMotion.sheetEnter);
+    _motion.reverseDuration = reduced
+        ? Duration.zero
+        : AppMotion.scaled(context, AppMotion.sheetExit);
+  }
+
+  void _syncOpen(bool open) {
+    if (AppMotion.reduce(context)) {
+      _motion.value = open ? 1 : 0;
+      return;
+    }
+    if (open) {
+      _motion.forward();
+    } else {
+      _motion.reverse();
+    }
+  }
+
+  void _handleMotionStatus(AnimationStatus status) {
+    if (status == AnimationStatus.dismissed && !widget.open) {
+      _notifyExitSettled();
+    }
+  }
+
+  void _notifyExitSettled() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && !widget.open) widget.onExitSettled?.call();
+    });
   }
 
   /// Keeps the draft in step with edits made elsewhere (full settings,
@@ -137,63 +213,69 @@ class _FloatingVideoSettingsState extends State<FloatingVideoSettings> {
                       top: 16,
                       bottom: 16,
                     ),
-                    child: TweenAnimationBuilder<double>(
-                      tween: Tween<double>(begin: 0.0, end: 1.0),
-                      duration: AppMotion.duration(context, AppMotion.standard),
-                      curve: AppMotion.enter,
-                      builder: (context, progress, child) {
-                        // One surface, one motion: the panel slides in from the
-                        // edge. No opacity fade or backdrop blur is layered on
-                        // top, so the surface stays calm.
-                        return Transform.translate(
-                          offset: AppMotion.reduce(context)
-                              ? Offset.zero
-                              : Offset((1.0 - progress) * 20.0, 0),
-                          child: child,
-                        );
-                      },
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(16),
-                        child: Container(
-                          width: panelWidth,
-                          height: panelHeight,
-                          decoration: BoxDecoration(
-                            color: isDark
-                                ? const Color(0xE8141519)
-                                : const Color(0xF2FFFFFF),
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(
+                    child: AnimatedBuilder(
+                      animation: _motionCurve,
+                      child: RepaintBoundary(
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(16),
+                          child: Container(
+                            width: panelWidth,
+                            height: panelHeight,
+                            decoration: BoxDecoration(
                               color: isDark
-                                  ? Colors.white.withValues(alpha: 0.12)
-                                  : Colors.black.withValues(alpha: 0.1),
-                              width: 1,
-                            ),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withValues(alpha: 0.42),
-                                blurRadius: 28,
-                                offset: const Offset(0, 10),
+                                  ? const Color(0xE8141519)
+                                  : const Color(0xF2FFFFFF),
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(
+                                color: isDark
+                                    ? Colors.white.withValues(alpha: 0.12)
+                                    : Colors.black.withValues(alpha: 0.1),
+                                width: 1,
                               ),
-                            ],
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              _buildHeader(theme, accent),
-                              _buildTabBar(theme, accent),
-                              Expanded(
-                                child: ListenableBuilder(
-                                  listenable: widget.controller,
-                                  builder: (context, _) =>
-                                      _buildTabContent(theme, accent),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.42),
+                                  blurRadius: 28,
+                                  offset: const Offset(0, 10),
                                 ),
-                              ),
-                              if (widget.onOpenFullSettings != null)
-                                _buildFooter(theme, accent),
-                            ],
+                              ],
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                _buildHeader(theme, accent),
+                                _buildTabBar(theme, accent),
+                                Expanded(
+                                  child: ListenableBuilder(
+                                    listenable: widget.controller,
+                                    builder: (context, _) =>
+                                        _buildTabContent(theme, accent),
+                                  ),
+                                ),
+                                if (widget.onOpenFullSettings != null)
+                                  _buildFooter(theme, accent),
+                              ],
+                            ),
                           ),
                         ),
                       ),
+                      builder: (context, child) {
+                        // Slide the already-painted panel as one surface.
+                        // Opacity over the video texture tiles and leaves a
+                        // seam, so this motion never fades.
+                        final reduce = AppMotion.reduce(context);
+                        final t = reduce ? 1.0 : _motionCurve.value;
+                        final panel = IgnorePointer(
+                          ignoring: !widget.open && t < 0.99,
+                          child: child,
+                        );
+                        if (t >= 0.999) return panel;
+                        return Transform.translate(
+                          key: const ValueKey('floating-settings-slide'),
+                          offset: Offset((1.0 - t) * (panelWidth + 20.0), 0),
+                          child: panel,
+                        );
+                      },
                     ),
                   ),
                 );

@@ -161,13 +161,15 @@ class _PlayerQueueLayoutState extends State<PlayerQueueLayout>
               excluding: !open,
               child: DecoratedBox(
                 decoration: BoxDecoration(
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.35),
-                      blurRadius: 18,
-                      offset: const Offset(-6, 0),
-                    ),
-                  ],
+                  boxShadow: AppMotion.lowPower(context)
+                      ? null
+                      : [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.35),
+                            blurRadius: 18,
+                            offset: const Offset(-6, 0),
+                          ),
+                        ],
                 ),
                 child: CallbackShortcuts(
                   bindings: {

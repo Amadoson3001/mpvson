@@ -4,6 +4,7 @@ import '../../../app.dart' show AppPreferencesScope;
 import '../../player/player_controller.dart';
 import '../../../domain/models/media_entry.dart';
 import '../app_theme.dart';
+import '../tokens/motion.dart';
 
 /// Follows the active media and animates its accessible artwork color.
 class MediaAccentScope extends StatefulWidget {
@@ -165,8 +166,8 @@ class _MediaAccentScopeState extends State<MediaAccentScope> {
           for (var i = 0; i + 3 < bytes.length; i += 4) {
             if (bytes[i + 3] < 128) continue;
             final r = bytes[i], g = bytes[i + 1], b = bytes[i + 2];
-            final max = [r, g, b].reduce((a, b) => a > b ? a : b);
-            final min = [r, g, b].reduce((a, b) => a < b ? a : b);
+            final max = r > g ? (r > b ? r : b) : (g > b ? g : b);
+            final min = r < g ? (r < b ? r : b) : (g < b ? g : b);
             if (max - min < 30 || max < 45) continue;
             final key = (r ~/ 32) * 64 + (g ~/ 32) * 8 + b ~/ 32;
             final bin = bins.putIfAbsent(key, () => [0, 0, 0, 0]);
@@ -278,9 +279,9 @@ class _MediaAccentScopeState extends State<MediaAccentScope> {
         );
 
     return AnimatedTheme(
-      duration: MediaQuery.disableAnimationsOf(context)
+      duration: AppMotion.reduce(context) || AppMotion.lowPower(context)
           ? Duration.zero
-          : const Duration(milliseconds: 400),
+          : const Duration(milliseconds: 180),
       data: dynamicTheme,
       child: widget.child,
     );

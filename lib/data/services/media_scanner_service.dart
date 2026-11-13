@@ -57,6 +57,7 @@ typedef DirectoryWatcherFactory = DirectoryWatcher Function(String path);
 class MediaScannerService {
   static const int _maxPendingWatcherPaths = 2048;
   static const Duration _maxWatcherBatchDelay = Duration(seconds: 2);
+  static const int _scanDiscoveryChunkSize = 500;
 
   MediaScannerService({
     required MediaProbeService probeService,
@@ -98,6 +99,7 @@ class MediaScannerService {
            onFileAvailabilityChanged ?? database?.markFileAvailability,
        _onFolderReconciled =
            onFolderReconciled ?? database?.reconcileFolderFiles,
+       _hasCustomReconciler = onFolderReconciled != null,
        _getRegisteredFolders = getRegisteredFolders ?? database?.getAllFolders,
        _debounceDuration = debounceDuration,
        _reconnectInterval = reconnectInterval,
@@ -114,6 +116,7 @@ class MediaScannerService {
   final FolderScanCompletedCallback? _onFolderScanCompleted;
   final FileAvailabilityCallback? _onFileAvailabilityChanged;
   final FolderReconciliationCallback? _onFolderReconciled;
+  final bool _hasCustomReconciler;
   final RegisteredFoldersProvider? _getRegisteredFolders;
   final Duration _debounceDuration;
   final Duration _reconnectInterval;
@@ -378,7 +381,7 @@ class MediaScannerService {
       );
 
       var enriching = false;
-      var totalToEnrich = 0;
+      var totalEnriched = 0;
 
       var remaining = List<String>.of(roots);
       while (remaining.isNotEmpty) {
@@ -432,9 +435,62 @@ class MediaScannerService {
             continue;
           }
 
-          final folderDiscovered = <String>[];
+          final useStreamingDbReconcile =
+              _database != null && !_hasCustomReconciler;
+          if (useStreamingDbReconcile) {
+            await _database.beginFolderReconcile();
+            if (_isCancelled || _isDisposed) {
+              break;
+            }
+            if (!_explicitFolders.contains(root)) {
+              continue;
+            }
+          }
+
+          final chunk = <String>[];
+          final customReconcilePaths = <String>[];
           final directories = <String>{};
+          var folderFileCount = 0;
           var traversalComplete = true;
+
+          Future<void> processChunk(List<String> files) async {
+            if (files.isEmpty) return;
+            if (useStreamingDbReconcile) {
+              await _database.recordReconcileBatch(files);
+            } else if (_onFolderReconciled != null) {
+              customReconcilePaths.addAll(files);
+            }
+            if (_isCancelled ||
+                _isDisposed ||
+                !_explicitFolders.contains(root)) {
+              return;
+            }
+            await _onDiscoveredFiles?.call(files);
+            if (_isCancelled ||
+                _isDisposed ||
+                !_explicitFolders.contains(root)) {
+              return;
+            }
+            if (!enriching) {
+              enriching = true;
+              // Total file count stays unknown while chunks and roots continue
+              // streaming (or can merge mid-scan), so keep totalToEnrich at 0
+              // rather than letting determinate progress drop backwards.
+              _updateStatus(
+                _status.copyWith(phase: ScanPhase.enriching, totalToEnrich: 0),
+              );
+            }
+            await _enrichFiles(
+              files,
+              shouldContinue: _isPathInRegisteredFolder,
+              skipUnchanged: true,
+              onItemCompleted: () {
+                totalEnriched++;
+                _updateStatus(_status.copyWith(enrichedCount: totalEnriched));
+              },
+            );
+          }
+
           await for (final file in _traverseDirectory(
             root,
             onError: () => traversalComplete = false,
@@ -443,12 +499,34 @@ class MediaScannerService {
             if (_isCancelled ||
                 _isDisposed ||
                 !_explicitFolders.contains(root)) {
+              traversalComplete = false;
               break;
             }
-            folderDiscovered.add(file);
+            chunk.add(file);
+            folderFileCount++;
             _updateStatus(
               _status.copyWith(discoveredCount: _status.discoveredCount + 1),
             );
+            if (chunk.length >= _scanDiscoveryChunkSize) {
+              final toFlush = List<String>.of(chunk);
+              chunk.clear();
+              await processChunk(toFlush);
+              if (_isCancelled ||
+                  _isDisposed ||
+                  !_explicitFolders.contains(root)) {
+                traversalComplete = false;
+                break;
+              }
+            }
+          }
+
+          if (chunk.isNotEmpty &&
+              !_isCancelled &&
+              !_isDisposed &&
+              _explicitFolders.contains(root)) {
+            final toFlush = List<String>.of(chunk);
+            chunk.clear();
+            await processChunk(toFlush);
           }
 
           if (_isCancelled || _isDisposed) {
@@ -459,45 +537,16 @@ class MediaScannerService {
             continue;
           }
 
-          if (folderDiscovered.isNotEmpty) {
-            await _onDiscoveredFiles?.call(folderDiscovered);
-            if (_isCancelled || _isDisposed) {
-              break;
-            }
-            if (!_explicitFolders.contains(root)) {
-              continue;
-            }
-            if (!enriching) {
-              enriching = true;
-              totalToEnrich = folderDiscovered.length;
-              _updateStatus(
-                _status.copyWith(
-                  phase: ScanPhase.enriching,
-                  totalToEnrich: totalToEnrich,
-                  enrichedCount: 0,
-                ),
-              );
-            } else {
-              totalToEnrich += folderDiscovered.length;
-              _updateStatus(_status.copyWith(totalToEnrich: totalToEnrich));
-            }
-            await _enrichFiles(
-              folderDiscovered,
-              shouldContinue: _isPathInRegisteredFolder,
-              skipUnchanged: true,
-            );
-          }
-
-          if (_isCancelled || _isDisposed) {
-            break;
-          }
-          if (!_explicitFolders.contains(root)) {
-            continue;
-          }
-
           if (traversalComplete) {
             _knownDirectories[root] = directories;
-            await _onFolderReconciled?.call(root, folderDiscovered);
+            if (useStreamingDbReconcile) {
+              await _database.finishFolderReconcile(
+                root,
+                hasDiscoveredFiles: folderFileCount > 0,
+              );
+            } else {
+              await _onFolderReconciled?.call(root, customReconcilePaths);
+            }
             if (_isCancelled || _isDisposed) {
               break;
             }
@@ -507,7 +556,7 @@ class MediaScannerService {
           }
           await _onFolderScanCompleted?.call(
             root,
-            fileCount: folderDiscovered.length,
+            fileCount: folderFileCount,
             lastScannedAt: DateTime.now(),
           );
         }
@@ -578,30 +627,33 @@ class MediaScannerService {
         await for (final entity in entityStream) {
           if (_isCancelled || _isDisposed) return;
 
-          // Traversal must NOT follow directory symlinks or junctions
+          // Traversal must NOT follow directory symlinks or junctions.
           if (entity is Link) continue;
 
-          FileSystemEntityType type;
-          try {
-            type = await FileSystemEntity.type(entity.path, followLinks: false);
-          } catch (_) {
-            onError?.call();
-            continue;
-          }
-
-          if (type == FileSystemEntityType.link) {
-            continue;
-          }
-
-          if (type == FileSystemEntityType.directory) {
-            queue.add(entity.path);
-          } else if (type == FileSystemEntityType.file) {
+          if (entity is File) {
             try {
               if (MediaCatalog.isSupportedFile(entity.path)) {
                 yield entity.path;
               }
             } catch (_) {
               // Unreadable file: do NOT fail scan!
+            }
+            continue;
+          }
+
+          if (entity is Directory) {
+            FileSystemEntityType type;
+            try {
+              type = await FileSystemEntity.type(
+                entity.path,
+                followLinks: false,
+              );
+            } catch (_) {
+              onError?.call();
+              continue;
+            }
+            if (type == FileSystemEntityType.directory) {
+              queue.add(entity.path);
             }
           }
         }
@@ -620,6 +672,7 @@ class MediaScannerService {
     bool Function(String path)? shouldContinue,
     bool ignoreScanCancellation = false,
     bool skipUnchanged = false,
+    VoidCallback? onItemCompleted,
   }) async {
     final epoch = _cancellationEpoch;
     bool stopped() {
@@ -725,8 +778,12 @@ class MediaScannerService {
           } catch (_) {}
         } finally {
           if (!ignoreScanCancellation) {
-            completed++;
-            _updateStatus(_status.copyWith(enrichedCount: completed));
+            if (onItemCompleted != null) {
+              onItemCompleted();
+            } else {
+              completed++;
+              _updateStatus(_status.copyWith(enrichedCount: completed));
+            }
           }
         }
       }

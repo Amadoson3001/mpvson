@@ -77,7 +77,8 @@ class ANGLESurfaceManager {
   void CleanUp(bool release_context);
 
   // Recreates D3D textures and the EGL pbuffer without dropping the Flutter
-  // texture ID. The previous public textures stay alive until the next resize.
+  // texture ID. Previous public textures are retained only across the swap
+  // transition and released after a few presented frames or on Trim.
   void RecreateSurface();
 
   void DestroyEGLSurface();
@@ -116,6 +117,7 @@ class ANGLESurfaceManager {
   Microsoft::WRL::ComPtr<ID3D11Texture2D> public_texture_[2];
   Microsoft::WRL::ComPtr<ID3D11Texture2D> previous_internal_d3d_11_texture_2D_;
   Microsoft::WRL::ComPtr<ID3D11Texture2D> previous_public_texture_[2];
+  int previous_textures_frames_remaining_ = 0;
   // ANGLE
   EGLSurface surface_ = EGL_NO_SURFACE;
   EGLDisplay display_ = EGL_NO_DISPLAY;

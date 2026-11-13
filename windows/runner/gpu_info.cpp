@@ -357,6 +357,12 @@ EncodableValue BuildSnapshot() {
   if (preference.has_value()) {
     root[EncodableValue("preference")] = EncodableValue(*preference);
   }
+  MEMORYSTATUSEX mem_status = {};
+  mem_status.dwLength = sizeof(mem_status);
+  if (::GlobalMemoryStatusEx(&mem_status)) {
+    root[EncodableValue("totalPhysicalMemory")] = EncodableValue(
+        static_cast<int64_t>(mem_status.ullTotalPhys));
+  }
   return EncodableValue(root);
 }
 

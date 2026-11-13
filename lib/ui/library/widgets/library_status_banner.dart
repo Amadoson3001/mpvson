@@ -141,6 +141,8 @@ class LibraryStatusBanner extends StatelessWidget {
 
     final countDetails = status.totalToEnrich > 0
         ? '${status.discoveredCount} discovered • ${status.enrichedCount} of ${status.totalToEnrich} enriched'
+        : status.enrichedCount > 0
+        ? '${status.discoveredCount} discovered • ${status.enrichedCount} enriched'
         : '${status.discoveredCount} items discovered';
 
     return Container(

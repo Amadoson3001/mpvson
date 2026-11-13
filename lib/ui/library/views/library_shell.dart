@@ -458,26 +458,27 @@ class _LibraryShellState extends State<LibraryShell>
                       // by assistive tech until the sheet has left.
                       AnimatedBuilder(
                         animation: _nowPlayingMorphCurve,
-                        builder: (context, _) {
+                        child: Column(
+                          children: [
+                            Expanded(
+                              child: _buildBodyRow(
+                                isDesktopWide,
+                                isDesktopMedium,
+                                isCompact,
+                              ),
+                            ),
+                            ToastRegion(
+                              child: _buildBottomMiniPlayer(isCompact),
+                            ),
+                          ],
+                        ),
+                        builder: (context, child) {
                           final sheetUp = _nowPlayingMorphCurve.value > 0;
                           return ExcludeFocus(
                             excluding: sheetUp,
                             child: ExcludeSemantics(
                               excluding: sheetUp,
-                              child: Column(
-                                children: [
-                                  Expanded(
-                                    child: _buildBodyRow(
-                                      isDesktopWide,
-                                      isDesktopMedium,
-                                      isCompact,
-                                    ),
-                                  ),
-                                  ToastRegion(
-                                    child: _buildBottomMiniPlayer(isCompact),
-                                  ),
-                                ],
-                              ),
+                              child: child!,
                             ),
                           );
                         },

@@ -392,6 +392,29 @@ class LibraryDatabase {
     });
   }
 
+  /// Clears and initializes the session-local seen-path table for a folder scan.
+  Future<void> beginFolderReconcile() async {
+    await _send<dynamic>('beginFolderReconcile');
+  }
+
+  /// Records a bounded batch of discovered file paths for folder reconciliation.
+  Future<void> recordReconcileBatch(List<String> paths) async {
+    if (paths.isEmpty) return;
+    await _send<dynamic>('recordReconcileBatch', paths);
+  }
+
+  /// Marks any available files under [folderPath] absent from the seen-path
+  /// table as unavailable, without holding the entire file list in Dart memory.
+  Future<void> finishFolderReconcile(
+    String folderPath, {
+    required bool hasDiscoveredFiles,
+  }) async {
+    await _send<dynamic>('finishFolderReconcile', <String, Object?>{
+      'folderPath': folderPath,
+      'hasDiscoveredFiles': hasDiscoveredFiles,
+    });
+  }
+
   /// Updates a single watched file while preserving its metadata and playlists.
   Future<void> markFileAvailability(String path, bool isAvailable) async {
     await _send<dynamic>('markFileAvailability', <String, Object?>{
@@ -610,6 +633,49 @@ class LibraryDatabase {
     if (artist != null) payload['artist'] = artist;
     final res = await _send<dynamic>('getDistinctAlbums', payload);
     return (res as List).cast<String>();
+  }
+
+  /// Retrieves artist summaries with representative artwork metadata in one query.
+  Future<List<MediaCollectionSummary>> getArtistSummaries({
+    MediaKind? kind,
+  }) async {
+    final payload = <String, Object?>{};
+    if (kind != null) payload['kind'] = kind.name;
+    final res = await _send<dynamic>('getArtistSummaries', payload);
+    return (res as List)
+        .map((raw) {
+          final map = (raw as Map).cast<String, Object?>();
+          return MediaCollectionSummary(
+            name: map['name'] as String,
+            subtitle: (map['subtitle'] as String?) ?? '',
+            artworkUri: map['artwork_uri'] as String?,
+            samplePath: map['sample_path'] as String?,
+            trackCount: map['track_count'] as int? ?? 0,
+            albumCount: map['album_count'] as int? ?? 0,
+          );
+        })
+        .toList(growable: false);
+  }
+
+  /// Retrieves album summaries with representative artwork metadata in one query.
+  Future<List<MediaCollectionSummary>> getAlbumSummaries({
+    String? artist,
+  }) async {
+    final payload = <String, Object?>{};
+    if (artist != null) payload['artist'] = artist;
+    final res = await _send<dynamic>('getAlbumSummaries', payload);
+    return (res as List)
+        .map((raw) {
+          final map = (raw as Map).cast<String, Object?>();
+          return MediaCollectionSummary(
+            name: map['name'] as String,
+            subtitle: (map['subtitle'] as String?) ?? '',
+            artworkUri: map['artwork_uri'] as String?,
+            samplePath: map['sample_path'] as String?,
+            trackCount: map['track_count'] as int? ?? 0,
+          );
+        })
+        .toList(growable: false);
   }
 
   // ---------------------------------------------------------------------------
@@ -1325,6 +1391,24 @@ Object? _dispatchAction(Database db, String action, Object? params) {
       );
       return null;
 
+    case 'beginFolderReconcile':
+      _ensureReconcileSeenTable(db);
+      db.execute('DELETE FROM _reconcile_seen');
+      return null;
+
+    case 'recordReconcileBatch':
+      _recordReconcileBatch(db, (params as List).cast<String>());
+      return null;
+
+    case 'finishFolderReconcile':
+      final map = (params as Map).cast<String, Object?>();
+      _markMissingFilesFromReconcileTemp(
+        db,
+        map['folderPath'] as String,
+        hasDiscoveredFiles: map['hasDiscoveredFiles'] as bool? ?? false,
+      );
+      return null;
+
     case 'markFileAvailability':
       final map = (params as Map).cast<String, Object?>();
       db.execute(
@@ -1600,6 +1684,82 @@ Object? _dispatchAction(Database db, String action, Object? params) {
       sql.write(' ORDER BY LOWER(album_name) COLLATE NOCASE ASC');
       final rows = db.select(sql.toString(), args);
       return rows.map((r) => r['album_name'] as String).toList();
+
+    case 'getArtistSummaries':
+      final map = (params as Map).cast<String, Object?>();
+      final kind = map['kind'] as String?;
+      final sql = StringBuffer('''
+        SELECT
+          coalesce(nullif(trim(artist), ''), nullif(trim(album_artist), ''), 'Unknown Artist') AS artist_name,
+          coalesce(MAX(nullif(trim(album), '')), '') AS subtitle,
+          MAX(nullif(trim(artwork_uri), '')) AS artwork_uri,
+          coalesce(
+            MAX(CASE WHEN artwork_uri IS NOT NULL AND trim(artwork_uri) != '' THEN path END),
+            MIN(path)
+          ) AS sample_path,
+          COUNT(*) AS track_count,
+          COUNT(DISTINCT coalesce(nullif(trim(album), ''), 'Unknown Album')) AS album_count
+        FROM media WHERE is_in_library = 1
+        ''');
+      final args = <Object?>[];
+      if (kind != null) {
+        sql.write(' AND kind = ?');
+        args.add(kind);
+      }
+      sql.write(
+        ' GROUP BY artist_name ORDER BY LOWER(artist_name) COLLATE NOCASE ASC',
+      );
+      final rows = db.select(sql.toString(), args);
+      return rows
+          .map(
+            (r) => <String, Object?>{
+              'name': r['artist_name'] as String,
+              'subtitle': r['subtitle'] as String? ?? '',
+              'artwork_uri': r['artwork_uri'] as String?,
+              'sample_path': r['sample_path'] as String?,
+              'track_count': r['track_count'] as int? ?? 0,
+              'album_count': r['album_count'] as int? ?? 0,
+            },
+          )
+          .toList(growable: false);
+
+    case 'getAlbumSummaries':
+      final map = (params as Map).cast<String, Object?>();
+      final artist = map['artist'] as String?;
+      final sql = StringBuffer('''
+        SELECT
+          coalesce(nullif(trim(album), ''), 'Unknown Album') AS album_name,
+          coalesce(MAX(nullif(trim(album_artist), '')), MAX(nullif(trim(artist), '')), '') AS subtitle,
+          MAX(nullif(trim(artwork_uri), '')) AS artwork_uri,
+          coalesce(
+            MAX(CASE WHEN artwork_uri IS NOT NULL AND trim(artwork_uri) != '' THEN path END),
+            MIN(path)
+          ) AS sample_path,
+          COUNT(*) AS track_count
+        FROM media WHERE is_in_library = 1 AND kind = 'audio'
+        ''');
+      final args = <Object?>[];
+      if (artist != null) {
+        sql.write(
+          " AND unicode_lower(coalesce(nullif(trim(artist), ''), nullif(trim(album_artist), ''), 'Unknown Artist')) = unicode_lower(?)",
+        );
+        args.add(artist);
+      }
+      sql.write(
+        ' GROUP BY album_name ORDER BY LOWER(album_name) COLLATE NOCASE ASC',
+      );
+      final rows = db.select(sql.toString(), args);
+      return rows
+          .map(
+            (r) => <String, Object?>{
+              'name': r['album_name'] as String,
+              'subtitle': r['subtitle'] as String? ?? '',
+              'artwork_uri': r['artwork_uri'] as String?,
+              'sample_path': r['sample_path'] as String?,
+              'track_count': r['track_count'] as int? ?? 0,
+            },
+          )
+          .toList(growable: false);
 
     // ---------------- Playlists ----------------
     case 'createPlaylist':
@@ -2116,6 +2276,60 @@ void _untrackRemovedFolder(Database db, String folderPath) {
   }
 }
 
+void _ensureReconcileSeenTable(Database db) {
+  db.execute(
+    'CREATE TEMP TABLE IF NOT EXISTS _reconcile_seen '
+    '(canonical_source TEXT PRIMARY KEY)',
+  );
+}
+
+void _recordReconcileBatch(Database db, List<String> paths) {
+  if (paths.isEmpty) return;
+  _ensureReconcileSeenTable(db);
+  db.execute('BEGIN TRANSACTION');
+  final statement = db.prepare(
+    'INSERT OR IGNORE INTO _reconcile_seen (canonical_source) VALUES (?)',
+  );
+  try {
+    for (final rawPath in paths) {
+      statement.execute([MediaEntry.canonicalSource(rawPath)]);
+    }
+    db.execute('COMMIT');
+  } catch (_) {
+    db.execute('ROLLBACK');
+    rethrow;
+  } finally {
+    statement.close();
+  }
+}
+
+void _markMissingFilesFromReconcileTemp(
+  Database db,
+  String folderPath, {
+  required bool hasDiscoveredFiles,
+}) {
+  _ensureReconcileSeenTable(db);
+  final root = MediaEntry.canonicalSource(folderPath);
+  final (withinPredicate, withinArgs) = _canonicalSourceUnderRoot(root);
+  final rows = db.select(
+    'SELECT canonical_source, path FROM media '
+    'WHERE is_available = 1 AND $withinPredicate '
+    'AND NOT EXISTS (SELECT 1 FROM _reconcile_seen s '
+    'WHERE s.canonical_source = media.canonical_source)',
+    withinArgs,
+  );
+  try {
+    _reconcileMissingCandidates(
+      db,
+      root,
+      rows,
+      revalidateWithStat: hasDiscoveredFiles && Directory(root).existsSync(),
+    );
+  } finally {
+    db.execute('DELETE FROM _reconcile_seen');
+  }
+}
+
 void _markMissingFilesInFolder(
   Database db,
   String folderPath,
@@ -2132,13 +2346,24 @@ void _markMissingFilesInFolder(
     'WHERE is_available = 1 AND $withinPredicate',
     withinArgs,
   );
-  // A watcher add that lands while a scan is in flight can be missing from the
-  // discovered snapshot; re-stating each candidate keeps mid-scan additions
-  // from being marked unavailable. The re-stat is skipped when the folder root
-  // itself is gone, because stats against a disconnected drive can block for
-  // seconds per file.
-  final revalidateWithStat =
-      discovered.isNotEmpty && Directory(root).existsSync();
+  _reconcileMissingCandidates(
+    db,
+    root,
+    rows,
+    revalidateWithStat: discovered.isNotEmpty && Directory(root).existsSync(),
+    shouldKeep: discovered.contains,
+    inTransaction: inTransaction,
+  );
+}
+
+void _reconcileMissingCandidates(
+  Database db,
+  String root,
+  Iterable<Map<String, Object?>> candidateRows, {
+  required bool revalidateWithStat,
+  bool Function(String source)? shouldKeep,
+  bool inTransaction = false,
+}) {
   if (!inTransaction) {
     db.execute('BEGIN TRANSACTION');
   }
@@ -2147,11 +2372,15 @@ void _markMissingFilesInFolder(
       'UPDATE media SET is_available = 0 WHERE canonical_source = ?',
     );
     try {
-      for (final row in rows) {
+      for (final row in candidateRows) {
         final source = row['canonical_source'] as String;
         final path = MediaEntry.canonicalSource(row['path'] as String);
         if ((p.equals(root, path) || p.isWithin(root, path)) &&
-            !discovered.contains(source)) {
+            !(shouldKeep?.call(source) ?? false)) {
+          // A watcher add that lands while a scan is in flight can be missing
+          // from the discovered snapshot; re-stating each candidate keeps
+          // mid-scan additions from being marked unavailable. The re-stat is
+          // skipped when the folder root itself is gone.
           if (revalidateWithStat && File(row['path'] as String).existsSync()) {
             continue;
           }
@@ -2172,6 +2401,26 @@ void _markMissingFilesInFolder(
   }
 }
 
+({String kind, String title, String? artist}) _parsePathMetadata(
+  String normalized,
+) {
+  final kind = MediaCatalog.kindFromExtension(normalized).name;
+  final rawTitle = MediaEntry.titleFromPath(normalized);
+  final displayName = MediaCatalog.displayName(rawTitle);
+  var title = displayName;
+  String? artist;
+  if (displayName.contains(' - ')) {
+    final parts = displayName.split(' - ');
+    final pArtist = parts[0].trim();
+    final pTitle = parts.sublist(1).join(' - ').trim();
+    if (pArtist.isNotEmpty && pTitle.isNotEmpty) {
+      artist = pArtist;
+      title = pTitle;
+    }
+  }
+  return (kind: kind, title: title, artist: artist);
+}
+
 void _batchUpsertPaths(
   Database db,
   List<String> paths, {
@@ -2182,9 +2431,10 @@ void _batchUpsertPaths(
   if (!inTransaction) {
     db.execute('BEGIN TRANSACTION;');
   }
+  PreparedStatement? stmt;
   try {
     final now = DateTime.now().millisecondsSinceEpoch;
-    final stmt = db.prepare('''
+    const upsertSql = '''
       INSERT INTO media (
         id, canonical_source, path, kind, title, artist,
         file_size, modified_at, is_available, is_favorite, added_at, play_count
@@ -2201,32 +2451,93 @@ void _batchUpsertPaths(
          OR (media.artist IS NULL AND excluded.artist IS NOT NULL)
          OR media.is_available != 1
          OR COALESCE(media.is_in_library, 1) != 1
-    ''');
-    try {
-      for (final rawPath in paths) {
+    ''';
+
+    // Pre-select existing metadata in bounded chunks so identical rescans skip
+    // per-path hashing (SHA-256), filename parsing, and SQLite write work.
+    const chunkSize = 500;
+    final existingByCanonical =
+        <
+          String,
+          ({String path, bool hasArtist, int isAvailable, int isInLibrary})
+        >{};
+
+    for (var start = 0; start < paths.length; start += chunkSize) {
+      final end = (start + chunkSize < paths.length)
+          ? start + chunkSize
+          : paths.length;
+      final chunk = <({String normalized, String canonical})>[];
+      final toLookup = <String>[];
+      final seenLookup = <String>{};
+
+      for (var i = start; i < end; i++) {
+        final rawPath = paths[i];
         final normalized = MediaEntry.normalizeSourcePath(rawPath);
         final canonical = MediaEntry.canonicalSource(rawPath);
-        final id = _generateId(canonical);
-        final kind = MediaCatalog.kindFromExtension(normalized).name;
-        final rawTitle = MediaEntry.titleFromPath(normalized);
-        final displayName = MediaCatalog.displayName(rawTitle);
-        String title = displayName;
-        String? artist;
-        if (displayName.contains(' - ')) {
-          final parts = displayName.split(' - ');
-          final pArtist = parts[0].trim();
-          final pTitle = parts.sublist(1).join(' - ').trim();
-          if (pArtist.isNotEmpty && pTitle.isNotEmpty) {
-            artist = pArtist;
-            title = pTitle;
-          }
+        chunk.add((normalized: normalized, canonical: canonical));
+        if (!existingByCanonical.containsKey(canonical) &&
+            seenLookup.add(canonical)) {
+          toLookup.add(canonical);
+        }
+      }
+
+      if (toLookup.isNotEmpty) {
+        final placeholders = List<String>.filled(
+          toLookup.length,
+          '?',
+        ).join(',');
+        final rows = db.select('''
+          SELECT canonical_source, path, artist IS NOT NULL AS has_artist,
+                 is_available, is_in_library
+          FROM media
+          WHERE canonical_source IN ($placeholders)
+          ''', toLookup);
+        for (final row in rows) {
+          existingByCanonical[row['canonical_source'] as String] = (
+            path: row['path'] as String,
+            hasArtist: (row['has_artist'] as int? ?? 0) != 0,
+            isAvailable: row['is_available'] as int? ?? 0,
+            isInLibrary: row['is_in_library'] as int? ?? 1,
+          );
+        }
+      }
+
+      for (final item in chunk) {
+        final existing = existingByCanonical[item.canonical];
+        final isUnchangedActive =
+            existing != null &&
+            existing.isAvailable == 1 &&
+            existing.isInLibrary == 1 &&
+            existing.path == item.normalized;
+        if (isUnchangedActive && existing.hasArtist) {
+          continue;
         }
 
-        stmt.execute([id, canonical, normalized, kind, title, artist, now]);
+        final parsed = _parsePathMetadata(item.normalized);
+        if (isUnchangedActive && parsed.artist == null) {
+          continue;
+        }
+
+        final id = _generateId(item.canonical);
+        stmt ??= db.prepare(upsertSql);
+        stmt.execute([
+          id,
+          item.canonical,
+          item.normalized,
+          parsed.kind,
+          parsed.title,
+          parsed.artist,
+          now,
+        ]);
+        existingByCanonical[item.canonical] = (
+          path: item.normalized,
+          hasArtist: parsed.artist != null || (existing?.hasArtist ?? false),
+          isAvailable: 1,
+          isInLibrary: 1,
+        );
       }
-    } finally {
-      stmt.close();
     }
+
     if (!inTransaction) {
       db.execute('COMMIT;');
     }
@@ -2235,6 +2546,8 @@ void _batchUpsertPaths(
       db.execute('ROLLBACK;');
     }
     rethrow;
+  } finally {
+    stmt?.close();
   }
 }
 
@@ -2380,6 +2693,9 @@ List<Map<String, Object?>> _queryMediaRows(
     sql.write(' AND media.is_available = ?');
     args.add(isAvailable ? 1 : 0);
   }
+  if (sortBy == 'last_played_at' || sortBy == 'lastPlayedAt') {
+    sql.write(' AND media.last_played_at IS NOT NULL');
+  }
 
   final dir = ascending ? 'ASC' : 'DESC';
   switch (sortBy) {
@@ -2406,7 +2722,6 @@ List<Map<String, Object?>> _queryMediaRows(
       break;
     case 'last_played_at':
     case 'lastPlayedAt':
-      sql.write(' AND media.last_played_at IS NOT NULL');
       sql.write(' ORDER BY media.last_played_at $dir');
       break;
     case 'play_count':

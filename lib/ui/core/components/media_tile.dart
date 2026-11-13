@@ -30,17 +30,39 @@ class MediaTile extends StatefulWidget {
 }
 
 class _MediaTileState extends State<MediaTile> {
-  bool _hovered = false;
-  bool _pressed = false;
+  final ValueNotifier<({bool hovered, bool pressed})> _interaction =
+      ValueNotifier<({bool hovered, bool pressed})>((
+        hovered: false,
+        pressed: false,
+      ));
+
+  @override
+  void dispose() {
+    _interaction.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final reduced = AppMotion.lowPower(context);
-    final scale = reduced ? 1.0 : (_pressed ? 0.98 : (_hovered ? 1.02 : 1.0));
-    final duration = AppMotion.duration(
-      context,
-      _pressed ? AppMotion.press : AppMotion.hover,
+    final artworkStack = ClipRRect(
+      borderRadius: BorderRadius.circular(AppRadii.artwork),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          widget.artwork,
+          if (widget.overlay != null)
+            Positioned(
+              right: AppSpace.xs,
+              bottom: AppSpace.xs,
+              child: widget.overlay!,
+            ),
+        ],
+      ),
     );
+    final artworkCard = widget.aspectRatio != null
+        ? AspectRatio(aspectRatio: widget.aspectRatio!, child: artworkStack)
+        : artworkStack;
 
     return Semantics(
       button: true,
@@ -51,10 +73,19 @@ class _MediaTileState extends State<MediaTile> {
       child: InkWell(
         onTap: widget.onTap,
         onHover: (hovering) {
-          if (_hovered != hovering) setState(() => _hovered = hovering);
+          final current = _interaction.value;
+          if (current.hovered != hovering) {
+            _interaction.value = (hovered: hovering, pressed: current.pressed);
+          }
         },
         onHighlightChanged: (highlighted) {
-          if (_pressed != highlighted) setState(() => _pressed = highlighted);
+          final current = _interaction.value;
+          if (current.pressed != highlighted) {
+            _interaction.value = (
+              hovered: current.hovered,
+              pressed: highlighted,
+            );
+          }
         },
         borderRadius: BorderRadius.circular(AppRadii.artwork),
         child: Column(
@@ -62,47 +93,27 @@ class _MediaTileState extends State<MediaTile> {
           children: [
             Expanded(
               child: RepaintBoundary(
-                child: AnimatedScale(
-                  scale: scale,
-                  duration: duration,
-                  curve: AppMotion.enter,
-                  child: widget.aspectRatio != null
-                      ? AspectRatio(
-                          aspectRatio: widget.aspectRatio!,
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(
-                              AppRadii.artwork,
-                            ),
-                            child: Stack(
-                              fit: StackFit.expand,
-                              children: [
-                                widget.artwork,
-                                if (widget.overlay != null)
-                                  Positioned(
-                                    right: AppSpace.xs,
-                                    bottom: AppSpace.xs,
-                                    child: widget.overlay!,
-                                  ),
-                              ],
-                            ),
-                          ),
-                        )
-                      : ClipRRect(
-                          borderRadius: BorderRadius.circular(AppRadii.artwork),
-                          child: Stack(
-                            fit: StackFit.expand,
-                            children: [
-                              widget.artwork,
-                              if (widget.overlay != null)
-                                Positioned(
-                                  right: AppSpace.xs,
-                                  bottom: AppSpace.xs,
-                                  child: widget.overlay!,
-                                ),
-                            ],
-                          ),
-                        ),
-                ),
+                child: reduced
+                    ? artworkCard
+                    : ValueListenableBuilder<({bool hovered, bool pressed})>(
+                        valueListenable: _interaction,
+                        child: artworkCard,
+                        builder: (context, state, child) {
+                          final scale = state.pressed
+                              ? 0.98
+                              : (state.hovered ? 1.02 : 1.0);
+                          final duration = AppMotion.duration(
+                            context,
+                            state.pressed ? AppMotion.press : AppMotion.hover,
+                          );
+                          return AnimatedScale(
+                            scale: scale,
+                            duration: duration,
+                            curve: AppMotion.enter,
+                            child: child,
+                          );
+                        },
+                      ),
               ),
             ),
             const SizedBox(height: AppSpace.xs),

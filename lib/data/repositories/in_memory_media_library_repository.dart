@@ -483,6 +483,72 @@ class InMemoryMediaLibraryRepository extends MediaLibraryRepository {
     return albums;
   }
 
+  List<MediaCollectionSummary> _summarizeGroups(
+    Iterable<MediaItemRecord> items,
+    String Function(MediaItemRecord item) keyFor, {
+    required String Function(List<MediaItemRecord> group) subtitleFor,
+    bool countAlbums = false,
+  }) {
+    final grouped = <String, List<MediaItemRecord>>{};
+    for (final item in items) {
+      grouped.putIfAbsent(keyFor(item), () => <MediaItemRecord>[]).add(item);
+    }
+    final keys = grouped.keys.toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    return keys
+        .map((key) {
+          final group = grouped[key]!;
+          final withArtwork = group.firstWhereOrNull(
+            (i) => (i.metadata.artworkUri ?? '').trim().isNotEmpty,
+          );
+          final sample = withArtwork ?? group.first;
+          return MediaCollectionSummary(
+            name: key,
+            subtitle: subtitleFor(group),
+            artworkUri: withArtwork?.metadata.artworkUri,
+            samplePath: sample.path,
+            trackCount: group.length,
+            albumCount: countAlbums
+                ? group.map((i) => i.album).toSet().length
+                : 0,
+          );
+        })
+        .toList(growable: false);
+  }
+
+  @override
+  Future<List<MediaCollectionSummary>> getArtistSummaries({
+    MediaKind? kind,
+  }) async {
+    final items = kind != null ? _items.where((i) => i.kind == kind) : _items;
+    return _summarizeGroups(
+      items,
+      (i) => i.artist,
+      subtitleFor: (group) => group
+          .map((i) => i.album)
+          .firstWhere((a) => a.isNotEmpty, orElse: () => ''),
+      countAlbums: true,
+    );
+  }
+
+  @override
+  Future<List<MediaCollectionSummary>> getAlbumSummaries({
+    String? artist,
+  }) async {
+    final audio = _items.where((i) => i.kind == MediaKind.audio);
+    final items = artist != null
+        ? audio.where((i) => i.artist.toLowerCase() == artist.toLowerCase())
+        : audio;
+    return _summarizeGroups(
+      items,
+      (i) => i.album,
+      subtitleFor: (group) {
+        final albumArtist = group.first.metadata.effectiveAlbumArtist.trim();
+        return albumArtist.isNotEmpty ? albumArtist : group.first.artist;
+      },
+    );
+  }
+
   @override
   Future<void> markFolderAvailability(
     String folderPath,

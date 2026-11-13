@@ -27,12 +27,13 @@ state.
 Run from the repo root (`E:\mpvson`).
 
 CI runs `flutter test --exclude-tags=golden,benchmark`. The full layout matrix
-in `screen_audit_test.dart` is tagged `golden` and must be run explicitly:
+in `screen_audit_test.dart` is tagged `golden` (skipped by default on plain
+`flutter test`) and must be run explicitly with `--run-skipped`:
 
-    flutter test --no-pub --tags=golden test/audit/screen_audit_test.dart
+    flutter test --no-pub --run-skipped --tags=golden test/audit/screen_audit_test.dart
 
     flutter analyze --no-pub
-    flutter test --no-pub test/audit/screen_audit_test.dart --plain-name "min720x480"
+    flutter test --no-pub --run-skipped test/audit/screen_audit_test.dart --plain-name "min720x480"
     flutter test --no-pub test/audit/shots_test.dart --dart-define=SHOTS=true --dart-define=SHOT_DIR=mine --dart-define=SHOT_ONLY=dark_1240
 
 Screenshots land in `build/shots/<SHOT_DIR>/`. Open them with an image viewer

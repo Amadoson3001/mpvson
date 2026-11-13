@@ -50,6 +50,7 @@ class _VideosViewState extends State<VideosView> {
   int _browseOffset = 0;
   bool _hasMoreBrowse = false;
   bool _loadingMoreBrowse = false;
+  int _browseEpoch = 0;
   final ScrollController _browseScrollController = ScrollController();
   bool _isLoading = false;
   Object? _error;
@@ -77,6 +78,7 @@ class _VideosViewState extends State<VideosView> {
 
   Future<void> _loadMoreBrowse() async {
     if (!_hasMoreBrowse || _loadingMoreBrowse || _isLoading) return;
+    final epoch = _browseEpoch;
     if (mounted) setState(() => _loadingMoreBrowse = true);
     try {
       final batch = await fetchMediaPage(
@@ -87,17 +89,19 @@ class _VideosViewState extends State<VideosView> {
         sortBy: _sortBy,
         ascending: _ascending,
       );
-      if (!mounted) return;
+      if (!mounted || epoch != _browseEpoch) return;
       setState(() {
         _videos ??= <MediaItemRecord>[];
         _videos!.addAll(batch.items);
         _browseOffset += batch.items.length;
         _hasMoreBrowse = batch.hasMore;
+        _loadingMoreBrowse = false;
       });
     } catch (error) {
       debugPrint('Videos view could not load more: $error');
-    } finally {
-      if (mounted) setState(() => _loadingMoreBrowse = false);
+      if (mounted && epoch == _browseEpoch) {
+        setState(() => _loadingMoreBrowse = false);
+      }
     }
   }
 
@@ -141,6 +145,7 @@ class _VideosViewState extends State<VideosView> {
 
   Future<void> _reload() {
     if (!mounted) return Future<void>.value();
+    _browseEpoch++;
     _reloadAgain = true;
     final active = _reloadFuture;
     if (active != null) return active;
@@ -154,9 +159,15 @@ class _VideosViewState extends State<VideosView> {
   }
 
   Future<void> _drainReloads() async {
-    if (mounted) setState(() => _isLoading = true);
+    if (mounted) {
+      setState(() {
+        _isLoading = true;
+        _loadingMoreBrowse = false;
+      });
+    }
     try {
       do {
+        _browseEpoch++;
         _reloadAgain = false;
         _browseOffset = 0;
         _hasMoreBrowse = false;
@@ -380,6 +391,13 @@ class _VideosViewState extends State<VideosView> {
   // --- Grid View ---
 
   Widget _buildVideoGrid(List<MediaItemRecord> videos) {
+    final recentProgressByPath = <String, double>{
+      for (final entry in widget.controller.recent)
+        if (entry.position > Duration.zero && entry.duration > Duration.zero)
+          entry.path:
+              (entry.position.inMilliseconds / entry.duration.inMilliseconds)
+                  .clamp(0.0, 1.0),
+    };
     return LayoutBuilder(
       builder: (context, constraints) {
         final columns =
@@ -422,6 +440,7 @@ class _VideosViewState extends State<VideosView> {
               video: video,
               isSelected: _selectedVideo == video.id,
               controller: widget.controller,
+              resumeProgress: recentProgressByPath[video.path],
               onSelect: () {
                 if (_selectedVideo != video.id) {
                   setState(() => _selectedVideo = video.id);
@@ -440,189 +459,237 @@ class _VideosViewState extends State<VideosView> {
 
   Widget _buildVideoList(List<MediaItemRecord> videos) {
     final accent = Theme.of(context).colorScheme.primary;
-    final footerIndex = videos.length + 1;
-    return ListView.separated(
+    final textScale = (MediaQuery.textScalerOf(context).scale(14) / 14.0).clamp(
+      1.0,
+      2.2,
+    );
+    final rowExtent = (68.0 * textScale).ceilToDouble();
+    final dividerColor = context.palette.surface;
+    final headerBorder = context.palette.border;
+
+    return CustomScrollView(
       controller: _browseScrollController,
-      addAutomaticKeepAlives: false,
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpace.lg,
-        vertical: AppSpace.md,
-      ),
-      itemCount: footerIndex + (_loadingMoreBrowse ? 1 : 0),
-      separatorBuilder: (_, index) => index == 0
-          ? Divider(height: 16, thickness: 1, color: context.palette.border)
-          : Divider(height: 1, color: context.palette.surface),
-      itemBuilder: (context, index) {
-        if (_loadingMoreBrowse && index == footerIndex) {
-          return Padding(
-            padding: const EdgeInsets.symmetric(vertical: AppSpace.lg),
-            child: Center(
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                valueColor: AlwaysStoppedAnimation<Color>(accent),
-              ),
-            ),
-          );
-        }
-        if (index == 0) {
-          return Padding(
-            padding: const EdgeInsets.symmetric(
-              horizontal: AppSpace.sm,
-              vertical: AppSpace.xs,
-            ),
-            child: Row(
+      slivers: [
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(
+            AppSpace.lg,
+            AppSpace.md,
+            AppSpace.lg,
+            0,
+          ),
+          sliver: SliverToBoxAdapter(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                SizedBox(
-                  width: 48,
-                  child: Text('#', style: context.palette.metadata),
-                ),
-                Expanded(
-                  flex: 5,
-                  child: Text('Title', style: context.palette.metadata),
-                ),
-                Expanded(
-                  flex: 2,
-                  child: Text('Size', style: context.palette.metadata),
-                ),
-                SizedBox(
-                  width: 90,
-                  child: Text(
-                    'Duration',
-                    style: context.palette.metadata,
-                    textAlign: TextAlign.right,
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpace.sm,
+                    vertical: AppSpace.xs,
+                  ),
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: 48,
+                        child: Text('#', style: context.palette.metadata),
+                      ),
+                      Expanded(
+                        flex: 5,
+                        child: Text('Title', style: context.palette.metadata),
+                      ),
+                      Expanded(
+                        flex: 2,
+                        child: Text('Size', style: context.palette.metadata),
+                      ),
+                      SizedBox(
+                        width: 90,
+                        child: Text(
+                          'Duration',
+                          style: context.palette.metadata,
+                          textAlign: TextAlign.right,
+                        ),
+                      ),
+                      const SizedBox(width: 48), // Favorite icon space
+                      const SizedBox(width: 40), // More menu space
+                    ],
                   ),
                 ),
-                const SizedBox(width: 48), // Favorite icon space
-                const SizedBox(width: 40), // More menu space
+                Divider(height: 16, thickness: 1, color: headerBorder),
               ],
             ),
-          );
-        }
+          ),
+        ),
+        SliverPadding(
+          padding: EdgeInsets.fromLTRB(
+            AppSpace.lg,
+            0,
+            AppSpace.lg,
+            _loadingMoreBrowse ? 0 : AppSpace.md,
+          ),
+          sliver: SliverFixedExtentList(
+            itemExtent: rowExtent,
+            delegate: SliverChildBuilderDelegate(
+              (context, videoIndex) {
+                final video = videos[videoIndex];
+                final isUnavailable = !video.isAvailable;
 
-        final videoIndex = index - 1;
-        final video = videos[videoIndex];
-        final isUnavailable = !video.isAvailable;
-
-        return MediaRow(
-          key: ValueKey(video.id),
-          onSelect: () {
-            if (_selectedVideo != video.id) {
-              setState(() => _selectedVideo = video.id);
-            }
-          },
-          onPlay: isUnavailable ? null : () => _playVideo(video),
-          builder: (context, rowFocus) => InkWell(
-            canRequestFocus: false,
-            onTap: () {
-              rowFocus.requestFocus();
-              setState(() => _selectedVideo = video.id);
-            },
-            onDoubleTap: isUnavailable ? null : () => _playVideo(video),
-            borderRadius: BorderRadius.circular(AppRadii.control),
-            hoverColor: context.palette.hover,
-            child: Container(
-              color: _selectedVideo == video.id
-                  ? context.palette.hover
-                  : Colors.transparent,
-              padding: const EdgeInsets.symmetric(
-                horizontal: AppSpace.sm,
-                vertical: 10,
-              ),
-              child: Row(
-                children: [
-                  SizedBox(
-                    width: 48,
-                    child: Text(
-                      '${videoIndex + 1}',
-                      style: context.palette.metadata,
-                    ),
-                  ),
-                  Expanded(
-                    flex: 5,
-                    child: Row(
-                      children: [
-                        Flexible(
-                          child: Text(
-                            video.title,
-                            style: context.palette.rowPrimary.copyWith(
-                              color: isUnavailable
-                                  ? context.palette.mutedText
-                                  : context.palette.primaryText,
+                return Column(
+                  children: [
+                    Expanded(
+                      child: MediaRow(
+                        key: ValueKey(video.id),
+                        onSelect: () {
+                          if (_selectedVideo != video.id) {
+                            setState(() => _selectedVideo = video.id);
+                          }
+                        },
+                        onPlay: isUnavailable ? null : () => _playVideo(video),
+                        builder: (context, rowFocus) => InkWell(
+                          canRequestFocus: false,
+                          onTap: () {
+                            rowFocus.requestFocus();
+                            setState(() => _selectedVideo = video.id);
+                          },
+                          onDoubleTap: isUnavailable
+                              ? null
+                              : () => _playVideo(video),
+                          borderRadius: BorderRadius.circular(AppRadii.control),
+                          hoverColor: context.palette.hover,
+                          child: Container(
+                            color: _selectedVideo == video.id
+                                ? context.palette.hover
+                                : Colors.transparent,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: AppSpace.sm,
+                              vertical: 10,
                             ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                            child: Row(
+                              children: [
+                                SizedBox(
+                                  width: 48,
+                                  child: Text(
+                                    '${videoIndex + 1}',
+                                    style: context.palette.metadata,
+                                  ),
+                                ),
+                                Expanded(
+                                  flex: 5,
+                                  child: Row(
+                                    children: [
+                                      Flexible(
+                                        child: Text(
+                                          video.title,
+                                          style: context.palette.rowPrimary
+                                              .copyWith(
+                                                color: isUnavailable
+                                                    ? context.palette.mutedText
+                                                    : context
+                                                          .palette
+                                                          .primaryText,
+                                              ),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                      if (isUnavailable) ...[
+                                        const SizedBox(width: 8),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 5,
+                                            vertical: 1,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: context.palette.danger
+                                                .withValues(alpha: 0.2),
+                                            borderRadius: BorderRadius.circular(
+                                              AppRadii.control,
+                                            ),
+                                          ),
+                                          child: Text(
+                                            'Missing',
+                                            style: context.palette.badge
+                                                .copyWith(
+                                                  fontSize: AppType.caption,
+                                                  color: context.palette.danger,
+                                                ),
+                                          ),
+                                        ),
+                                      ],
+                                    ],
+                                  ),
+                                ),
+                                Expanded(
+                                  flex: 2,
+                                  child: Text(
+                                    formatFileSize(video.fileSize),
+                                    style: context.palette.rowSecondary,
+                                  ),
+                                ),
+                                SizedBox(
+                                  width: 90,
+                                  child: Text(
+                                    formatDuration(video.metadata.duration),
+                                    style: context.palette.metadata,
+                                    textAlign: TextAlign.right,
+                                  ),
+                                ),
+                                SizedBox(
+                                  width: 48,
+                                  child: IconButton(
+                                    icon: Icon(
+                                      video.isFavorite
+                                          ? Icons.favorite_rounded
+                                          : Icons.favorite_border_rounded,
+                                      size: 18,
+                                      color: video.isFavorite
+                                          ? accent
+                                          : context.palette.mutedText,
+                                    ),
+                                    tooltip: video.isFavorite
+                                        ? 'Remove favorite'
+                                        : 'Add to favorites',
+                                    onPressed: () =>
+                                        widget.repository.toggleFavorite(
+                                          video.id,
+                                          !video.isFavorite,
+                                        ),
+                                  ),
+                                ),
+                                SizedBox(
+                                  width: 40,
+                                  child: _buildVideoItemActionMenu(video),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
-                        if (isUnavailable) ...[
-                          const SizedBox(width: 8),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 5,
-                              vertical: 1,
-                            ),
-                            decoration: BoxDecoration(
-                              color: context.palette.danger.withValues(
-                                alpha: 0.2,
-                              ),
-                              borderRadius: BorderRadius.circular(
-                                AppRadii.control,
-                              ),
-                            ),
-                            child: Text(
-                              'Missing',
-                              style: context.palette.badge.copyWith(
-                                fontSize: AppType.caption,
-                                color: context.palette.danger,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                  Expanded(
-                    flex: 2,
-                    child: Text(
-                      formatFileSize(video.fileSize),
-                      style: context.palette.rowSecondary,
-                    ),
-                  ),
-                  SizedBox(
-                    width: 90,
-                    child: Text(
-                      formatDuration(video.metadata.duration),
-                      style: context.palette.metadata,
-                      textAlign: TextAlign.right,
-                    ),
-                  ),
-                  SizedBox(
-                    width: 48,
-                    child: IconButton(
-                      icon: Icon(
-                        video.isFavorite
-                            ? Icons.favorite_rounded
-                            : Icons.favorite_border_rounded,
-                        size: 18,
-                        color: video.isFavorite
-                            ? accent
-                            : context.palette.mutedText,
-                      ),
-                      tooltip: video.isFavorite
-                          ? 'Remove favorite'
-                          : 'Add to favorites',
-                      onPressed: () => widget.repository.toggleFavorite(
-                        video.id,
-                        !video.isFavorite,
                       ),
                     ),
-                  ),
-                  SizedBox(width: 40, child: _buildVideoItemActionMenu(video)),
-                ],
+                    Divider(height: 1, thickness: 1, color: dividerColor),
+                  ],
+                );
+              },
+              childCount: videos.length,
+              addAutomaticKeepAlives: false,
+              addRepaintBoundaries: true,
+            ),
+          ),
+        ),
+        if (_loadingMoreBrowse)
+          SliverPadding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpace.lg,
+              vertical: AppSpace.lg,
+            ),
+            sliver: SliverToBoxAdapter(
+              child: Center(
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(accent),
+                ),
               ),
             ),
           ),
-        );
-      },
+      ],
     );
   }
 
@@ -740,12 +807,23 @@ class _VideoPreview extends StatefulWidget {
 
 class _VideoPreviewState extends State<_VideoPreview> {
   late Future<MediaThumbnail?> _thumbnail;
+  MediaThumbnail? _provisional;
   ThumbnailRequestHandle? _request;
+
+  MediaEntry get _entry =>
+      MediaEntry.fromPath(widget.video.path, id: widget.video.id);
+
+  void _syncPreview() {
+    _provisional = widget.video.isAvailable
+        ? widget.controller.peekThumbnail(_entry)
+        : null;
+    _thumbnail = _load();
+  }
 
   @override
   void initState() {
     super.initState();
-    _thumbnail = _load();
+    _syncPreview();
   }
 
   @override
@@ -757,7 +835,7 @@ class _VideoPreviewState extends State<_VideoPreview> {
         oldWidget.controller != widget.controller) {
       _request?.release();
       _request = null;
-      _thumbnail = _load();
+      _syncPreview();
     }
   }
 
@@ -770,9 +848,7 @@ class _VideoPreviewState extends State<_VideoPreview> {
   Future<MediaThumbnail?> _load() async {
     if (!widget.video.isAvailable) return null;
     try {
-      _request = widget.controller.requestThumbnail(
-        MediaEntry.fromPath(widget.video.path, id: widget.video.id),
-      );
+      _request = widget.controller.requestThumbnail(_entry);
       return await _request?.thumbnail;
     } catch (_) {
       return null;
@@ -794,14 +870,14 @@ class _VideoPreviewState extends State<_VideoPreview> {
     return FutureBuilder<MediaThumbnail?>(
       future: _thumbnail,
       builder: (context, snapshot) {
-        final bytes = snapshot.data?.bytes;
+        final bytes = snapshot.data?.bytes ?? _provisional?.bytes;
         return bytes == null
             ? fallback()
             : Image.memory(
                 bytes,
                 fit: BoxFit.cover,
                 filterQuality: FilterQuality.low,
-                cacheWidth: 512,
+                cacheWidth: 480,
                 gaplessPlayback: true,
                 errorBuilder: (_, _, _) => fallback(),
               );
@@ -819,6 +895,7 @@ class _VideoGridCard extends StatefulWidget {
     required this.onSelect,
     required this.onPlay,
     required this.actionMenu,
+    this.resumeProgress,
   });
 
   final MediaItemRecord video;
@@ -827,31 +904,36 @@ class _VideoGridCard extends StatefulWidget {
   final VoidCallback onSelect;
   final VoidCallback? onPlay;
   final Widget actionMenu;
+  final double? resumeProgress;
 
   @override
   State<_VideoGridCard> createState() => _VideoGridCardState();
 }
 
 class _VideoGridCardState extends State<_VideoGridCard> {
-  bool _isHovered = false;
+  final ValueNotifier<bool> _hovered = ValueNotifier<bool>(false);
+
+  @override
+  void dispose() {
+    _hovered.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final video = widget.video;
     final isUnavailable = !video.isAvailable;
     final accent = Theme.of(context).colorScheme.primary;
+    final progress = widget.resumeProgress;
 
     return MouseRegion(
-      onEnter: (_) => setState(() => _isHovered = true),
-      onExit: (_) => setState(() => _isHovered = false),
+      onEnter: (_) => _hovered.value = true,
+      onExit: (_) => _hovered.value = false,
       child: MediaRow(
         key: ValueKey(video.id),
         onSelect: widget.onSelect,
         onPlay: widget.onPlay,
         builder: (context, rowFocus) {
-          final showPlayOverlay =
-              !isUnavailable &&
-              (_isHovered || widget.isSelected || rowFocus.hasFocus);
           final semanticsLabel = [
             video.title,
             formatFileSize(video.fileSize),
@@ -859,6 +941,72 @@ class _VideoGridCardState extends State<_VideoGridCard> {
               formatDuration(video.metadata.duration),
             if (isUnavailable) 'File missing',
           ].join(', ');
+          final staticStage = Stack(
+            fit: StackFit.expand,
+            children: [
+              _VideoPreview(video: video, controller: widget.controller),
+              if (progress != null)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: LinearProgressIndicator(
+                    minHeight: 2,
+                    value: progress,
+                    color: accent,
+                    backgroundColor: Colors.transparent,
+                  ),
+                ),
+              // Duration badge
+              if (video.metadata.duration > Duration.zero)
+                Positioned(
+                  right: 8,
+                  bottom: 8,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.75),
+                      borderRadius: BorderRadius.circular(AppRadii.control),
+                    ),
+                    child: Text(
+                      formatDuration(video.metadata.duration),
+                      style: context.palette.badge.copyWith(
+                        fontSize: AppType.caption,
+                      ),
+                    ),
+                  ),
+                ),
+              // Missing file indicator badge
+              if (isUnavailable)
+                Positioned(
+                  left: 8,
+                  top: 8,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: context.palette.danger.withValues(alpha: 0.85),
+                      borderRadius: BorderRadius.circular(AppRadii.control),
+                    ),
+                    child: Text(
+                      'File missing',
+                      style: context.palette.badge.copyWith(
+                        fontSize: AppType.caption,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          );
+          final lowPower = AppMotion.lowPower(context);
+          final hoverDuration = AppMotion.duration(context, AppMotion.hover);
+
           return Semantics(
             button: true,
             container: true,
@@ -884,144 +1032,64 @@ class _VideoGridCardState extends State<_VideoGridCard> {
                   children: [
                     // Video Thumbnail Stage
                     RepaintBoundary(
-                      child: AnimatedScale(
-                        scale: (AppMotion.lowPower(context) || !showPlayOverlay)
-                            ? 1.0
-                            : 1.02,
-                        duration: AppMotion.duration(context, AppMotion.hover),
-                        curve: AppMotion.enter,
-                        child: Container(
-                          foregroundDecoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(
-                              AppRadii.artwork,
-                            ),
-                            border: Border.all(
-                              color: context.palette.borderStrong.withValues(
-                                alpha: 0.65,
+                      child: ValueListenableBuilder<bool>(
+                        valueListenable: _hovered,
+                        child: staticStage,
+                        builder: (context, isHovered, stageChild) {
+                          final showPlayOverlay =
+                              !isUnavailable &&
+                              (isHovered ||
+                                  widget.isSelected ||
+                                  rowFocus.hasFocus);
+                          return AnimatedScale(
+                            scale: (lowPower || !showPlayOverlay) ? 1.0 : 1.02,
+                            duration: hoverDuration,
+                            curve: AppMotion.enter,
+                            child: Container(
+                              foregroundDecoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(
+                                  AppRadii.artwork,
+                                ),
+                                border: Border.all(
+                                  color: context.palette.borderStrong
+                                      .withValues(alpha: 0.65),
+                                ),
                               ),
-                            ),
-                          ),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(
-                              AppRadii.artwork,
-                            ),
-                            child: AspectRatio(
-                              aspectRatio: 16 / 9,
-                              child: Stack(
-                                fit: StackFit.expand,
-                                children: [
-                                  _VideoPreview(
-                                    video: video,
-                                    controller: widget.controller,
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(
+                                  AppRadii.artwork,
+                                ),
+                                child: AspectRatio(
+                                  aspectRatio: 16 / 9,
+                                  child: Stack(
+                                    fit: StackFit.expand,
+                                    children: [
+                                      ?stageChild,
+                                      // Subtle play button overlay on hover or focus
+                                      if (showPlayOverlay)
+                                        Center(
+                                          child: IconButton.filled(
+                                            onPressed: widget.onPlay,
+                                            tooltip: 'Play video',
+                                            style: IconButton.styleFrom(
+                                              backgroundColor: Colors.black
+                                                  .withValues(alpha: 0.65),
+                                              foregroundColor: accent,
+                                              minimumSize: const Size(40, 40),
+                                            ),
+                                            icon: const Icon(
+                                              Icons.play_arrow_rounded,
+                                              size: 22,
+                                            ),
+                                          ),
+                                        ),
+                                    ],
                                   ),
-                                  if (widget.controller.recent.any(
-                                    (entry) =>
-                                        entry.path == video.path &&
-                                        entry.position > Duration.zero &&
-                                        entry.duration > Duration.zero,
-                                  ))
-                                    Positioned(
-                                      left: 0,
-                                      right: 0,
-                                      bottom: 0,
-                                      child: Builder(
-                                        builder: (context) {
-                                          final entry = widget.controller.recent
-                                              .firstWhere(
-                                                (entry) =>
-                                                    entry.path == video.path,
-                                              );
-                                          return LinearProgressIndicator(
-                                            minHeight: 2,
-                                            value:
-                                                (entry.position.inMilliseconds /
-                                                        entry
-                                                            .duration
-                                                            .inMilliseconds)
-                                                    .clamp(0.0, 1.0),
-                                            color: accent,
-                                            backgroundColor: Colors.transparent,
-                                          );
-                                        },
-                                      ),
-                                    ),
-                                  // Duration badge
-                                  if (video.metadata.duration > Duration.zero)
-                                    Positioned(
-                                      right: 8,
-                                      bottom: 8,
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 6,
-                                          vertical: 2,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: Colors.black.withValues(
-                                            alpha: 0.75,
-                                          ),
-                                          borderRadius: BorderRadius.circular(
-                                            AppRadii.control,
-                                          ),
-                                        ),
-                                        child: Text(
-                                          formatDuration(
-                                            video.metadata.duration,
-                                          ),
-                                          style: context.palette.badge.copyWith(
-                                            fontSize: AppType.caption,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  // Missing file indicator badge
-                                  if (isUnavailable)
-                                    Positioned(
-                                      left: 8,
-                                      top: 8,
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 6,
-                                          vertical: 2,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: context.palette.danger
-                                              .withValues(alpha: 0.85),
-                                          borderRadius: BorderRadius.circular(
-                                            AppRadii.control,
-                                          ),
-                                        ),
-                                        child: Text(
-                                          'File missing',
-                                          style: context.palette.badge.copyWith(
-                                            fontSize: AppType.caption,
-                                            color: Colors.white,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  // Subtle play button overlay on hover or focus
-                                  if (showPlayOverlay)
-                                    Center(
-                                      child: IconButton.filled(
-                                        onPressed: widget.onPlay,
-                                        tooltip: 'Play video',
-                                        style: IconButton.styleFrom(
-                                          backgroundColor: Colors.black
-                                              .withValues(alpha: 0.65),
-                                          foregroundColor: accent,
-                                          minimumSize: const Size(40, 40),
-                                        ),
-                                        icon: const Icon(
-                                          Icons.play_arrow_rounded,
-                                          size: 22,
-                                        ),
-                                      ),
-                                    ),
-                                ],
+                                ),
                               ),
                             ),
-                          ),
-                        ),
+                          );
+                        },
                       ),
                     ),
                     // Card Bottom Details

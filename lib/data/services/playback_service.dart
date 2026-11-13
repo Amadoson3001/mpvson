@@ -1152,7 +1152,50 @@ class MediaKitPlaybackService
     };
     final applied = <String>[];
     final failed = <String>[];
+    final dirtyEntries = <MapEntry<String, String>>[];
     for (final entry in properties.entries) {
+      if (_confirmedPlaybackProperties[entry.key] == entry.value) {
+        applied.add(entry.key);
+      } else {
+        dirtyEntries.add(entry);
+      }
+    }
+    if (dirtyEntries.isNotEmpty) {
+      final results = await Future.wait([
+        for (final entry in dirtyEntries)
+          () async {
+            if (_disposed) return false;
+            try {
+              // Wait for VideoController initialization before sending runtime mpv
+              // writes. media_kit returns void from setProperty, so read the value
+              // back and only report properties that match the requested value.
+              await nativePlayer
+                  .setProperty(
+                    entry.key,
+                    entry.value,
+                    waitForInitialization: false,
+                  )
+                  .timeout(const Duration(seconds: 2));
+              if (_disposed) return false;
+              final actual = await nativePlayer
+                  .getProperty(entry.key, waitForInitialization: false)
+                  .timeout(const Duration(seconds: 2));
+              return _propertyMatches(actual, entry.value);
+            } on Object {
+              return false;
+            }
+          }(),
+      ]);
+      for (var i = 0; i < dirtyEntries.length; i++) {
+        final entry = dirtyEntries[i];
+        if (results[i]) {
+          applied.add(entry.key);
+          _confirmedPlaybackProperties[entry.key] = entry.value;
+        } else {
+          failed.add(entry.key);
+          _confirmedPlaybackProperties.remove(entry.key);
+        }
+      }
       if (_disposed) {
         return PlaybackSettingsApplyResult(
           supported: false,
@@ -1160,31 +1203,6 @@ class MediaKitPlaybackService
           failedProperties: List<String>.unmodifiable(failed),
           reason: 'The playback engine is closing.',
         );
-      }
-      if (_confirmedPlaybackProperties[entry.key] == entry.value) {
-        applied.add(entry.key);
-        continue;
-      }
-      try {
-        // Wait for VideoController initialization before sending runtime mpv
-        // writes. media_kit returns void from setProperty, so read the value
-        // back and only report properties that match the requested value.
-        await nativePlayer
-            .setProperty(entry.key, entry.value, waitForInitialization: false)
-            .timeout(const Duration(seconds: 2));
-        final actual = await nativePlayer
-            .getProperty(entry.key, waitForInitialization: false)
-            .timeout(const Duration(seconds: 2));
-        if (_propertyMatches(actual, entry.value)) {
-          applied.add(entry.key);
-          _confirmedPlaybackProperties[entry.key] = entry.value;
-        } else {
-          failed.add(entry.key);
-          _confirmedPlaybackProperties.remove(entry.key);
-        }
-      } on Object {
-        failed.add(entry.key);
-        _confirmedPlaybackProperties.remove(entry.key);
       }
     }
     return PlaybackSettingsApplyResult(

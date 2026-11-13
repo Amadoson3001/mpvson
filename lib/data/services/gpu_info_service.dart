@@ -6,7 +6,10 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../../domain/models/gpu_adapter.dart';
+import '../../domain/models/hardware_profile.dart';
 import 'diagnostic_log.dart';
+import '../../ui/core/tokens/motion_stub.dart'
+    if (dart.library.io) '../../ui/core/tokens/motion_io.dart';
 
 /// Read-only GPU diagnostics and the Windows per-app GPU preference.
 class GpuInfoService {
@@ -57,6 +60,44 @@ class GpuInfoService {
   Future<bool> clearPreference() async {
     final result = await _invoke<bool>('clearPreference');
     return result ?? false;
+  }
+
+  /// Writes the full diagnostic snapshot beside `diagnostics.log` and returns
+  /// the resolved [HardwareProfile] from the same probe pass.
+  Future<HardwareProfile> resolveHardwareProfileAndRecord(
+    DiagnosticSink sink, {
+    Directory? directory,
+    int? cpuCount,
+  }) async {
+    final gpuSnapshot = await snapshot();
+    final defaultAdapter = await resolveDefault();
+    final preference = await readPreference();
+    final profile = HardwareProfile.detect(
+      cpuCount: cpuCount ?? detectProcessorCount(),
+      gpuSnapshot: gpuSnapshot,
+      defaultAdapter: defaultAdapter,
+    );
+    final payload = <String, Object?>{
+      'capturedAt': DateTime.now().toUtc().toIso8601String(),
+      'defaultAdapter': defaultAdapter?.toJson(),
+      'preference': preference,
+      'snapshot': gpuSnapshot?.toJson(),
+      'hardwareTier': profile.tier.name,
+    };
+
+    try {
+      final target = directory ?? await _defaultDirectory();
+      await target.create(recursive: true);
+      final file = File(p.join(target.path, 'gpu_snapshot.json'));
+      await file.writeAsString(
+        const JsonEncoder.withIndent('  ').convert(payload),
+        flush: true,
+      );
+      sink.record('gpu.snapshot', message: 'Wrote ${file.path}');
+    } on Object {
+      sink.record('gpu.snapshot', message: 'GPU diagnostics were unavailable.');
+    }
+    return profile;
   }
 
   /// Writes the full diagnostic snapshot beside `diagnostics.log`.
