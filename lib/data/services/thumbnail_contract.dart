@@ -4,15 +4,6 @@ import 'dart:typed_data';
 import '../../domain/models/media_entry.dart';
 import '../../domain/models/media_thumbnail.dart';
 
-/// A thumbnail image and the duration discovered while opening its source.
-class ThumbnailExtraction {
-  ThumbnailExtraction({required Uint8List bytes, this.duration = Duration.zero})
-    : bytes = Uint8List.fromList(bytes).asUnmodifiableView();
-
-  final Uint8List bytes;
-  final Duration duration;
-}
-
 /// Cancellation token passed to extraction operations to support early termination
 /// and decoder interruption.
 class ThumbnailCancellation {
@@ -122,7 +113,7 @@ class ThumbnailDiagnosticRecord {
 /// [outputDirectory], must not modify [source], and should return `null` when
 /// the source has no usable video frame.
 abstract interface class ThumbnailExtractor {
-  Future<ThumbnailExtraction?> extract(
+  Future<MediaThumbnail?> extract(
     String source, {
     required Directory outputDirectory,
     ThumbnailCancellation? cancellation,

@@ -424,7 +424,7 @@ class MediaKitThumbnailService implements ThumbnailService {
       'mpvson-thumbnail-',
     );
     try {
-      final extraction = await _runExtractionSerialized<ThumbnailExtraction?>(
+      final extraction = await _runExtractionSerialized<MediaThumbnail?>(
         () => _extractor.extract(
           snapshot.source,
           outputDirectory: outputDirectory,
@@ -450,9 +450,7 @@ class MediaKitThumbnailService implements ThumbnailService {
         cancellation,
         priority: priority,
         sequence: sequence,
-        validator: _imageValidator != thumbnailImageIsDecodable
-            ? _imageValidator
-            : null,
+        validator: _customValidator,
       );
       if (normalizedBytes == null || normalizedBytes.isEmpty) {
         _recordDiagnostic(
@@ -578,9 +576,7 @@ class MediaKitThumbnailService implements ThumbnailService {
           cancellation,
           priority: priority,
           sequence: sequence,
-          validator: _imageValidator != thumbnailImageIsDecodable
-              ? _imageValidator
-              : null,
+          validator: _customValidator,
         );
         if (normalized != null && normalized.isNotEmpty) {
           return normalized;
@@ -730,6 +726,13 @@ class MediaKitThumbnailService implements ThumbnailService {
     }
     _normalizerQueue.insert(insertIndex, task);
   }
+
+  /// The caller-supplied validator, or null when it is the built-in default.
+  ///
+  /// [_normalizeArtwork] only consults a validator on the decode-failure path,
+  /// so skipping the default there avoids a second doomed decode attempt.
+  ThumbnailImageValidator? get _customValidator =>
+      _imageValidator == thumbnailImageIsDecodable ? null : _imageValidator;
 
   Future<Uint8List?> _runNormalized(
     Uint8List bytes,
@@ -921,9 +924,7 @@ class MediaKitThumbnailService implements ThumbnailService {
         cancellation,
         priority: priority,
         sequence: sequence,
-        validator: _imageValidator != thumbnailImageIsDecodable
-            ? _imageValidator
-            : null,
+        validator: _customValidator,
       );
       if (cancellation.isCancelled) return null;
       if (normalized == null || normalized.isEmpty) {

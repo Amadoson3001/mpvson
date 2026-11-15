@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 import '../../domain/models/media_catalog.dart';
 import '../../domain/models/media_kind.dart';
 import '../../domain/models/media_source.dart';
+import '../../domain/models/media_thumbnail.dart';
 import 'diagnostic_log.dart';
 import 'media_probe_service_impl.dart' show PureDartMediaParser;
 import 'thumbnail_contract.dart';
@@ -182,14 +183,14 @@ class MediaKitThumbnailExtractor implements ThumbnailExtractor {
   }
 
   @override
-  Future<ThumbnailExtraction?> extract(
+  Future<MediaThumbnail?> extract(
     String source, {
     required Directory outputDirectory,
     ThumbnailCancellation? cancellation,
   }) async {
     final audioArtwork = await _extractAudioArtwork(source, cancellation);
     if (audioArtwork.handled) return audioArtwork.extraction;
-    return _runSerialized<ThumbnailExtraction?>(
+    return _runSerialized<MediaThumbnail?>(
       cancellation: cancellation,
       defaultValue: null,
       action: (player) async {
@@ -336,7 +337,7 @@ class MediaKitThumbnailExtractor implements ThumbnailExtractor {
           return null;
         }
 
-        return ThumbnailExtraction(bytes: bytes, duration: duration);
+        return MediaThumbnail(bytes: bytes, duration: duration);
       },
     );
   }
@@ -347,8 +348,7 @@ class MediaKitThumbnailExtractor implements ThumbnailExtractor {
   /// thumbnail, and creating a decoder for every song delayed music artwork
   /// substantially. Containers understood by the pure parser are resolved
   /// here; anything else still falls back to the native path.
-  Future<({bool handled, ThumbnailExtraction? extraction})>
-  _extractAudioArtwork(
+  Future<({bool handled, MediaThumbnail? extraction})> _extractAudioArtwork(
     String source,
     ThumbnailCancellation? cancellation,
   ) async {
@@ -369,7 +369,7 @@ class MediaKitThumbnailExtractor implements ThumbnailExtractor {
     }
     return (
       handled: true,
-      extraction: ThumbnailExtraction(bytes: artwork, duration: info.duration),
+      extraction: MediaThumbnail(bytes: artwork, duration: info.duration),
     );
   }
 
