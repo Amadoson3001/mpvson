@@ -20,6 +20,7 @@ import '../../domain/updates/update_url.dart';
 import '../../domain/updates/semantic_version.dart' as app_version;
 import 'download_manager.dart';
 import 'http_response_length.dart';
+import 'redirecting_get.dart';
 
 enum EngineUpdatePlatform {
   windows,
@@ -884,98 +885,100 @@ class EngineUpdateService extends ChangeNotifier {
   }) async {
     var uri = initialUri;
     _requireHttps(uri, 'Request URL');
-    for (var redirects = 0; redirects <= _maxRedirects; redirects++) {
-      if (_disposed || abort.isCompleted) throw const _EngineCancelled();
-      final request = http.AbortableRequest(
-        'GET',
-        uri,
-        abortTrigger: abort.future,
-      )..followRedirects = false;
-      request.headers.addAll(headers);
-      final send = _client.send(request);
-      send.then<void>((lateResponse) {
-        if (_disposed || abort.isCompleted) _cancelResponse(lateResponse);
-      }, onError: (Object _) {});
-      var timedOut = false;
-      final http.StreamedResponse response;
-      try {
-        response =
-            await Future.any<http.StreamedResponse>([
-              send,
-              abort.future.then<http.StreamedResponse>(
-                (_) => throw const _EngineCancelled(),
-              ),
-            ]).timeout(
-              _requestTimeout,
-              onTimeout: () {
-                timedOut = true;
-                if (!abort.isCompleted) abort.complete();
-                throw const _EngineUpdateException('Engine request timed out.');
-              },
+    return sendGetFollowingRedirects(
+      uri: uri,
+      maxRedirects: _maxRedirects,
+      refuse: (refusal) => switch (refusal) {
+        RedirectRefusal.missingLocation => const _EngineUpdateException(
+          'Engine server returned an invalid redirect.',
+        ),
+        RedirectRefusal.tooManyRedirects => const _EngineUpdateException(
+          'Engine server redirected too many times.',
+        ),
+        RedirectRefusal.insecureTarget => const _EngineUpdateException(
+          'Redirect URL must be HTTPS without credentials or fragments.',
+        ),
+      },
+      send: (destination) async {
+        if (_disposed || abort.isCompleted) throw const _EngineCancelled();
+        final request = http.AbortableRequest(
+          'GET',
+          destination,
+          abortTrigger: abort.future,
+        )..followRedirects = false;
+        request.headers.addAll(headers);
+        final send = _client.send(request);
+        send.then<void>((lateResponse) {
+          if (_disposed || abort.isCompleted) _cancelResponse(lateResponse);
+        }, onError: (Object _) {});
+        var timedOut = false;
+        final http.StreamedResponse response;
+        try {
+          response =
+              await Future.any<http.StreamedResponse>([
+                send,
+                abort.future.then<http.StreamedResponse>(
+                  (_) => throw const _EngineCancelled(),
+                ),
+              ]).timeout(
+                _requestTimeout,
+                onTimeout: () {
+                  timedOut = true;
+                  if (!abort.isCompleted) abort.complete();
+                  throw const _EngineUpdateException(
+                    'Engine request timed out.',
+                  );
+                },
+              );
+        } on Object {
+          if (timedOut) {
+            throw const _EngineUpdateException('Engine request timed out.');
+          }
+          if (_disposed) throw const _EngineCancelled();
+          rethrow;
+        }
+        // A 3xx is handed back for the shared walker to follow; everything
+        // else is validated here, where the rate-limit and size policy lives.
+        if (response.statusCode >= 300 && response.statusCode < 400) {
+          return response;
+        }
+        if (response.statusCode != HttpStatus.ok) {
+          final isRateLimited =
+              _usesOfficialMpvSource &&
+              (destination == MpvGithubRelease.apiUri ||
+                  destination == MpvGithubRelease.latestStableApiUri) &&
+              (response.statusCode == HttpStatus.forbidden ||
+                  response.statusCode == 429) &&
+              (response.headers['x-ratelimit-remaining'] == '0' ||
+                  response.statusCode == 429);
+          await _cancelResponse(response);
+          if (isRateLimited) {
+            throw const _EngineUpdateException(
+              'GitHub API rate limit reached. Try again later.',
             );
-      } on Object {
-        if (timedOut) {
-          throw const _EngineUpdateException('Engine request timed out.');
-        }
-        if (_disposed) throw const _EngineCancelled();
-        rethrow;
-      }
-
-      if (response.statusCode >= 300 && response.statusCode < 400) {
-        final location = response.headers['location'];
-        await _cancelResponse(response);
-        if (location == null || location.trim().isEmpty) {
-          throw const _EngineUpdateException(
-            'Engine server returned an invalid redirect.',
+          }
+          throw _EngineUpdateException(
+            'Engine request failed with HTTP ${response.statusCode}.',
           );
         }
-        uri = uri.resolve(location);
-        _requireHttps(uri, 'Redirect URL');
-        if (redirects == _maxRedirects) {
+        final contentLength = responseBodyLength(response);
+        if (contentLength != null && contentLength > maxBytes) {
+          await _cancelResponse(response);
           throw const _EngineUpdateException(
-            'Engine server redirected too many times.',
+            'Engine response exceeds the size limit.',
           );
         }
-        continue;
-      }
-      if (response.statusCode != HttpStatus.ok) {
-        final isRateLimited =
-            _usesOfficialMpvSource &&
-            (uri == MpvGithubRelease.apiUri ||
-                uri == MpvGithubRelease.latestStableApiUri) &&
-            (response.statusCode == HttpStatus.forbidden ||
-                response.statusCode == 429) &&
-            (response.headers['x-ratelimit-remaining'] == '0' ||
-                response.statusCode == 429);
-        await _cancelResponse(response);
-        if (isRateLimited) {
+        if (expectedBytes != null &&
+            contentLength != null &&
+            contentLength != expectedBytes) {
+          await _cancelResponse(response);
           throw const _EngineUpdateException(
-            'GitHub API rate limit reached. Try again later.',
+            'Engine package size does not match its declared size.',
           );
         }
-        throw _EngineUpdateException(
-          'Engine request failed with HTTP ${response.statusCode}.',
-        );
-      }
-      final contentLength = responseBodyLength(response);
-      if (contentLength != null && contentLength > maxBytes) {
-        await _cancelResponse(response);
-        throw const _EngineUpdateException(
-          'Engine response exceeds the size limit.',
-        );
-      }
-      if (expectedBytes != null &&
-          contentLength != null &&
-          contentLength != expectedBytes) {
-        await _cancelResponse(response);
-        throw const _EngineUpdateException(
-          'Engine package size does not match its declared size.',
-        );
-      }
-      return response;
-    }
-    throw const _EngineUpdateException(
-      'Engine server redirected too many times.',
+        return response;
+      },
+      cancelBody: _cancelResponse,
     );
   }
 

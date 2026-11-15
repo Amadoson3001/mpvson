@@ -16,6 +16,7 @@ import '../../domain/updates/update_url.dart';
 import '../../utils/file_utils.dart';
 import 'download_manager.dart';
 import 'http_response_length.dart';
+import 'redirecting_get.dart';
 
 /// Checks for complete desktop application bundles and verifies them before
 /// exposing the downloaded archive to the user.
@@ -379,71 +380,63 @@ class UpdateService extends ChangeNotifier {
     Uri uri,
     Completer<void> abortCompleter,
   ) async {
-    var destination = uri;
-    for (
-      var redirectCount = 0;
-      redirectCount <= _maxRedirects;
-      redirectCount++
-    ) {
-      if (_disposed) throw const _DisposedException();
-      _requireHttps(destination, 'Request URL');
-      final request =
-          http.AbortableRequest(
-              'GET',
-              destination,
-              abortTrigger: abortCompleter.future,
-            )
-            ..followRedirects = false
-            ..maxRedirects = 0
-            ..headers['Accept'] = 'application/json, application/octet-stream';
-      final pendingResponse = _client.send(request).then((response) {
-        if (_disposed || abortCompleter.isCompleted) {
-          unawaited(_cancelBody(response));
-          throw const _DisposedException();
-        }
-        return response;
-      });
-      http.StreamedResponse response;
-      try {
-        response = await Future.any<http.StreamedResponse>([
-          pendingResponse,
-          abortCompleter.future.then<http.StreamedResponse>(
-            (_) => throw const _DisposedException(),
-          ),
-        ]).timeout(_requestTimeout);
-      } on TimeoutException {
-        if (!abortCompleter.isCompleted) {
-          abortCompleter.complete();
-        }
-        throw const _UpdateException('Update request timed out.');
-      } catch (error) {
-        if (!abortCompleter.isCompleted) {
-          abortCompleter.complete();
-        }
-        rethrow;
-      }
-
-      if (response.statusCode < 300 || response.statusCode >= 400) {
-        return response;
-      }
-
-      await _cancelBody(response);
-      if (redirectCount == _maxRedirects) {
-        throw const _UpdateException(
-          'Update request exceeded the redirect limit.',
-        );
-      }
-      final location = response.headers['location'];
-      if (location == null || location.trim().isEmpty) {
-        throw const _UpdateException(
+    return sendGetFollowingRedirects(
+      uri: uri,
+      maxRedirects: _maxRedirects,
+      refuse: (refusal) => switch (refusal) {
+        RedirectRefusal.missingLocation => const _UpdateException(
           'Update server returned an invalid redirect.',
-        );
-      }
-      final redirected = destination.resolve(location);
-      _requireHttps(redirected, 'Redirect URL');
-      destination = redirected;
-    }
-    throw const _UpdateException('Update request exceeded the redirect limit.');
+        ),
+        RedirectRefusal.tooManyRedirects => const _UpdateException(
+          'Update request exceeded the redirect limit.',
+        ),
+        RedirectRefusal.insecureTarget => const _UpdateException(
+          'Redirect URL must use HTTPS and contain no credentials.',
+        ),
+      },
+      send: (destination) async {
+        if (_disposed) throw const _DisposedException();
+        _requireHttps(destination, 'Request URL');
+        final request =
+            http.AbortableRequest(
+                'GET',
+                destination,
+                abortTrigger: abortCompleter.future,
+              )
+              ..followRedirects = false
+              ..maxRedirects = 0
+              ..headers['Accept'] =
+                  'application/json, application/octet-stream';
+        final pendingResponse = _client.send(request).then((response) {
+          if (_disposed || abortCompleter.isCompleted) {
+            unawaited(_cancelBody(response));
+            throw const _DisposedException();
+          }
+          return response;
+        });
+        http.StreamedResponse response;
+        try {
+          response = await Future.any<http.StreamedResponse>([
+            pendingResponse,
+            abortCompleter.future.then<http.StreamedResponse>(
+              (_) => throw const _DisposedException(),
+            ),
+          ]).timeout(_requestTimeout);
+        } on TimeoutException {
+          if (!abortCompleter.isCompleted) {
+            abortCompleter.complete();
+          }
+          throw const _UpdateException('Update request timed out.');
+        } catch (error) {
+          if (!abortCompleter.isCompleted) {
+            abortCompleter.complete();
+          }
+          rethrow;
+        }
+        return response;
+      },
+      cancelBody: _cancelBody,
+    );
   }
 
   Future<String> _readTextBody(
