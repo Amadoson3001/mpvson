@@ -314,11 +314,6 @@ class PlayerController extends ChangeNotifier {
 
   QueueSnapshot _queueSnapshot = QueueSnapshot.empty;
 
-  /// Position updates, delivered independently of queue and transport changes.
-  final ValueNotifier<Duration> positionListenable = ValueNotifier<Duration>(
-    Duration.zero,
-  );
-
   /// Duration updates, delivered independently of queue changes.
   final ValueNotifier<Duration> durationListenable = ValueNotifier<Duration>(
     Duration.zero,
@@ -326,9 +321,6 @@ class PlayerController extends ChangeNotifier {
 
   /// Buffering updates, delivered independently of queue changes.
   final ValueNotifier<bool> bufferingListenable = ValueNotifier<bool>(false);
-
-  /// Seekability updates, delivered independently of queue changes.
-  final ValueNotifier<bool> seekableListenable = ValueNotifier<bool>(false);
 
   /// Chapter markers of the attached source; changes only when the list does.
   final ValueNotifier<List<PlaybackChapter>> chaptersListenable =

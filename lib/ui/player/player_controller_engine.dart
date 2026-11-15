@@ -729,7 +729,6 @@ extension PlayerControllerEngine on PlayerController {
       }
     }
     if (oldSeekable != isSeekable) {
-      seekableListenable.value = isSeekable;
       _seekPreview.setSeekable(isSeekable);
     }
     if (oldKind != _mediaKind) {
@@ -750,9 +749,6 @@ extension PlayerControllerEngine on PlayerController {
   /// The engine value is the only authority on where playback is; the smoother
   /// derives the value the user sees from it.
   void _publishPosition(Duration position) {
-    if (positionListenable.value != position) {
-      positionListenable.value = position;
-    }
     final duration = _playbackState.duration;
     _positionSmoother.update(
       reported: position,

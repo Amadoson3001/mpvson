@@ -545,10 +545,8 @@ extension PlayerControllerSession on PlayerController {
     if (_notifierDisposed) return;
     _notifierDisposed = true;
     _positionSmoother.dispose();
-    positionListenable.dispose();
     durationListenable.dispose();
     bufferingListenable.dispose();
-    seekableListenable.dispose();
     chaptersListenable.dispose();
     queueListenable.dispose();
     transportListenable.dispose();
