@@ -14,20 +14,6 @@ typedef ShowInFolderRunner =
 /// Resolves the filesystem entity type at [path].
 typedef EntityTypeResolver = Future<FileSystemEntityType> Function(String path);
 
-const _nonLocalSchemes = <String>{
-  'http',
-  'https',
-  'rtsp',
-  'rtsps',
-  'rtmp',
-  'udp',
-  'mms',
-  'smb',
-  'ftp',
-  'data',
-  'blob',
-};
-
 /// Removes Windows extended-length prefixes (`\\?\` and `\\?\UNC\`) so shell
 /// APIs and Explorer receive standard Win32/UNC paths.
 String stripWindowsLongPathPrefix(String source) {
@@ -69,9 +55,8 @@ String? normalizeLocalPath(
           candidate = uri.path;
         }
         candidate = stripWindowsLongPathPrefix(candidate);
-      } else if (_nonLocalSchemes.contains(scheme) || uri.hasAuthority) {
-        return null;
       } else {
+        // Any other scheme (http, rtsp, smb, ...) is not a local path.
         return null;
       }
     }
