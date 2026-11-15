@@ -27,6 +27,8 @@ class PlaybackSession {
     this.rate = 1,
     this.shuffle = false,
     this.repeatMode = 'off',
+    this.autoPlayNextVideo = true,
+    this.autoPlayNextAudio = true,
     this.controlDensity = ControlDensity.compact,
     this.playbackSettings = PlaybackSettings.defaults,
     this.saveNetworkUrls = false,
@@ -51,6 +53,8 @@ class PlaybackSession {
   final double rate;
   final bool shuffle;
   final String repeatMode;
+  final bool autoPlayNextVideo;
+  final bool autoPlayNextAudio;
   final ControlDensity controlDensity;
   final PlaybackSettings playbackSettings;
 
@@ -95,6 +99,8 @@ class PlaybackSession {
       rate: rate,
       shuffle: shuffle,
       repeatMode: repeatMode,
+      autoPlayNextVideo: autoPlayNextVideo,
+      autoPlayNextAudio: autoPlayNextAudio,
       controlDensity: controlDensity,
       playbackSettings: playbackSettings,
       saveNetworkUrls: false,
@@ -112,6 +118,8 @@ class PlaybackSession {
     double? rate,
     bool? shuffle,
     String? repeatMode,
+    bool? autoPlayNextVideo,
+    bool? autoPlayNextAudio,
     ControlDensity? controlDensity,
     PlaybackSettings? playbackSettings,
     bool? saveNetworkUrls,
@@ -126,6 +134,8 @@ class PlaybackSession {
       rate: rate ?? this.rate,
       shuffle: shuffle ?? this.shuffle,
       repeatMode: repeatMode ?? this.repeatMode,
+      autoPlayNextVideo: autoPlayNextVideo ?? this.autoPlayNextVideo,
+      autoPlayNextAudio: autoPlayNextAudio ?? this.autoPlayNextAudio,
       controlDensity: controlDensity ?? this.controlDensity,
       playbackSettings: playbackSettings ?? this.playbackSettings,
       saveNetworkUrls: saveNetworkUrls ?? this.saveNetworkUrls,
@@ -155,6 +165,8 @@ class PlaybackSession {
       rate: _boundedNumber(json['rate'], fallback: 1, min: 0.25, max: 4),
       shuffle: json['shuffle'] == true,
       repeatMode: repeatMode,
+      autoPlayNextVideo: json['autoPlayNextVideo'] != false,
+      autoPlayNextAudio: json['autoPlayNextAudio'] != false,
       controlDensity: ControlDensity.fromPersisted(json['controlDensity']),
       playbackSettings: PlaybackSettings.fromJson(json['playbackSettings']),
       // Version 1 predates the consent setting, so it implies no consent.
@@ -175,6 +187,8 @@ class PlaybackSession {
     'rate': rate,
     'shuffle': shuffle,
     'repeatMode': repeatMode,
+    'autoPlayNextVideo': autoPlayNextVideo,
+    'autoPlayNextAudio': autoPlayNextAudio,
     'controlDensity': controlDensity.name,
     'playbackSettings': playbackSettings.toJson(),
     'saveNetworkUrls': saveNetworkUrls,

@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
@@ -256,11 +255,6 @@ class MediaKitPlaybackService
     VideoController? videoController,
     NativeMediaEvents? nativeEvents,
     DiagnosticSink? diagnostics,
-    @visibleForTesting
-    Future<void> Function(String property, String value)?
-    propertyWriterForTesting,
-    @visibleForTesting
-    Future<String?> Function(String property)? propertyReaderForTesting,
   }) : _player =
            player ??
            Player(
@@ -276,10 +270,9 @@ class MediaKitPlaybackService
     // name stays `diagnostics`; named parameters cannot be private.
     _diagnostics = diagnostics;
     _videoController = videoController;
-    _propertyWriter = propertyWriterForTesting ?? _writeNativeProperty;
-    _propertyReader = propertyReaderForTesting ?? _readNativeProperty;
-    _hasRuntimePropertyBridge =
-        propertyWriterForTesting != null || _player.platform is NativePlayer;
+    _propertyWriter = _writeNativeProperty;
+    _propertyReader = _readNativeProperty;
+    _hasRuntimePropertyBridge = _player.platform is NativePlayer;
     _state = _snapshotFrom(
       _player.state,
     ).copyWith(sourceStart: 0, clearNativeSource: true);
@@ -405,6 +398,22 @@ class MediaKitPlaybackService
   VideoOutputPolicy _videoOutputPolicy = const VideoOutputPolicy();
   Timer? _resizeDebounceTimer;
   Timer? _hiddenVideoSuspendTimer;
+  Timer? _traceTimer;
+  bool _traceInFlight = false;
+  int _traceLastBoundary = -1;
+  int _traceLastOutputDrops = 0;
+  int _traceLastDecoderDrops = 0;
+  final Stopwatch _traceClock = Stopwatch()..start();
+  static final bool _traceEnabled = () {
+    final flag = Platform.environment['MPVSON_TRACE']?.trim().toLowerCase();
+    return flag == '1' || flag == 'true';
+  }();
+  static final bool _traceAutoplay = () {
+    final flag = Platform.environment['MPVSON_TRACE_AUTOPLAY']
+        ?.trim()
+        .toLowerCase();
+    return flag == '1' || flag == 'true';
+  }();
   bool _videoTrackSuspended = false;
   int? _lastAppliedWidth;
   int? _lastAppliedHeight;
@@ -520,14 +529,26 @@ class MediaKitPlaybackService
 
   void _applyStoredVideoPolicy(VideoController controller) {
     final visible = _videoOutputPolicy.visible;
-    _lastAppliedVisibility = visible;
-    unawaited(
-      controller.setRenderVisibility(visible).catchError((Object _) {}),
-    );
+    _pushRenderVisibility(controller, visible);
     _syncVideoDecoding(visible);
     _lastAppliedWidth = null;
     _lastAppliedHeight = null;
     _scheduleResize(force: true);
+  }
+
+  void _pushRenderVisibility(VideoController controller, bool visible) {
+    _lastAppliedVisibility = visible;
+    unawaited(() async {
+      try {
+        await controller.setRenderVisibility(visible);
+      } catch (_) {
+        // Clear cached visibility so the next policy application retries.
+        if (identical(_videoController, controller) &&
+            _lastAppliedVisibility == visible) {
+          _lastAppliedVisibility = null;
+        }
+      }
+    }());
   }
 
   @override
@@ -549,14 +570,7 @@ class MediaKitPlaybackService
     _videoOutputPolicy = policy;
     final controller = _videoController;
     if (visibilityChanged && controller != null) {
-      _lastAppliedVisibility = policy.visible;
-      // Best-effort: a platform channel failure must not become an unhandled
-      // async error; the next policy application retries the visibility.
-      unawaited(
-        controller
-            .setRenderVisibility(policy.visible)
-            .catchError((Object _) {}),
-      );
+      _pushRenderVisibility(controller, policy.visible);
     }
     _syncVideoDecoding(policy.visible);
     _scheduleResize();
@@ -685,8 +699,13 @@ class MediaKitPlaybackService
       try {
         await controller.setSize(width: width, height: height);
       } catch (_) {
-        // A source close can race the debounced resize. The next source or
-        // viewport event reapplies its current policy.
+        // Clear cached dimensions so the next viewport or source event retries.
+        if (identical(_videoController, controller) &&
+            _lastAppliedWidth == width &&
+            _lastAppliedHeight == height) {
+          _lastAppliedWidth = null;
+          _lastAppliedHeight = null;
+        }
       }
     }());
   }
@@ -763,7 +782,9 @@ class MediaKitPlaybackService
         videoController;
       }
       _scheduleResize(force: true);
-      await _applyBufferingPolicy(isNetwork: MediaEntry.isNetworkUrl(path));
+      await _applyBufferingPolicy(
+        isNetwork: MediaEntry.isBufferedNetworkSource(path),
+      );
       if (done.isCompleted || _disposed) return;
       // The policy writes above can be slow; re-check staleness immediately
       // before the engine open so a rapid next/previous never races this load.
@@ -776,8 +797,9 @@ class MediaKitPlaybackService
         return;
       }
       _syncVideoDecoding(_videoOutputPolicy.visible);
-      await _player.open(Media(path), play: play);
+      await _player.open(Media(path), play: play || _traceAutoplay);
       _reconcileVideoSuspensionAfterLoad();
+      _ensureTraceTimer();
       if (!_identity.observationActive && !_disposed) {
         _emit(_stamped(_state.copyWith(isBuffering: _player.state.buffering)));
       }
@@ -1216,6 +1238,103 @@ class MediaKitPlaybackService
     );
   }
 
+  void _ensureTraceTimer() {
+    if (!_traceEnabled || _diagnostics == null || _disposed) return;
+    if (_traceTimer != null) return;
+    _traceTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (_disposed || _traceInFlight) return;
+      _traceInFlight = true;
+      unawaited(
+        _sampleTrace().whenComplete(() {
+          _traceInFlight = false;
+        }),
+      );
+    });
+  }
+
+  Future<void> _sampleTrace() async {
+    final diagnostics = _diagnostics;
+    if (diagnostics == null || _disposed) return;
+    final boundary = _identity.boundaryCounter;
+    if (_traceLastBoundary != boundary) {
+      _traceLastBoundary = boundary;
+      _traceLastOutputDrops = 0;
+      _traceLastDecoderDrops = 0;
+    }
+    String? outDropsRaw;
+    String? decDropsRaw;
+    String? avsyncRaw;
+    String? cacheRaw;
+    String? hwdecRaw;
+    String? vfFpsRaw;
+    try {
+      outDropsRaw = await _propertyReader('frame-drop-count');
+      decDropsRaw = await _propertyReader('decoder-frame-drop-count');
+      avsyncRaw = await _propertyReader('avsync');
+      cacheRaw = await _propertyReader('demuxer-cache-duration');
+      hwdecRaw = await _propertyReader('hwdec-current');
+      vfFpsRaw = await _propertyReader('estimated-vf-fps');
+    } catch (_) {
+      return;
+    }
+    if (_disposed || _identity.boundaryCounter != boundary) return;
+    final outDrops = int.tryParse(outDropsRaw?.trim() ?? '') ?? 0;
+    final decDrops = int.tryParse(decDropsRaw?.trim() ?? '') ?? 0;
+    final outDelta = outDrops >= _traceLastOutputDrops
+        ? outDrops - _traceLastOutputDrops
+        : outDrops;
+    final decDelta = decDrops >= _traceLastDecoderDrops
+        ? decDrops - _traceLastDecoderDrops
+        : decDrops;
+    _traceLastOutputDrops = outDrops;
+    _traceLastDecoderDrops = decDrops;
+
+    var nativeSummary = '';
+    final vc = _videoController;
+    if (vc != null) {
+      try {
+        final platform = await vc.platform.future;
+        final stats = await platform.getNativeStats();
+        if (_disposed || _identity.boundaryCounter != boundary) return;
+        if (stats.isNotEmpty) {
+          nativeSummary =
+              ' backend=${stats['backend']}'
+              ' gen=${stats['outputGeneration'] ?? 0}'
+              ' seq=${stats['frameSeq'] ?? 0}'
+              ' cb=${stats['descriptorCallbacks'] ?? 0}'
+              ' swMiss=${stats['swMissedPublishes'] ?? 0}'
+              ' gpuMiss=${stats['gpuMissedPublishes'] ?? 0}'
+              ' rfail=${stats['renderFailures'] ?? 0}'
+              ' ifail=${stats['importFailures'] ?? 0}'
+              ' coal=${stats['coalescedWakeups'] ?? 0}'
+              ' wUs=${stats['lastNotifyToWorkerUs'] ?? 0}'
+              ' rUs=${stats['lastMpvRenderUs'] ?? 0}'
+              ' maxRUs=${stats['maxMpvRenderUs'] ?? 0}'
+              ' cUs=${stats['lastCopySubmitUs'] ?? 0}'
+              ' aUs=${stats['lastAcquireUs'] ?? 0}';
+        }
+      } catch (_) {}
+    }
+    if (_disposed || _identity.boundaryCounter != boundary) return;
+
+    diagnostics.record(
+      'playback.trace',
+      sourceId: _state.nativeSource,
+      message:
+          'tMs=${_traceClock.elapsedMilliseconds}'
+          ' b=$boundary'
+          ' playing=${_state.isPlaying}'
+          ' posMs=${_state.position.inMilliseconds}'
+          ' hwdec=${hwdecRaw?.trim() ?? 'unavail'}'
+          ' vfFps=${vfFpsRaw?.trim() ?? 'unavail'}'
+          ' outDropD=$outDelta'
+          ' decDropD=$decDelta'
+          ' avsync=${avsyncRaw?.trim() ?? 'unavail'}'
+          ' cache=${cacheRaw?.trim() ?? 'unavail'}'
+          '$nativeSummary',
+    );
+  }
+
   static bool _propertyMatches(String actual, String requested) {
     final expectedNumber = double.tryParse(requested);
     if (expectedNumber != null) {
@@ -1248,6 +1367,8 @@ class MediaKitPlaybackService
     _resizeDebounceTimer = null;
     _hiddenVideoSuspendTimer?.cancel();
     _hiddenVideoSuspendTimer = null;
+    _traceTimer?.cancel();
+    _traceTimer = null;
     for (final subscription in _subscriptions) {
       try {
         await subscription.cancel();

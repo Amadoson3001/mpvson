@@ -38,6 +38,24 @@ class PlaybackSettingsSection extends StatelessWidget {
               title: 'Queue & session',
               children: [
                 SettingsSwitchTile(
+                  key: const ValueKey('auto-play-next-video-toggle'),
+                  icon: Icons.smart_display_rounded,
+                  title: 'Auto-play next video',
+                  subtitle:
+                      'Automatically starts the next video when the current one finishes.',
+                  value: controller.autoPlayNextVideo,
+                  onChanged: controller.setAutoPlayNextVideo,
+                ),
+                SettingsSwitchTile(
+                  key: const ValueKey('auto-play-next-audio-toggle'),
+                  icon: Icons.queue_music_rounded,
+                  title: 'Auto-play next audio',
+                  subtitle:
+                      'Automatically starts the next audio track when the current one finishes.',
+                  value: controller.autoPlayNextAudio,
+                  onChanged: controller.setAutoPlayNextAudio,
+                ),
+                SettingsSwitchTile(
                   icon: Icons.shuffle_rounded,
                   title: 'Shuffle queue',
                   subtitle: 'Plays queue tracks and videos in random order.',

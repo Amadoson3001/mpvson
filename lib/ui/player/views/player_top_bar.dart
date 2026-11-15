@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 import '../../core/app_motion.dart';
 import '../../core/app_theme.dart';
-import '../../core/components/auto_hide_container.dart';
 
 class PlayerTopBar extends StatelessWidget {
   const PlayerTopBar({
@@ -29,17 +28,15 @@ class PlayerTopBar extends StatelessWidget {
   final ValueChanged<bool>? onFocusChange;
 
   @override
-  Widget build(BuildContext context) => Positioned(
-    left: 16,
-    top: 12,
-    right: 24,
-    child: MouseRegion(
-      onEnter: (_) => onPointerEnter(),
-      onExit: (_) => onPointerExit(),
-      child: AutoHideContainer(
-        visible: controlsVisible,
-        autoHide: false,
-        fadeDuration: AppMotion.duration(context, AppMotion.quick),
+  Widget build(BuildContext context) => MouseRegion(
+    onEnter: (_) => onPointerEnter(),
+    onExit: (_) => onPointerExit(),
+    child: AnimatedOpacity(
+      opacity: controlsVisible ? 1 : 0,
+      duration: AppMotion.duration(context, AppMotion.quick),
+      curve: AppMotion.standardCurve,
+      child: IgnorePointer(
+        ignoring: !controlsVisible,
         child: ExcludeFocus(
           excluding: !controlsVisible,
           child: ExcludeSemantics(

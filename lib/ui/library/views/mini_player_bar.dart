@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../../../data/repositories/media_library_repository.dart';
@@ -11,10 +13,11 @@ import '../../player/widgets/player_controls.dart';
 import '../widgets/audio_volume_control.dart';
 import '../widgets/library_artwork.dart';
 
-/// Persistent transport bar under the library stage.
+/// Persistent full-width transport bar under the library stage.
 ///
-/// The title area opens Now Playing (or the video player), the right side
-/// carries transport and volume, and the strip below is the seek bar.
+/// The left area stacks track info, transport + volume controls, and the seek
+/// bar; the right edge holds the full-height, frameless mini player / artwork
+/// slot flush from top to bottom.
 class MiniPlayerBar extends StatelessWidget {
   const MiniPlayerBar({
     super.key,
@@ -29,43 +32,39 @@ class MiniPlayerBar extends StatelessWidget {
     this.dense = false,
   });
 
-  static const double _minRowHeight = 60;
+  static const double _minBarHeight = AppLayout.dockedMiniVideoHeight;
+  static const double _denseMinBarHeight = 84;
+  static const double _minRowHeight = 52;
+  static const double _denseMinRowHeight = 44;
   static const double _titleSize = 14;
   static const double _subtitleSize = 12;
   static const double seekHeight = 28;
-  static const double _denseSeekHeight = 22;
-  static const double _denseMinRowHeight = 56;
-  static const double _audioThumbSize = 44;
-  static const double _cardBorder = 1;
+  static const double _denseSeekHeight = 24;
+  static const double _topBorder = 1;
 
-  /// Artwork slot: square for audio, a 16:9 frame for video so the docked
-  /// in-app mini video can seat exactly here and read as part of the bar.
-  static Size thumbnailSizeFor(bool isVideo) => isVideo
-      ? const Size(
-          AppLayout.dockedMiniVideoWidth,
-          AppLayout.dockedMiniVideoHeight,
-        )
-      : const Size.square(_audioThumbSize);
+  /// Artwork slot: square at full bar height for audio, or a 16:9 frame at
+  /// full bar height for video so the docked in-app mini video sits flush on
+  /// the left edge, top to bottom, without any frame.
+  static Size thumbnailSizeFor(bool isVideo, {double? barHeight}) {
+    final height = barHeight ?? _minBarHeight;
+    return isVideo
+        ? Size((height * 16 / 9).roundToDouble(), height)
+        : Size.square(height);
+  }
 
   /// The bar's video artwork slot, in coordinates of the full content area.
   /// The player content lerps the docked mini video to this rect so the live
-  /// video lands in the bar instead of overlapping it.
+  /// video lands flush on the left edge from top to bottom of the bar.
   static Rect dockedVideoRect(
     double totalHeight,
     TextScaler scaler, {
     bool dense = false,
   }) {
-    final size = thumbnailSizeFor(true);
-    final rowHeight = rowHeightFor(scaler, dense: dense);
-    final top =
-        totalHeight -
-        heightFor(scaler, dense: dense) +
-        (dense ? AppSpace.xxs : AppSpace.xs) +
-        _cardBorder +
-        (rowHeight - size.height) / 2;
+    final barHeight = heightFor(scaler, dense: dense);
+    final size = thumbnailSizeFor(true, barHeight: barHeight);
     return Rect.fromLTWH(
-      AppSpace.sm + _cardBorder + 2 * AppSpace.xs,
-      top < 0 ? 0 : top,
+      0,
+      (totalHeight - barHeight).clamp(0.0, double.infinity),
       size.width,
       size.height,
     );
@@ -79,23 +78,28 @@ class MiniPlayerBar extends StatelessWidget {
         scaler.scale(_titleSize) * 1.3 +
         AppSpace.micro +
         scaler.scale(_subtitleSize) * 1.3;
-    final padding = dense
-        ? 2 * AppSpace.xxs + 2 * AppSpace.xxs + 2
-        : 2 * AppSpace.xs + 2 * AppSpace.xxs + 2;
-    return (text + padding).ceilToDouble().clamp(
+    return (text + 8).ceilToDouble().clamp(
       dense ? _denseMinRowHeight : _minRowHeight,
       double.infinity,
     );
   }
 
-  /// Whole bar: floating card (transport row + seek strip) plus the outer
-  /// gaps. The shell sizes the bar from this, so it must equal what [build]
-  /// lays out.
-  static double heightFor(TextScaler scaler, {bool dense = false}) =>
-      (dense ? AppSpace.xxs : AppSpace.xs) +
-      rowHeightFor(scaler, dense: dense) +
-      (dense ? _denseSeekHeight : seekHeight) +
-      (dense ? AppSpace.xs : AppSpace.sm);
+  /// Whole bar height: top hairline + controls column + seek strip. The shell
+  /// and docked video rect both measure from this so they stay locked together.
+  static double heightFor(TextScaler scaler, {bool dense = false}) {
+    final topPad = dense ? 6.0 : 10.0;
+    final gap = dense ? 2.0 : 4.0;
+    final bottomPad = dense ? 4.0 : 8.0;
+    final seek = dense ? _denseSeekHeight : seekHeight;
+    final contentHeight =
+        _topBorder +
+        topPad +
+        rowHeightFor(scaler, dense: dense) +
+        gap +
+        seek +
+        bottomPad;
+    return math.max(dense ? _denseMinBarHeight : _minBarHeight, contentHeight);
+  }
 
   final PlayerController controller;
   final MediaLibraryRepository repository;
@@ -111,96 +115,123 @@ class MiniPlayerBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.palette;
     final scaler = MediaQuery.textScalerOf(context);
+    final barHeight = heightFor(scaler, dense: dense);
     final rowHeight = rowHeightFor(scaler, dense: dense);
     final seek = dense ? _denseSeekHeight : seekHeight;
-    final radius = BorderRadius.circular(AppRadii.card);
-    return Padding(
-      padding: EdgeInsets.fromLTRB(
-        AppSpace.sm,
-        dense ? AppSpace.xxs : AppSpace.xs,
-        AppSpace.sm,
-        dense ? AppSpace.xs : AppSpace.sm,
-      ),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: palette.card,
-          borderRadius: radius,
-          border: Border.all(color: palette.border),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            AudioVolumeWheel(
-              controller: controller,
-              child: SizedBox(
-                height: rowHeight,
+    final topPad = dense ? 6.0 : 10.0;
+    final bottomPad = dense ? 4.0 : 8.0;
+    final thumbSize = thumbnailSizeFor(isVideo, barHeight: barHeight);
+
+    return SizedBox(
+      height: barHeight,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SizedBox.fromSize(
+            size: thumbSize,
+            child: Semantics(
+              button: true,
+              label: openLabel,
+              excludeSemantics: true,
+              child: Tooltip(
+                message: openLabel,
+                waitDuration: const Duration(milliseconds: 600),
+                child: Material(
+                  color: isVideo ? AppTheme.stage : palette.card,
+                  child: InkWell(
+                    onTap: onOpen,
+                    hoverColor: Colors.white.withValues(alpha: 0.08),
+                    child: _Thumbnail(
+                      entry: entry,
+                      repository: repository,
+                      isVideo: isVideo,
+                      showEqualizer: controller.isPlaying && !isVideo,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Expanded(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: palette.card,
+                border: Border(
+                  top: BorderSide(color: palette.border, width: _topBorder),
+                ),
+              ),
+              child: AudioVolumeWheel(
+                controller: controller,
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: AppSpace.xs),
-                  child: Row(
+                  padding: EdgeInsets.fromLTRB(
+                    AppSpace.sm,
+                    topPad,
+                    AppSpace.sm,
+                    bottomPad,
+                  ),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Expanded(
-                        child: _OpenArea(
-                          label: openLabel,
-                          onTap: onOpen,
-                          child: Row(
-                            children: [
-                              _Thumbnail(
-                                entry: entry,
-                                repository: repository,
-                                isVideo: isVideo,
-                                showEqualizer: controller.isPlaying && !isVideo,
-                              ),
-                              const SizedBox(width: AppSpace.sm),
-                              Expanded(
-                                child: _MiniPlayerSubtitle(
-                                  key: ValueKey(entry.path),
-                                  repository: repository,
-                                  path: entry.path,
-                                  fallbackTitle: entry.title,
-                                  isVideo: isVideo,
+                      SizedBox(
+                        height: rowHeight,
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: _OpenArea(
+                                label: openLabel,
+                                onTap: onOpen,
+                                child: Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: _MiniPlayerSubtitle(
+                                    key: ValueKey(entry.path),
+                                    repository: repository,
+                                    path: entry.path,
+                                    fallbackTitle: entry.title,
+                                    isVideo: isVideo,
+                                  ),
                                 ),
                               ),
-                            ],
-                          ),
+                            ),
+                            const SizedBox(width: AppSpace.sm),
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                TransportButtons(
+                                  controller: controller,
+                                  compact: compact,
+                                ),
+                                const SizedBox(width: AppSpace.xs),
+                                AudioVolumeControl(
+                                  controller: controller,
+                                  compact: true,
+                                  showPercent: !compact,
+                                ),
+                                if (compact)
+                                  IconButton(
+                                    icon: const Icon(Icons.queue_music_rounded),
+                                    tooltip: 'Queue',
+                                    color: palette.secondaryText,
+                                    onPressed: onShowQueue,
+                                  ),
+                              ],
+                            ),
+                          ],
                         ),
                       ),
-                      const SizedBox(width: AppSpace.sm),
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          TransportButtons(
-                            controller: controller,
-                            compact: compact,
-                          ),
-                          const SizedBox(width: AppSpace.xs),
-                          AudioVolumeControl(
-                            controller: controller,
-                            compact: true,
-                            showPercent: !compact,
-                          ),
-                          if (compact)
-                            IconButton(
-                              icon: const Icon(Icons.queue_music_rounded),
-                              tooltip: 'Queue',
-                              color: palette.secondaryText,
-                              onPressed: onShowQueue,
-                            ),
-                        ],
+                      SizedBox(
+                        height: seek,
+                        child: Padding(
+                          padding: const EdgeInsets.only(left: AppSpace.xxs),
+                          child: SeekBar(controller: controller),
+                        ),
                       ),
                     ],
                   ),
                 ),
               ),
             ),
-            SizedBox(
-              height: seek,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: AppSpace.xxs),
-                child: SeekBar(controller: controller),
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -220,36 +251,30 @@ class _Thumbnail extends StatelessWidget {
   final bool showEqualizer;
 
   @override
-  Widget build(BuildContext context) => ClipRRect(
-    borderRadius: BorderRadius.circular(AppRadii.control),
-    child: SizedBox.fromSize(
-      size: MiniPlayerBar.thumbnailSizeFor(isVideo),
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          LibraryArtwork(
-            mediaPath: entry.path,
-            repository: repository,
-            iconSize: 20,
-          ),
-          if (showEqualizer)
-            Positioned(
-              right: 3,
-              bottom: 3,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.75),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: const Padding(
-                  padding: EdgeInsets.all(2),
-                  child: PlayingEqualizerGlyph(isPlaying: true, size: 10),
-                ),
-              ),
-            ),
-        ],
+  Widget build(BuildContext context) => Stack(
+    fit: StackFit.expand,
+    children: [
+      LibraryArtwork(
+        mediaPath: entry.path,
+        repository: repository,
+        iconSize: 32,
       ),
-    ),
+      if (showEqualizer)
+        Positioned(
+          right: 8,
+          bottom: 8,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.75),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: const Padding(
+              padding: EdgeInsets.all(3),
+              child: PlayingEqualizerGlyph(isPlaying: true, size: 12),
+            ),
+          ),
+        ),
+    ],
   );
 }
 

@@ -348,7 +348,8 @@ class _PlayerScreenState extends State<PlayerScreen>
     if (current == null ||
         controller.hasMedia ||
         controller.isLoading ||
-        controller.isStopped) {
+        controller.isStopped ||
+        controller.error != null) {
       return;
     }
     if (!MediaCatalog.kindFromExtension(current.path).isVideo) return;

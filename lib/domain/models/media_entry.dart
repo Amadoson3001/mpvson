@@ -105,6 +105,27 @@ class MediaEntry {
     return scheme == 'http' || scheme == 'https';
   }
 
+  /// Whether [source] benefits from network-style buffering (HTTP(S), streaming
+  /// protocols, or SMB/UNC network shares).
+  static bool isBufferedNetworkSource(String source) {
+    if (isNetworkUrl(source)) return true;
+    final trimmed = source.trim();
+    if (trimmed.startsWith(r'\\')) return true;
+    final uri = Uri.tryParse(trimmed);
+    if (uri == null) return false;
+    switch (uri.scheme.toLowerCase()) {
+      case 'smb':
+      case 'rtsp':
+      case 'rtsps':
+      case 'rtmp':
+      case 'udp':
+      case 'mms':
+        return true;
+      default:
+        return false;
+    }
+  }
+
   /// Converts local file paths and file URIs to normalized absolute filesystem
   /// paths, while preserving http and https URLs untouched.
   static String normalizeSourcePath(String source) {

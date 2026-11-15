@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'update_url.dart';
+
 /// A Windows libmpv build described by an engine update source.
 final class EngineRelease {
   const EngineRelease({
@@ -153,11 +155,7 @@ final class EngineUpdateManifest {
 
   static Uri _httpsUri(String value, String field) {
     final uri = Uri.tryParse(value);
-    if (uri == null ||
-        uri.scheme.toLowerCase() != 'https' ||
-        uri.host.isEmpty ||
-        uri.userInfo.isNotEmpty ||
-        uri.hasFragment) {
+    if (uri == null || !isSafeHttpsUri(uri)) {
       throw FormatException(
         '$field must be HTTPS without credentials or fragments.',
       );

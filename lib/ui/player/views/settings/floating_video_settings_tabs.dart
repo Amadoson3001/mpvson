@@ -333,6 +333,22 @@ class FloatingPlaybackTab extends StatelessWidget {
               },
             ),
             SettingsSwitchTile(
+              key: const ValueKey('floating-auto-play-next-video-toggle'),
+              icon: Icons.smart_display_rounded,
+              title: 'Auto-play next video',
+              subtitle: 'Starts the next video when the current one ends.',
+              value: controller.autoPlayNextVideo,
+              onChanged: controller.setAutoPlayNextVideo,
+            ),
+            SettingsSwitchTile(
+              key: const ValueKey('floating-auto-play-next-audio-toggle'),
+              icon: Icons.queue_music_rounded,
+              title: 'Auto-play next audio',
+              subtitle: 'Starts the next audio track when playback ends.',
+              value: controller.autoPlayNextAudio,
+              onChanged: controller.setAutoPlayNextAudio,
+            ),
+            SettingsSwitchTile(
               icon: Icons.shuffle_rounded,
               title: 'Shuffle queue',
               subtitle: 'Plays queue items in random order.',

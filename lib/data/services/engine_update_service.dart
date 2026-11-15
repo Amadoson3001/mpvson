@@ -16,6 +16,7 @@ import '../../domain/updates/engine_release.dart';
 import '../../domain/updates/engine_update_channel.dart';
 import '../../domain/updates/engine_selection.dart';
 import '../../domain/updates/mpv_github_release.dart';
+import '../../domain/updates/update_url.dart';
 import '../../domain/updates/semantic_version.dart' as app_version;
 import 'download_manager.dart';
 import 'http_response_length.dart';
@@ -1151,10 +1152,7 @@ class EngineUpdateService extends ChangeNotifier {
   }
 
   void _requireHttps(Uri uri, String label) {
-    if (uri.scheme.toLowerCase() != 'https' ||
-        uri.host.isEmpty ||
-        uri.userInfo.isNotEmpty ||
-        uri.hasFragment) {
+    if (!isSafeHttpsUri(uri)) {
       throw _EngineUpdateException(
         '$label must be HTTPS without credentials or fragments.',
       );

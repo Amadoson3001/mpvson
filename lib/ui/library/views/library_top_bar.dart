@@ -8,10 +8,9 @@ import 'library_section.dart';
 
 /// Top bar of the library shell.
 ///
-/// One consistent strip for every section: navigation trigger on compact
-/// widths, optional return-to-video, search on library pages, secondary
-/// actions and the queue toggle. Page titles live in each page's own
-/// `PageHeader`, not here.
+/// One consistent strip for library sections: navigation trigger on compact
+/// widths, search on library pages, secondary actions and the queue toggle.
+/// Page titles live in each page's own `PageHeader`, not here.
 class LibraryTopBar extends StatelessWidget {
   const LibraryTopBar({
     super.key,
@@ -23,7 +22,6 @@ class LibraryTopBar extends StatelessWidget {
     required this.searchFocus,
     required this.onOpenNavigation,
     required this.onToggleQueue,
-    this.onBackToPlayer,
     this.onOpenFiles,
     this.onOpenUrl,
   });
@@ -36,7 +34,6 @@ class LibraryTopBar extends StatelessWidget {
   final FocusNode searchFocus;
   final VoidCallback onOpenNavigation;
   final VoidCallback onToggleQueue;
-  final VoidCallback? onBackToPlayer;
   final VoidCallback? onOpenFiles;
   final VoidCallback? onOpenUrl;
 
@@ -53,7 +50,6 @@ class LibraryTopBar extends StatelessWidget {
           final gutter = PageHeader.gutterFor(constraints.maxWidth);
           // IconButtons carry their own padding, so they sit closer to the edge.
           final startInset = compact ? AppSpace.xs : gutter;
-          final showBackLabel = constraints.maxWidth >= 640;
           return Padding(
             padding: EdgeInsets.only(
               left: startInset,
@@ -61,34 +57,15 @@ class LibraryTopBar extends StatelessWidget {
             ),
             child: Row(
               children: [
-                if (compact)
+                if (compact) ...[
                   PlayerIconButton(
                     icon: const Icon(Icons.menu_rounded),
                     tooltip: 'Open navigation',
                     color: palette.primaryText,
                     onPressed: onOpenNavigation,
                   ),
-                if (onBackToPlayer != null) ...[
-                  if (showBackLabel)
-                    TextButton.icon(
-                      onPressed: onBackToPlayer,
-                      icon: const Icon(Icons.arrow_back_rounded, size: 18),
-                      label: const Text('Return to video'),
-                      style: TextButton.styleFrom(
-                        foregroundColor: palette.primaryText,
-                      ),
-                    )
-                  else
-                    PlayerIconButton(
-                      onPressed: onBackToPlayer,
-                      tooltip: 'Return to video',
-                      icon: const Icon(Icons.arrow_back_rounded),
-                      color: palette.primaryText,
-                    ),
                   const SizedBox(width: AppSpace.xs),
                 ],
-                if (compact && onBackToPlayer == null)
-                  const SizedBox(width: AppSpace.xs),
                 Expanded(
                   child: section.hasSearch
                       ? Align(

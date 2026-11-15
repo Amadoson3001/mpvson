@@ -52,7 +52,7 @@ extension SettingsSectionX on SettingsSection {
     SettingsSection.appearance => 'Theme, accent, and control size.',
     SettingsSection.animation => 'Motion for panels, sheets, and video.',
     SettingsSection.playerControls => 'Bar layout, blur, and seek bar.',
-    SettingsSection.playback => 'Repeat, speed, and media tracks.',
+    SettingsSection.playback => 'Auto-play, repeat, speed, and tracks.',
     SettingsSection.videoAudio => 'Quality, color, and timing.',
     SettingsSection.desktopIntegration => 'File opening and power.',
     SettingsSection.mediaLibrary => 'Indexed folders and scan status.',

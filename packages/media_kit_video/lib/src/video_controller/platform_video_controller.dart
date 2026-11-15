@@ -54,6 +54,10 @@ abstract class PlatformVideoController {
   /// Sets the rendering visibility of the video output.
   Future<void> setRenderVisibility(bool visible) async {}
 
+  /// Returns native renderer diagnostics when supported by the backend.
+  Future<Map<String, Object?>> getNativeStats() async =>
+      const <String, Object?>{};
+
   /// A [Future] that completes when the first video frame has been rendered.
   Future<void> get waitUntilFirstFrameRendered =>
       waitUntilFirstFrameRenderedCompleter.future;

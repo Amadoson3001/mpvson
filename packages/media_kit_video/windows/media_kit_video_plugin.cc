@@ -169,16 +169,47 @@ void MediaKitVideoPlugin::HandleMethodCall(
                 }),
                 nullptr);
           });
+        },
+        [this, handle = handle_value](const std::string& error) {
+          RunOnMainThread([=]() {
+            channel_->InvokeMethod(
+                "VideoOutput.Error",
+                std::make_unique<flutter::EncodableValue>(flutter::EncodableMap{
+                    {
+                        flutter::EncodableValue("handle"),
+                        flutter::EncodableValue(handle),
+                    },
+                    {
+                        flutter::EncodableValue("error"),
+                        flutter::EncodableValue(error),
+                    },
+                }),
+                nullptr);
+          });
         });
     result->Success(flutter::EncodableValue(std::monostate{}));
+  } else if (method_call.method_name().compare(
+                 "VideoOutputManager.GetStats") == 0) {
+    auto arguments = std::get<flutter::EncodableMap>(*method_call.arguments());
+    auto handle =
+        std::get<std::string>(arguments[flutter::EncodableValue("handle")]);
+    auto handle_value = static_cast<int64_t>(std::stoll(handle.c_str()));
+    result->Success(
+        flutter::EncodableValue(video_output_manager_->GetStats(handle_value)));
   } else if (method_call.method_name().compare("VideoOutputManager.Dispose") ==
              0) {
     auto arguments = std::get<flutter::EncodableMap>(*method_call.arguments());
     auto handle =
         std::get<std::string>(arguments[flutter::EncodableValue("handle")]);
     auto handle_value = static_cast<int64_t>(std::stoll(handle.c_str()));
-    video_output_manager_->Dispose(handle_value);
-    result->Success(flutter::EncodableValue(std::monostate{}));
+    auto shared_result =
+        std::shared_ptr<flutter::MethodResult<flutter::EncodableValue>>(
+            std::move(result));
+    video_output_manager_->Dispose(handle_value, [this, shared_result]() {
+      RunOnMainThread([shared_result]() {
+        shared_result->Success(flutter::EncodableValue(std::monostate{}));
+      });
+    });
   } else if (method_call.method_name().compare("VideoOutputManager.SetSize") ==
              0) {
     auto arguments = std::get<flutter::EncodableMap>(*method_call.arguments());
@@ -197,8 +228,20 @@ void MediaKitVideoPlugin::HandleMethodCall(
     if (height.compare("null") != 0) {
       height_value = static_cast<int64_t>(std::stoll(height.c_str()));
     }
-    video_output_manager_->SetSize(handle_value, width_value, height_value);
-    result->Success(flutter::EncodableValue(std::monostate{}));
+    auto shared_result =
+        std::shared_ptr<flutter::MethodResult<flutter::EncodableValue>>(
+            std::move(result));
+    video_output_manager_->SetSize(
+        handle_value, width_value, height_value,
+        [this, shared_result](bool ok, const std::string& error) {
+          RunOnMainThread([shared_result, ok, error]() {
+            if (ok) {
+              shared_result->Success(flutter::EncodableValue(std::monostate{}));
+            } else {
+              shared_result->Error("VIDEO_OUTPUT_SET_SIZE_FAILED", error);
+            }
+          });
+        });
   } else if (method_call.method_name().compare("VideoOutputManager.SetVisibility") ==
              0) {
     auto arguments = std::get<flutter::EncodableMap>(*method_call.arguments());
@@ -207,8 +250,21 @@ void MediaKitVideoPlugin::HandleMethodCall(
     auto visible =
         std::get<bool>(arguments[flutter::EncodableValue("visible")]);
     auto handle_value = static_cast<int64_t>(std::stoll(handle.c_str()));
-    video_output_manager_->SetVisibility(handle_value, visible);
-    result->Success(flutter::EncodableValue(std::monostate{}));
+    auto shared_result =
+        std::shared_ptr<flutter::MethodResult<flutter::EncodableValue>>(
+            std::move(result));
+    video_output_manager_->SetVisibility(
+        handle_value, visible,
+        [this, shared_result](bool ok, const std::string& error) {
+          RunOnMainThread([shared_result, ok, error]() {
+            if (ok) {
+              shared_result->Success(flutter::EncodableValue(std::monostate{}));
+            } else {
+              shared_result->Error("VIDEO_OUTPUT_SET_VISIBILITY_FAILED",
+                                   error);
+            }
+          });
+        });
   } else if (method_call.method_name().compare(
                  "VideoOutputManager.TrimMemory") == 0) {
     video_output_manager_->TrimMemory();

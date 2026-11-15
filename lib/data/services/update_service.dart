@@ -12,6 +12,7 @@ import '../../domain/updates/release_info.dart';
 import '../../domain/updates/semantic_version.dart';
 import '../../domain/updates/update_manifest.dart';
 import '../../domain/updates/update_record.dart';
+import '../../domain/updates/update_url.dart';
 import '../../utils/file_utils.dart';
 import 'download_manager.dart';
 import 'http_response_length.dart';
@@ -25,12 +26,6 @@ class UpdateService extends ChangeNotifier {
     Future<Directory> Function()? supportDirectoryProvider,
     UpdatePlatform Function()? platformProvider,
     this.currentVersion = '0.1.0',
-    Future<void> Function(String path)? openDownloadLocationForTesting,
-    Future<void> Function(IOSink sink)? flushDownloadSinkForTesting,
-    Duration requestTimeoutForTesting = const Duration(seconds: 20),
-    Duration maxDownloadDurationForTesting = const Duration(minutes: 30),
-    int maxManifestBytesForTesting = 256 * 1024,
-    int maxDownloadBytesForTesting = 2 * 1024 * 1024 * 1024,
   }) : _manifestUri = manifestUri ?? _manifestUriFromEnvironment(),
        _configured = manifestUri == null
            ? _configuredManifest.trim().isNotEmpty
@@ -40,15 +35,9 @@ class UpdateService extends ChangeNotifier {
        _supportDirectoryProvider =
            supportDirectoryProvider ?? getApplicationSupportDirectory,
        _platformProvider = platformProvider ?? (() => UpdatePlatform.current),
-       _openDownloadedArtifact = openDownloadLocationForTesting,
-       _flushDownloadSink = flushDownloadSinkForTesting,
-       _requestTimeout = requestTimeoutForTesting,
-       _maxDownloadDuration = maxDownloadDurationForTesting,
-       _maxManifestBytes = maxManifestBytesForTesting,
-       _maxDownloadBytes = maxDownloadBytesForTesting,
        _downloadManager = DownloadManager(
-         idleTimeout: requestTimeoutForTesting,
-         maxDuration: maxDownloadDurationForTesting,
+         idleTimeout: _requestTimeout,
+         maxDuration: _maxDownloadDuration,
        ) {
     _status = configured ? 'idle' : 'unconfigured';
   }
@@ -57,6 +46,10 @@ class UpdateService extends ChangeNotifier {
     'MPVSON_UPDATE_MANIFEST',
   );
   static const int _maxRedirects = 4;
+  static const Duration _requestTimeout = Duration(seconds: 20);
+  static const Duration _maxDownloadDuration = Duration(minutes: 30);
+  static const int _maxManifestBytes = 256 * 1024;
+  static const int _maxDownloadBytes = 2 * 1024 * 1024 * 1024;
 
   final Uri? _manifestUri;
   final bool _configured;
@@ -65,13 +58,6 @@ class UpdateService extends ChangeNotifier {
   final Future<Directory> Function() _supportDirectoryProvider;
   final UpdatePlatform Function() _platformProvider;
   final String currentVersion;
-  final Future<void> Function(String path)? _openDownloadedArtifact;
-  final Future<void> Function(IOSink sink)? _flushDownloadSink;
-  final Duration _requestTimeout;
-  final Duration _maxDownloadDuration;
-  Duration get maxDownloadDuration => _maxDownloadDuration;
-  final int _maxManifestBytes;
-  final int _maxDownloadBytes;
   final DownloadManager _downloadManager;
   final Random _random = Random.secure();
 
@@ -269,7 +255,6 @@ class UpdateService extends ChangeNotifier {
               _setProgress(frac);
             }
           },
-          flushSink: _flushDownloadSink,
           isDisposed: () => _disposed,
         );
       } on DownloadCancelledException {
@@ -376,12 +361,7 @@ class UpdateService extends ChangeNotifier {
         );
       }
       if (_disposed) return;
-      final opener = _openDownloadedArtifact;
-      if (opener != null) {
-        await opener(path);
-      } else {
-        await showInFolder(path);
-      }
+      await showInFolder(path);
       _setState(status: 'ready', error: null);
     } on Object catch (error) {
       _fail(error);
@@ -514,10 +494,7 @@ class UpdateService extends ChangeNotifier {
   }
 
   static void _requireHttps(Uri uri, String label) {
-    if (uri.scheme.toLowerCase() != 'https' ||
-        uri.host.isEmpty ||
-        uri.userInfo.isNotEmpty ||
-        uri.hasFragment) {
+    if (!isSafeHttpsUri(uri)) {
       throw _UpdateException(
         '$label must use HTTPS and contain no credentials.',
       );

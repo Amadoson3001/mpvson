@@ -23,6 +23,28 @@ import 'player_layout_manager.dart';
 import 'player_media_coordinator.dart';
 import 'player_stage.dart';
 
+/// Where the in-app dock transition is committed to heading.
+///
+/// The dock controller is driven from two directions: screen state (is the
+/// library showing?) and user intent (expand the mini player back to the
+/// stage). Playback publishes structure changes at any moment — a queue edit,
+/// a metadata refresh, a new track — and each one re-runs the screen-state
+/// sync. Without an explicit destination that sync calls `forward()` while the
+/// user's reverse is still running, which cancels the reverse's
+/// `TickerFuture`: the completion callback never fires and the user is stranded
+/// on the library with a mini player that re-docks itself.
+///
+/// [InAppDockDestination.player] is set by the return action and holds until
+/// the parent confirms the player is showing again, so no playback update can
+/// redirect it.
+enum InAppDockDestination {
+  /// Undocking: the stage expands back to the full player.
+  player,
+
+  /// Docking: the stage shrinks into the transport bar's artwork slot.
+  miniPlayer,
+}
+
 /// Player surface plus the inline/drawer queue, with the library shell layered
 /// on top when it is showing.
 ///
@@ -100,12 +122,10 @@ class PlayerContent extends StatefulWidget {
 
 class _PlayerContentState extends State<PlayerContent>
     with SingleTickerProviderStateMixin {
-  static const Duration _dockExpandDuration = Duration(milliseconds: 200);
-
   late final AnimationController _miniPlayerController = AnimationController(
     vsync: this,
-    duration: AppMotion.emphasized,
-    reverseDuration: _dockExpandDuration,
+    duration: AppMotion.spatialDefault,
+    reverseDuration: AppMotion.dockExpand,
     value:
         (widget.isShowingLibrary &&
             widget.controller.hasMedia &&
@@ -116,7 +136,7 @@ class _PlayerContentState extends State<PlayerContent>
 
   late final CurvedAnimation _miniPlayerCurved = CurvedAnimation(
     parent: _miniPlayerController,
-    curve: AppMotion.standardCurve,
+    curve: AppMotion.spatialProgressCurve,
     reverseCurve: AppMotion.enter,
   );
 
@@ -124,6 +144,10 @@ class _PlayerContentState extends State<PlayerContent>
   late bool _libraryMounted =
       widget.isShowingLibrary || _miniPlayerController.value > 0.001;
   String? _lastVideoId;
+
+  /// Destination the dock transition is committed to. See
+  /// [InAppDockDestination] for why playback updates must not steer it.
+  InAppDockDestination _dockDestination = InAppDockDestination.miniPlayer;
 
   Widget? _queuePanelCache;
   PlayerController? _queuePanelCacheController;
@@ -133,26 +157,69 @@ class _PlayerContentState extends State<PlayerContent>
   PlayerHotkeys get _hotkeys =>
       widget.appPreferences?.preferences.hotkeys ?? PlayerHotkeys.defaults;
 
+  bool get _canInAppDockVideo =>
+      widget.controller.hasMedia &&
+      widget.controller.isVideo &&
+      !_miniPlayerDismissed;
+
+  /// A return to the player the user asked for is still animating.
+  bool get _dockReturnInFlight =>
+      _dockDestination == InAppDockDestination.player;
+
+  void _syncInAppDockController() {
+    // The user's return owns the transition until the parent confirms the
+    // player is showing again. Re-docking here would cancel the reverse.
+    if (_dockReturnInFlight) return;
+    if (_canInAppDockVideo && widget.isShowingLibrary) {
+      if (_miniPlayerController.value < 1.0 &&
+          _miniPlayerController.status != AnimationStatus.forward) {
+        final dockDuration = AppMotion.scaled(
+          context,
+          AppMotion.spatialDefault,
+        );
+        if (dockDuration > Duration.zero) {
+          _miniPlayerController.forward();
+        } else {
+          _miniPlayerController.value = 1.0;
+        }
+      }
+      return;
+    }
+    if (_miniPlayerController.value != 0.0) {
+      _miniPlayerController.value = 0.0;
+    }
+  }
+
   @override
   void initState() {
     super.initState();
     _lastVideoId = widget.controller.current?.id;
     widget.controller.structureListenable.addListener(_handlePlaybackChanges);
-    widget.layoutManager.isInAppMiniPlayerActive = () =>
-        !_miniPlayerDismissed &&
-        widget.controller.hasMedia &&
-        widget.controller.isVideo;
+    widget.layoutManager.isInAppMiniPlayerActive = () => _canInAppDockVideo;
   }
 
   void _handlePlaybackChanges() {
     if (!mounted) return;
     final currentId = widget.controller.current?.id;
-    if (currentId == _lastVideoId) return;
-    _lastVideoId = currentId;
-    final resetDismissed = _miniPlayerDismissed;
-    _miniPlayerDismissed = false;
+    final trackChanged = currentId != _lastVideoId;
+    if (trackChanged) {
+      _lastVideoId = currentId;
+      final resetDismissed = _miniPlayerDismissed;
+      _miniPlayerDismissed = false;
+      if (resetDismissed) setState(() {});
+    }
+    final dockBefore = _miniPlayerController.value;
+    _syncInAppDockController();
     widget.layoutManager.syncVideoVisibilityForLibrary();
-    if (resetDismissed) setState(() {});
+    if (trackChanged || dockBefore != _miniPlayerController.value) {
+      setState(() {});
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _syncInAppDockController();
   }
 
   @override
@@ -165,30 +232,24 @@ class _PlayerContentState extends State<PlayerContent>
       widget.controller.structureListenable.addListener(_handlePlaybackChanges);
       _miniPlayerDismissed = false;
     }
-    widget.layoutManager.isInAppMiniPlayerActive = () =>
-        !_miniPlayerDismissed &&
-        widget.controller.hasMedia &&
-        widget.controller.isVideo;
+    widget.layoutManager.isInAppMiniPlayerActive = () => _canInAppDockVideo;
 
-    final dockDuration = AppMotion.scaled(context, AppMotion.emphasized);
-    final expandDuration = AppMotion.scaled(context, _dockExpandDuration);
+    final dockDuration = AppMotion.scaled(context, AppMotion.spatialDefault);
+    final expandDuration = AppMotion.scaled(context, AppMotion.dockExpand);
     _miniPlayerController.duration = dockDuration;
     _miniPlayerController.reverseDuration = expandDuration;
 
-    final isVideo = widget.controller.hasMedia && widget.controller.isVideo;
     if (widget.isShowingLibrary != oldWidget.isShowingLibrary) {
+      // The screen-level destination moved, so whatever transition was in
+      // flight has been superseded: re-dock for a fresh library, or let the
+      // player-stage branch below run the expand.
+      _dockDestination = InAppDockDestination.miniPlayer;
       if (widget.isShowingLibrary) {
-        if (isVideo && !_miniPlayerDismissed && dockDuration > Duration.zero) {
-          _miniPlayerController.forward();
-        } else {
-          _miniPlayerController.value = 1.0;
-        }
+        _syncInAppDockController();
+      } else if (_canInAppDockVideo && expandDuration > Duration.zero) {
+        _miniPlayerController.reverse();
       } else {
-        if (isVideo && expandDuration > Duration.zero) {
-          _miniPlayerController.reverse();
-        } else {
-          _miniPlayerController.value = 0.0;
-        }
+        _miniPlayerController.value = 0.0;
       }
     }
   }
@@ -207,18 +268,28 @@ class _PlayerContentState extends State<PlayerContent>
   void _returnToPlayerAnimated() {
     _miniPlayerDismissed = false;
     widget.layoutManager.syncVideoVisibilityForLibrary();
-    final expandDuration = AppMotion.scaled(context, _dockExpandDuration);
+    final expandDuration = AppMotion.scaled(context, AppMotion.dockExpand);
     _miniPlayerController.reverseDuration = expandDuration;
-    if (expandDuration == Duration.zero) {
+    // Nothing has been painted in the mini slot yet (or motion is off), so
+    // there is no reverse to wait on: hand control back in the same frame
+    // instead of parking the caller on a TickerFuture that cannot run.
+    final atRest =
+        !_miniPlayerController.isAnimating &&
+        _miniPlayerController.value <= 0.0;
+    if (expandDuration == Duration.zero || atRest) {
+      _dockDestination = InAppDockDestination.miniPlayer;
       _miniPlayerController.value = 0.0;
       widget.onReturnToPlayer();
       return;
     }
+    // Commit the destination before starting the reverse so a structure update
+    // arriving mid-transition cannot re-dock the stage and cancel it.
+    _dockDestination = InAppDockDestination.player;
     if (_miniPlayerController.status == AnimationStatus.reverse) return;
     _miniPlayerController.reverse().then((_) {
-      if (mounted) {
-        widget.onReturnToPlayer();
-      }
+      if (!mounted || !_dockReturnInFlight) return;
+      _dockDestination = InAppDockDestination.miniPlayer;
+      widget.onReturnToPlayer();
     });
   }
 
@@ -385,13 +456,24 @@ class _PlayerContentState extends State<PlayerContent>
   @override
   Widget build(BuildContext context) {
     final repository = widget.libraryRepository;
-    if (widget.isShowingLibrary || _miniPlayerCurved.value > 0.001) {
+    if (widget.isShowingLibrary ||
+        (_canInAppDockVideo && _miniPlayerCurved.value > 0.001)) {
       _libraryMounted = true;
     }
     final library = _libraryMounted && repository != null
         ? _buildLibrary(repository)
         : null;
-    final isVideo = widget.controller.hasMedia && widget.controller.isVideo;
+
+    // Built here, outside the queue slot's LayoutBuilder: the queue widens
+    // its slot on every animation tick, which re-runs that builder with new
+    // constraints. Building the stage inside it rebuilt the whole stage — video
+    // surface, controls, top bar — on each of those ticks. Hoisting it leaves
+    // the stage as a stable child that is only relaid out, not recomposed.
+    final stage = _buildStage(
+      miniProgressAnimation: _canInAppDockVideo ? _miniPlayerCurved : null,
+      onExpandFromMini: _returnToPlayerAnimated,
+      onDismissMini: _dismissMiniPlayer,
+    );
 
     return PlayerQueueLayout(
       playerArea: PlayerDragDrop(
@@ -428,19 +510,30 @@ class _PlayerContentState extends State<PlayerContent>
             );
 
             return AnimatedBuilder(
-              animation: _miniPlayerCurved,
-              child: _buildStage(
-                miniProgressAnimation: _miniPlayerCurved,
-                onExpandFromMini: _returnToPlayerAnimated,
-                onDismissMini: _dismissMiniPlayer,
-              ),
+              animation: Listenable.merge(<Listenable>[
+                _miniPlayerCurved,
+                widget.controller.structureListenable,
+              ]),
+              child: stage,
               builder: (context, stage) {
-                final t = _miniPlayerCurved.value;
+                final t = _canInAppDockVideo
+                    ? _miniPlayerCurved.value.clamp(0.0, 1.0)
+                    : 0.0;
                 final currentRect = Rect.lerp(fullRect, miniRect, t)!;
 
+                // The moving geometry is still a changing Positioned, so the
+                // stage is relaid out every dock frame. That is deliberate for
+                // now: holding the stage at its full size and transforming it
+                // into the mini slot would either squash the chrome
+                // (non-uniform scale) or crop the video instead of resizing
+                // it. A DevTools trace should confirm the relayout is the cost
+                // worth removing before trading either of those away.
+
                 final showLibraryUnderneath =
-                    library != null && (widget.isShowingLibrary || t > 0.001);
-                final showVideoStage = isVideo
+                    library != null &&
+                    (widget.isShowingLibrary ||
+                        (_canInAppDockVideo && t > 0.001));
+                final showVideoStage = _canInAppDockVideo
                     ? (!_miniPlayerDismissed || t < 0.999)
                     : !widget.isShowingLibrary;
 

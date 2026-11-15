@@ -10,6 +10,8 @@
 #include <EGL/eglext_angle.h>
 #include <dxgi1_6.h>
 
+#include <chrono>
+#include <cstdlib>
 #include <iostream>
 #include <stdexcept>
 
@@ -27,6 +29,77 @@
   }
 
 int ANGLESurfaceManager::instance_count_ = 0;
+
+static bool IsRingPoolEnabled() {
+  wchar_t buf[16]{};
+  const DWORD len =
+      ::GetEnvironmentVariableW(L"MPVSON_GPU_RING_POOL", buf, 16);
+  if (len == 0 || len >= 16) return false;
+  return wcscmp(buf, L"1") == 0 || _wcsicmp(buf, L"true") == 0;
+}
+
+static bool IsForcedAngleFailStage(const wchar_t* expected) {
+  wchar_t buf[32]{};
+  const DWORD len =
+      ::GetEnvironmentVariableW(L"MPVSON_FORCE_ANGLE_FAIL_STAGE", buf, 32);
+  if (len == 0 || len >= 32) return false;
+  return _wcsicmp(buf, expected) == 0;
+}
+
+static std::string Utf8FromWide(const wchar_t* wide) {
+  if (!wide || wide[0] == L'\0') return {};
+  const int needed =
+      ::WideCharToMultiByte(CP_UTF8, 0, wide, -1, nullptr, 0, nullptr, nullptr);
+  if (needed <= 1) return {};
+  std::string out(static_cast<size_t>(needed - 1), '\0');
+  ::WideCharToMultiByte(CP_UTF8, 0, wide, -1, out.data(), needed, nullptr,
+                        nullptr);
+  return out;
+}
+
+static bool TryFlutterCompositorAdapter(
+    Microsoft::WRL::ComPtr<IDXGIAdapter>& adapter) {
+  wchar_t buffer[64]{};
+  const DWORD len =
+      ::GetEnvironmentVariableW(L"MPVSON_FLUTTER_ADAPTER_LUID", buffer, 64);
+  if (len == 0 || len >= 64) {
+    return false;
+  }
+  wchar_t* end = nullptr;
+  const int64_t raw = _wcstoi64(buffer, &end, 10);
+  if (end == buffer || raw == 0) {
+    return false;
+  }
+  Microsoft::WRL::ComPtr<IDXGIFactory1> factory1;
+  if (FAILED(::CreateDXGIFactory1(IID_PPV_ARGS(factory1.GetAddressOf()))) ||
+      !factory1) {
+    return false;
+  }
+  Microsoft::WRL::ComPtr<IDXGIFactory4> factory4;
+  if (FAILED(factory1.As(&factory4)) || !factory4) {
+    return false;
+  }
+  LUID luid{};
+  const uint64_t uval = static_cast<uint64_t>(raw);
+  luid.LowPart = static_cast<DWORD>(uval & 0xFFFFFFFFu);
+  luid.HighPart = static_cast<LONG>(uval >> 32);
+  Microsoft::WRL::ComPtr<IDXGIAdapter1> adapter1;
+  if (FAILED(factory4->EnumAdapterByLuid(luid,
+                                         IID_PPV_ARGS(adapter1.GetAddressOf()))) ||
+      !adapter1) {
+    return false;
+  }
+  DXGI_ADAPTER_DESC1 desc{};
+  if (SUCCEEDED(adapter1->GetDesc1(&desc))) {
+    if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) {
+      return false;
+    }
+    std::wcout << L"media_kit: ANGLESurfaceManager: Matched Flutter GPU: "
+               << desc.Description << std::endl;
+  }
+  adapter = adapter1;
+  return true;
+}
 
 static bool TryHighPerformanceAdapter(
     Microsoft::WRL::ComPtr<IDXGIAdapter>& adapter) {
@@ -60,8 +133,13 @@ static bool TryHighPerformanceAdapter(
 
 ANGLESurfaceManager::ANGLESurfaceManager(int32_t width, int32_t height)
     : width_(width), height_(height) {
-  Create();
-  instance_count_++;
+  try {
+    Create();
+    instance_count_++;
+  } catch (...) {
+    CleanUp(true);
+    throw;
+  }
 }
 
 ANGLESurfaceManager::~ANGLESurfaceManager() {
@@ -70,111 +148,153 @@ ANGLESurfaceManager::~ANGLESurfaceManager() {
   instance_count_--;
 }
 
-void ANGLESurfaceManager::SetSize(int32_t width, int32_t height) {
+bool ANGLESurfaceManager::SetSize(int32_t width, int32_t height) {
   std::lock_guard<std::mutex> lock(mutex_);
-  if (width == width_ && height == height_) {
-    return;
+  if (width < 1 || height < 1) {
+    return false;
   }
-  width_ = width;
-  height_ = height;
-  RecreateSurface();
+  if (width == width_ && height == height_ && active_backing_ != nullptr) {
+    return true;
+  }
+  return RecreateSurface(width, height);
 }
 
-void ANGLESurfaceManager::Draw(std::function<void()> callback, bool present) {
+bool ANGLESurfaceManager::Draw(const std::function<bool()>& callback,
+                               bool present) {
   std::lock_guard<std::mutex> lock(mutex_);
-  MakeCurrent(true);
-  callback();
-  if (!present) {
-    MakeCurrent(false);
-    return;
+  if (surface_ == EGL_NO_SURFACE || active_backing_ == nullptr) {
+    return false;
   }
+  if (!MakeCurrent(true)) {
+    return false;
+  }
+  const bool ok = callback();
+  if (!ok || !present) {
+    MakeCurrent(false);
+    return ok;
+  }
+  const auto copy_start = std::chrono::steady_clock::now();
   SwapBuffers();
-  // Copy into the public texture Flutter is not sampling. The raster thread
-  // only loads the published HANDLE, so this never blocks UI.
-  const int back = 1 - front_index_;
-  if (d3d_11_device_context_ != nullptr && internal_d3d_11_texture_2D_ &&
-      public_texture_[back]) {
-    d3d_11_device_context_->CopyResource(public_texture_[back].Get(),
-                                         internal_d3d_11_texture_2D_.Get());
-    d3d_11_device_context_->Flush();
-    Publish(back);
-    if (previous_textures_frames_remaining_ > 0) {
-      --previous_textures_frames_remaining_;
-      if (previous_textures_frames_remaining_ == 0) {
-        ReleasePreviousTextures();
+  int slot = active_backing_->next_slot;
+  if (active_backing_->slot_count > 1 && d3d_11_device_context_ != nullptr) {
+    int chosen = -1;
+    for (int offset = 0; offset < active_backing_->slot_count; ++offset) {
+      const int candidate =
+          (active_backing_->next_slot + offset) % active_backing_->slot_count;
+      if (candidate == active_backing_->published_slot) {
+        continue;
+      }
+      if (!active_backing_->query_issued[candidate] ||
+          !active_backing_->copy_queries[candidate] ||
+          d3d_11_device_context_->GetData(
+              active_backing_->copy_queries[candidate].Get(), nullptr, 0,
+              D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK) {
+        chosen = candidate;
+        break;
       }
     }
+    if (chosen < 0) {
+      gpu_missed_publishes_.fetch_add(1, std::memory_order_relaxed);
+      MakeCurrent(false);
+      return true;
+    }
+    slot = chosen;
+  }
+  if (d3d_11_device_context_ != nullptr &&
+      active_backing_->internal_texture &&
+      active_backing_->public_textures[slot]) {
+    d3d_11_device_context_->CopyResource(
+        active_backing_->public_textures[slot].Get(),
+        active_backing_->internal_texture.Get());
+    d3d_11_device_context_->Flush();
+    if (active_backing_->copy_queries[slot]) {
+      d3d_11_device_context_->End(active_backing_->copy_queries[slot].Get());
+      active_backing_->query_issued[slot] = true;
+    }
+    const auto copy_end = std::chrono::steady_clock::now();
+    last_copy_submit_us_.store(
+        std::chrono::duration_cast<std::chrono::microseconds>(copy_end -
+                                                              copy_start)
+            .count(),
+        std::memory_order_relaxed);
+    active_backing_->published_slot = slot;
+    Publish(active_backing_, slot);
+    active_backing_->next_slot = (slot + 1) % active_backing_->slot_count;
   }
   MakeCurrent(false);
+  return true;
 }
 
-void ANGLESurfaceManager::Publish(int index) {
-  published_width_.store(width_, std::memory_order_relaxed);
-  published_height_.store(height_, std::memory_order_relaxed);
-  published_handle_.store(public_handle_[index], std::memory_order_release);
-  front_index_ = index;
+void ANGLESurfaceManager::Publish(
+    const std::shared_ptr<SurfaceBacking>& backing,
+    int slot) {
+  if (!backing) return;
+  const uint64_t next_publish =
+      publish_count_.fetch_add(1, std::memory_order_relaxed) + 1;
+  {
+    std::lock_guard<std::mutex> lock(publish_mutex_);
+    published_.backing = backing;
+    published_.handle = backing->public_handles[slot];
+    published_.width = backing->width;
+    published_.height = backing->height;
+    published_.generation = backing->generation;
+    published_.publish_count = next_publish;
+  }
 }
 
 void ANGLESurfaceManager::Read() {
-  // Flutter samples the published DXGI handle after this callback returns.
-  // Do not wait on |mutex_|: |Draw| holds it for the whole GL submit.
+  // Snapshot is copied atomically in |CopyPublishedSnapshot| under
+  // |publish_mutex_|, which is never held across GPU/GL work.
 }
 
-void ANGLESurfaceManager::ReleasePreviousTextures() {
-  previous_internal_d3d_11_texture_2D_.Reset();
-  previous_public_texture_[0].Reset();
-  previous_public_texture_[1].Reset();
-  previous_textures_frames_remaining_ = 0;
-}
-
-void ANGLESurfaceManager::DestroyEGLSurface() {
-  if (display_ != EGL_NO_DISPLAY && surface_ != EGL_NO_SURFACE &&
-      tex_id_ != 0) {
-    MakeCurrent(true);
-    eglReleaseTexImage(display_, surface_, EGL_BACK_BUFFER);
-    glDeleteTextures(1, &tex_id_);
-    tex_id_ = 0;
-    MakeCurrent(false);
+void ANGLESurfaceManager::DestroyEGLSurface(EGLSurface* surface,
+                                            GLuint* tex_id) {
+  if (display_ != EGL_NO_DISPLAY && *surface != EGL_NO_SURFACE &&
+      *tex_id != 0) {
+    if (eglMakeCurrent(display_, *surface, *surface, context_) != EGL_FALSE) {
+      eglReleaseTexImage(display_, *surface, EGL_BACK_BUFFER);
+      glDeleteTextures(1, tex_id);
+      *tex_id = 0;
+    }
   }
   if (display_ != EGL_NO_DISPLAY) {
     eglMakeCurrent(display_, EGL_NO_SURFACE, EGL_NO_SURFACE, context_);
   }
-  if (display_ != EGL_NO_DISPLAY && surface_ != EGL_NO_SURFACE) {
-    eglDestroySurface(display_, surface_);
+  if (display_ != EGL_NO_DISPLAY && *surface != EGL_NO_SURFACE) {
+    eglDestroySurface(display_, *surface);
   }
-  surface_ = EGL_NO_SURFACE;
+  *surface = EGL_NO_SURFACE;
 }
 
-void ANGLESurfaceManager::RecreateSurface() {
-  DestroyEGLSurface();
-  // Keep the generation Flutter is still sampling until the next |Draw|
-  // publishes a filled texture at the new size.
-  ReleasePreviousTextures();
-  previous_internal_d3d_11_texture_2D_ = internal_d3d_11_texture_2D_;
-  previous_public_texture_[0] = public_texture_[0];
-  previous_public_texture_[1] = public_texture_[1];
-  previous_textures_frames_remaining_ = 4;
-  internal_d3d_11_texture_2D_.Reset();
-  public_texture_[0].Reset();
-  public_texture_[1].Reset();
-  internal_handle_ = nullptr;
-  public_handle_[0] = nullptr;
-  public_handle_[1] = nullptr;
-  if (!CreateD3DTexture()) {
-    throw std::runtime_error("Unable to create Windows Direct3D device.");
+bool ANGLESurfaceManager::RecreateSurface(int32_t width, int32_t height) {
+  const uint64_t next_gen = generation_ + 1;
+  std::shared_ptr<SurfaceBacking> next_backing;
+  if (!CreateBacking(width, height, next_gen, &next_backing)) {
+    return false;
   }
-  if (!CreateAndBindEGLSurface()) {
-    throw std::runtime_error("Unable to create ANGLE EGL surface.");
+  EGLSurface next_surface = EGL_NO_SURFACE;
+  GLuint next_tex_id = 0;
+  if (!CreateAndBindEGLSurface(next_backing->internal_handle, width, height,
+                               &next_surface, &next_tex_id)) {
+    DestroyEGLSurface(&next_surface, &next_tex_id);
+    return false;
   }
-  if (internal_handle_ == nullptr || public_handle_[0] == nullptr ||
-      public_handle_[1] == nullptr) {
-    throw std::runtime_error("Unable to retrieve Direct3D shared HANDLE.");
-  }
+  // Commit transactionally: release the previous EGL surface/texture and
+  // install the new backing. |published_| continues to hold the previous
+  // backing until the next successful |Draw| publishes the new frame.
+  DestroyEGLSurface(&surface_, &tex_id_);
+  surface_ = next_surface;
+  tex_id_ = next_tex_id;
+  active_backing_ = std::move(next_backing);
+  width_ = width;
+  height_ = height;
+  generation_ = next_gen;
+  resize_allocations_.fetch_add(1, std::memory_order_relaxed);
+  return true;
 }
 
 void ANGLESurfaceManager::Trim() {
   std::lock_guard<std::mutex> lock(mutex_);
-  ReleasePreviousTextures();
   if (d3d_11_device_ != nullptr) {
     Microsoft::WRL::ComPtr<IDXGIDevice3> dxgi_device;
     if (SUCCEEDED(d3d_11_device_->QueryInterface(
@@ -188,22 +308,24 @@ void ANGLESurfaceManager::Trim() {
   }
 }
 
-void ANGLESurfaceManager::MakeCurrent(bool value) {
+bool ANGLESurfaceManager::MakeCurrent(bool value) {
+  if (display_ == EGL_NO_DISPLAY) return !value;
   if (value) {
     if (eglGetCurrentDisplay() == display_ &&
         eglGetCurrentContext() == context_ &&
         eglGetCurrentSurface(EGL_DRAW) == surface_ &&
         eglGetCurrentSurface(EGL_READ) == surface_) {
-      return;
+      return true;
     }
-    eglMakeCurrent(display_, surface_, surface_, context_);
+    return eglMakeCurrent(display_, surface_, surface_, context_) != EGL_FALSE;
   } else {
     if (eglGetCurrentContext() == EGL_NO_CONTEXT &&
         eglGetCurrentSurface(EGL_DRAW) == EGL_NO_SURFACE &&
         eglGetCurrentSurface(EGL_READ) == EGL_NO_SURFACE) {
-      return;
+      return true;
     }
-    eglMakeCurrent(display_, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+    return eglMakeCurrent(display_, EGL_NO_SURFACE, EGL_NO_SURFACE,
+                          EGL_NO_CONTEXT) != EGL_FALSE;
   }
 }
 
@@ -219,55 +341,43 @@ void ANGLESurfaceManager::SwapBuffers() {
 
 void ANGLESurfaceManager::Create() {
   CleanUp(false);
-  if (!CreateD3DTexture()) {
+  if (!EnsureD3DDevice()) {
     throw std::runtime_error("Unable to create Windows Direct3D device.");
-    return;
   }
   if (!CreateEGLDisplay()) {
     throw std::runtime_error("Unable to create ANGLE EGL display.");
-    return;
   }
-  if (!CreateAndBindEGLSurface()) {
+  std::shared_ptr<SurfaceBacking> initial_backing;
+  if (!CreateBacking(width_, height_, 1, &initial_backing)) {
+    throw std::runtime_error("Unable to create Direct3D shared texture.");
+  }
+  if (!CreateAndBindEGLSurface(initial_backing->internal_handle, width_,
+                               height_, &surface_, &tex_id_)) {
+    DestroyEGLSurface(&surface_, &tex_id_);
     throw std::runtime_error("Unable to create ANGLE EGL surface.");
-    return;
   }
-  if (internal_handle_ == nullptr || public_handle_[0] == nullptr ||
-      public_handle_[1] == nullptr) {
-    throw std::runtime_error("Unable to retrieve Direct3D shared HANDLE.");
-    return;
-  }
+  active_backing_ = std::move(initial_backing);
+  generation_ = 1;
+  Publish(active_backing_, 0);
 }
 
 void ANGLESurfaceManager::CleanUp(bool release_context) {
+  {
+    std::lock_guard<std::mutex> lock(publish_mutex_);
+    published_ = PublishedSurface{};
+  }
+  DestroyEGLSurface(&surface_, &tex_id_);
+  active_backing_.reset();
+
   if (release_context) {
-    if (display_ != EGL_NO_DISPLAY && surface_ != EGL_NO_SURFACE) {
-      eglReleaseTexImage(display_, surface_, EGL_BACK_BUFFER);
-    }
-    if (display_ != EGL_NO_DISPLAY && context_ != EGL_NO_CONTEXT &&
-        surface_ != EGL_NO_SURFACE) {
-      // Delete the GL texture object that was bound to the pbuffer surface.
-      // glDeleteTextures requires a current context, so this happens while the
-      // context & surface still exist.
-      MakeCurrent(true);
-      if (tex_id_ != 0) {
-        glDeleteTextures(1, &tex_id_);
-        tex_id_ = 0;
-      }
-      MakeCurrent(false);
-    }
     if (display_ != EGL_NO_DISPLAY && context_ != EGL_NO_CONTEXT) {
       eglDestroyContext(display_, context_);
       context_ = EGL_NO_CONTEXT;
     }
-    if (surface_ != EGL_NO_SURFACE) {
-      eglDestroySurface(display_, surface_);
-      surface_ = EGL_NO_SURFACE;
-    }
-    if (instance_count_ == 1) {
+    if (display_ != EGL_NO_DISPLAY && instance_count_ == 1) {
       eglTerminate(display_);
     }
     display_ = EGL_NO_DISPLAY;
-    // Release D3D device & context if the instance is being destroyed.
     if (d3d_11_device_context_) {
       d3d_11_device_context_->Release();
       d3d_11_device_context_ = nullptr;
@@ -276,39 +386,11 @@ void ANGLESurfaceManager::CleanUp(bool release_context) {
       d3d_11_device_->Release();
       d3d_11_device_ = nullptr;
     }
-  } else {
-    // Clear context & destroy existing |surface_|.
-    if (display_ != EGL_NO_DISPLAY && surface_ != EGL_NO_SURFACE &&
-        tex_id_ != 0) {
-      // Release the GL texture object bound to the surface & delete it before
-      // the surface goes away, otherwise it leaks on every |Resize|.
-      // glDeleteTextures requires a current context.
-      MakeCurrent(true);
-      eglReleaseTexImage(display_, surface_, EGL_BACK_BUFFER);
-      glDeleteTextures(1, &tex_id_);
-      tex_id_ = 0;
-      MakeCurrent(false);
-    }
-    eglMakeCurrent(display_, EGL_NO_SURFACE, EGL_NO_SURFACE, context_);
-    if (display_ != EGL_NO_DISPLAY && surface_ != EGL_NO_SURFACE) {
-      eglDestroySurface(display_, surface_);
-    }
-    surface_ = EGL_NO_SURFACE;
   }
-  // Release D3D 11 texture(s).
-  internal_d3d_11_texture_2D_.Reset();
-  public_texture_[0].Reset();
-  public_texture_[1].Reset();
-  internal_handle_ = nullptr;
-  public_handle_[0] = nullptr;
-  public_handle_[1] = nullptr;
-  published_handle_.store(nullptr, std::memory_order_release);
-  ReleasePreviousTextures();
 }
 
-bool ANGLESurfaceManager::CreateD3DTexture() {
+bool ANGLESurfaceManager::EnsureD3DDevice() {
   if (d3d_11_device_ == nullptr) {
-    // NOTE: Not enabling Feature Level 12. It crashes directly on Windows 7.
     const auto feature_levels = {
         D3D_FEATURE_LEVEL_11_0,
         D3D_FEATURE_LEVEL_10_1,
@@ -316,25 +398,17 @@ bool ANGLESurfaceManager::CreateD3DTexture() {
         D3D_FEATURE_LEVEL_9_3,
     };
 
-    // Kept in a |ComPtr| so the adapter (and the factory below) are released
-    // when this function returns. D3D11CreateDevice takes its own reference,
-    // so the one acquired here must not be leaked: a new set of interfaces is
-    // acquired for every surface (re)creation, e.g. on each resize.
     Microsoft::WRL::ComPtr<IDXGIAdapter> adapter;
     D3D_DRIVER_TYPE driver_type = D3D_DRIVER_TYPE_UNKNOWN;
 
-    // Prefer the discrete GPU so decode, ANGLE, and Flutter stay on one
-    // adapter. D3D_DRIVER_TYPE_HARDWARE follows the Windows default, which
-    // is often the iGPU on hybrid laptops.
-    if (TryHighPerformanceAdapter(adapter)) {
+    if (TryFlutterCompositorAdapter(adapter)) {
+      driver_type = D3D_DRIVER_TYPE_UNKNOWN;
+    } else if (TryHighPerformanceAdapter(adapter)) {
       driver_type = D3D_DRIVER_TYPE_UNKNOWN;
     } else if (Utils::IsWindows10RTMOrGreater()) {
       driver_type = D3D_DRIVER_TYPE_HARDWARE;
     } else {
       Microsoft::WRL::ComPtr<IDXGIFactory> dxgi;
-      // Passing NULL (so-called default) seems to cause issues on Windows 7
-      // or maybe some older graphics drivers. First adapter is the default.
-      // D3D_DRIVER_TYPE_UNKNOWN must be passed with manual adapter selection.
       if (SUCCEEDED(
               ::CreateDXGIFactory(IID_PPV_ARGS(dxgi.GetAddressOf()))) &&
           dxgi) {
@@ -347,52 +421,89 @@ bool ANGLESurfaceManager::CreateD3DTexture() {
         static_cast<UINT>(feature_levels.size()), D3D11_SDK_VERSION,
         &d3d_11_device_, 0, &d3d_11_device_context_);
     CHECK_HRESULT("D3D11CreateDevice");
+
+    if (IsForcedAngleFailStage(L"device")) {
+      FAIL("Forced ANGLE failure after device creation");
+    }
+
+    Microsoft::WRL::ComPtr<IDXGIDevice> dxgi_device;
+    if (SUCCEEDED(d3d_11_device_->QueryInterface(
+            IID_PPV_ARGS(dxgi_device.GetAddressOf()))) &&
+        dxgi_device) {
+      dxgi_device->SetGPUThreadPriority(5);
+      Microsoft::WRL::ComPtr<IDXGIAdapter> actual_adapter;
+      if (SUCCEEDED(dxgi_device->GetAdapter(actual_adapter.GetAddressOf())) &&
+          actual_adapter) {
+        DXGI_ADAPTER_DESC desc{};
+        if (SUCCEEDED(actual_adapter->GetDesc(&desc))) {
+          const uint64_t high = static_cast<uint64_t>(
+              static_cast<uint32_t>(desc.AdapterLuid.HighPart));
+          const uint64_t low = static_cast<uint64_t>(desc.AdapterLuid.LowPart);
+          adapter_luid_ = static_cast<int64_t>((high << 32) | low);
+          adapter_name_ = Utf8FromWide(desc.Description);
+        }
+      }
+    }
+
+    auto level = d3d_11_device_->GetFeatureLevel();
+    std::cout << "media_kit: ANGLESurfaceManager: Direct3D Feature Level: "
+              << (((unsigned)level) >> 12) << "_"
+              << ((((unsigned)level) >> 8) & 0xf) << std::endl;
   }
+  return true;
+}
 
-  Microsoft::WRL::ComPtr<IDXGIDevice> dxgi_device = nullptr;
-  auto dxgi_device_success = d3d_11_device_->QueryInterface(
-      __uuidof(IDXGIDevice), (void**)&dxgi_device);
-  if (SUCCEEDED(dxgi_device_success) && dxgi_device != nullptr) {
-    dxgi_device->SetGPUThreadPriority(5);  // Must be in interval [-7, 7].
-  }
-
-  auto level = d3d_11_device_->GetFeatureLevel();
-  std::cout << "media_kit: ANGLESurfaceManager: Direct3D Feature Level: "
-            << (((unsigned)level) >> 12) << "_"
-            << ((((unsigned)level) >> 8) & 0xf) << std::endl;
-  auto d3d11_texture2D_desc = D3D11_TEXTURE2D_DESC{0};
-  d3d11_texture2D_desc.Width = width_;
-  d3d11_texture2D_desc.Height = height_;
-  d3d11_texture2D_desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-  d3d11_texture2D_desc.MipLevels = 1;
-  d3d11_texture2D_desc.ArraySize = 1;
-  d3d11_texture2D_desc.SampleDesc.Count = 1;
-  d3d11_texture2D_desc.SampleDesc.Quality = 0;
-  d3d11_texture2D_desc.Usage = D3D11_USAGE_DEFAULT;
-  d3d11_texture2D_desc.BindFlags =
-      D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
-  d3d11_texture2D_desc.CPUAccessFlags = 0;
-  d3d11_texture2D_desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
-
-  // Internal texture is the ANGLE draw target. Two public textures ping-pong
-  // so Flutter can sample a complete frame while the next copy runs.
-  if (!CreateSharedTexture(internal_d3d_11_texture_2D_, &internal_handle_,
-                           d3d11_texture2D_desc)) {
+bool ANGLESurfaceManager::CreateBacking(
+    int32_t width,
+    int32_t height,
+    uint64_t generation,
+    std::shared_ptr<SurfaceBacking>* out_backing) {
+  if (!EnsureD3DDevice()) {
     return false;
   }
-  if (!CreateSharedTexture(public_texture_[0], &public_handle_[0],
-                           d3d11_texture2D_desc)) {
+  auto backing = std::make_shared<SurfaceBacking>();
+  backing->width = width;
+  backing->height = height;
+  backing->generation = generation;
+
+  D3D11_TEXTURE2D_DESC desc{};
+  desc.Width = width;
+  desc.Height = height;
+  desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+  desc.MipLevels = 1;
+  desc.ArraySize = 1;
+  desc.SampleDesc.Count = 1;
+  desc.SampleDesc.Quality = 0;
+  desc.Usage = D3D11_USAGE_DEFAULT;
+  desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+  desc.CPUAccessFlags = 0;
+  desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
+
+  if (!CreateSharedTexture(backing->internal_texture, &backing->internal_handle,
+                           desc)) {
     return false;
   }
-  if (!CreateSharedTexture(public_texture_[1], &public_handle_[1],
-                           d3d11_texture2D_desc)) {
-    return false;
+  backing->slot_count =
+      IsRingPoolEnabled() ? SurfaceBacking::kMaxPublicSlots : 1;
+  D3D11_QUERY_DESC query_desc{};
+  query_desc.Query = D3D11_QUERY_EVENT;
+  for (int i = 0; i < backing->slot_count; ++i) {
+    if (!CreateSharedTexture(backing->public_textures[i],
+                             &backing->public_handles[i], desc)) {
+      return false;
+    }
+    if (backing->public_handles[i] == nullptr) {
+      FAIL("CreateBacking: null public shared HANDLE");
+    }
+    if (d3d_11_device_ != nullptr) {
+      d3d_11_device_->CreateQuery(&query_desc,
+                                  backing->copy_queries[i].GetAddressOf());
+    }
   }
-  // First construction publishes an empty 1x1. Resizes keep the previous
-  // HANDLE until |Draw| fills and publishes a new one.
-  if (published_handle_.load(std::memory_order_acquire) == nullptr) {
-    Publish(0);
+  if (backing->internal_handle == nullptr) {
+    FAIL("CreateBacking: null internal shared HANDLE");
   }
+  *out_backing = std::move(backing);
   return true;
 }
 
@@ -435,8 +546,6 @@ bool ANGLESurfaceManager::CreateEGLDisplay() {
     return false;
   };
 
-  // Prefer wrapping the existing D3D device so CopyResource is same-device
-  // and does not need a CPU stall.
   auto eglCreateDeviceANGLE =
       reinterpret_cast<PFNEGLCREATEDEVICEANGLEPROC>(
           eglGetProcAddress("eglCreateDeviceANGLE"));
@@ -484,10 +593,12 @@ bool ANGLESurfaceManager::CreateEGLDisplay() {
   FAIL("eglGetPlatformDisplayEXT");
 }
 
-bool ANGLESurfaceManager::CreateAndBindEGLSurface() {
-  // Do not create |context_| again, likely due to |Resize|.
+bool ANGLESurfaceManager::CreateAndBindEGLSurface(HANDLE internal_handle,
+                                                  int32_t width,
+                                                  int32_t height,
+                                                  EGLSurface* out_surface,
+                                                  GLuint* out_tex_id) {
   if (context_ == EGL_NO_CONTEXT) {
-    // First time from the constructor itself.
     auto count = 0;
     auto result = eglChooseConfig(display_, kEGLConfigurationAttributes,
                                   &config_, 1, &count);
@@ -501,20 +612,33 @@ bool ANGLESurfaceManager::CreateAndBindEGLSurface() {
     }
   }
   EGLint buffer_attributes[] = {
-      EGL_WIDTH,          width_,         EGL_HEIGHT,         height_,
+      EGL_WIDTH,          width,         EGL_HEIGHT,         height,
       EGL_TEXTURE_TARGET, EGL_TEXTURE_2D, EGL_TEXTURE_FORMAT, EGL_TEXTURE_RGBA,
       EGL_NONE,
   };
-  surface_ = eglCreatePbufferFromClientBuffer(
-      display_, EGL_D3D_TEXTURE_2D_SHARE_HANDLE_ANGLE, internal_handle_,
+  EGLSurface surface = eglCreatePbufferFromClientBuffer(
+      display_, EGL_D3D_TEXTURE_2D_SHARE_HANDLE_ANGLE, internal_handle,
       config_, buffer_attributes);
-  if (surface_ == EGL_NO_SURFACE) {
+  if (surface == EGL_NO_SURFACE) {
     FAIL("eglCreatePbufferFromClientBuffer");
   }
-  glGenTextures(1, &tex_id_);
-  glBindTexture(GL_TEXTURE_2D, tex_id_);
-  eglBindTexImage(display_, surface_, EGL_BACK_BUFFER);
+  if (eglMakeCurrent(display_, surface, surface, context_) == EGL_FALSE) {
+    eglDestroySurface(display_, surface);
+    FAIL("eglMakeCurrent");
+  }
+  GLuint tex_id = 0;
+  glGenTextures(1, &tex_id);
+  glBindTexture(GL_TEXTURE_2D, tex_id);
+  if (eglBindTexImage(display_, surface, EGL_BACK_BUFFER) == EGL_FALSE) {
+    glDeleteTextures(1, &tex_id);
+    eglMakeCurrent(display_, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+    eglDestroySurface(display_, surface);
+    FAIL("eglBindTexImage");
+  }
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  eglMakeCurrent(display_, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+  *out_surface = surface;
+  *out_tex_id = tex_id;
   return true;
 }

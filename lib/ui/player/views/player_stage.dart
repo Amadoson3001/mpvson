@@ -141,25 +141,39 @@ class PlayerStage extends StatelessWidget {
   Widget build(BuildContext context) {
     final media = _buildMediaContent(context);
     final animation = miniProgressAnimation;
-    if (animation != null) {
-      return AnimatedBuilder(
-        animation: animation,
-        child: media.surface,
-        builder: (context, child) => _composeStage(
-          context,
-          contentState: media.state,
-          media: child!,
-          progress: animation.value,
-        ),
-      );
-    }
-    return _composeStage(
+    // One progress source for the whole stage: a caller that passes a plain
+    // value gets a frozen animation at that value, while the dock path passes a
+    // live one that the thin wrappers below follow.
+    final progress = animation ?? AlwaysStoppedAnimation<double>(miniProgress);
+    final body = _buildStageBody(
       context,
       contentState: media.state,
       media: media.surface,
-      progress: miniProgress,
+      progress: progress,
+    );
+    if (animation == null) return body;
+    return AnimatedBuilder(
+      animation: progress,
+      child: body,
+      builder: (context, child) => _applyDockProgress(child!, progress.value),
     );
   }
+
+  /// The only work a dock tick does: clip the stage once it leaves the stage
+  /// rectangle. The stage body itself is the [AnimatedBuilder] child, so it is
+  /// built once per stage rebuild instead of once per frame.
+  ///
+  /// The [ClipRect] stays mounted for the whole dock and only its
+  /// [clipBehavior] changes. Swapping between a bare body and a `ClipRect`
+  /// wrapper would put two different widget types at the same tree position, so
+  /// the stage's unkeyed chrome would unmount and remount at both ends of the
+  /// move — losing control state and restarting the video-surface switcher.
+  /// [Clip.none] paints the child directly, so the undocked stage costs
+  /// nothing extra.
+  Widget _applyDockProgress(Widget body, double progress) => ClipRect(
+    clipBehavior: progress > 0.01 ? Clip.hardEdge : Clip.none,
+    child: body,
+  );
 
   ({String state, Widget surface}) _buildMediaContent(BuildContext context) =>
       buildPlayerStageMedia(
@@ -173,11 +187,18 @@ class PlayerStage extends StatelessWidget {
         onOpenLibrary: onOpenLibrary,
       );
 
-  Widget _composeStage(
+  /// Everything the stage shows, built without reading the dock progress.
+  ///
+  /// Progress-dependent presentation lives in the small wrappers at the bottom
+  /// of this file ([_DockFade], [_DockMiniOverlay], [_DockTapSurface]) and in
+  /// the video's [LayoutBuilder], which reads the live value. Rebuilding the
+  /// controls, top bar and video surface on every dock tick was the stage's
+  /// dominant per-frame cost; now a tick only re-runs those wrappers.
+  Widget _buildStageBody(
     BuildContext context, {
     required String contentState,
     required Widget media,
-    required double progress,
+    required Animation<double> progress,
   }) {
     final current = controller.current;
     final Widget content;
@@ -186,7 +207,10 @@ class PlayerStage extends StatelessWidget {
         color: AppTheme.stage,
         child: LayoutBuilder(
           builder: (context, constraints) {
-            if (progress <= 0.001) {
+            // Read the live value: the dock changes this box every frame, so
+            // the builder runs per frame and must not re-assert the full-stage
+            // viewport while the video is seated in the mini slot.
+            if (progress.value <= 0.001) {
               onUpdateViewportDimensions(context, constraints);
             }
             return RepaintBoundary(child: media);
@@ -196,9 +220,6 @@ class PlayerStage extends StatelessWidget {
     } else {
       content = media;
     }
-
-    final fullControlsOpacity = (1.0 - progress * 3.5).clamp(0.0, 1.0);
-    final showFullControls = fullControlsOpacity > 0.01;
 
     final stageBody = Stack(
       fit: StackFit.expand,
@@ -227,12 +248,16 @@ class PlayerStage extends StatelessWidget {
                 : MouseCursor.defer,
             child: Listener(
               onPointerSignal: onPointerSignal,
-              child: GestureDetector(
+              // Rebuilt per tick, but its child is not: only the tap bindings
+              // depend on whether the video is docked.
+              child: _DockTapSurface(
+                progress: progress,
                 key: videoSurfaceKey,
                 behavior: HitTestBehavior.opaque,
                 onTap: controller.hasMedia
                     ? () {
-                        if (progress > 0.01 && onExpandFromMini != null) {
+                        if (_DockTapSurface.isDocked(progress) &&
+                            onExpandFromMini != null) {
                           onExpandFromMini!();
                           return;
                         }
@@ -243,8 +268,12 @@ class PlayerStage extends StatelessWidget {
                         onVideoTap();
                       }
                     : null,
-                onDoubleTap: desktopWindow && progress <= 0.01
-                    ? onVideoDoubleTap
+                onDoubleTap: desktopWindow
+                    ? () {
+                        // Docked video expands instead of going fullscreen.
+                        if (_DockTapSurface.isDocked(progress)) return;
+                        onVideoDoubleTap();
+                      }
                     : null,
                 child: AnimatedSwitcher(
                   duration: AppMotion.duration(context, AppMotion.reveal),
@@ -272,30 +301,41 @@ class PlayerStage extends StatelessWidget {
             ),
           ),
         ),
-        if (showFullControls &&
-            (controller.hasMedia || contentState == 'ready') &&
+        if ((controller.hasMedia ||
+                controller.isLoading ||
+                contentState == 'ready') &&
             (!controller.hasMedia || controller.isVideo) &&
             current != null)
-          PlayerTopBar(
-            currentTitle: current.title,
-            controlsVisible:
-                (contentState == 'ready' ||
-                    !controller.hasMedia ||
-                    controller.isStopped)
-                ? true
-                : controlsVisible,
-            hasLibraryRepository: hasLibraryRepository,
-            isMiniPlayer: isMiniPlayer,
-            onPointerEnter: () =>
-                onControlsPointerEnter(const PointerEnterEvent()),
-            onPointerExit: () =>
-                onControlsPointerExit(const PointerExitEvent()),
-            onBackToHome: onBackToHome,
-            onExitMiniPlayer: onExitMiniPlayer,
-            onFocusChange: onTopBarFocusChange,
+          Positioned(
+            left: 16,
+            top: 12,
+            right: 24,
+            child: _DockFade(
+              progress: progress,
+              child: PlayerTopBar(
+                currentTitle: current.title,
+                controlsVisible:
+                    (contentState == 'ready' ||
+                        !controller.hasMedia ||
+                        controller.isStopped)
+                    ? true
+                    : controlsVisible,
+                hasLibraryRepository: hasLibraryRepository,
+                isMiniPlayer: isMiniPlayer,
+                onPointerEnter: () =>
+                    onControlsPointerEnter(const PointerEnterEvent()),
+                onPointerExit: () =>
+                    onControlsPointerExit(const PointerExitEvent()),
+                onBackToHome: onBackToHome,
+                onExitMiniPlayer: onExitMiniPlayer,
+                onFocusChange: onTopBarFocusChange,
+              ),
+            ),
           ),
-        if (showFullControls)
-          Positioned.fill(
+        Positioned.fill(
+          child: _DockFade(
+            progress: progress,
+            fadeWithDock: false,
             child: IgnorePointer(
               child: Align(
                 alignment: feedbackCentered
@@ -318,13 +358,23 @@ class PlayerStage extends StatelessWidget {
               ),
             ),
           ),
-        if (draggingFiles && current != null && showFullControls)
-          PlayerDragOverlay(hasMedia: controller.hasMedia),
-        if (showFullControls)
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
+        ),
+        if (draggingFiles && current != null)
+          _DockFade(
+            progress: progress,
+            fadeWithDock: false,
+            child: PlayerDragOverlay(hasMedia: controller.hasMedia),
+          ),
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          // The dock fade lives here; the chrome's own auto-hide fade stays on
+          // the AnimatedOpacity below, so hiding the controls still animates.
+          child: _DockFade(
+            key: const ValueKey('player-controls-visibility'),
+            progress: progress,
+            inertWhenHidden: true,
             child: FocusScope(
               node: controlsFocusScope,
               child: MouseRegion(
@@ -335,9 +385,8 @@ class PlayerStage extends StatelessWidget {
                     ? HitTestBehavior.opaque
                     : HitTestBehavior.deferToChild,
                 child: AnimatedOpacity(
-                  key: const ValueKey('player-controls-visibility'),
                   duration: AppMotion.duration(context, AppMotion.quick),
-                  opacity: controlsVisible ? fullControlsOpacity : 0,
+                  opacity: controlsVisible ? 1.0 : 0.0,
                   child: AnimatedSlide(
                     offset: !AppMotion.reduce(context) && !controlsVisible
                         ? const Offset(0, 0.1)
@@ -345,15 +394,13 @@ class PlayerStage extends StatelessWidget {
                     duration: AppMotion.duration(context, AppMotion.quick),
                     curve: AppMotion.standardCurve,
                     child: IgnorePointer(
-                      ignoring: !controlsVisible || fullControlsOpacity < 0.8,
                       // Hidden chrome must not steal focus or reach screen
                       // readers while it fades out.
+                      ignoring: !controlsVisible,
                       child: ExcludeFocus(
-                        excluding:
-                            !controlsVisible || fullControlsOpacity < 0.8,
+                        excluding: !controlsVisible,
                         child: ExcludeSemantics(
-                          excluding:
-                              !controlsVisible || fullControlsOpacity < 0.8,
+                          excluding: !controlsVisible,
                           child: ToastRegion(
                             child: AnimatedBuilder(
                               animation: Listenable.merge(<Listenable>[
@@ -368,9 +415,7 @@ class PlayerStage extends StatelessWidget {
                                     onControlInteractionChanged,
                                 onVolumeChanged: onVolumeChanged,
                                 showPlaybackControls: controller.hasMedia,
-                                timelineActive:
-                                    controlsVisible &&
-                                    fullControlsOpacity > 0.01,
+                                timelineActive: controlsVisible,
                                 actions: isMiniPlayer
                                     ? null
                                     : PlayerActions(
@@ -413,52 +458,170 @@ class PlayerStage extends StatelessWidget {
               ),
             ),
           ),
-        if (showFullControls &&
-            (videoSettingsOpen || videoSettingsMounted) &&
+        ),
+        if ((videoSettingsOpen || videoSettingsMounted) &&
             controller.hasMedia &&
             controller.isVideo)
           Positioned.fill(
-            child: FloatingVideoSettings(
-              key: const ValueKey('floating-video-settings'),
-              controller: controller,
-              appPreferences: appPreferences,
-              pickSubtitle: onPickSubtitle ?? () async => null,
-              onClose: onCloseVideoSettings ?? () {},
-              onOpenFullSettings: onOpenFullSettings,
-              open: videoSettingsOpen,
-              onExitSettled: onVideoSettingsExitEnd,
+            child: _DockFade(
+              progress: progress,
+              fadeWithDock: false,
+              child: FloatingVideoSettings(
+                key: const ValueKey('floating-video-settings'),
+                controller: controller,
+                appPreferences: appPreferences,
+                pickSubtitle: onPickSubtitle ?? () async => null,
+                onClose: onCloseVideoSettings ?? () {},
+                onOpenFullSettings: onOpenFullSettings,
+                open: videoSettingsOpen,
+                onExitSettled: onVideoSettingsExitEnd,
+              ),
             ),
           ),
-        if (progress > 0.35 && controller.hasMedia && controller.isVideo)
+        if (controller.hasMedia && controller.isVideo)
           Positioned.fill(
-            child: MiniPlayerOverlay(
-              controller: controller,
-              onExpand: onExpandFromMini ?? () {},
-              onDismiss: onDismissMini ?? () {},
-              visualOpacity: ((progress - 0.35) * 1.54).clamp(0.0, 1.0),
+            child: _DockMiniOverlay(
+              progress: progress,
+              child: MiniPlayerOverlay(
+                controller: controller,
+                onExpand: onExpandFromMini ?? () {},
+                onDismiss: onDismissMini ?? () {},
+              ),
             ),
           ),
       ],
     );
 
-    if (progress > 0.01) {
-      final borderRadius = BorderRadius.circular(
-        AppLayout.dockedMiniVideoRadius * progress,
-      );
-      return DecoratedBox(
-        decoration: BoxDecoration(
-          borderRadius: borderRadius,
-          border: Border.all(
-            color: context.palette.border.withValues(
-              alpha: progress.clamp(0.0, 1.0),
-            ),
-            width: 1,
-          ),
-        ),
-        child: ClipRRect(borderRadius: borderRadius, child: stageBody),
-      );
-    }
-
     return stageBody;
+  }
+}
+
+/// Fades a stage slot out as the video docks, and drops it from the tree once
+/// it is fully faded.
+///
+/// The stage body is built once per stage rebuild; only these thin wrappers
+/// re-run on a dock tick, so the controls, top bar and video surface are not
+/// recomposed on every frame while the video moves.
+class _DockFade extends StatelessWidget {
+  const _DockFade({
+    super.key,
+    required this.progress,
+    required this.child,
+    this.fadeWithDock = true,
+    this.inertWhenHidden = false,
+  });
+
+  final Animation<double> progress;
+  final Widget child;
+
+  /// Whether the dock fades this slot. Feedback and settings panels stay
+  /// fully opaque while shown, but still leave with the rest of the chrome as
+  /// the video docks.
+  final bool fadeWithDock;
+
+  /// Hidden chrome must not steal focus or reach screen readers.
+  final bool inertWhenHidden;
+
+  /// Fully faded just under a third of the way into the dock.
+  static double opacityFor(double progress) =>
+      (1.0 - progress * 3.5).clamp(0.0, 1.0);
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: progress,
+      child: child,
+      builder: (context, child) {
+        final dockOpacity = opacityFor(progress.value);
+        final double opacity;
+        if (fadeWithDock) {
+          opacity = dockOpacity;
+        } else {
+          opacity = dockOpacity > 0.01 ? 1.0 : 0.0;
+        }
+        if (opacity <= 0.01) return const SizedBox.shrink();
+        if (opacity >= 0.999) return child!;
+        final faded = Opacity(opacity: opacity, child: child);
+        if (!inertWhenHidden || opacity >= 0.8) return faded;
+        return IgnorePointer(
+          ignoring: true,
+          child: ExcludeFocus(
+            excluding: true,
+            child: ExcludeSemantics(excluding: true, child: faded),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Shows the docked mini video's tap/dismiss overlay once the video has mostly
+/// arrived in the transport bar's artwork slot.
+///
+/// The overlay paints nothing but its hover/press highlight, so fading the
+/// whole widget reproduces the ramp the overlay applies to that highlight
+/// without rebuilding it on every dock tick. Hit testing is unaffected.
+class _DockMiniOverlay extends StatelessWidget {
+  const _DockMiniOverlay({required this.progress, required this.child});
+
+  final Animation<double> progress;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: progress,
+      child: child,
+      builder: (context, child) {
+        final value = progress.value;
+        if (value <= 0.35) return const SizedBox.shrink();
+        final opacity = ((value - 0.35) * 1.54).clamp(0.0, 1.0);
+        if (opacity >= 0.999) return child!;
+        return Opacity(opacity: opacity, child: child);
+      },
+    );
+  }
+}
+
+/// The video surface's gesture bindings.
+///
+/// Only the bindings depend on whether the video is docked, so this wrapper is
+/// rebuilt per dock tick while its child — the whole video surface — is not.
+class _DockTapSurface extends StatelessWidget {
+  const _DockTapSurface({
+    super.key,
+    required this.progress,
+    required this.behavior,
+    required this.onTap,
+    required this.onDoubleTap,
+    required this.child,
+  });
+
+  final Animation<double> progress;
+  final HitTestBehavior behavior;
+  final VoidCallback? onTap;
+  final VoidCallback? onDoubleTap;
+  final Widget child;
+
+  /// Whether the video has left the stage rectangle.
+  static bool isDocked(Animation<double> progress) => progress.value > 0.01;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: progress,
+      child: child,
+      builder: (context, child) {
+        final docked = isDocked(progress);
+        return GestureDetector(
+          behavior: behavior,
+          onTap: onTap,
+          // A docked video expands on tap; it must not also arm the fullscreen
+          // double-tap, which would delay that tap by the double-tap timer.
+          onDoubleTap: docked ? null : onDoubleTap,
+          child: child,
+        );
+      },
+    );
   }
 }

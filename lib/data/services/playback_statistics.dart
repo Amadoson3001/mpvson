@@ -1,10 +1,12 @@
 import 'package:media_kit/media_kit.dart';
+import 'package:media_kit_video/media_kit_video.dart';
 
 import '../../domain/models/gpu_adapter.dart';
 import 'gpu_info_service.dart';
 
 typedef PlaybackPropertyReader = Future<String> Function(String name);
 typedef PlaybackGpuRowReader = Future<Map<String, String>> Function();
+typedef PlaybackNativeStatsReader = Future<Map<String, Object?>> Function();
 
 /// An on-demand sample. No observers or background polling run during playback.
 class PlaybackStatistics {
@@ -19,10 +21,12 @@ class PlaybackStatistics {
     'dwidth': 'Display width',
     'dheight': 'Display height',
     'container-fps': 'Source frame rate',
+    'estimated-vf-fps': 'Output frame rate',
     'frame-drop-count': 'Frames dropped by output',
     'decoder-frame-drop-count': 'Frames dropped by decoder',
     'avsync': 'Audio/video difference',
     'demuxer-cache-duration': 'Buffered media',
+    'paused-for-cache': 'Cache underrun',
   };
 
   static const gpuProperties = <String>[
@@ -36,6 +40,7 @@ class PlaybackStatistics {
     PlaybackPropertyReader readProperty, {
     Duration timeout = const Duration(seconds: 2),
     PlaybackGpuRowReader? readGpuRows,
+    PlaybackNativeStatsReader? readNativeStats,
   }) async {
     final values = await Future.wait(
       properties.entries.map((entry) async {
@@ -58,6 +63,31 @@ class PlaybackStatistics {
       }
       for (final label in gpuProperties) {
         merged.putIfAbsent(label, () => 'Unavailable');
+      }
+    }
+    if (readNativeStats != null) {
+      try {
+        final nativeStats = await readNativeStats();
+        final backend = nativeStats['backend']?.toString();
+        if (backend != null && backend.isNotEmpty) {
+          merged['Renderer backend'] = backend;
+        }
+        final adapterName = nativeStats['adapterName']?.toString();
+        if (adapterName != null && adapterName.isNotEmpty) {
+          merged['Renderer GPU'] = adapterName;
+        }
+        final frameSeq = nativeStats['frameSeq'];
+        if (frameSeq != null) {
+          merged['Rendered frames'] = frameSeq.toString();
+        }
+        final renderFailures = nativeStats['renderFailures'];
+        final importFailures = nativeStats['importFailures'];
+        if (renderFailures != null || importFailures != null) {
+          merged['Renderer / import failures'] =
+              '${renderFailures ?? 0} / ${importFailures ?? 0}';
+        }
+      } on Object {
+        // Native renderer stats are optional.
       }
     }
     return PlaybackStatistics(Map.unmodifiable(merged));
@@ -96,15 +126,19 @@ class PlaybackStatistics {
     if (property == 'hwdec-current') {
       return raw == 'no' ? 'Software' : raw;
     }
+    if (property == 'paused-for-cache') {
+      return raw == 'yes' ? 'Yes' : 'No';
+    }
     if (property == 'avsync' ||
         property == 'demuxer-cache-duration' ||
-        property == 'container-fps') {
+        property == 'container-fps' ||
+        property == 'estimated-vf-fps') {
       final number = double.tryParse(raw);
       if (number == null || !number.isFinite) return 'Unavailable';
       if (property == 'avsync') {
         return '${(number * 1000).toStringAsFixed(1)} ms';
       }
-      if (property == 'container-fps') {
+      if (property == 'container-fps' || property == 'estimated-vf-fps') {
         return '${number.toStringAsFixed(3)} fps';
       }
       return '${number.toStringAsFixed(1)} s';
@@ -116,6 +150,7 @@ class PlaybackStatistics {
 Future<PlaybackStatistics> readNativePlaybackStatistics(
   Player player, {
   GpuInfoService? gpuInfo,
+  VideoController? videoController,
 }) async {
   final native = player.platform;
   if (native is! NativePlayer) {
@@ -126,6 +161,12 @@ Future<PlaybackStatistics> readNativePlaybackStatistics(
     readGpuRows: gpuInfo == null
         ? null
         : () => PlaybackStatistics.gpuRows(gpuInfo),
+    readNativeStats: videoController == null
+        ? null
+        : () async {
+            final platform = await videoController.platform.future;
+            return platform.getNativeStats();
+          },
   );
 }
 

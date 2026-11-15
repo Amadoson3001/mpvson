@@ -50,6 +50,11 @@ class MediaEnrichmentData {
     'channels': metadata.audioInfo?.channels,
     'bitrate': metadata.audioInfo?.bitrate,
     'bitsPerSample': metadata.audioInfo?.bitsPerSample,
+    'videoCodec': metadata.videoInfo?.codec,
+    'videoWidth': metadata.videoInfo?.width,
+    'videoHeight': metadata.videoInfo?.height,
+    'videoFps': metadata.videoInfo?.fps,
+    'videoBitrate': metadata.videoInfo?.bitrate,
     'fileSize': fileSize,
     'modifiedAt': modifiedAt.millisecondsSinceEpoch,
   };
@@ -66,6 +71,17 @@ class MediaEnrichmentData {
         channels != null ||
         bitrate != null ||
         bitsPerSample != null;
+    final videoCodec = map['videoCodec'] as String?;
+    final videoWidth = (map['videoWidth'] as num?)?.toInt();
+    final videoHeight = (map['videoHeight'] as num?)?.toInt();
+    final videoFps = (map['videoFps'] as num?)?.toDouble();
+    final videoBitrate = (map['videoBitrate'] as num?)?.toInt();
+    final hasVideoInfo =
+        videoCodec != null ||
+        videoWidth != null ||
+        videoHeight != null ||
+        videoFps != null ||
+        videoBitrate != null;
 
     final kindStr = map['kind'] as String?;
     final kind = MediaKind.values.firstWhere(
@@ -94,6 +110,15 @@ class MediaEnrichmentData {
                 channels: channels,
                 bitrate: bitrate,
                 bitsPerSample: bitsPerSample,
+              )
+            : null,
+        videoInfo: hasVideoInfo
+            ? VideoTechnicalInfo(
+                codec: videoCodec,
+                width: videoWidth,
+                height: videoHeight,
+                fps: videoFps,
+                bitrate: videoBitrate,
               )
             : null,
       ),
@@ -157,11 +182,6 @@ class LibraryDatabase {
   /// Whether the database isolate connection is closed.
   bool get isClosed => _isClosed;
 
-  /// The underlying database isolate, exposed so tests can simulate an
-  /// unexpected isolate death.
-  @visibleForTesting
-  Isolate get debugIsolate => _isolate;
-
   /// Marks the connection as closed after the isolate died or its ports closed,
   /// so pending and future calls fail fast instead of hanging forever.
   void _handleIsolateGone(String message) {
@@ -174,8 +194,6 @@ class LibraryDatabase {
   static Future<LibraryDatabase> open({
     String? path,
     bool inMemory = false,
-    @visibleForTesting
-    void Function(dynamic params)? isolateEntryPointForTesting,
   }) async {
     final initPort = ReceivePort();
     final exitPort = ReceivePort();
@@ -194,7 +212,7 @@ class LibraryDatabase {
       });
 
       isolate = await Isolate.spawn<_DbInitParams>(
-        isolateEntryPointForTesting ?? _databaseIsolateEntryPoint,
+        _databaseIsolateEntryPoint,
         _DbInitParams(
           initPort: initPort.sendPort,
           path: path,
@@ -808,9 +826,6 @@ class LibraryDatabase {
       _failAllPending(StateError('Database has been closed.'));
     }
   }
-
-  /// Alias for [close].
-  Future<void> dispose() => close();
 }
 
 // =============================================================================
@@ -966,17 +981,14 @@ void _databaseIsolateEntryPoint(_DbInitParams params) {
 /// Version 2 describes the FTS5 external-content search table with
 /// album_artist and path columns; version 0 (or 1) marks a database that still
 /// needs the migration (or was left mid-migration by a crash).
-const int _currentSchemaVersion = 2;
+const int _currentSchemaVersion = 3;
 
 int _readUserVersion(Database db) {
   final rows = db.select('PRAGMA user_version;');
   return (rows.first.values.first as int?) ?? 0;
 }
 
-void _initializeSchema(
-  Database db, {
-  void Function(Database db)? midMigrationFaultForTesting,
-}) {
+void _initializeSchema(Database db) {
   if (_readUserVersion(db) >= _currentSchemaVersion) {
     _createSchema(db);
     return;
@@ -1019,11 +1031,24 @@ void _initializeSchema(
         )
         .isNotEmpty;
     if (mediaTableExists) {
-      final columns = db.select('PRAGMA table_info(media)');
-      if (!columns.any((column) => column['name'] == 'is_in_library')) {
-        db.execute(
-          'ALTER TABLE media ADD COLUMN is_in_library INTEGER NOT NULL DEFAULT 1',
-        );
+      final columns = db
+          .select('PRAGMA table_info(media)')
+          .map((column) => column['name'] as String)
+          .toSet();
+      const migrations = <String, String>{
+        'is_in_library': 'INTEGER NOT NULL DEFAULT 1',
+        'video_codec': 'TEXT',
+        'video_width': 'INTEGER',
+        'video_height': 'INTEGER',
+        'video_fps': 'REAL',
+        'video_bitrate': 'INTEGER',
+      };
+      for (final entry in migrations.entries) {
+        if (!columns.contains(entry.key)) {
+          db.execute(
+            'ALTER TABLE media ADD COLUMN ${entry.key} ${entry.value}',
+          );
+        }
       }
     }
 
@@ -1068,8 +1093,6 @@ void _initializeSchema(
       }
     }
 
-    midMigrationFaultForTesting?.call(db);
-
     db.execute('PRAGMA user_version = $_currentSchemaVersion;');
     db.execute('COMMIT;');
   } catch (_) {
@@ -1077,25 +1100,6 @@ void _initializeSchema(
     rethrow;
   }
 }
-
-/// Runs the schema migration against a raw database handle so tests can
-/// simulate a crash between migration steps.
-@visibleForTesting
-void debugRunSchemaMigrationForTesting(
-  Database db, {
-  void Function(Database db)? midMigrationFaultForTesting,
-}) {
-  _initializeSchema(
-    db,
-    midMigrationFaultForTesting: midMigrationFaultForTesting,
-  );
-}
-
-/// An isolate entrypoint that exits immediately without sending an initialization
-/// response, used to test that [LibraryDatabase.open] fails promptly instead of
-/// hanging.
-@visibleForTesting
-void debugPrematureExitIsolateEntryPoint(dynamic params) {}
 
 void _createSchema(Database db) {
   db.execute('''
@@ -1127,6 +1131,11 @@ void _createSchema(Database db) {
       channels INTEGER,
       bitrate INTEGER,
       bits_per_sample INTEGER,
+      video_codec TEXT,
+      video_width INTEGER,
+      video_height INTEGER,
+      video_fps REAL,
+      video_bitrate INTEGER,
       file_size INTEGER NOT NULL DEFAULT 0,
       modified_at INTEGER,
       is_available INTEGER NOT NULL DEFAULT 1,
@@ -1592,11 +1601,13 @@ Object? _dispatchAction(Database db, String action, Object? params) {
             id, canonical_source, path, kind, title, artist, album_artist, album,
             genre, year, track_number, disc_number, duration_ms, artwork_uri,
             audio_codec, sample_rate, channels, bitrate, bits_per_sample,
+            video_codec, video_width, video_height, video_fps, video_bitrate,
             file_size, modified_at, is_available, is_favorite, added_at,
             last_played_at, play_count
           ) VALUES (
             ?, ?, ?, ?, ?, ?, ?, ?,
             ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?,
             ?, ?, ?, ?, ?,
             ?, ?, ?, ?, ?,
             ?, ?
@@ -1619,6 +1630,11 @@ Object? _dispatchAction(Database db, String action, Object? params) {
             channels = excluded.channels,
             bitrate = excluded.bitrate,
             bits_per_sample = excluded.bits_per_sample,
+            video_codec = excluded.video_codec,
+            video_width = excluded.video_width,
+            video_height = excluded.video_height,
+            video_fps = excluded.video_fps,
+            video_bitrate = excluded.video_bitrate,
             file_size = excluded.file_size,
             modified_at = excluded.modified_at,
             is_available = excluded.is_available,
@@ -2066,6 +2082,11 @@ Object? _dispatchAction(Database db, String action, Object? params) {
           m.channels,
           m.bitrate,
           m.bits_per_sample,
+          m.video_codec,
+          m.video_width,
+          m.video_height,
+          m.video_fps,
+          m.video_bitrate,
           m.file_size,
           m.modified_at,
           m.is_available,
@@ -2113,6 +2134,11 @@ Object? _dispatchAction(Database db, String action, Object? params) {
             'channels': rowMap['channels'],
             'bitrate': rowMap['bitrate'],
             'bits_per_sample': rowMap['bits_per_sample'],
+            'video_codec': rowMap['video_codec'],
+            'video_width': rowMap['video_width'],
+            'video_height': rowMap['video_height'],
+            'video_fps': rowMap['video_fps'],
+            'video_bitrate': rowMap['video_bitrate'],
             'file_size': rowMap['file_size'],
             'modified_at': rowMap['modified_at'],
             'is_available': rowMap['is_available'],
@@ -2155,6 +2181,11 @@ void _executeInsertMediaRowStmt(
     m['channels'],
     m['bitrate'],
     m['bits_per_sample'],
+    m['video_codec'],
+    m['video_width'],
+    m['video_height'],
+    m['video_fps'],
+    m['video_bitrate'],
     m['file_size'] ?? 0,
     m['modified_at'],
     (m['is_available'] as bool? ?? true) ? 1 : 0,
@@ -2172,11 +2203,13 @@ void _insertOrUpdateMediaRow(Database db, Map<String, Object?> m) {
       id, canonical_source, path, kind, title, artist, album_artist, album,
       genre, year, track_number, disc_number, duration_ms, artwork_uri,
       audio_codec, sample_rate, channels, bitrate, bits_per_sample,
+      video_codec, video_width, video_height, video_fps, video_bitrate,
       file_size, modified_at, is_available, is_favorite, added_at,
       last_played_at, play_count
     ) VALUES (
       ?, ?, ?, ?, ?, ?, ?, ?,
       ?, ?, ?, ?, ?, ?,
+      ?, ?, ?, ?, ?,
       ?, ?, ?, ?, ?,
       ?, ?, ?, ?, ?,
       ?, ?
@@ -2199,6 +2232,11 @@ void _insertOrUpdateMediaRow(Database db, Map<String, Object?> m) {
       channels = excluded.channels,
       bitrate = excluded.bitrate,
       bits_per_sample = excluded.bits_per_sample,
+      video_codec = excluded.video_codec,
+      video_width = excluded.video_width,
+      video_height = excluded.video_height,
+      video_fps = excluded.video_fps,
+      video_bitrate = excluded.video_bitrate,
       file_size = excluded.file_size,
       modified_at = excluded.modified_at,
       is_available = excluded.is_available,
@@ -2227,6 +2265,11 @@ void _insertOrUpdateMediaRow(Database db, Map<String, Object?> m) {
       m['channels'],
       m['bitrate'],
       m['bits_per_sample'],
+      m['video_codec'],
+      m['video_width'],
+      m['video_height'],
+      m['video_fps'],
+      m['video_bitrate'],
       m['file_size'] ?? 0,
       m['modified_at'],
       (m['is_available'] as bool? ?? true) ? 1 : 0,
@@ -2575,6 +2618,11 @@ void _batchUpdateMetadata(Database db, List<Map<dynamic, dynamic>> updates) {
         channels = ?,
         bitrate = ?,
         bits_per_sample = ?,
+        video_codec = ?,
+        video_width = ?,
+        video_height = ?,
+        video_fps = ?,
+        video_bitrate = ?,
         file_size = ?,
         modified_at = ?
       WHERE canonical_source = ? OR canonical_source = ?
@@ -2601,6 +2649,11 @@ void _batchUpdateMetadata(Database db, List<Map<dynamic, dynamic>> updates) {
           u['channels'],
           u['bitrate'],
           u['bitsPerSample'],
+          u['videoCodec'],
+          u['videoWidth'],
+          u['videoHeight'],
+          u['videoFps'],
+          u['videoBitrate'],
           u['fileSize'],
           u['modifiedAt'],
           rawSource,
@@ -2779,6 +2832,11 @@ Map<String, Object?> _mediaToMap(MediaItemRecord media) {
     'channels': media.metadata.audioInfo?.channels,
     'bitrate': media.metadata.audioInfo?.bitrate,
     'bits_per_sample': media.metadata.audioInfo?.bitsPerSample,
+    'video_codec': media.metadata.videoInfo?.codec,
+    'video_width': media.metadata.videoInfo?.width,
+    'video_height': media.metadata.videoInfo?.height,
+    'video_fps': media.metadata.videoInfo?.fps,
+    'video_bitrate': media.metadata.videoInfo?.bitrate,
     'file_size': media.fileSize,
     'modified_at': media.modifiedAt?.millisecondsSinceEpoch,
     'is_available': media.isAvailable,
@@ -2795,12 +2853,23 @@ MediaItemRecord _mediaFromMap(Map<String, Object?> map) {
   final channels = map['channels'] as int?;
   final bitrate = map['bitrate'] as int?;
   final bitsPerSample = map['bits_per_sample'] as int?;
+  final videoCodec = map['video_codec'] as String?;
+  final videoWidth = (map['video_width'] as num?)?.toInt();
+  final videoHeight = (map['video_height'] as num?)?.toInt();
+  final videoFps = (map['video_fps'] as num?)?.toDouble();
+  final videoBitrate = (map['video_bitrate'] as num?)?.toInt();
   final hasAudio =
       audioCodec != null ||
       sampleRate != null ||
       channels != null ||
       bitrate != null ||
       bitsPerSample != null;
+  final hasVideoInfo =
+      videoCodec != null ||
+      videoWidth != null ||
+      videoHeight != null ||
+      videoFps != null ||
+      videoBitrate != null;
 
   final kindStr = map['kind'] as String?;
   final kind = MediaKind.values.firstWhere(
@@ -2831,6 +2900,15 @@ MediaItemRecord _mediaFromMap(Map<String, Object?> map) {
               channels: channels,
               bitrate: bitrate,
               bitsPerSample: bitsPerSample,
+            )
+          : null,
+      videoInfo: hasVideoInfo
+          ? VideoTechnicalInfo(
+              codec: videoCodec,
+              width: videoWidth,
+              height: videoHeight,
+              fps: videoFps,
+              bitrate: videoBitrate,
             )
           : null,
     ),

@@ -26,40 +26,74 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <mutex>
+#include <string>
 
 // |ANGLESurfaceManager| provides an abstraction around ANGLE to easily draw
 // OpenGL ES 2.0 content & read as D3D 11 texture using shared |HANDLE|.
 // * |Draw|: Takes callback where OpenGL ES 2.0 calls can be made for rendering,
-//           then copies the complete frame to the inactive public texture and
-//           publishes that HANDLE. Flutter samples the other public texture.
-// * |Read|: No-op. Flutter's raster thread loads the published HANDLE without
-//           waiting on the render mutex.
-
-// A large part of implementation is inspired from Flutter.
-// https://github.com/flutter/engine/blob/master/shell/platform/windows/angle_surface_manager.h
+//           then copies the complete frame to the public texture and publishes
+//           an atomic snapshot.
+// * |CopyPublishedSnapshot|: Thread-safe snapshot of the latest published
+//           shared handle, dimensions, generation, and backing refcount.
 
 class ANGLESurfaceManager {
  public:
-  const int32_t width() const { return width_; }
-  const int32_t height() const { return height_; }
-  const int32_t published_width() const {
-    return published_width_.load(std::memory_order_relaxed);
+  struct SurfaceBacking {
+    int32_t width = 1;
+    int32_t height = 1;
+    uint64_t generation = 0;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> internal_texture;
+    static constexpr int kMaxPublicSlots = 3;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> public_textures[kMaxPublicSlots];
+    Microsoft::WRL::ComPtr<ID3D11Query> copy_queries[kMaxPublicSlots];
+    bool query_issued[kMaxPublicSlots] = {false, false, false};
+    HANDLE internal_handle = nullptr;
+    HANDLE public_handles[kMaxPublicSlots] = {nullptr, nullptr, nullptr};
+    int slot_count = 1;
+    int next_slot = 0;
+    int published_slot = -1;
+  };
+
+  struct PublishedSurface {
+    std::shared_ptr<SurfaceBacking> backing;
+    HANDLE handle = nullptr;
+    int32_t width = 1;
+    int32_t height = 1;
+    uint64_t generation = 0;
+    uint64_t publish_count = 0;
+  };
+
+  int32_t width() const { return width_; }
+  int32_t height() const { return height_; }
+  int64_t adapter_luid() const { return adapter_luid_; }
+  const std::string& adapter_name() const { return adapter_name_; }
+  uint64_t resize_allocations() const {
+    return resize_allocations_.load(std::memory_order_relaxed);
   }
-  const int32_t published_height() const {
-    return published_height_.load(std::memory_order_relaxed);
+  uint64_t publish_count() const {
+    return publish_count_.load(std::memory_order_relaxed);
   }
-  const HANDLE handle() const {
-    return published_handle_.load(std::memory_order_acquire);
+  int64_t last_copy_submit_us() const {
+    return last_copy_submit_us_.load(std::memory_order_relaxed);
+  }
+  uint64_t gpu_missed_publishes() const {
+    return gpu_missed_publishes_.load(std::memory_order_relaxed);
+  }
+
+  PublishedSurface CopyPublishedSnapshot() const {
+    std::lock_guard<std::mutex> lock(publish_mutex_);
+    return published_;
   }
 
   ANGLESurfaceManager(int32_t width, int32_t height);
 
   ~ANGLESurfaceManager();
 
-  void SetSize(int32_t width, int32_t height);
+  bool SetSize(int32_t width, int32_t height);
 
-  void Draw(std::function<void()> callback, bool present = true);
+  bool Draw(const std::function<bool()>& callback, bool present = true);
 
   void Read();
 
@@ -67,7 +101,7 @@ class ANGLESurfaceManager {
   // |Draw| and |SetSize| by the same mutex.
   void Trim();
 
-  void MakeCurrent(bool value);
+  bool MakeCurrent(bool value);
 
  private:
   void SwapBuffers();
@@ -76,16 +110,17 @@ class ANGLESurfaceManager {
 
   void CleanUp(bool release_context);
 
-  // Recreates D3D textures and the EGL pbuffer without dropping the Flutter
-  // texture ID. Previous public textures are retained only across the swap
-  // transition and released after a few presented frames or on Trim.
-  void RecreateSurface();
+  // Transactionally allocates new D3D textures and an EGL pbuffer at
+  // |width|x|height| without dropping the Flutter texture ID or losing the
+  // previously published frame if allocation/bind fails.
+  bool RecreateSurface(int32_t width, int32_t height);
 
-  void DestroyEGLSurface();
+  bool EnsureD3DDevice();
 
-  void ReleasePreviousTextures();
-
-  bool CreateD3DTexture();
+  bool CreateBacking(int32_t width,
+                     int32_t height,
+                     uint64_t generation,
+                     std::shared_ptr<SurfaceBacking>* out_backing);
 
   bool CreateSharedTexture(Microsoft::WRL::ComPtr<ID3D11Texture2D>& texture,
                            HANDLE* handle,
@@ -93,39 +128,43 @@ class ANGLESurfaceManager {
 
   bool CreateEGLDisplay();
 
-  bool CreateAndBindEGLSurface();
+  bool CreateAndBindEGLSurface(HANDLE internal_handle,
+                               int32_t width,
+                               int32_t height,
+                               EGLSurface* out_surface,
+                               GLuint* out_tex_id);
 
-  void Publish(int index);
+  void DestroyEGLSurface(EGLSurface* surface, GLuint* tex_id);
+
+  void Publish(const std::shared_ptr<SurfaceBacking>& backing, int slot);
 
   int32_t width_ = 1;
   int32_t height_ = 1;
-  HANDLE internal_handle_ = nullptr;
-  HANDLE public_handle_[2] = {nullptr, nullptr};
-  std::atomic<HANDLE> published_handle_{nullptr};
-  std::atomic<int32_t> published_width_{1};
-  std::atomic<int32_t> published_height_{1};
-  int front_index_ = 0;
+  uint64_t generation_ = 0;
   bool angle_shares_d3d_device_ = false;
+  int64_t adapter_luid_ = 0;
+  std::string adapter_name_;
 
-  // Sync |Draw|, |SetSize| and |Trim|. Flutter's raster thread reads the
-  // published HANDLE without this lock.
+  std::atomic<uint64_t> resize_allocations_{0};
+  std::atomic<uint64_t> publish_count_{0};
+  std::atomic<int64_t> last_copy_submit_us_{0};
+  std::atomic<uint64_t> gpu_missed_publishes_{0};
+
+  // Sync |Draw|, |SetSize| and |Trim|.
   std::mutex mutex_;
+  mutable std::mutex publish_mutex_;
+  PublishedSurface published_;
+
   // D3D 11
   ID3D11Device* d3d_11_device_ = nullptr;
   ID3D11DeviceContext* d3d_11_device_context_ = nullptr;
-  Microsoft::WRL::ComPtr<ID3D11Texture2D> internal_d3d_11_texture_2D_;
-  Microsoft::WRL::ComPtr<ID3D11Texture2D> public_texture_[2];
-  Microsoft::WRL::ComPtr<ID3D11Texture2D> previous_internal_d3d_11_texture_2D_;
-  Microsoft::WRL::ComPtr<ID3D11Texture2D> previous_public_texture_[2];
-  int previous_textures_frames_remaining_ = 0;
+  std::shared_ptr<SurfaceBacking> active_backing_;
+
   // ANGLE
   EGLSurface surface_ = EGL_NO_SURFACE;
   EGLDisplay display_ = EGL_NO_DISPLAY;
   EGLContext context_ = nullptr;
   EGLConfig config_ = nullptr;
-  // GL texture object bound to the pbuffer surface via eglBindTexImage. Kept
-  // so it can be deleted when the surface is destroyed (|CleanUp|), otherwise
-  // it leaks on every resize and on teardown.
   GLuint tex_id_ = 0;
 
   static constexpr EGLint kEGLConfigurationAttributes[] = {
@@ -152,27 +191,22 @@ class ANGLESurfaceManager {
       9,
       EGL_PLATFORM_ANGLE_MAX_VERSION_MINOR_ANGLE,
       3,
-      EGL_PLATFORM_ANGLE_ENABLE_AUTOMATIC_TRIM_ANGLE,
-      EGL_TRUE,
       EGL_NONE,
   };
   static constexpr EGLint kD3D9DisplayAttributes[] = {
       EGL_PLATFORM_ANGLE_TYPE_ANGLE,
       EGL_PLATFORM_ANGLE_TYPE_D3D9_ANGLE,
-      EGL_PLATFORM_ANGLE_DEVICE_TYPE_ANGLE,
-      EGL_PLATFORM_ANGLE_DEVICE_TYPE_HARDWARE_ANGLE,
       EGL_NONE,
   };
   static constexpr EGLint kWrapDisplayAttributes[] = {
       EGL_PLATFORM_ANGLE_TYPE_ANGLE,
       EGL_PLATFORM_ANGLE_TYPE_D3D11_ANGLE,
-      EGL_PLATFORM_ANGLE_ENABLE_AUTOMATIC_TRIM_ANGLE,
-      EGL_TRUE,
+      EGL_PLATFORM_ANGLE_DEVICE_TYPE_ANGLE,
+      EGL_PLATFORM_ANGLE_DEVICE_TYPE_D3D_WARP_ANGLE,
       EGL_NONE,
   };
 
-  // Number of active instances of ANGLESurfaceManager.
-  static int32_t instance_count_;
+  static int instance_count_;
 };
 
 #endif  // ANGLE_SURFACE_MANAGER_H_

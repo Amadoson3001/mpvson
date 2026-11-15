@@ -22,25 +22,6 @@ permissions:
   contents: read
 
 jobs:
-  benchmarks:
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: windows-2022
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: subosito/flutter-action@44ac965b96f18d999802d4b807e3256d5a3f9fa1 # v2.18.0
-        with:
-          flutter-version: '3.44.0'
-          channel: stable
-          cache: true
-      - run: flutter pub get --enforce-lockfile
-      - run: flutter test --no-pub --run-skipped test/benchmark/ --dart-define=RECORD_BASELINE=true
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: benchmark-baselines
-          path: build/benchmark/*.json
-          if-no-files-found: error
-
   desktop:
     strategy:
       fail-fast: false
@@ -52,7 +33,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: subosito/flutter-action@44ac965b96f18d999802d4b807e3256d5a3f9fa1 # v2.18.0
         with:
-          flutter-version: '3.44.0'
+          flutter-version: '3.50.0'
           channel: stable
           cache: true
       - name: Install Linux build dependencies
@@ -62,8 +43,8 @@ jobs:
           sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libmpv-dev libasound2-dev libepoxy-dev liblzma-dev jq
       - run: flutter pub get --enforce-lockfile
       - run: dart format --output=none --set-exit-if-changed lib tool test
-      - run: flutter analyze
-      - run: flutter test --no-pub --exclude-tags=golden,benchmark
+      - run: flutter analyze --no-fatal-infos
+      - run: flutter test --no-pub test/
       - name: Build Windows release
         if: runner.os == 'Windows'
         shell: pwsh

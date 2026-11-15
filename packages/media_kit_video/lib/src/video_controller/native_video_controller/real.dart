@@ -14,6 +14,7 @@ import 'package:media_kit/media_kit.dart';
 
 import 'package:media_kit_video/src/utils/query_decoders.dart';
 import 'package:media_kit_video/src/video_controller/platform_video_controller.dart';
+import 'package:media_kit_video/src/video_controller/native_video_controller/video_size_coordinator.dart';
 
 /// {@template native_video_controller}
 ///
@@ -66,6 +67,7 @@ class NativeVideoController extends PlatformVideoController {
   /// [StreamSubscription] for listening to video [Rect].
   StreamSubscription<VideoParams>? videoParamsSubscription;
   bool _disposed = false;
+  late final VideoSizeCoordinator _sizeCoordinator;
 
   /// {@macro native_video_controller}
   NativeVideoController._(
@@ -73,14 +75,32 @@ class NativeVideoController extends PlatformVideoController {
     super.configuration,
   )   : width = configuration.width,
         height = configuration.height {
+    _sizeCoordinator = VideoSizeCoordinator(
+      initialWidth: configuration.width,
+      initialHeight: configuration.height,
+      applyNative: (targetWidth, targetHeight) async {
+        if (_disposed) return;
+        final handle = await player.handle;
+        if (_disposed) return;
+        await _channel.invokeMethod(
+          'VideoOutputManager.SetSize',
+          {
+            'handle': handle.toString(),
+            'width': targetWidth?.toString() ?? 'null',
+            'height': targetHeight?.toString() ?? 'null',
+          },
+        );
+        if (_disposed) return;
+        width = _sizeCoordinator.overrideWidth;
+        height = _sizeCoordinator.overrideHeight;
+      },
+    );
     videoParamsSubscription = player.stream.videoParams.listen(
       (event) => lock.synchronized(() async {
         if (_disposed) return;
         if ([0, null].contains(event.dw) || [0, null].contains(event.dh)) {
           return;
         }
-
-        final int handle = await player.handle;
 
         final int width;
         final int height;
@@ -100,19 +120,7 @@ class NativeVideoController extends PlatformVideoController {
         videoParamsWidth = width;
         videoParamsHeight = height;
 
-        final targetWidth =
-            (this.width != null && this.height != null) ? this.width! : width;
-        final targetHeight =
-            (this.width != null && this.height != null) ? this.height! : height;
-
-        await _channel.invokeMethod(
-          'VideoOutputManager.SetSize',
-          {
-            'handle': handle.toString(),
-            'width': targetWidth.toString(),
-            'height': targetHeight.toString(),
-          },
-        );
+        await _sizeCoordinator.updateSourceDimensions(width, height);
       }),
     );
   }
@@ -160,9 +168,10 @@ class NativeVideoController extends PlatformVideoController {
     // Store the [NativeVideoController] in the [_controllers].
     _controllers[handle] = controller;
 
-    // Wait until first texture ID is received.
+    // Wait until first texture ID is received or native initialization fails.
     // We are not waiting on the native-side itself because it will block the UI thread.
     final completer = Completer<void>();
+    _createCompleters[handle] = completer;
     void listener() {
       final value = controller.id.value;
       if (value != null && !completer.isCompleted) {
@@ -202,6 +211,9 @@ class NativeVideoController extends PlatformVideoController {
         await completer.future;
       } finally {
         controller.id.removeListener(listener);
+        if (identical(_createCompleters[handle], completer)) {
+          _createCompleters.remove(handle);
+        }
       }
       return controller;
     } on Object {
@@ -228,34 +240,8 @@ class NativeVideoController extends PlatformVideoController {
     int? width,
     int? height,
   }) async {
-    final handle = await player.handle;
-    if (this.width == width && this.height == height) {
-      // No need to resize if the requested size is same as the current size.
-      return;
-    }
-    if (width != null && height != null) {
-      this.width = width;
-      this.height = height;
-      await _channel.invokeMethod(
-        'VideoOutputManager.SetSize',
-        {
-          'handle': handle.toString(),
-          'width': width.toString(),
-          'height': height.toString(),
-        },
-      );
-    } else {
-      this.width = null;
-      this.height = null;
-      await _channel.invokeMethod(
-        'VideoOutputManager.SetSize',
-        {
-          'handle': handle.toString(),
-          'width': videoParamsWidth?.toString() ?? 'null',
-          'height': videoParamsHeight?.toString() ?? 'null',
-        },
-      );
-    }
+    if (_disposed) return;
+    await _sizeCoordinator.setSize(width: width, height: height);
   }
 
   @override
@@ -270,10 +256,34 @@ class NativeVideoController extends PlatformVideoController {
     );
   }
 
+  /// Returns native renderer diagnostics on platforms that support it.
+  @override
+  Future<Map<String, Object?>> getNativeStats() async {
+    if (_disposed) return const <String, Object?>{};
+    try {
+      final handle = await player.handle;
+      final raw = await _channel.invokeMethod<Object?>(
+        'VideoOutputManager.GetStats',
+        {'handle': handle.toString()},
+      );
+      if (raw is Map) {
+        return raw.map(
+          (key, value) => MapEntry(key.toString(), value),
+        );
+      }
+    } on MissingPluginException {
+      // Unsupported on platforms without GetStats.
+    } on PlatformException {
+      // Best-effort diagnostics.
+    }
+    return const <String, Object?>{};
+  }
+
   /// Disposes the instance. Releases allocated resources back to the system.
   Future<void> _dispose() async {
     if (_disposed) return;
     _disposed = true;
+    _sizeCoordinator.dispose();
     super.dispose();
     await videoParamsSubscription?.cancel();
     final handle = await player.handle;
@@ -289,6 +299,7 @@ class NativeVideoController extends PlatformVideoController {
   /// Currently created [NativeVideoController]s.
   /// This is used to notify about updated texture IDs & [Rect]s through [_channel].
   static final _controllers = HashMap<int, NativeVideoController>();
+  static final _createCompleters = HashMap<int, Completer<void>>();
 
   /// [MethodChannel] for invoking platform specific native implementation.
   static final _channel =
@@ -299,6 +310,23 @@ class NativeVideoController extends PlatformVideoController {
               debugPrint(call.method.toString());
               debugPrint(call.arguments.toString());
               switch (call.method) {
+                case 'VideoOutput.Error':
+                  {
+                    final int handle = call.arguments['handle'];
+                    final String error =
+                        (call.arguments['error'] as String?) ??
+                        'VideoOutput initialization failed.';
+                    final completer = _createCompleters.remove(handle);
+                    if (completer != null && !completer.isCompleted) {
+                      completer.completeError(
+                        PlatformException(
+                          code: 'VIDEO_OUTPUT_INIT_FAILED',
+                          message: error,
+                        ),
+                      );
+                    }
+                    break;
+                  }
                 case 'VideoOutput.Resize':
                   {
                     // Notify about updated texture ID & [Rect].

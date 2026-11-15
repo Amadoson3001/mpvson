@@ -52,6 +52,85 @@ class AudioTechnicalInfo {
   }
 }
 
+@immutable
+class VideoTechnicalInfo {
+  const VideoTechnicalInfo({
+    this.codec,
+    this.width,
+    this.height,
+    this.fps,
+    this.bitrate,
+  });
+
+  final String? codec;
+  final int? width;
+  final int? height;
+  final double? fps;
+  final int? bitrate;
+
+  bool get isEmpty =>
+      codec == null &&
+      width == null &&
+      height == null &&
+      fps == null &&
+      bitrate == null;
+
+  String? get resolutionLabel {
+    final w = width;
+    final h = height;
+    if (w == null || h == null || w <= 0 || h <= 0) return null;
+    return '$w \u00d7 $h';
+  }
+
+  factory VideoTechnicalInfo.fromJson(Map<String, Object?> json) {
+    return VideoTechnicalInfo(
+      codec: json['codec'] as String?,
+      width: (json['width'] as num?)?.toInt(),
+      height: (json['height'] as num?)?.toInt(),
+      fps: (json['fps'] as num?)?.toDouble(),
+      bitrate: (json['bitrate'] as num?)?.toInt(),
+    );
+  }
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'codec': codec,
+    'width': width,
+    'height': height,
+    'fps': fps,
+    'bitrate': bitrate,
+  };
+
+  VideoTechnicalInfo copyWith({
+    String? codec,
+    int? width,
+    int? height,
+    double? fps,
+    int? bitrate,
+  }) {
+    return VideoTechnicalInfo(
+      codec: codec ?? this.codec,
+      width: width ?? this.width,
+      height: height ?? this.height,
+      fps: fps ?? this.fps,
+      bitrate: bitrate ?? this.bitrate,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other is VideoTechnicalInfo &&
+            other.codec == codec &&
+            other.width == width &&
+            other.height == height &&
+            other.fps == fps &&
+            other.bitrate == bitrate);
+  }
+
+  @override
+  int get hashCode => Object.hash(codec, width, height, fps, bitrate);
+}
+
 /// Probed properties of a library file or stream.
 ///
 /// Canonical owner of title, duration, artwork, and technical audio info for
@@ -72,6 +151,7 @@ class MediaMetadata {
     this.duration = Duration.zero,
     this.artworkUri,
     this.audioInfo,
+    this.videoInfo,
   });
 
   final String? title;
@@ -85,6 +165,7 @@ class MediaMetadata {
   final Duration duration;
   final String? artworkUri;
   final AudioTechnicalInfo? audioInfo;
+  final VideoTechnicalInfo? videoInfo;
 
   static const MediaMetadata empty = MediaMetadata();
 
@@ -132,6 +213,11 @@ class MediaMetadata {
               (json['audioInfo'] as Map).cast<String, Object?>(),
             )
           : null,
+      videoInfo: json['videoInfo'] is Map
+          ? VideoTechnicalInfo.fromJson(
+              (json['videoInfo'] as Map).cast<String, Object?>(),
+            )
+          : null,
     );
   }
 
@@ -147,6 +233,7 @@ class MediaMetadata {
     'durationMs': duration.inMilliseconds,
     'artworkUri': artworkUri,
     'audioInfo': audioInfo?.toJson(),
+    'videoInfo': videoInfo?.toJson(),
   };
 
   MediaMetadata copyWith({
@@ -161,6 +248,7 @@ class MediaMetadata {
     Duration? duration,
     String? artworkUri,
     AudioTechnicalInfo? audioInfo,
+    VideoTechnicalInfo? videoInfo,
   }) {
     return MediaMetadata(
       title: title ?? this.title,
@@ -174,6 +262,7 @@ class MediaMetadata {
       duration: duration ?? this.duration,
       artworkUri: artworkUri ?? this.artworkUri,
       audioInfo: audioInfo ?? this.audioInfo,
+      videoInfo: videoInfo ?? this.videoInfo,
     );
   }
 }

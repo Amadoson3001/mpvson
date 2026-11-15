@@ -208,15 +208,16 @@ class _InlineVolumeControlState extends State<InlineVolumeControl> {
               width: sliderWidth,
               height: buttonExtent,
               child: SliderTheme(
-                data: PlayerSliderTheme.volume(
-                  context,
-                  compact: true,
-                  thumbColor: Colors.white,
-                  inactiveColor: Colors.white.withValues(alpha: 0.22),
-                ).copyWith(
-                  trackShape: const UniformRoundedSliderTrackShape(),
-                  padding: EdgeInsets.zero,
-                ),
+                data:
+                    PlayerSliderTheme.volume(
+                      context,
+                      compact: true,
+                      thumbColor: Colors.white,
+                      inactiveColor: Colors.white.withValues(alpha: 0.22),
+                    ).copyWith(
+                      trackShape: const UniformRoundedSliderTrackShape(),
+                      padding: EdgeInsets.zero,
+                    ),
                 child: SliderOverlay(
                   child: Slider(
                     key: const ValueKey('volume-inline-slider'),

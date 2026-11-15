@@ -3,8 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
-// The public testing hook keeps a readable name instead of exposing the
-// repository's private field name as a constructor parameter.
+// Keep public constructor parameter names independent of private fields.
 // ignore_for_file: prefer_initializing_formals
 
 import 'package:crypto/crypto.dart' as crypto;
@@ -21,19 +20,12 @@ class EngineInstallationRepository {
   EngineInstallationRepository({
     Directory? enginesDirectory,
     Future<Directory> Function()? supportDirectoryProvider,
-    Future<void> Function()? beforeSelectionWriteForTesting,
-    Future<void> Function()? beforeExtractionForTesting,
-    Future<void> Function()? beforeStageFailureCleanupForTesting,
     ArchiveExtractor archiveExtractor = const ArchiveExtractor(),
     this.maxArchiveEntries = 4096,
     this.maxUncompressedBytes = 2 * 1024 * 1024 * 1024,
     this.bootLeaseTimeout = const Duration(seconds: 3),
     this.storeLockTimeout = const Duration(seconds: 3),
   }) : _providedEnginesDirectory = enginesDirectory,
-       _beforeSelectionWriteForTesting = beforeSelectionWriteForTesting,
-       _beforeExtractionForTesting = beforeExtractionForTesting,
-       _beforeStageFailureCleanupForTesting =
-           beforeStageFailureCleanupForTesting,
        _archiveExtractor = archiveExtractor,
        _supportDirectoryProvider =
            supportDirectoryProvider ?? getApplicationSupportDirectory;
@@ -78,9 +70,6 @@ class EngineInstallationRepository {
       <String, Set<String>>{};
 
   final Directory? _providedEnginesDirectory;
-  final Future<void> Function()? _beforeSelectionWriteForTesting;
-  final Future<void> Function()? _beforeExtractionForTesting;
-  final Future<void> Function()? _beforeStageFailureCleanupForTesting;
   final Future<Directory> Function() _supportDirectoryProvider;
   final int maxArchiveEntries;
   final int maxUncompressedBytes;
@@ -352,11 +341,6 @@ class EngineInstallationRepository {
     final b = _random.nextInt(1 << 32).toRadixString(16).padLeft(8, '0');
     return '$a-$b';
   }
-
-  /// Releases the held OS boot lease without committing confirmation or rejection.
-  ///
-  /// Used in tests to simulate an unexpected process crash during boot.
-  Future<void> simulateCrashForTesting() => _releaseBootLease();
 
   /// Reads selection state after discarding records whose paths escape the
   /// engine store or no longer contain the expected library.
@@ -1120,10 +1104,6 @@ class EngineInstallationRepository {
       if (shouldCancel?.call() == true) {
         throw const _EngineStageCancelled();
       }
-      await _beforeExtractionForTesting?.call();
-      if (shouldCancel?.call() == true) {
-        throw const _EngineStageCancelled();
-      }
 
       final params = ArchiveExtractionParams(
         packageFilePath: packageFile.path,
@@ -1217,11 +1197,6 @@ class EngineInstallationRepository {
         return record;
       });
     } on Object {
-      try {
-        await _beforeStageFailureCleanupForTesting?.call();
-      } on Object {
-        // The failure hook is only for deterministic concurrency tests.
-      }
       try {
         await _cleanupFailedStageAttempt(
           attempt,
@@ -1985,7 +1960,6 @@ class EngineInstallationRepository {
     var movedOld = false;
     try {
       await temporary.writeAsString(jsonEncode(state.toJson()), flush: true);
-      await _beforeSelectionWriteForTesting?.call();
       if (shouldCancel?.call() == true) {
         throw const _EngineStageCancelled();
       }

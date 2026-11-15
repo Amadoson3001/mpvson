@@ -1,6 +1,9 @@
-import 'dart:math' as math;
+import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import '../../../utils/file_utils.dart';
+import '../widgets/media_context_menu.dart';
 
 import '../../../data/repositories/media_library_repository.dart';
 import '../../../domain/models/media_catalog.dart';
@@ -9,8 +12,8 @@ import '../../../domain/models/media_thumbnail.dart';
 import '../../../utils/format.dart';
 import '../../core/app_motion.dart';
 import '../../core/app_theme.dart';
-import '../../core/components/app_popup_menu_item.dart';
 import '../../core/components/page_header.dart';
+import '../../core/components/player_icon_button.dart';
 import '../../core/toast/app_toast.dart';
 import '../../player/player_controller.dart';
 import '../widgets/library_artwork.dart';
@@ -40,168 +43,411 @@ class HomeView extends StatelessWidget {
   final bool isDragging;
 
   @override
-  Widget build(BuildContext context) => DecoratedBox(
-    decoration: BoxDecoration(
-      color: context.palette.background,
-      gradient: RadialGradient(
-        center: const Alignment(0, -0.35),
-        radius: 1.15,
-        colors: [
-          Theme.of(context).colorScheme.primary.withValues(alpha: 0.08),
-          context.palette.raisedSurface.withValues(alpha: 0.15),
-          Colors.transparent,
-        ],
-        stops: const [0.0, 0.45, 1.0],
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final primary = Theme.of(context).colorScheme.primary;
+    final hasDrawer = Scaffold.maybeOf(context)?.hasDrawer ?? false;
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: palette.background,
+        gradient: RadialGradient(
+          center: const Alignment(0, -0.35),
+          radius: 1.15,
+          colors: [
+            primary.withValues(alpha: 0.06),
+            palette.raisedSurface.withValues(alpha: 0.12),
+            Colors.transparent,
+          ],
+          stops: const [0.0, 0.45, 1.0],
+        ),
+        border: isDragging ? Border.all(color: primary, width: 2) : null,
       ),
-      border: isDragging
-          ? Border.all(color: Theme.of(context).colorScheme.primary, width: 2)
-          : null,
-    ),
-    child: LayoutBuilder(
-      builder: (context, constraints) {
-        const gap = 20.0;
-        final compact = constraints.maxWidth < 600;
-        final inset = compact ? 20.0 : 32.0;
-        final contentWidth = (constraints.maxWidth - inset * 2).clamp(
-          0.0,
-          double.infinity,
-        );
-        // The opening surface is capped at 960; keep the recent grid on the
-        // same measure instead of letting it run wider underneath.
-        final gridWidth = math.min(contentWidth, 960.0);
-        final gridInset = inset + (contentWidth - gridWidth) / 2;
-        final columns = ((gridWidth + gap) / 320).ceil().clamp(1, 8);
-        final tileWidth = (gridWidth - (columns - 1) * gap) / columns;
-        final textHeight = MediaQuery.textScalerOf(context).scale(13) * 3.8;
-        return CustomScrollView(
-          slivers: [
-            SliverPadding(
-              padding: EdgeInsets.fromLTRB(inset, 20, inset, 32),
-              sliver: SliverToBoxAdapter(
-                child: Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 960),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const PageHeader(
-                          title: 'Home',
-                          subtitle: 'Desktop Media Center',
-                          padding: EdgeInsets.zero,
-                        ),
-                        const SizedBox(height: 24),
-                        _DropZoneCard(
-                          isDragging: isDragging,
-                          onOpenFiles: onOpenFiles,
-                          onOpenUrl: onOpenUrl,
-                          compact: recent.isNotEmpty,
-                        ),
-                        if (recent.isEmpty) const _HomeEmptyGuide(),
-                        if (recent.isNotEmpty) ...[
-                          const SizedBox(height: 24),
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.baseline,
-                            textBaseline: TextBaseline.alphabetic,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          const gap = 18.0;
+          final compact = constraints.maxWidth < AppLayout.compactBreakpoint;
+          final inset = PageHeader.gutterFor(constraints.maxWidth);
+          final gridWidth = (constraints.maxWidth - inset * 2).clamp(
+            0.0,
+            double.infinity,
+          );
+          final columns = ((gridWidth + gap) / AppLayout.videoGridMinWidth)
+              .ceil()
+              .clamp(1, 8);
+          final tileWidth = (gridWidth - (columns - 1) * gap) / columns;
+          final textHeight = MediaQuery.textScalerOf(context).scale(13) * 4.0;
+
+          final openButtons = Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              FilledButton.icon(
+                onPressed: onOpenFiles,
+                icon: const Icon(Icons.file_open_rounded, size: 16),
+                label: const Text('Open file'),
+              ),
+              const SizedBox(width: AppSpace.xs),
+              OutlinedButton.icon(
+                onPressed: onOpenUrl,
+                icon: const Icon(Icons.link_rounded, size: 16),
+                label: const Text('Open URL'),
+              ),
+            ],
+          );
+
+          final headerRow = Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              if (hasDrawer) ...[
+                PlayerIconButton(
+                  icon: const Icon(Icons.menu_rounded),
+                  tooltip: 'Open navigation',
+                  color: palette.primaryText,
+                  onPressed: () => Scaffold.of(context).openDrawer(),
+                ),
+                const SizedBox(width: AppSpace.xs),
+              ],
+              Expanded(
+                child: Semantics(
+                  header: true,
+                  child: Text(
+                    'Home',
+                    style: palette.pageTitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ),
+              const SizedBox(width: AppSpace.sm),
+              if (!compact)
+                openButtons
+              else
+                Flexible(
+                  flex: 0,
+                  child: Wrap(
+                    spacing: AppSpace.xs,
+                    runSpacing: AppSpace.xs,
+                    alignment: WrapAlignment.end,
+                    children: [
+                      FilledButton.icon(
+                        onPressed: onOpenFiles,
+                        icon: const Icon(Icons.file_open_rounded, size: 16),
+                        label: const Text('Open'),
+                      ),
+                      IconButton.outlined(
+                        onPressed: onOpenUrl,
+                        tooltip: 'Open URL',
+                        icon: const Icon(Icons.link_rounded, size: 18),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          );
+
+          return CustomScrollView(
+            slivers: [
+              SliverPadding(
+                padding: EdgeInsets.fromLTRB(
+                  inset,
+                  AppSpace.md,
+                  inset,
+                  recent.isEmpty ? AppSpace.lg : AppSpace.md,
+                ),
+                sliver: SliverToBoxAdapter(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      headerRow,
+                      if (isDragging && recent.isNotEmpty) ...[
+                        const SizedBox(height: AppSpace.sm),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: AppSpace.md,
+                            vertical: AppSpace.sm,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Color.alphaBlend(
+                              primary.withValues(alpha: 0.12),
+                              palette.card,
+                            ),
+                            borderRadius: BorderRadius.circular(
+                              AppRadii.control,
+                            ),
+                            border: Border.all(color: primary, width: 1.5),
+                          ),
+                          child: Row(
                             children: [
-                              Expanded(
-                                child: Text(
-                                  'Recently played',
-                                  overflow: TextOverflow.ellipsis,
-                                  maxLines: 1,
-                                  style: Theme.of(context).textTheme.titleLarge,
-                                ),
+                              Icon(
+                                Icons.file_download_rounded,
+                                size: 20,
+                                color: primary,
                               ),
-                              const SizedBox(width: 12),
+                              const SizedBox(width: AppSpace.sm),
                               Text(
-                                '${recent.length} ${recent.length == 1 ? 'item' : 'items'}',
-                                style: context.palette.metadata,
-                              ),
-                              const Spacer(),
-                              TextButton.icon(
-                                onPressed:
-                                    onClearRecent ??
-                                    () {
-                                      final cleared = controller.clearRecent();
-                                      if (cleared.isNotEmpty &&
-                                          context.mounted) {
-                                        AppToast.show(
-                                          context,
-                                          'Recently played cleared',
-                                          actionLabel: 'Undo',
-                                          onAction: () => controller
-                                              .restoreRecentList(cleared),
-                                        );
-                                      }
-                                    },
-                                icon: const Icon(
-                                  Icons.clear_all_rounded,
-                                  size: 16,
-                                ),
-                                label: const Text('Clear all'),
-                                style: TextButton.styleFrom(
-                                  foregroundColor: context.palette.mutedText,
-                                  visualDensity: VisualDensity.compact,
-                                  textStyle: Theme.of(
-                                    context,
-                                  ).textTheme.bodySmall,
-                                ),
+                                'Release to play media',
+                                style: Theme.of(context).textTheme.titleSmall
+                                    ?.copyWith(fontWeight: FontWeight.w600),
                               ),
                             ],
                           ),
-                          const SizedBox(height: 20),
-                        ],
+                        ),
                       ],
-                    ),
+                      if (recent.isEmpty) ...[
+                        const SizedBox(height: AppSpace.lg),
+                        Center(
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 720),
+                            child: Column(
+                              children: [
+                                _DropZoneCard(
+                                  isDragging: isDragging,
+                                  onOpenFiles: onOpenFiles,
+                                  onOpenUrl: onOpenUrl,
+                                ),
+                                const _HomeEmptyGuide(),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                      if (recent.isNotEmpty) ...[
+                        const SizedBox(height: AppSpace.lg),
+                        _RecentSectionHeader(
+                          recentCount: recent.length,
+                          onClearRecent: () {
+                            _homeSelectedRecentIds.value = <String>{};
+                            if (onClearRecent != null) {
+                              onClearRecent!();
+                              return;
+                            }
+                            final cleared = controller.clearRecent();
+                            if (cleared.isNotEmpty && context.mounted) {
+                              AppToast.show(
+                                context,
+                                'Recently played cleared',
+                                actionLabel: 'Undo',
+                                onAction: () =>
+                                    controller.restoreRecentList(cleared),
+                              );
+                            }
+                          },
+                        ),
+                      ],
+                    ],
                   ),
                 ),
+              ),
+              if (recent.isNotEmpty)
+                _RecentSliverGrid(
+                  recent: recent,
+                  columns: columns,
+                  gap: gap,
+                  inset: inset,
+                  tileWidth: tileWidth,
+                  textHeight: textHeight,
+                  controller: controller,
+                  repository: repository,
+                  onOpenRecent: onOpenRecent,
+                  onRemoveRecent: onRemoveRecent,
+                ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+final ValueNotifier<Set<String>> _homeSelectedRecentIds =
+    ValueNotifier<Set<String>>(<String>{});
+
+class _RecentSectionHeader extends StatelessWidget {
+  const _RecentSectionHeader({
+    required this.recentCount,
+    required this.onClearRecent,
+  });
+
+  final int recentCount;
+  final VoidCallback onClearRecent;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final accent = Theme.of(context).colorScheme.primary;
+    return ValueListenableBuilder<Set<String>>(
+      valueListenable: _homeSelectedRecentIds,
+      builder: (context, selectedIds, _) {
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.baseline,
+          textBaseline: TextBaseline.alphabetic,
+          children: [
+            Flexible(
+              child: Text(
+                'Recently played',
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
               ),
             ),
-            if (recent.isNotEmpty)
-              SliverPadding(
-                padding: EdgeInsets.fromLTRB(gridInset, 0, gridInset, 32),
-                sliver: SliverGrid(
-                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: columns,
-                    crossAxisSpacing: gap,
-                    mainAxisSpacing: 24,
-                    mainAxisExtent: tileWidth * 9 / 16 + textHeight + 20,
-                  ),
-                  delegate: SliverChildBuilderDelegate(
-                    (context, index) => _RecentTile(
-                      key: ValueKey(recent[index].id),
-                      entry: recent[index],
-                      controller: controller,
-                      repository: repository,
-                      onOpen: () => onOpenRecent(recent[index]),
-                      onRemove: onRemoveRecent != null
-                          ? () => onRemoveRecent!(recent[index])
-                          : () {
-                              final restored = controller.removeRecent(
-                                recent[index],
-                              );
-                              if (restored != null && context.mounted) {
-                                AppToast.show(
-                                  context,
-                                  'Removed from recently played',
-                                  actionLabel: 'Undo',
-                                  onAction: () => controller.restoreRecent(
-                                    restored.$1,
-                                    restored.$2,
-                                  ),
-                                );
-                              }
-                            },
+            const SizedBox(width: AppSpace.sm),
+            Text(
+              '$recentCount ${recentCount == 1 ? 'item' : 'items'}',
+              style: palette.metadata,
+            ),
+            if (selectedIds.isNotEmpty) ...[
+              const SizedBox(width: AppSpace.sm),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: accent.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(AppRadii.control),
+                  border: Border.all(color: accent.withValues(alpha: 0.35)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      '${selectedIds.length} selected',
+                      style: palette.metadata.copyWith(
+                        color: accent,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
-                    addAutomaticKeepAlives: false,
-                    childCount: recent.length,
-                  ),
+                    const SizedBox(width: 6),
+                    InkWell(
+                      onTap: () => _homeSelectedRecentIds.value = <String>{},
+                      borderRadius: BorderRadius.circular(4),
+                      child: Padding(
+                        padding: const EdgeInsets.all(2),
+                        child: Icon(
+                          Icons.close_rounded,
+                          size: 13,
+                          color: accent,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
+            ],
+            const Spacer(),
+            TextButton.icon(
+              onPressed: onClearRecent,
+              icon: const Icon(Icons.clear_all_rounded, size: 16),
+              label: const Text('Clear all'),
+              style: TextButton.styleFrom(
+                foregroundColor: palette.mutedText,
+                visualDensity: VisualDensity.compact,
+                textStyle: Theme.of(context).textTheme.bodySmall,
+              ),
+            ),
           ],
         );
       },
-    ),
-  );
+    );
+  }
+}
+
+class _RecentSliverGrid extends StatelessWidget {
+  const _RecentSliverGrid({
+    required this.recent,
+    required this.columns,
+    required this.gap,
+    required this.inset,
+    required this.tileWidth,
+    required this.textHeight,
+    required this.controller,
+    required this.repository,
+    required this.onOpenRecent,
+    this.onRemoveRecent,
+  });
+
+  final List<MediaEntry> recent;
+  final int columns;
+  final double gap;
+  final double inset;
+  final double tileWidth;
+  final double textHeight;
+  final PlayerController controller;
+  final MediaLibraryRepository repository;
+  final ValueChanged<MediaEntry> onOpenRecent;
+  final ValueChanged<MediaEntry>? onRemoveRecent;
+
+  void _toggleSelection(String id) {
+    final next = Set<String>.from(_homeSelectedRecentIds.value);
+    if (!next.add(id)) {
+      next.remove(id);
+    }
+    _homeSelectedRecentIds.value = next;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SliverPadding(
+      padding: EdgeInsets.fromLTRB(inset, 0, inset, AppSpace.xl),
+      sliver: ValueListenableBuilder<Set<String>>(
+        valueListenable: _homeSelectedRecentIds,
+        builder: (context, selectedIds, _) {
+          final selectionMode = selectedIds.isNotEmpty;
+          return SliverGrid(
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: columns,
+              crossAxisSpacing: gap,
+              mainAxisSpacing: 22,
+              mainAxisExtent: tileWidth * 9 / 16 + textHeight + 16,
+            ),
+            delegate: SliverChildBuilderDelegate(
+              (context, index) {
+                final entry = recent[index];
+                return _RecentTile(
+                  key: ValueKey(entry.id),
+                  entry: entry,
+                  controller: controller,
+                  repository: repository,
+                  isSelected: selectedIds.contains(entry.id),
+                  selectionMode: selectionMode,
+                  onToggleSelect: () => _toggleSelection(entry.id),
+                  onOpen: () => onOpenRecent(entry),
+                  onRemove: onRemoveRecent != null
+                      ? () {
+                          final next = Set<String>.from(
+                            _homeSelectedRecentIds.value,
+                          )..remove(entry.id);
+                          _homeSelectedRecentIds.value = next;
+                          onRemoveRecent!(entry);
+                        }
+                      : () {
+                          final next = Set<String>.from(
+                            _homeSelectedRecentIds.value,
+                          )..remove(entry.id);
+                          _homeSelectedRecentIds.value = next;
+                          final restored = controller.removeRecent(entry);
+                          if (restored != null && context.mounted) {
+                            AppToast.show(
+                              context,
+                              'Removed from recently played',
+                              actionLabel: 'Undo',
+                              onAction: () => controller.restoreRecent(
+                                restored.$1,
+                                restored.$2,
+                              ),
+                            );
+                          }
+                        },
+                );
+              },
+              addAutomaticKeepAlives: false,
+              childCount: recent.length,
+            ),
+          );
+        },
+      ),
+    );
+  }
 }
 
 class _RecentTile extends StatefulWidget {
@@ -211,12 +457,18 @@ class _RecentTile extends StatefulWidget {
     required this.controller,
     required this.repository,
     required this.onOpen,
+    required this.isSelected,
+    required this.selectionMode,
+    required this.onToggleSelect,
     this.onRemove,
   });
   final MediaEntry entry;
   final PlayerController controller;
   final MediaLibraryRepository repository;
   final VoidCallback onOpen;
+  final bool isSelected;
+  final bool selectionMode;
+  final VoidCallback onToggleSelect;
   final VoidCallback? onRemove;
 
   @override
@@ -248,6 +500,8 @@ class _RecentTileState extends State<_RecentTile> {
     _active.value = _hovered || _focused;
   }
 
+  final FocusNode _tileFocusNode = FocusNode(debugLabel: 'RecentTile');
+
   @override
   void initState() {
     super.initState();
@@ -278,51 +532,44 @@ class _RecentTileState extends State<_RecentTile> {
   void dispose() {
     _request?.release();
     _active.dispose();
+    _tileFocusNode.dispose();
     super.dispose();
   }
 
-  Future<void> _showContextMenu(BuildContext context, Offset position) async {
-    final entry = widget.entry;
-    final hasProgress =
-        entry.duration > Duration.zero && entry.position > Duration.zero;
-    final accent = Theme.of(context).colorScheme.primary;
-    final selected = await showMenu<String>(
-      context: context,
-      position: RelativeRect.fromLTRB(
-        position.dx,
-        position.dy,
-        position.dx + 1,
-        position.dy + 1,
-      ),
-      color: context.palette.surface,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(AppRadii.control),
-        side: BorderSide(color: context.palette.border),
-      ),
-      items: [
-        AppPopupMenuItem<String>(
-          value: 'play',
-          icon: Icons.play_arrow_rounded,
-          iconColor: accent,
-          text: hasProgress ? 'Resume' : 'Play',
-        ),
-        if (widget.onRemove != null) ...[
-          const PopupMenuDivider(height: 1),
-          AppPopupMenuItem<String>(
-            value: 'remove',
-            icon: Icons.delete_outline_rounded,
-            iconColor: context.palette.danger,
-            text: 'Remove from recently played',
-          ),
-        ],
-      ],
-    );
-    if (!mounted || selected == null) return;
-    if (selected == 'play') {
-      widget.onOpen();
-    } else if (selected == 'remove') {
-      widget.onRemove?.call();
+  Future<void> _showInFolder(String path) async {
+    final ok = await showInFolder(path);
+    if (!ok && mounted) {
+      AppToast.show(
+        context,
+        'Could not open File Explorer',
+        tone: AppToastTone.danger,
+      );
     }
+  }
+
+  Future<void> _showContextMenu(BuildContext context, Offset position) async {
+    await showMediaContextMenu(
+      context: context,
+      globalPosition: position,
+      target: MediaContextMenuTarget.fromEntry(widget.entry),
+      repository: widget.repository,
+      controller: widget.controller,
+      onPlay: widget.onOpen,
+      onRemove: widget.onRemove,
+      isSelected: widget.isSelected,
+      onSelect: widget.onToggleSelect,
+      onShowInFolder: (path) => unawaited(_showInFolder(path)),
+    );
+    if (mounted) {
+      _tileFocusNode.requestFocus();
+    }
+  }
+
+  void _openContextMenuFromButton(BuildContext buttonContext) {
+    final box = buttonContext.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return;
+    final bottomLeft = box.localToGlobal(Offset(0, box.size.height));
+    _showContextMenu(buttonContext, bottomLeft);
   }
 
   @override
@@ -351,199 +598,225 @@ class _RecentTileState extends State<_RecentTile> {
               '${formatTime(entry.position, compactMinutes: true)} of '
               '${formatTime(entry.duration, compactMinutes: true)}'
         : '$type: ${entry.title}';
-    return Semantics(
-      button: true,
-      container: true,
-      label: semanticLabel,
-      child: InkWell(
-        onTap: widget.onOpen,
-        onSecondaryTapDown: (details) =>
-            _showContextMenu(context, details.globalPosition),
-        onHover: _setHover,
-        onFocusChange: _setFocus,
-        borderRadius: BorderRadius.circular(AppRadii.artwork),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            AspectRatio(
-              aspectRatio: 16 / 9,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(AppRadii.artwork),
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    FutureBuilder<MediaThumbnail?>(
-                      future: _thumbnail,
-                      builder: (context, snapshot) {
-                        final bytes =
-                            snapshot.data?.bytes ?? _provisional?.bytes;
-                        Widget fallback() => LibraryArtwork(
-                          mediaPath: entry.path,
-                          repository: widget.repository,
-                          icon: icon,
-                          iconSize: 32,
-                        );
-                        return bytes == null
-                            ? fallback()
-                            : Image.memory(
-                                bytes,
-                                fit: BoxFit.cover,
-                                filterQuality: FilterQuality.low,
-                                cacheWidth: 480,
-                                gaplessPlayback: true,
-                                errorBuilder: (_, _, _) => fallback(),
-                              );
-                      },
-                    ),
-                    Positioned.fill(
-                      child: ValueListenableBuilder<bool>(
-                        valueListenable: _active,
-                        builder: (context, active, _) {
-                          if (!active) return const SizedBox.shrink();
-                          return Stack(
-                            fit: StackFit.expand,
-                            children: [
-                              const ColoredBox(
-                                color: AppColors.lightScrim,
-                                child: Center(
-                                  child: Icon(
-                                    Icons.play_circle_fill_rounded,
-                                    color: AppColors.onStage,
-                                    size: 44,
+    return CallbackShortcuts(
+      bindings: <ShortcutActivator, VoidCallback>{
+        if (!MediaEntry.isNetworkUrl(entry.path))
+          const SingleActivator(LogicalKeyboardKey.f3): () =>
+              unawaited(_showInFolder(entry.path)),
+        if (widget.isSelected || widget.selectionMode)
+          const SingleActivator(LogicalKeyboardKey.escape): () =>
+              _homeSelectedRecentIds.value = <String>{},
+      },
+      child: Semantics(
+        button: true,
+        container: true,
+        label: semanticLabel,
+        child: InkWell(
+          focusNode: _tileFocusNode,
+          onTap: () {
+            _tileFocusNode.requestFocus();
+            if (widget.selectionMode) {
+              widget.onToggleSelect();
+            } else {
+              widget.onOpen();
+            }
+          },
+          onSecondaryTapDown: (details) =>
+              _showContextMenu(context, details.globalPosition),
+          onHover: _setHover,
+          onFocusChange: _setFocus,
+          borderRadius: BorderRadius.circular(AppRadii.artwork),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              AspectRatio(
+                aspectRatio: 16 / 9,
+                child: Container(
+                  foregroundDecoration: widget.isSelected
+                      ? BoxDecoration(
+                          borderRadius: BorderRadius.circular(AppRadii.artwork),
+                          border: Border.all(color: accent, width: 2),
+                        )
+                      : null,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(AppRadii.artwork),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        FutureBuilder<MediaThumbnail?>(
+                          future: _thumbnail,
+                          builder: (context, snapshot) {
+                            final bytes =
+                                snapshot.data?.bytes ?? _provisional?.bytes;
+                            Widget fallback() => LibraryArtwork(
+                              mediaPath: entry.path,
+                              repository: widget.repository,
+                              icon: icon,
+                              iconSize: 32,
+                            );
+                            return bytes == null
+                                ? fallback()
+                                : Image.memory(
+                                    bytes,
+                                    fit: BoxFit.cover,
+                                    filterQuality: FilterQuality.low,
+                                    cacheWidth: 480,
+                                    gaplessPlayback: true,
+                                    errorBuilder: (_, _, _) => fallback(),
+                                  );
+                          },
+                        ),
+                        if (widget.isSelected)
+                          Positioned(
+                            top: 8,
+                            left: 8,
+                            child: Container(
+                              width: 22,
+                              height: 22,
+                              decoration: BoxDecoration(
+                                color: accent,
+                                shape: BoxShape.circle,
+                                boxShadow: const [
+                                  BoxShadow(
+                                    color: Colors.black38,
+                                    blurRadius: 4,
                                   ),
-                                ),
+                                ],
                               ),
-                              if (widget.onRemove != null)
-                                Positioned(
-                                  top: 0,
-                                  right: 0,
-                                  child: IconButton(
-                                    onPressed: widget.onRemove,
-                                    tooltip: 'Remove from recently played',
-                                    color: AppColors.onStage,
-                                    style: IconButton.styleFrom(
-                                      backgroundColor: AppColors.scrim,
-                                      shape: const CircleBorder(
-                                        side: BorderSide(
-                                          color: AppColors.onStage,
-                                          width: 0.5,
-                                        ),
-                                      ),
-                                      minimumSize: const Size.square(44),
-                                      maximumSize: const Size.square(44),
-                                      padding: EdgeInsets.zero,
-                                      tapTargetSize:
-                                          MaterialTapTargetSize.shrinkWrap,
-                                    ),
-                                    icon: const Icon(
-                                      Icons.close_rounded,
-                                      size: 16,
-                                    ),
-                                  ),
-                                ),
-                            ],
-                          );
-                        },
-                      ),
-                    ),
-                    if (hasProgress)
-                      Positioned(
-                        left: 0,
-                        right: 0,
-                        bottom: 0,
-                        height: 3,
-                        child: ColoredBox(
-                          color: AppColors.lightScrim,
-                          child: Align(
-                            alignment: Alignment.centerLeft,
-                            child: FractionallySizedBox(
-                              widthFactor: progress,
-                              child: ColoredBox(color: accent),
+                              child: const Icon(
+                                Icons.check_rounded,
+                                size: 14,
+                                color: Colors.white,
+                              ),
                             ),
                           ),
+                        Positioned.fill(
+                          child: ValueListenableBuilder<bool>(
+                            valueListenable: _active,
+                            builder: (context, active, _) {
+                              if (!active) return const SizedBox.shrink();
+                              return Stack(
+                                fit: StackFit.expand,
+                                children: [
+                                  const ColoredBox(
+                                    color: AppColors.lightScrim,
+                                    child: Center(
+                                      child: Icon(
+                                        Icons.play_circle_fill_rounded,
+                                        color: AppColors.onStage,
+                                        size: 44,
+                                      ),
+                                    ),
+                                  ),
+                                  if (widget.onRemove != null)
+                                    Positioned(
+                                      top: 0,
+                                      right: 0,
+                                      child: IconButton(
+                                        onPressed: widget.onRemove,
+                                        tooltip: 'Remove from recently played',
+                                        color: AppColors.onStage,
+                                        style: IconButton.styleFrom(
+                                          backgroundColor: AppColors.scrim,
+                                          shape: const CircleBorder(
+                                            side: BorderSide(
+                                              color: AppColors.onStage,
+                                              width: 0.5,
+                                            ),
+                                          ),
+                                          minimumSize: const Size.square(44),
+                                          maximumSize: const Size.square(44),
+                                          padding: EdgeInsets.zero,
+                                          tapTargetSize:
+                                              MaterialTapTargetSize.shrinkWrap,
+                                        ),
+                                        icon: const Icon(
+                                          Icons.close_rounded,
+                                          size: 16,
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              );
+                            },
+                          ),
                         ),
-                      ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 10),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        entry.title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: context.palette.rowPrimary.copyWith(
-                          fontWeight: FontWeight.w600,
-                          color: _focused
-                              ? accent
-                              : context.palette.primaryText,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        hasProgress
-                            ? '$type  •  ${formatTime(entry.position, compactMinutes: true)} / ${formatTime(entry.duration, compactMinutes: true)}'
-                            : type,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: context.palette.metadata.copyWith(
-                          fontFeatures: const [FontFeature.tabularFigures()],
-                        ),
-                      ),
-                    ],
+                        if (hasProgress)
+                          Positioned(
+                            left: 0,
+                            right: 0,
+                            bottom: 0,
+                            height: 3,
+                            child: ColoredBox(
+                              color: AppColors.lightScrim,
+                              child: Align(
+                                alignment: Alignment.centerLeft,
+                                child: FractionallySizedBox(
+                                  widthFactor: progress,
+                                  child: ColoredBox(color: accent),
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
                   ),
                 ),
-                if (widget.onRemove != null)
-                  SizedBox(
-                    width: 44,
-                    height: 44,
-                    child: PopupMenuButton<String>(
-                      icon: Icon(
-                        Icons.more_vert_rounded,
-                        size: 18,
-                        color: context.palette.mutedText,
-                      ),
-                      tooltip: 'Actions',
-                      padding: EdgeInsets.zero,
-                      color: context.palette.surface,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(AppRadii.control),
-                        side: BorderSide(color: context.palette.border),
-                      ),
-                      onSelected: (action) {
-                        if (action == 'play') {
-                          widget.onOpen();
-                        } else if (action == 'remove') {
-                          widget.onRemove?.call();
-                        }
-                      },
-                      itemBuilder: (context) => [
-                        AppPopupMenuItem<String>(
-                          value: 'play',
-                          icon: Icons.play_arrow_rounded,
-                          iconColor: accent,
-                          text: hasProgress ? 'Resume' : 'Play',
+              ),
+              const SizedBox(height: 10),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          entry.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: context.palette.rowPrimary.copyWith(
+                            fontWeight: FontWeight.w600,
+                            color: (_focused || widget.isSelected)
+                                ? accent
+                                : context.palette.primaryText,
+                          ),
                         ),
-                        const PopupMenuDivider(height: 1),
-                        AppPopupMenuItem<String>(
-                          value: 'remove',
-                          icon: Icons.delete_outline_rounded,
-                          iconColor: context.palette.danger,
-                          text: 'Remove from recently played',
+                        const SizedBox(height: 4),
+                        Text(
+                          hasProgress
+                              ? '$type  •  ${formatTime(entry.position, compactMinutes: true)} / ${formatTime(entry.duration, compactMinutes: true)}'
+                              : type,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: context.palette.metadata.copyWith(
+                            fontFeatures: const [FontFeature.tabularFigures()],
+                          ),
                         ),
                       ],
                     ),
                   ),
-              ],
-            ),
-          ],
+                  SizedBox(
+                    width: 44,
+                    height: 44,
+                    child: Builder(
+                      builder: (buttonContext) => IconButton(
+                        icon: Icon(
+                          Icons.more_vert_rounded,
+                          size: 18,
+                          color: context.palette.mutedText,
+                        ),
+                        tooltip: 'Actions',
+                        padding: EdgeInsets.zero,
+                        onPressed: () =>
+                            _openContextMenuFromButton(buttonContext),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -555,88 +828,17 @@ class _DropZoneCard extends StatelessWidget {
     required this.isDragging,
     required this.onOpenFiles,
     required this.onOpenUrl,
-    this.compact = false,
   });
 
   final bool isDragging;
   final VoidCallback onOpenFiles;
   final VoidCallback onOpenUrl;
-  final bool compact;
 
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
     final primary = Theme.of(context).colorScheme.primary;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    if (compact) {
-      return Container(
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        decoration: BoxDecoration(
-          color: isDragging
-              ? Color.alphaBlend(primary.withValues(alpha: 0.12), palette.card)
-              : palette.card,
-          borderRadius: BorderRadius.circular(AppRadii.control),
-          border: Border.all(
-            color: isDragging
-                ? primary
-                : palette.borderStrong.withValues(alpha: 0.4),
-            width: isDragging ? 2.0 : 1.0,
-          ),
-        ),
-        child: Row(
-          children: [
-            Icon(
-              isDragging
-                  ? Icons.file_download_rounded
-                  : Icons.cloud_upload_outlined,
-              size: 22,
-              color: primary,
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    isDragging ? 'Release to play media' : 'Open new media',
-                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  Text(
-                    'Drop files anywhere, or browse your files',
-                    style: palette.metadata,
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 12),
-            Flexible(
-              child: Wrap(
-                spacing: 8,
-                runSpacing: 6,
-                alignment: WrapAlignment.end,
-                children: [
-                  FilledButton.icon(
-                    onPressed: onOpenFiles,
-                    icon: const Icon(Icons.file_open_rounded, size: 16),
-                    label: const Text('Open file'),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: onOpenUrl,
-                    icon: const Icon(Icons.link_rounded, size: 16),
-                    label: const Text('Open URL'),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      );
-    }
 
     return Container(
       width: double.infinity,

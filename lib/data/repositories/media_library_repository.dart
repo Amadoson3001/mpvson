@@ -42,6 +42,9 @@ abstract class MediaLibraryRepository extends ChangeNotifier {
   Future<void> toggleFavorite(String mediaId, bool isFavorite);
   Future<void> recordPlayback(String canonicalSource);
 
+  /// Removes a media record from the library index without deleting its file on disk.
+  Future<void> deleteMedia(String mediaId) async {}
+
   Future<List<PlaylistRecord>> getPlaylists();
   Future<PlaylistRecord> createPlaylist(String title);
   Future<void> deletePlaylist(String playlistId);

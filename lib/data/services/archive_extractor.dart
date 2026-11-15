@@ -72,10 +72,12 @@ class ArchiveExtractor {
   const ArchiveExtractor();
 
   /// Validates an archive path for path-traversal safety and returns its normalized form.
-  static String validateArchivePath(String source) => _validatedArchivePath(source);
+  static String validateArchivePath(String source) =>
+      _validatedArchivePath(source);
 
   /// Returns true if [relativePath] points to an executable or dynamic library dependency (.dll or .exe).
-  static bool isExecutableDependency(String relativePath) => _isExecutableDependency(relativePath);
+  static bool isExecutableDependency(String relativePath) =>
+      _isExecutableDependency(relativePath);
 
   /// Extracts the archive specified by [params] into its staging directory.
   ///
@@ -187,7 +189,9 @@ class ArchiveExtractor {
         throw StateError('Engine package extraction worker failed.');
       }
       if (!response.isCompleted) {
-        throw StateError('Engine package extraction worker exited unexpectedly.');
+        throw StateError(
+          'Engine package extraction worker exited unexpectedly.',
+        );
       }
       await exited.future;
       final message = await response.future;
@@ -514,7 +518,9 @@ void _preflightZipStream(
   final directories = <String>{};
   var totalUncompressed = 0;
   var hasRootLibrary = false;
-  final foldedReservedPaths = reservedControlPaths.map((p) => p.toLowerCase()).toSet();
+  final foldedReservedPaths = reservedControlPaths
+      .map((p) => p.toLowerCase())
+      .toSet();
 
   for (final header in headers) {
     _throwIfExtractionCancelled(shouldCancel);

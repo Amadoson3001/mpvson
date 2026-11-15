@@ -25,7 +25,10 @@ class MediaReady extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final hasResumePosition = position > Duration.zero;
+    final isAtEnd =
+        duration > const Duration(seconds: 5) &&
+        position >= duration - const Duration(seconds: 3);
+    final hasResumePosition = position > Duration.zero && !isAtEnd;
     final durationMs = duration.inMilliseconds;
     final progress = durationMs > 0
         ? (position.inMilliseconds / durationMs).clamp(0.0, 1.0)

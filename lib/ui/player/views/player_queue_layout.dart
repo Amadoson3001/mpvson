@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../../core/app_motion.dart';
 import '../../core/app_theme.dart';
+import 'queue_slide_transition.dart';
 
 /// Places the queue beside the player on wide windows and over it on narrow
 /// ones.
@@ -38,62 +39,37 @@ class PlayerQueueLayout extends StatefulWidget {
 
 class _PlayerQueueLayoutState extends State<PlayerQueueLayout>
     with SingleTickerProviderStateMixin {
-  late final AnimationController _open;
-  late final CurvedAnimation _progress;
+  late final QueueSlideTransition _slide;
 
   @override
   void initState() {
     super.initState();
-    _open = AnimationController(
+    _slide = QueueSlideTransition(
       vsync: this,
-      value: widget.showPlayerQueue ? 1.0 : 0.0,
-    )..addStatusListener(_handleOpenStatus);
-    _progress = CurvedAnimation(
-      parent: _open,
-      curve: AppMotion.panelEnterCurve,
-      reverseCurve: AppMotion.exit,
+      initialOpen: widget.showPlayerQueue,
+      onDismissed: () {
+        if (mounted) widget.onQueueExitEnd();
+      },
     );
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final reduced = AppMotion.reduce(context);
-    // An entering side panel needs room to decelerate; a leaving one can snap.
-    _open.duration = reduced
-        ? Duration.zero
-        : AppMotion.scaled(context, AppMotion.panelEnter);
-    _open.reverseDuration = reduced
-        ? Duration.zero
-        : AppMotion.scaled(context, AppMotion.panelExit);
+    _slide.applyMotion(context);
   }
 
   @override
   void didUpdateWidget(covariant PlayerQueueLayout oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.showPlayerQueue == widget.showPlayerQueue) return;
-    if (widget.showPlayerQueue) {
-      _open.forward();
-    } else {
-      _open.reverse();
-    }
+    _slide.drive(widget.showPlayerQueue);
   }
 
   @override
   void dispose() {
-    _open.removeStatusListener(_handleOpenStatus);
-    _progress.dispose();
-    _open.dispose();
+    _slide.dispose();
     super.dispose();
-  }
-
-  void _handleOpenStatus(AnimationStatus status) {
-    if (status != AnimationStatus.dismissed) return;
-    // The parent unmounts the panel from here. A zero-length reverse finishes
-    // inside our own build phase, so hand the callback to the end of the frame.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) widget.onQueueExitEnd();
-    });
   }
 
   @override
@@ -111,7 +87,7 @@ class _PlayerQueueLayoutState extends State<PlayerQueueLayout>
                 Expanded(child: widget.playerArea),
                 if (wide && present)
                   QueueSlideSlot(
-                    progress: _progress,
+                    progress: _slide.progress,
                     child: _InlinePanel(open: open, panel: widget.queuePanel),
                   ),
               ],
@@ -131,7 +107,7 @@ class _PlayerQueueLayoutState extends State<PlayerQueueLayout>
     return [
       Positioned.fill(
         child: AnimatedBuilder(
-          animation: _progress,
+          animation: _slide.progress,
           child: IgnorePointer(
             ignoring: !open,
             child: GestureDetector(
@@ -142,7 +118,7 @@ class _PlayerQueueLayoutState extends State<PlayerQueueLayout>
           ),
           builder: (context, child) => DecoratedBox(
             decoration: BoxDecoration(
-              color: scrim.withValues(alpha: 0.6 * _progress.value),
+              color: scrim.withValues(alpha: 0.6 * _slide.progress.value),
             ),
             child: child,
           ),
@@ -154,7 +130,7 @@ class _PlayerQueueLayoutState extends State<PlayerQueueLayout>
         right: 0,
         width: drawerWidth,
         child: AnimatedBuilder(
-          animation: _progress,
+          animation: _slide.progress,
           child: IgnorePointer(
             ignoring: !open,
             child: ExcludeSemantics(
@@ -182,7 +158,7 @@ class _PlayerQueueLayoutState extends State<PlayerQueueLayout>
             ),
           ),
           builder: (context, child) => Transform.translate(
-            offset: Offset((1 - _progress.value) * drawerWidth, 0),
+            offset: Offset((1 - _slide.progress.value) * drawerWidth, 0),
             child: RepaintBoundary(child: child),
           ),
         ),
@@ -194,27 +170,40 @@ class _PlayerQueueLayoutState extends State<PlayerQueueLayout>
 /// Widens an inline slot while a fixed-width panel slides in from the right
 /// edge as a single already-painted surface, so the video area shrinks in sync
 /// and the panel never relayouts mid-transition.
+///
+/// The animated [SizedBox] width reveals the slot; the child stays at
+/// [AppLayout.queuePanelWidth] and is clipped horizontally. We avoid
+/// [Align.widthFactor] on the panel itself so its layout constraints do not
+/// change every frame during the transition.
 class QueueSlideSlot extends StatelessWidget {
   const QueueSlideSlot({
     super.key,
     required this.progress,
     required this.child,
+    this.panelWidth = AppLayout.queuePanelWidth,
   });
 
   final Animation<double> progress;
   final Widget child;
+  final double panelWidth;
 
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: progress,
     child: child,
-    builder: (context, child) => ClipRect(
-      child: Align(
-        alignment: Alignment.centerLeft,
-        widthFactor: progress.value,
-        child: child,
-      ),
-    ),
+    builder: (context, child) {
+      final visibleWidth = panelWidth * progress.value;
+      return SizedBox(
+        width: visibleWidth,
+        child: ClipRect(
+          child: OverflowBox(
+            maxWidth: panelWidth,
+            alignment: Alignment.centerLeft,
+            child: SizedBox(width: panelWidth, child: child),
+          ),
+        ),
+      );
+    },
   );
 }
 

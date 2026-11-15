@@ -295,6 +295,7 @@ class _RecentEntryState extends State<_RecentEntry> {
   bool _isHovered = false;
 
   Future<void> _showContextMenu(BuildContext context, Offset position) async {
+    if (!context.mounted || Navigator.maybeOf(context) == null) return;
     final entry = widget.entry;
     final selected = await showMenu<String>(
       context: context,

@@ -356,6 +356,13 @@ class MediaLibraryRepositoryImpl extends MediaLibraryRepository {
   }
 
   @override
+  Future<void> deleteMedia(String mediaId) async {
+    _checkReady();
+    await _database!.deleteMedia(mediaId);
+    notifyListeners();
+  }
+
+  @override
   Future<void> probeMedia(String path) async {
     _checkReady();
     final probeService = _probeService;

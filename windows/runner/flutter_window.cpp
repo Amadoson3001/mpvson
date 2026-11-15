@@ -1,6 +1,11 @@
 #include "flutter_window.h"
 
+#include <dxgi.h>
+#include <wrl/client.h>
+
+#include <cstdint>
 #include <optional>
+#include <string>
 
 #include "flutter/generated_plugin_registrant.h"
 
@@ -46,6 +51,25 @@ bool FlutterWindow::OnCreate() {
 
   gpu_info_ = std::make_unique<GpuInfo>();
   gpu_info_->Initialize(messenger);
+
+  // Query Flutter's actual DXGI graphics adapter so video surface sharing and
+  // diagnostics use the compositor's real adapter rather than guessing.
+  Microsoft::WRL::ComPtr<IDXGIAdapter> flutter_adapter;
+  if (flutter_controller_->engine()->GetGraphicsAdapter(
+          flutter_adapter.GetAddressOf()) &&
+      flutter_adapter) {
+    DXGI_ADAPTER_DESC desc{};
+    if (SUCCEEDED(flutter_adapter->GetDesc(&desc))) {
+      const uint64_t high =
+          static_cast<uint64_t>(static_cast<uint32_t>(desc.AdapterLuid.HighPart));
+      const uint64_t low = static_cast<uint64_t>(desc.AdapterLuid.LowPart);
+      const int64_t luid_value = static_cast<int64_t>((high << 32) | low);
+      gpu_info_->SetFlutterAdapterLuid(luid_value);
+      const std::wstring luid_env = std::to_wstring(luid_value);
+      ::SetEnvironmentVariableW(L"MPVSON_FLUTTER_ADAPTER_LUID",
+                                luid_env.c_str());
+    }
+  }
 
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 

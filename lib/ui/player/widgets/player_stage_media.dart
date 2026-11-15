@@ -58,7 +58,9 @@ import 'media_ready.dart';
       ),
     );
   }
-  if (!controller.hasMedia) {
+  // Never flash the "Ready to resume" placeholder while opening or switching
+  // between tracks; keep the stage on the video/audio surface during loads.
+  if (!controller.hasMedia && !controller.isLoading) {
     return (
       state: 'ready',
       surface: Padding(

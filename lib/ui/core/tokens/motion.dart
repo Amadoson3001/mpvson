@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
@@ -8,9 +10,48 @@ import 'motion_stub.dart' if (dart.library.io) 'motion_io.dart';
 /// Shared timing and reduced-motion behavior for the desktop interface.
 abstract final class AppMotion {
   static const Duration instant = Duration.zero;
-  static const Duration quick = Duration(milliseconds: 90);
-  static const Duration standard = Duration(milliseconds: 150);
-  static const Duration emphasized = Duration(milliseconds: 240);
+
+  // --- Material 3 Expressive motion roles --------------------------------
+  //
+  // Two families, because they cost different things per frame:
+  //
+  //  * **Spatial** roles move a surface between two places — docking the
+  //    video, pushing the queue aside, expanding a sheet. The surface's
+  //    geometry changes, so layout runs on every tick.
+  //  * **Effects** roles fade, scale or recolor a surface where it already
+  //    is. Compositor only, so they can afford to be shorter.
+  //
+  // Every named duration below is one of these roles, so a reviewer can tell
+  // from the name whether a transition costs layout or only compositing, and
+  // [scaled] has one vocabulary to apply the animation-speed preference to.
+  //
+  // Curve families follow the same split: [enter]/[exit] are the effects
+  // curves, while [panelEnterCurve], [spatialProgressCurve],
+  // [sheetEnterCurve] and [sheetExitCurve] are the spatial ones.
+
+  /// Short spatial move: the docked video expanding back into the stage, a
+  /// side panel retracting.
+  static const Duration spatialFast = Duration(milliseconds: 200);
+
+  /// Default spatial move: a surface settling into a new seat.
+  static const Duration spatialDefault = Duration(milliseconds: 240);
+
+  /// Long spatial move: a panel pushing the video aside, where the neighbor
+  /// has to make room at the same pace.
+  static const Duration spatialSlow = Duration(milliseconds: 300);
+
+  /// Micro feedback: a press, a toggle.
+  static const Duration effectsFast = Duration(milliseconds: 90);
+
+  /// Default fade or recolor of a surface in place.
+  static const Duration effectsDefault = Duration(milliseconds: 150);
+
+  /// Long fade: a full-stage cross-fade, an emphasized arrival.
+  static const Duration effectsSlow = Duration(milliseconds: 240);
+
+  static const Duration quick = effectsFast;
+  static const Duration standard = effectsDefault;
+  static const Duration emphasized = effectsSlow;
   static const Duration reveal = Duration(milliseconds: 160);
 
   /// Slide and fade used by toasts entering and leaving a corner.
@@ -20,23 +61,31 @@ abstract final class AppMotion {
   static const Duration stage = Duration(milliseconds: 140);
 
   /// Sheet expansion and collapse timings for Now Playing morph transition.
-  static const Duration sheetEnter = Duration(milliseconds: 240);
-  static const Duration sheetExit = Duration(milliseconds: 200);
+  static const Duration sheetEnter = spatialDefault;
+  static const Duration sheetExit = spatialFast;
 
   /// Side-panel push-aside timings: the queue slides in beside the video while
   /// the picture makes room at the same pace.
-  static const Duration panelEnter = Duration(milliseconds: 300);
-  static const Duration panelExit = Duration(milliseconds: 200);
+  static const Duration panelEnter = spatialSlow;
+  static const Duration panelExit = spatialFast;
+
+  /// The docked video's expand (reverse) timing. Same role as the panel
+  /// retract: the stage is only taking back a seat it gave up.
+  static const Duration dockExpand = spatialFast;
 
   /// Start scale for the dialog morph. The surface grows from the trigger
   /// point without any cross-fade of its content.
   static const double dialogMorphBeginScale = 0.86;
 
+  /// Effects curves: decelerate in, accelerate out.
   static const Curve enter = Cubic(0.16, 1, 0.3, 1);
   static const Curve exit = Cubic(0.4, 0, 1, 1);
 
   /// Gentle start, long cushioned arrival for panels pushing the video aside.
   static const Curve panelEnterCurve = Cubic(0.2, 0, 0, 1);
+
+  /// Spatial progress for docked mini video (M3 emphasized deceleration).
+  static const Curve spatialProgressCurve = Cubic(0.22, 1, 0.36, 1);
 
   /// Ultra-smooth sheet deceleration curve (fast start, cushioned arrival).
   static const Curve sheetEnterCurve = Cubic(0.12, 1.0, 0.24, 1.0);
@@ -49,6 +98,45 @@ abstract final class AppMotion {
   /// `standard` is reserved for the standard duration above; a distinct name
   /// avoids a collision between a [Duration] and a [Curve] in Dart.
   static const Curve standardCurve = Curves.easeOutCubic;
+
+  /// Critically damped spring for the collapsible library sidebar (`64px <-> 208px`).
+  ///
+  /// Zero overshoot prevents the neighboring content stage and divider from
+  /// bouncing, while preserving physical inertia and velocity across rapid
+  /// mid-flight reversals.
+  static final SpringDescription sidebarSpring =
+      SpringDescription.withDampingRatio(
+        mass: 1.0,
+        stiffness: 420.0,
+        ratio: 1.0,
+      );
+
+  /// Snappy critically damped spring for the sliding navigation indicator pill.
+  static final SpringDescription indicatorSpring =
+      SpringDescription.withDampingRatio(
+        mass: 1.0,
+        stiffness: 560.0,
+        ratio: 1.0,
+      );
+
+  /// Scales a [SpringDescription] by the user's animation speed preference
+  /// while keeping its damping ratio invariant.
+  ///
+  /// Since settling time scales inversely with natural frequency $\sqrt{k/m}$,
+  /// stretching time by `scale` means dividing stiffness by `scale^2`.
+  static SpringDescription scaledSpring(
+    BuildContext context,
+    SpringDescription base,
+  ) {
+    final scale = speedScale(context);
+    if (scale <= 0.0 || (scale - 1.0).abs() < 0.001) return base;
+    final ratio = base.damping / (2.0 * math.sqrt(base.mass * base.stiffness));
+    return SpringDescription.withDampingRatio(
+      mass: base.mass,
+      stiffness: base.stiffness / (scale * scale),
+      ratio: ratio,
+    );
+  }
 
   static HardwareProfile _hardwareProfile = kIsWeb
       ? const HardwareProfile(tier: HardwareTier.balanced, cpuCount: 8)

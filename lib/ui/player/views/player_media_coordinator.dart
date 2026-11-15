@@ -130,13 +130,7 @@ class PlayerMediaCoordinator {
       label: 'Media files',
       extensions: MediaCatalog.filePickerExtensions,
     );
-    final audioVideoTypes = XTypeGroup(
-      label: 'Audio and video files',
-      extensions: MediaCatalog.filePickerExtensions,
-    );
-    final files = await openFiles(
-      acceptedTypeGroups: [mediaTypes, audioVideoTypes],
-    );
+    final files = await openFiles(acceptedTypeGroups: [mediaTypes]);
     return files
         .map((file) => file.path)
         .where((path) => path.isNotEmpty)
@@ -350,8 +344,13 @@ class PlayerMediaCoordinator {
       () => AppDialog.show<void>(
         context: context,
         builder: (_) => PlaybackInfoDialog(
-          readStatistics: () =>
-              readNativePlaybackStatistics(controller.player, gpuInfo: gpuInfo),
+          readStatistics: () => readNativePlaybackStatistics(
+            controller.player,
+            gpuInfo: gpuInfo,
+            videoController: controller.hasMedia && controller.isVideo
+                ? controller.videoController
+                : null,
+          ),
         ),
       ),
     );

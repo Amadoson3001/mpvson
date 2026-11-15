@@ -10,6 +10,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'app.dart';
+import 'dev/animation_timings_recorder.dart';
 import 'data/repositories/app_preferences_repository.dart';
 import 'data/repositories/media_library_repository.dart';
 import 'data/repositories/media_library_repository_impl.dart';
@@ -189,6 +190,9 @@ Future<void> _applyGpuLaunchPreference(GraphicsSettings settings) async {
 
 Future<void> main(List<String> arguments) async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Attached unconditionally: the recorder decides for itself, and profile runs
+  // are exactly where the README tells you to capture frame pacing.
+  AnimationTimingsRecorder.attachIfEnabled();
   final initialProfile = HardwareProfile.initial(
     cpuCount: Platform.numberOfProcessors,
   );

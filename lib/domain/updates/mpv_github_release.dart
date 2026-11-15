@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'engine_release.dart';
+import 'update_url.dart';
 import 'semantic_version.dart';
 
 /// Parses the rolling libmpv build published by mpv's first-party GitHub CI.
@@ -345,11 +346,7 @@ final class MpvGithubRelease {
 
   static Uri _httpsUri(String value, String label) {
     final uri = Uri.tryParse(value);
-    if (uri == null ||
-        uri.scheme.toLowerCase() != 'https' ||
-        uri.host.isEmpty ||
-        uri.userInfo.isNotEmpty ||
-        uri.hasFragment) {
+    if (uri == null || !isSafeHttpsUri(uri)) {
       throw FormatException(
         '$label must be HTTPS without credentials or fragments.',
       );

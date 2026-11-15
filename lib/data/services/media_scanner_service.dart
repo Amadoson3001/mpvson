@@ -723,7 +723,12 @@ class MediaScannerService {
           if (skipUnchanged && _database != null) {
             final stat = await File(path).stat();
             final existing = await _database.getMediaByCanonicalSource(path);
+            final hasRequiredStreamInfo =
+                existing?.kind != MediaKind.video ||
+                (existing?.metadata.videoInfo != null &&
+                    !existing!.metadata.videoInfo!.isEmpty);
             if (existing != null &&
+                hasRequiredStreamInfo &&
                 existing.metadata.duration > Duration.zero &&
                 existing.fileSize == stat.size &&
                 existing.modifiedAt?.millisecondsSinceEpoch ==

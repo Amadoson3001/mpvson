@@ -8,21 +8,32 @@ import '../../../utils/file_utils.dart';
 import '../../../utils/format.dart';
 import '../../player/player_controller.dart';
 import '../../core/app_theme.dart';
-import '../../core/toast/app_toast.dart';
-import '../../core/components/app_popup_menu_item.dart';
+import '../../core/components/app_dialog.dart';
 import '../../core/components/media_tile.dart';
 import '../../core/components/media_row.dart';
 import '../../core/components/media_accent_scope.dart';
 import '../../core/components/empty_state.dart';
 import '../../core/components/hover_builder.dart';
 import '../../core/components/playback_pulse.dart';
+import '../../core/toast/app_toast.dart';
 import '../library_browse_constants.dart';
+import '../library_reload_coordinator.dart';
 import '../paged_media_loader.dart';
-import '../viewmodels/music_view_model.dart';
-import '../widgets/add_to_playlist_dialog.dart';
 import '../widgets/library_artwork.dart';
+import '../widgets/library_item_action_menu.dart';
+import '../widgets/media_context_menu.dart';
 
 const int _kGridNamePageSize = 60;
+
+/// Subtabs within the Music library view.
+enum MusicSubtab {
+  songs,
+  albums,
+  artists,
+  favorites,
+  recentlyAdded,
+  recentlyPlayed,
+}
 
 /// Comprehensive Music View with subtabs for Songs, Albums, Artists,
 /// Favorites, Recently Added, and Recently Played.
@@ -47,12 +58,9 @@ class MusicView extends StatefulWidget {
 }
 
 class _MusicViewState extends State<MusicView> {
-  /// Owns the subtab selection (and the per-subtab sorting intent). Re-created
-  /// when the repository or player controller the view is bound to changes.
-  late MusicViewModel _music;
-  MusicSubTab? _lastSubTab;
+  MusicSubtab _subtab = MusicSubtab.songs;
 
-  String? _selectedSongPath;
+  final ValueNotifier<String?> _selectedSongPath = ValueNotifier<String?>(null);
   String? _selectedAlbum;
   String? _selectedAlbumArtist;
   String? _selectedArtist;
@@ -61,7 +69,6 @@ class _MusicViewState extends State<MusicView> {
   int _browseOffset = 0;
   bool _hasMoreBrowse = true;
   bool _loadingMoreBrowse = false;
-  int _browseEpoch = 0;
   List<MediaCollectionSummary>? _albumSummaries;
   List<MediaCollectionSummary>? _artistSummaries;
   int _albumGridVisible = _kGridNamePageSize;
@@ -69,11 +76,8 @@ class _MusicViewState extends State<MusicView> {
   final Map<String, MediaItemRecord?> _albumPreviewCache = {};
   List<MediaItemRecord>? _albumTracks;
   List<MediaItemRecord>? _artistSongs;
-  bool _isLoading = false;
   Object? _error;
-  Future<void>? _reloadFuture;
-  bool _reloadAgain = false;
-  Timer? _reloadThrottle;
+  late final LibraryReloadCoordinator _reloadCoordinator;
   String? _currentRowPath;
   bool _currentRowPlaying = false;
   late Listenable _playbackListenable;
@@ -87,9 +91,18 @@ class _MusicViewState extends State<MusicView> {
   @override
   void initState() {
     super.initState();
-    _music = _createMusicModel();
-    _lastSubTab = _music.subTab;
-    _music.addListener(_onMusicChanged);
+    _reloadCoordinator = LibraryReloadCoordinator(
+      onReload: _runReload,
+      onError: (error) {
+        diagnosticDebug('music.refresh', error: error);
+        if (mounted) setState(() => _error = error);
+      },
+      onLoadingChanged: (loading) {
+        if (loading) _loadingMoreBrowse = false;
+        if (mounted && _shouldShowLoader()) setState(() {});
+      },
+      isDisposed: () => !mounted,
+    );
     widget.repository.addListener(_onRepoChanged);
     _playbackListenable = _playbackSignals(widget.controller);
     _playbackListenable.addListener(_onPlaybackChanged);
@@ -99,57 +112,9 @@ class _MusicViewState extends State<MusicView> {
     _reload();
   }
 
-  MusicViewModel _createMusicModel() => MusicViewModel(
-    repository: widget.repository,
-    playerController: widget.controller,
-  );
-
-  /// The view model owns the subtab selection; a change resets any album or
-  /// artist drilldown and refetches the collection for the new subtab.
-  void _onMusicChanged() {
-    if (!mounted) return;
-    if (_music.subTab != _lastSubTab) {
-      _lastSubTab = _music.subTab;
-      setState(() {
-        _selectedAlbum = null;
-        _selectedAlbumArtist = null;
-        _selectedArtist = null;
-        _items = [];
-        _browseOffset = 0;
-        _hasMoreBrowse = true;
-        _loadingMoreBrowse = false;
-        _albumSummaries = null;
-        _artistSummaries = null;
-        _albumGridVisible = _kGridNamePageSize;
-        _artistGridVisible = _kGridNamePageSize;
-      });
-      _reload();
-    } else {
-      if (_selectedAlbum != null) {
-        _loadAlbumTracks(_selectedAlbum!);
-      } else if (_selectedArtist != null) {
-        _loadArtistTracks(_selectedArtist!);
-      } else {
-        _reload();
-      }
-    }
-  }
-
-  Future<void> _loadAlbumTracks(String album) => _reload();
-
-  Future<void> _loadArtistTracks(String artist) => _reload();
-
   @override
   void didUpdateWidget(MusicView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.repository != widget.repository ||
-        oldWidget.controller != widget.controller) {
-      _music.removeListener(_onMusicChanged);
-      _music.dispose();
-      _music = _createMusicModel();
-      _lastSubTab = _music.subTab;
-      _music.addListener(_onMusicChanged);
-    }
     if (oldWidget.repository != widget.repository) {
       oldWidget.repository.removeListener(_onRepoChanged);
       widget.repository.addListener(_onRepoChanged);
@@ -174,11 +139,10 @@ class _MusicViewState extends State<MusicView> {
 
   @override
   void dispose() {
+    _selectedSongPath.dispose();
     _scrollController.removeListener(_onBrowseScroll);
     _scrollController.dispose();
-    _reloadThrottle?.cancel();
-    _music.removeListener(_onMusicChanged);
-    _music.dispose();
+    _reloadCoordinator.dispose();
     widget.repository.removeListener(_onRepoChanged);
     _playbackListenable.removeListener(_onPlaybackChanged);
     super.dispose();
@@ -194,36 +158,19 @@ class _MusicViewState extends State<MusicView> {
   }
 
   void _onRepoChanged() {
-    // Scan progress notifies many times a second. Refreshing the visible
-    // collection that often floods the database isolate and rebuilds the
-    // list, so while a scan is running we wait out a longer throttle.
-    if (widget.repository.scanStatus.isScanning) {
-      _reloadThrottle ??= Timer(kLibraryScanReloadThrottle, () {
-        _reloadThrottle = null;
-        if (mounted) _reload();
-      });
-      return;
-    }
-    _reloadThrottle?.cancel();
-    _reloadThrottle = null;
-    if (mounted) _reload();
+    _reloadCoordinator.onRepositoryChanged(
+      isScanning: widget.repository.scanStatus.isScanning,
+    );
   }
 
-  Future<void> _reload() {
-    if (!mounted) return Future<void>.value();
-    _browseEpoch++;
-    _reloadAgain = true;
-    final active = _reloadFuture;
-    if (active != null) return active;
+  Future<void> _reload() => _reloadCoordinator.reload();
 
-    final future = _drainReloads();
-    final tracked = future.whenComplete(() {
-      _reloadFuture = null;
-      if (_reloadAgain && mounted) unawaited(_reload());
-    });
-    _reloadFuture = tracked;
-    return tracked;
-  }
+  bool _shouldShowLoader() =>
+      _items.isEmpty &&
+      _albumSummaries == null &&
+      _artistSummaries == null &&
+      _albumTracks == null &&
+      _artistSongs == null;
 
   void _patchFavoriteInLoadedLists(String mediaId, bool isFavorite) {
     MediaItemRecord patch(MediaItemRecord item) =>
@@ -240,122 +187,182 @@ class _MusicViewState extends State<MusicView> {
     }
   }
 
-  Future<void> _drainReloads() async {
-    final showLoader =
-        _items.isEmpty &&
-        _albumSummaries == null &&
-        _artistSummaries == null &&
-        _albumTracks == null &&
-        _artistSongs == null;
-    _isLoading = true;
-    _loadingMoreBrowse = false;
-    if (mounted && showLoader) {
-      setState(() {});
+  void _removeSongFromLoadedLists(String mediaId) {
+    if (_items.isNotEmpty) {
+      _items = _items.where((item) => item.id != mediaId).toList();
     }
-    try {
-      do {
-        _browseEpoch++;
-        _reloadAgain = false;
-        final album = _selectedAlbum;
-        final albumArtist = _selectedAlbumArtist;
-        final artist = _selectedArtist;
-        final List<MediaItemRecord> items;
-        if (album != null) {
-          final matching = await widget.repository.queryMedia(
-            kind: MediaKind.audio,
-            album: album,
-            sortBy: 'trackNumber',
-          );
-          items = albumArtist == null
-              ? matching
-              : matching
-                    .where(
-                      (item) =>
-                          item.metadata.effectiveAlbumArtist.toLowerCase() ==
-                          albumArtist.toLowerCase(),
-                    )
-                    .toList();
-        } else if (artist != null) {
-          items = await widget.repository.queryMedia(
-            kind: MediaKind.audio,
-            artist: artist,
-            sortBy: 'title',
-          );
-        } else {
-          switch (_music.currentSubtab) {
-            case MusicSubtab.albums:
-              final summaries = await widget.repository.getAlbumSummaries();
-              if (!mounted) return;
-              if (_reloadAgain) continue;
-              setState(() {
-                _error = null;
-                _albumSummaries = summaries;
-                _artistSummaries = null;
-                _items = [];
-                _albumGridVisible = _kGridNamePageSize;
-              });
-              continue;
-            case MusicSubtab.artists:
-              final summaries = await widget.repository.getArtistSummaries(
-                kind: MediaKind.audio,
-              );
-              if (!mounted) return;
-              if (_reloadAgain) continue;
-              setState(() {
-                _error = null;
-                _artistSummaries = summaries;
-                _albumSummaries = null;
-                _items = [];
-                _artistGridVisible = _kGridNamePageSize;
-              });
-              continue;
-            case MusicSubtab.songs:
-            case MusicSubtab.favorites:
-            case MusicSubtab.recentlyAdded:
-            case MusicSubtab.recentlyPlayed:
-              _browseOffset = 0;
-              _hasMoreBrowse = true;
-              _loadingMoreBrowse = false;
-              final batch = await _fetchMediaPageForSubtab(offset: 0);
-              if (!mounted) return;
-              if (_reloadAgain) continue;
-              setState(() {
-                _error = null;
-                _albumSummaries = null;
-                _artistSummaries = null;
-                _items = List<MediaItemRecord>.from(batch.items);
-                _browseOffset = batch.items.length;
-                _hasMoreBrowse = batch.hasMore;
-              });
-              continue;
-          }
-        }
-        if (!mounted) return;
-        if (_reloadAgain) continue;
-        setState(() {
-          _error = null;
-          if (album != null) {
-            _albumTracks = items;
-          } else if (artist != null) {
-            _artistSongs = items;
-          }
-        });
-      } while (_reloadAgain && mounted);
-    } catch (error) {
-      diagnosticDebug('music.refresh', error: error);
-      if (mounted) setState(() => _error = error);
-    } finally {
-      _isLoading = false;
-      if (mounted && showLoader) setState(() {});
+    if (_albumTracks != null) {
+      _albumTracks = _albumTracks!.where((item) => item.id != mediaId).toList();
+    }
+    if (_artistSongs != null) {
+      _artistSongs = _artistSongs!.where((item) => item.id != mediaId).toList();
     }
   }
 
-  void _showInFolder(String path) {
+  Future<void> _runReload(int epoch) async {
+    final album = _selectedAlbum;
+    final albumArtist = _selectedAlbumArtist;
+    final artist = _selectedArtist;
+    final List<MediaItemRecord> items;
+    if (album != null) {
+      final matching = await widget.repository.queryMedia(
+        kind: MediaKind.audio,
+        album: album,
+        sortBy: 'trackNumber',
+      );
+      items = albumArtist == null
+          ? matching
+          : matching
+                .where(
+                  (item) =>
+                      item.metadata.effectiveAlbumArtist.toLowerCase() ==
+                      albumArtist.toLowerCase(),
+                )
+                .toList();
+    } else if (artist != null) {
+      items = await widget.repository.queryMedia(
+        kind: MediaKind.audio,
+        artist: artist,
+        sortBy: 'title',
+      );
+    } else {
+      switch (_subtab) {
+        case MusicSubtab.albums:
+          final summaries = await widget.repository.getAlbumSummaries();
+          if (!mounted || epoch != _reloadCoordinator.epoch) return;
+          setState(() {
+            _error = null;
+            _albumSummaries = summaries;
+            _artistSummaries = null;
+            _items = [];
+            _albumGridVisible = _kGridNamePageSize;
+          });
+          return;
+        case MusicSubtab.artists:
+          final summaries = await widget.repository.getArtistSummaries(
+            kind: MediaKind.audio,
+          );
+          if (!mounted || epoch != _reloadCoordinator.epoch) return;
+          setState(() {
+            _error = null;
+            _artistSummaries = summaries;
+            _albumSummaries = null;
+            _items = [];
+            _artistGridVisible = _kGridNamePageSize;
+          });
+          return;
+        case MusicSubtab.songs:
+        case MusicSubtab.favorites:
+        case MusicSubtab.recentlyAdded:
+        case MusicSubtab.recentlyPlayed:
+          _browseOffset = 0;
+          _hasMoreBrowse = true;
+          _loadingMoreBrowse = false;
+          final batch = await _fetchMediaPageForSubtab(offset: 0);
+          if (!mounted || epoch != _reloadCoordinator.epoch) return;
+          setState(() {
+            _error = null;
+            _albumSummaries = null;
+            _artistSummaries = null;
+            _items = List<MediaItemRecord>.from(batch.items);
+            _browseOffset = batch.items.length;
+            _hasMoreBrowse = batch.hasMore;
+          });
+          return;
+      }
+    }
+    if (!mounted || epoch != _reloadCoordinator.epoch) return;
+    setState(() {
+      _error = null;
+      if (album != null) {
+        _albumTracks = items;
+      } else if (artist != null) {
+        _artistSongs = items;
+      }
+    });
+  }
+
+  Future<void> _showInFolder(String path) async {
     if (widget.onShowInFolder != null) {
       widget.onShowInFolder!(path);
       return;
     }
-    showInFolder(path);
+    final ok = await showInFolder(path);
+    if (!ok && mounted) {
+      AppToast.show(
+        context,
+        'Could not open File Explorer',
+        tone: AppToastTone.danger,
+      );
+    }
+  }
+
+  Future<void> _confirmAndRemoveSong(MediaItemRecord song) async {
+    if (!mounted || Navigator.maybeOf(context, rootNavigator: true) == null) {
+      return;
+    }
+    final confirmed =
+        await AppDialog.show<bool>(
+          context: context,
+          builder: (dialogContext) => AppDialog(
+            maxWidth: 420,
+            title: const Text('Remove from library?'),
+            content: Text(
+              '"${song.title}" will be removed from your Music library index. The file on disk will not be deleted.',
+              style: dialogContext.palette.rowSecondary,
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                child: const Text('Remove'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!confirmed || !mounted) return;
+    await widget.repository.deleteMedia(song.id);
+    if (!mounted) return;
+    setState(() {
+      _removeSongFromLoadedLists(song.id);
+      if (_selectedSongPath.value == song.path) {
+        _selectedSongPath.value = null;
+      }
+    });
+    AppToast.show(context, 'Removed "${song.title}" from library');
+  }
+
+  Future<void> _showSongContextMenu(
+    List<MediaItemRecord> collection,
+    MediaItemRecord song,
+    int index,
+    Offset globalPosition,
+  ) async {
+    if (_selectedSongPath.value != song.path) {
+      _selectedSongPath.value = song.path;
+    }
+    await showMediaContextMenu(
+      context: context,
+      globalPosition: globalPosition,
+      target: MediaContextMenuTarget.fromRecord(song),
+      repository: widget.repository,
+      controller: widget.controller,
+      onPlay: song.isAvailable
+          ? () => _playSongCollection(collection, index)
+          : null,
+      onRemove: () => unawaited(_confirmAndRemoveSong(song)),
+      isSelected: _selectedSongPath.value == song.path,
+      onSelect: () {
+        _selectedSongPath.value = _selectedSongPath.value == song.path
+            ? null
+            : song.path;
+      },
+      onShowInFolder: (path) => unawaited(_showInFolder(path)),
+    );
   }
 
   Future<void> _playSongCollection(
@@ -419,7 +426,7 @@ class _MusicViewState extends State<MusicView> {
       );
     }
 
-    final subtab = _music.currentSubtab;
+    final subtab = _subtab;
     final isSongSubtab =
         subtab == MusicSubtab.songs ||
         subtab == MusicSubtab.favorites ||
@@ -433,13 +440,14 @@ class _MusicViewState extends State<MusicView> {
       MusicSubtab.artists => (_artistSummaries ?? const []).isEmpty,
       _ => false,
     };
+    final isLoading = _reloadCoordinator.isLoading;
     final gridNamesLoading =
         isGridSubtab &&
-        _isLoading &&
+        isLoading &&
         _albumSummaries == null &&
         _artistSummaries == null;
     final showInitialLoader =
-        _isLoading && ((isSongSubtab && items.isEmpty) || gridNamesLoading);
+        isLoading && ((isSongSubtab && items.isEmpty) || gridNamesLoading);
 
     return Material(
       color: context.palette.background,
@@ -482,9 +490,22 @@ class _MusicViewState extends State<MusicView> {
   }
 
   void _changeSubtab(MusicSubtab tab) {
-    // The view model notifies; _onMusicChanged resets the drilldown state and
-    // refetches. selectSubtab ignores a redundant selection.
-    _music.selectSubtab(tab);
+    if (_subtab == tab) return;
+    setState(() {
+      _subtab = tab;
+      _selectedAlbum = null;
+      _selectedAlbumArtist = null;
+      _selectedArtist = null;
+      _items = [];
+      _browseOffset = 0;
+      _hasMoreBrowse = true;
+      _loadingMoreBrowse = false;
+      _albumSummaries = null;
+      _artistSummaries = null;
+      _albumGridVisible = _kGridNamePageSize;
+      _artistGridVisible = _kGridNamePageSize;
+    });
+    _reload();
   }
 
   Widget _detailAccent(Widget child, List<MediaItemRecord>? items) {
@@ -497,7 +518,7 @@ class _MusicViewState extends State<MusicView> {
   }
 
   Widget _buildSubtabHeader() {
-    final subtab = _music.currentSubtab;
+    final subtab = _subtab;
     final songsSelected =
         subtab != MusicSubtab.albums && subtab != MusicSubtab.artists;
     return Container(
@@ -569,7 +590,7 @@ class _MusicViewState extends State<MusicView> {
   Future<PagedMediaBatch> _fetchMediaPageForSubtab({required int offset}) {
     final query = widget.searchQuery;
     final repository = widget.repository;
-    switch (_music.currentSubtab) {
+    switch (_subtab) {
       case MusicSubtab.songs:
         return fetchMediaPage(
           repository,
@@ -621,20 +642,22 @@ class _MusicViewState extends State<MusicView> {
   }
 
   Future<void> _loadMoreBrowse() async {
-    if (_isLoading || _loadingMoreBrowse || !_hasMoreBrowse) return;
+    if (_reloadCoordinator.isLoading || _loadingMoreBrowse || !_hasMoreBrowse) {
+      return;
+    }
     if (_selectedAlbum != null || _selectedArtist != null) return;
-    final subtab = _music.currentSubtab;
+    final subtab = _subtab;
     if (subtab != MusicSubtab.songs &&
         subtab != MusicSubtab.favorites &&
         subtab != MusicSubtab.recentlyAdded &&
         subtab != MusicSubtab.recentlyPlayed) {
       return;
     }
-    final epoch = _browseEpoch;
+    final epoch = _reloadCoordinator.epoch;
     setState(() => _loadingMoreBrowse = true);
     try {
       final batch = await _fetchMediaPageForSubtab(offset: _browseOffset);
-      if (!mounted || epoch != _browseEpoch) return;
+      if (!mounted || epoch != _reloadCoordinator.epoch) return;
       setState(() {
         _items.addAll(batch.items);
         _browseOffset += batch.items.length;
@@ -643,7 +666,7 @@ class _MusicViewState extends State<MusicView> {
       });
     } catch (error) {
       diagnosticDebug('music.loadMore', error: error);
-      if (mounted && epoch == _browseEpoch) {
+      if (mounted && epoch == _reloadCoordinator.epoch) {
         setState(() => _loadingMoreBrowse = false);
       }
     }
@@ -681,7 +704,7 @@ class _MusicViewState extends State<MusicView> {
   }
 
   void _loadMoreGridNames() {
-    final subtab = _music.currentSubtab;
+    final subtab = _subtab;
     if (subtab == MusicSubtab.albums) {
       final total = _filteredAlbumSummaries().length;
       if (_albumGridVisible >= total) return;
@@ -722,7 +745,7 @@ class _MusicViewState extends State<MusicView> {
         icon: Icons.search_off_rounded,
       );
     }
-    switch (_music.currentSubtab) {
+    switch (_subtab) {
       case MusicSubtab.favorites:
         return const EmptyState(
           title: 'No favorite songs yet',
@@ -872,288 +895,219 @@ class _MusicViewState extends State<MusicView> {
     final accent = Theme.of(context).colorScheme.primary;
     final isCurrent = widget.controller.current?.path == song.path;
     final isUnavailable = !song.isAvailable;
-    final isSelected = _selectedSongPath == song.path;
     return HoverListenable(
       key: ValueKey(song.id),
       builder: (context, hoveredListenable) => MediaRow(
         onSelect: () {
-          if (_selectedSongPath != song.path) {
-            setState(() => _selectedSongPath = song.path);
+          if (_selectedSongPath.value != song.path) {
+            _selectedSongPath.value = song.path;
           }
         },
         onPlay: isUnavailable
             ? null
             : () => _playSongCollection(collection, index),
-        builder: (context, rowFocus) => Container(
-          padding: const EdgeInsets.symmetric(
-            horizontal: AppSpace.sm,
-            vertical: AppSpace.xxs,
-          ),
-          decoration: BoxDecoration(
-            color: isSelected ? context.palette.hover : Colors.transparent,
-            border: isSelected
-                ? Border(left: BorderSide(color: accent, width: 2))
-                : null,
-          ),
-          child: Row(
-            children: [
-              // Clickable content region (double-tap to play)
-              Expanded(
-                child: InkWell(
-                  canRequestFocus: false,
-                  onTap: () {
-                    rowFocus.requestFocus();
-                    setState(() => _selectedSongPath = song.path);
-                  },
-                  onDoubleTap: isUnavailable
-                      ? null
-                      : () => _playSongCollection(collection, index),
-                  borderRadius: BorderRadius.circular(AppRadii.control),
-                  hoverColor: context.palette.hover,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 6),
-                    child: Row(
-                      children: [
-                        // Track index or playing indicator
-                        SizedBox(
-                          width: 36,
-                          child: ValueListenableBuilder<bool>(
-                            valueListenable: hoveredListenable,
-                            builder: (context, hovered, _) => _TrackIndexCell(
-                              index: index,
-                              isCurrent: isCurrent,
-                              isPlaying: widget.controller.isPlaying,
-                              isUnavailable: isUnavailable,
-                              hovered: hovered,
-                              onPlay: () =>
-                                  _playSongCollection(collection, index),
-                            ),
-                          ),
+        builder: (context, rowFocus, handleTap) =>
+            ValueListenableBuilder<String?>(
+              valueListenable: _selectedSongPath,
+              builder: (context, selectedPath, rowChild) {
+                final isSelected = selectedPath == song.path;
+                return Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpace.sm,
+                    vertical: AppSpace.xxs,
+                  ),
+                  decoration: BoxDecoration(
+                    color: isSelected
+                        ? context.palette.hover
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(AppRadii.control),
+                    border: isSelected
+                        ? Border.all(color: accent.withValues(alpha: 0.45))
+                        : null,
+                  ),
+                  child: rowChild,
+                );
+              },
+              child: Row(
+                children: [
+                  // Clickable content region (instant select, double-tap to play)
+                  Expanded(
+                    child: InkWell(
+                      canRequestFocus: false,
+                      onTap: handleTap,
+                      onSecondaryTapDown: (details) => unawaited(
+                        _showSongContextMenu(
+                          collection,
+                          song,
+                          index,
+                          details.globalPosition,
                         ),
-                        // Title & Artist + Missing file indicator
-                        Expanded(
-                          flex: 4,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Row(
+                      ),
+                      borderRadius: BorderRadius.circular(AppRadii.control),
+                      hoverColor: context.palette.hover,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 6),
+                        child: Row(
+                          children: [
+                            // Track index or playing indicator
+                            SizedBox(
+                              width: 36,
+                              child: ValueListenableBuilder<bool>(
+                                valueListenable: hoveredListenable,
+                                builder: (context, hovered, _) =>
+                                    _TrackIndexCell(
+                                      index: index,
+                                      isCurrent: isCurrent,
+                                      isPlaying: widget.controller.isPlaying,
+                                      isUnavailable: isUnavailable,
+                                      hovered: hovered,
+                                      onPlay: () => _playSongCollection(
+                                        collection,
+                                        index,
+                                      ),
+                                    ),
+                              ),
+                            ),
+                            // Title & Artist + Missing file indicator
+                            Expanded(
+                              flex: 4,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  Flexible(
-                                    child: Text(
-                                      song.title,
-                                      style: context.palette.rowPrimary
-                                          .copyWith(
-                                            color: isUnavailable
-                                                ? context.palette.mutedText
-                                                : isCurrent
-                                                ? accent
-                                                : context.palette.primaryText,
-                                            fontWeight: isCurrent
-                                                ? FontWeight.w600
-                                                : FontWeight.w500,
+                                  Row(
+                                    children: [
+                                      Flexible(
+                                        child: Text(
+                                          song.title,
+                                          style: context.palette.rowPrimary
+                                              .copyWith(
+                                                color: isUnavailable
+                                                    ? context.palette.mutedText
+                                                    : isCurrent
+                                                    ? accent
+                                                    : context
+                                                          .palette
+                                                          .primaryText,
+                                                fontWeight: isCurrent
+                                                    ? FontWeight.w600
+                                                    : FontWeight.w500,
+                                              ),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                      if (isUnavailable) ...[
+                                        const SizedBox(width: 6),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 5,
+                                            vertical: 1,
                                           ),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
+                                          decoration: BoxDecoration(
+                                            color: context.palette.danger
+                                                .withValues(alpha: 0.2),
+                                            borderRadius: BorderRadius.circular(
+                                              AppRadii.control,
+                                            ),
+                                          ),
+                                          child: Text(
+                                            'Missing',
+                                            style: context.palette.badge
+                                                .copyWith(
+                                                  fontSize: AppType.caption,
+                                                  color: context.palette.danger,
+                                                ),
+                                          ),
+                                        ),
+                                      ],
+                                    ],
                                   ),
-                                  if (isUnavailable) ...[
-                                    const SizedBox(width: 6),
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 5,
-                                        vertical: 1,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: context.palette.danger
-                                            .withValues(alpha: 0.2),
-                                        borderRadius: BorderRadius.circular(
-                                          AppRadii.control,
-                                        ),
-                                      ),
-                                      child: Text(
-                                        'Missing',
-                                        style: context.palette.badge.copyWith(
-                                          fontSize: AppType.caption,
-                                          color: context.palette.danger,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    song.artist,
+                                    style: context.palette.rowSecondary,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
                                 ],
                               ),
-                              const SizedBox(height: 2),
-                              Text(
-                                song.artist,
+                            ),
+                            // Album
+                            Expanded(
+                              flex: 3,
+                              child: Text(
+                                song.album,
                                 style: context.palette.rowSecondary,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                               ),
-                            ],
-                          ),
-                        ),
-                        // Album
-                        Expanded(
-                          flex: 3,
-                          child: Text(
-                            song.album,
-                            style: context.palette.rowSecondary,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        // Duration
-                        SizedBox(
-                          width: 70,
-                          child: Text(
-                            formatDuration(song.metadata.duration),
-                            style: context.palette.metadata.copyWith(
-                              fontFeatures: const [
-                                FontFeature.tabularFigures(),
-                              ],
                             ),
-                            textAlign: TextAlign.right,
-                          ),
+                            // Duration
+                            SizedBox(
+                              width: 70,
+                              child: Text(
+                                formatDuration(song.metadata.duration),
+                                style: context.palette.metadata.copyWith(
+                                  fontFeatures: const [
+                                    FontFeature.tabularFigures(),
+                                  ],
+                                ),
+                                textAlign: TextAlign.right,
+                              ),
+                            ),
+                          ],
                         ),
-                      ],
+                      ),
                     ),
                   ),
-                ),
-              ),
-              // Favorite Button
-              SizedBox(
-                width: 48,
-                child: IconButton(
-                  icon: Icon(
-                    song.isFavorite
-                        ? Icons.favorite_rounded
-                        : Icons.favorite_border_rounded,
-                    size: 18,
-                    color: song.isFavorite ? accent : context.palette.mutedText,
+                  // Favorite Button
+                  SizedBox(
+                    width: 48,
+                    child: IconButton(
+                      icon: Icon(
+                        song.isFavorite
+                            ? Icons.favorite_rounded
+                            : Icons.favorite_border_rounded,
+                        size: 18,
+                        color: song.isFavorite
+                            ? accent
+                            : context.palette.mutedText,
+                      ),
+                      tooltip: song.isFavorite
+                          ? 'Remove favorite'
+                          : 'Add to favorites',
+                      onPressed: () async {
+                        final next = !song.isFavorite;
+                        await widget.repository.toggleFavorite(song.id, next);
+                        if (!mounted) return;
+                        setState(() {
+                          _patchFavoriteInLoadedLists(song.id, next);
+                        });
+                      },
+                    ),
                   ),
-                  tooltip: song.isFavorite
-                      ? 'Remove favorite'
-                      : 'Add to favorites',
-                  onPressed: () async {
-                    final next = !song.isFavorite;
-                    await widget.repository.toggleFavorite(song.id, next);
-                    if (!mounted) return;
-                    setState(() {
-                      _patchFavoriteInLoadedLists(song.id, next);
-                    });
-                  },
-                ),
+                  // More actions menu
+                  SizedBox(width: 40, child: _buildItemActionMenu(song)),
+                ],
               ),
-              // More actions menu
-              SizedBox(width: 40, child: _buildItemActionMenu(song)),
-            ],
-          ),
-        ),
+            ),
       ),
     );
   }
 
   Widget _buildItemActionMenu(MediaItemRecord song) {
-    return PopupMenuButton<String>(
-      icon: Icon(
-        Icons.more_vert_rounded,
-        size: 18,
-        color: context.palette.mutedText,
-      ),
-      tooltip: 'Actions',
-      color: context.palette.surface,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(AppRadii.control),
-        side: BorderSide(color: context.palette.border),
-      ),
-      onSelected: (action) async {
-        switch (action) {
-          case 'play_now':
-            await widget.controller.openPaths(
-              [song.path],
-              append: false,
-              initialIndex: 0,
-            );
-            break;
-          case 'play_next':
-            await _music.playNext(song.path);
-            break;
-          case 'add_queue':
-            await _music.addToQueue(song.path);
-            break;
-          case 'toggle_favorite':
-            final next = !song.isFavorite;
-            await _music.toggleFavorite(song, next);
-            if (!mounted) return;
-            setState(() {
-              _patchFavoriteInLoadedLists(song.id, next);
-            });
-            break;
-          case 'add_playlist':
-            final added = await AddToPlaylistDialog.show(
-              context,
-              widget.repository,
-              song.id,
-            );
-            // `context` is the State's context, so the State's mounted flag is
-            // the matching guard for the async gap.
-            if (!mounted) return;
-            if (added) {
-              AppToast.show(
-                context,
-                'Added to playlist',
-                tone: AppToastTone.success,
-                duration: const Duration(seconds: 3),
-              );
-            }
-            break;
-          case 'show_folder':
-            _showInFolder(song.path);
-            break;
-        }
-      },
-      itemBuilder: (context) {
-        final accent = Theme.of(context).colorScheme.primary;
-        return [
-          AppPopupMenuItem<String>(
-            value: 'play_now',
-            enabled: song.isAvailable,
-            icon: Icons.play_arrow_rounded,
-            iconColor: accent,
-            text: 'Play now',
-          ),
-          AppPopupMenuItem<String>(
-            value: 'play_next',
-            enabled: song.isAvailable,
-            icon: Icons.playlist_play_rounded,
-            text: 'Play next',
-          ),
-          AppPopupMenuItem<String>(
-            value: 'add_queue',
-            enabled: song.isAvailable,
-            icon: Icons.queue_music_rounded,
-            text: 'Add to queue',
-          ),
-          AppPopupMenuItem<String>(
-            value: 'add_playlist',
-            icon: Icons.playlist_add_rounded,
-            text: 'Add to playlist',
-          ),
-          AppPopupMenuItem<String>(
-            value: 'toggle_favorite',
-            icon: song.isFavorite
-                ? Icons.favorite_border_rounded
-                : Icons.favorite_rounded,
-            iconColor: accent,
-            text: song.isFavorite ? 'Remove favorite' : 'Favorite',
-          ),
-          const PopupMenuDivider(height: 1),
-          AppPopupMenuItem<String>(
-            value: 'show_folder',
-            icon: Icons.folder_open_rounded,
-            text: 'Show in folder',
-          ),
-        ];
+    return LibraryItemActionMenu(
+      item: song,
+      repository: widget.repository,
+      controller: widget.controller,
+      libraryContext: context,
+      onShowInFolder: _showInFolder,
+      onFavoriteToggled: (mediaId, isFavorite) {
+        if (!mounted) return;
+        setState(() {
+          _patchFavoriteInLoadedLists(mediaId, isFavorite);
+        });
       },
     );
   }

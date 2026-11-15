@@ -106,7 +106,9 @@ class _MediaLibrarySettingsSectionState
     );
     if (confirmed == true) {
       try {
-        await _runOperation(() => widget.libraryRepository.removeFolder(folder.path));
+        await _runOperation(
+          () => widget.libraryRepository.removeFolder(folder.path),
+        );
       } catch (_) {
         if (!mounted) return;
         AppToast.show(
@@ -259,8 +261,9 @@ class _MediaLibrarySettingsSectionState
                                   size: 19,
                                 ),
                                 onPressed: isReady
-                                    ? () =>
-                                          unawaited(_removeFolder(context, folder))
+                                    ? () => unawaited(
+                                        _removeFolder(context, folder),
+                                      )
                                     : null,
                               ),
                             ),

@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'release_info.dart';
 import 'semantic_version.dart';
+import 'update_url.dart';
 
 /// The supported desktop targets for release artifacts.
 enum UpdatePlatform {
@@ -94,11 +95,7 @@ final class UpdateManifest {
 
   static Uri _httpsUri(String value, String field) {
     final uri = Uri.tryParse(value);
-    if (uri == null ||
-        uri.scheme.toLowerCase() != 'https' ||
-        uri.host.isEmpty ||
-        uri.userInfo.isNotEmpty ||
-        uri.hasFragment) {
+    if (uri == null || !isSafeHttpsUri(uri)) {
       throw FormatException('$field must be an HTTPS URL without credentials.');
     }
     return uri;

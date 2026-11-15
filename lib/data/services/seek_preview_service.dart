@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
@@ -225,9 +224,6 @@ abstract interface class SeekPreviewBackend {
 }
 
 typedef SeekPreviewBackendFactory = SeekPreviewBackend Function();
-
-typedef PreviewTimerFactory =
-    Timer Function(Duration duration, void Function() callback);
 
 /// Production backend using media_kit and bundled libmpv.
 class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
@@ -1074,37 +1070,6 @@ class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
   }
 }
 
-/// Used when running under Flutter tests without an injected preview backend.
-class DisabledSeekPreviewBackend implements SeekPreviewBackend {
-  const DisabledSeekPreviewBackend();
-
-  @override
-  Future<void> open(
-    String source, {
-    Duration start = Duration.zero,
-    Duration timeout = const Duration(seconds: 5),
-  }) async {}
-
-  @override
-  Future<SeekPreviewFrame?> extractFrame(
-    Duration target, {
-    required bool exact,
-    Duration timeout = const Duration(seconds: 3),
-  }) async => null;
-
-  @override
-  void cancelExtraction() {}
-
-  @override
-  Future<void> pause() async {}
-
-  @override
-  Future<void> stop() async {}
-
-  @override
-  Future<void> dispose() async {}
-}
-
 /// Service that coordinates on-demand seek preview frame extraction, bounded
 /// scheduling, and in-memory frame caching.
 class SeekPreviewService {
@@ -1113,13 +1078,11 @@ class SeekPreviewService {
     this.onExtractionStateChange,
     SeekPreviewLRUCache? cache,
     this.diagnostics,
-    this._monotonicNow,
-    PreviewTimerFactory? timerFactory,
     Duration? idleWorkerTimeout,
   }) : _backendFactory =
-           backendFactory ?? (() => _defaultBackendFactory(diagnostics)),
+           backendFactory ??
+           (() => MediaKitSeekPreviewBackend(diagnostics: diagnostics)),
        _cache = cache ?? SeekPreviewLRUCache(),
-       _timerFactory = timerFactory ?? _defaultTimerFactory,
        _idleWorkerTimeout = idleWorkerTimeout ?? defaultIdleWorkerTimeout {
     _clock.start();
   }
@@ -1130,26 +1093,10 @@ class SeekPreviewService {
   /// Whether a preview backend player is currently allocated in memory.
   bool get hasActiveWorker => _backend != null;
 
-  static SeekPreviewBackend _defaultBackendFactory(
-    DiagnosticSink? diagnostics,
-  ) {
-    if (Platform.environment.containsKey('FLUTTER_TEST')) {
-      return const DisabledSeekPreviewBackend();
-    }
-    return MediaKitSeekPreviewBackend(diagnostics: diagnostics);
-  }
-
-  static Timer _defaultTimerFactory(
-    Duration duration,
-    void Function() callback,
-  ) => Timer(duration, callback);
-
   final SeekPreviewBackendFactory _backendFactory;
   final void Function(bool extracting)? onExtractionStateChange;
   final SeekPreviewLRUCache _cache;
   final DiagnosticSink? diagnostics;
-  final Duration Function()? _monotonicNow;
-  final PreviewTimerFactory _timerFactory;
   final Stopwatch _clock = Stopwatch();
 
   final ValueNotifier<SeekPreviewState> _stateNotifier =
@@ -1197,7 +1144,7 @@ class SeekPreviewService {
   Future<void>? _disposeFuture;
   bool _disposed = false;
 
-  Duration _now() => _monotonicNow?.call() ?? _clock.elapsed;
+  Duration _now() => _clock.elapsed;
 
   bool _isStale(int interactionGen, int sourceGen) =>
       _disposed ||
@@ -1275,7 +1222,7 @@ class SeekPreviewService {
 
   Future<T> _withDeadline<T>(Future<T> operation, Duration timeout) {
     final completer = Completer<T>();
-    final timer = _timerFactory(timeout, () {
+    final timer = Timer(timeout, () {
       if (!completer.isCompleted) {
         completer.completeError(TimeoutException('Preview deadline expired'));
       }
@@ -1530,7 +1477,7 @@ class SeekPreviewService {
     if (!alreadyExact) {
       final interactionGen = _interactionGeneration;
       final sourceGen = _sourceGeneration;
-      _refineTimer = _timerFactory(const Duration(milliseconds: 250), () {
+      _refineTimer = Timer(const Duration(milliseconds: 250), () {
         _scheduleExactRefinement(target, interactionGen, sourceGen, revision);
       });
     }
@@ -1542,7 +1489,7 @@ class SeekPreviewService {
     final interactionGen = _interactionGeneration;
     final sourceGen = _sourceGeneration;
     final revision = _intentRevision;
-    _refineTimer = _timerFactory(const Duration(milliseconds: 250), () {
+    _refineTimer = Timer(const Duration(milliseconds: 250), () {
       _scheduleExactRefinement(target, interactionGen, sourceGen, revision);
     });
   }
@@ -1597,7 +1544,7 @@ class SeekPreviewService {
     final elapsed = lastStart == null ? null : now - lastStart;
     if (elapsed != null && elapsed < const Duration(milliseconds: 100)) {
       _throttleTimer?.cancel();
-      _throttleTimer = _timerFactory(
+      _throttleTimer = Timer(
         const Duration(milliseconds: 100) - elapsed,
         _pumpScheduler,
       );
@@ -1896,17 +1843,14 @@ class SeekPreviewService {
 
     _pointerExitGraceTimer?.cancel();
     if (_isCurrentSourceRemote) {
-      _pointerExitGraceTimer = _timerFactory(
-        const Duration(milliseconds: 400),
-        () {
-          _pointerExitGraceTimer = null;
-          _pauseOrStopWorker(
-            stopRemote: true,
-            expectedInteractionGeneration: exitInteractionGeneration,
-            expectedSourceGeneration: exitSourceGeneration,
-          );
-        },
-      );
+      _pointerExitGraceTimer = Timer(const Duration(milliseconds: 400), () {
+        _pointerExitGraceTimer = null;
+        _pauseOrStopWorker(
+          stopRemote: true,
+          expectedInteractionGeneration: exitInteractionGeneration,
+          expectedSourceGeneration: exitSourceGeneration,
+        );
+      });
     }
 
     _scheduleIdleWorkerRelease();
@@ -1914,7 +1858,7 @@ class SeekPreviewService {
 
   void _scheduleIdleWorkerRelease() {
     _idleWorkerReleaseTimer?.cancel();
-    _idleWorkerReleaseTimer = _timerFactory(_idleWorkerTimeout, () {
+    _idleWorkerReleaseTimer = Timer(_idleWorkerTimeout, () {
       _releaseWorker(force: true);
     });
   }
@@ -2020,7 +1964,7 @@ class SeekPreviewService {
       }
     } else {
       _playbackHealthTimer?.cancel();
-      _playbackHealthTimer = _timerFactory(const Duration(seconds: 1), () {
+      _playbackHealthTimer = Timer(const Duration(seconds: 1), () {
         _isPlaybackBuffering = false;
         if (!_isSuspended) _restoreLatestIntent();
       });

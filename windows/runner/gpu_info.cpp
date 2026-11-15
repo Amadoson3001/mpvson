@@ -408,6 +408,40 @@ EncodableValue ResolveDefaultAdapter() {
   return EncodableValue(result);
 }
 
+EncodableValue ResolveAdapterByLuid(std::optional<int64_t> luid) {
+  if (luid.has_value()) {
+    ComPtr<IDXGIFactory1> factory1;
+    if (SUCCEEDED(::CreateDXGIFactory1(IID_PPV_ARGS(&factory1))) && factory1) {
+      ComPtr<IDXGIFactory4> factory4;
+      if (SUCCEEDED(factory1.As(&factory4)) && factory4) {
+        LUID dxgi_luid{};
+        const uint64_t raw = static_cast<uint64_t>(*luid);
+        dxgi_luid.LowPart = static_cast<DWORD>(raw & 0xFFFFFFFFu);
+        dxgi_luid.HighPart = static_cast<LONG>(raw >> 32);
+        ComPtr<IDXGIAdapter1> adapter;
+        if (SUCCEEDED(factory4->EnumAdapterByLuid(dxgi_luid,
+                                                  IID_PPV_ARGS(&adapter))) &&
+            adapter) {
+          DXGI_ADAPTER_DESC1 desc{};
+          if (SUCCEEDED(adapter->GetDesc1(&desc))) {
+            EncodableMap result;
+            result[EncodableValue("luid")] =
+                EncodableValue(LuidToInt64(desc.AdapterLuid));
+            result[EncodableValue("name")] =
+                EncodableValue(Utf8FromUtf16(desc.Description));
+            result[EncodableValue("vendorId")] =
+                EncodableValue(static_cast<int32_t>(desc.VendorId));
+            result[EncodableValue("deviceId")] =
+                EncodableValue(static_cast<int32_t>(desc.DeviceId));
+            return EncodableValue(result);
+          }
+        }
+      }
+    }
+  }
+  return ResolveDefaultAdapter();
+}
+
 }  // namespace
 
 GpuInfo::~GpuInfo() {
@@ -434,7 +468,7 @@ void GpuInfo::OnMethodCall(
   if (method == "snapshot") {
     result->Success(BuildSnapshot());
   } else if (method == "resolveDefault") {
-    result->Success(ResolveDefaultAdapter());
+    result->Success(ResolveAdapterByLuid(flutter_adapter_luid_));
   } else if (method == "readPreference") {
     const auto level = ReadPreferenceLevel();
     result->Success(level.has_value() ? EncodableValue(*level)

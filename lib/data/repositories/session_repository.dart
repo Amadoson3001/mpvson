@@ -4,7 +4,6 @@ import 'dart:io';
 import 'dart:isolate';
 import 'dart:math';
 
-import 'package:meta/meta.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
@@ -385,7 +384,7 @@ class SessionRepository {
             }
           }
           try {
-            await commitTemporary(temporary, target);
+            await temporary.rename(target.path);
           } on Object {
             // Copy rather than rename so a failed commit never consumes the
             // recovery copy.
@@ -541,12 +540,6 @@ class SessionRepository {
       rethrow;
     }
   }
-
-  /// Swaps the prepared temporary file into [target]. A separate step so tests
-  /// can inject a commit failure at the exact point recovery must survive.
-  @visibleForTesting
-  Future<void> commitTemporary(File temporary, File target) =>
-      temporary.rename(target.path);
 
   File _backupFile(File target) => File('${target.path}.bak');
 

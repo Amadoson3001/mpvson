@@ -190,8 +190,9 @@ class _AudioVolumeControlState extends State<AudioVolumeControl> {
                       data: PlayerSliderTheme.volume(
                         context,
                         compact: widget.compact,
-                        inactiveColor:
-                            Theme.of(context).colorScheme.outlineVariant,
+                        inactiveColor: Theme.of(
+                          context,
+                        ).colorScheme.outlineVariant,
                         thumbColor: Theme.of(context).colorScheme.primary,
                       ),
                       child: Slider(

@@ -29,20 +29,6 @@ String formatDuration(Duration d, {bool compactMinutes = false}) {
 String formatTime(Duration d, {bool compactMinutes = false}) =>
     formatDuration(d, compactMinutes: compactMinutes);
 
-/// Convenience wrapper for seconds (as floating point or integer).
-String formatDurationSeconds(double seconds, {bool compactMinutes = false}) =>
-    formatDuration(
-      Duration(milliseconds: (seconds * 1000).round()),
-      compactMinutes: compactMinutes,
-    );
-
-/// Convenience wrapper for milliseconds.
-String formatDurationMs(int milliseconds, {bool compactMinutes = false}) =>
-    formatDuration(
-      Duration(milliseconds: milliseconds),
-      compactMinutes: compactMinutes,
-    );
-
 /// Formats file size in bytes to human-readable binary units (B, KB, MB, GB, TB).
 String formatFileSize(int bytes) {
   if (bytes <= 0) return '0 B';

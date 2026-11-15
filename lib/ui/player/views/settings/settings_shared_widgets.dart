@@ -153,68 +153,6 @@ class SettingsSwitchTile extends StatelessWidget {
   }
 }
 
-class SettingsRow extends StatelessWidget {
-  const SettingsRow({
-    super.key,
-    this.icon,
-    required this.title,
-    this.subtitle,
-    required this.trailing,
-    this.onTap,
-  });
-
-  final IconData? icon;
-  final String title;
-  final String? subtitle;
-  final Widget trailing;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.palette;
-    final content = Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      child: Row(
-        children: [
-          if (icon != null) ...[
-            Icon(icon, size: 18, color: palette.muted),
-            const SizedBox(width: 12),
-          ],
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  title,
-                  style: palette.rowPrimary.copyWith(
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                if (subtitle != null && subtitle!.isNotEmpty) ...[
-                  const SizedBox(height: 2),
-                  Text(subtitle!, style: palette.rowSecondary),
-                ],
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          trailing,
-        ],
-      ),
-    );
-
-    if (onTap != null) {
-      return InkWell(
-        onTap: onTap,
-        hoverColor: palette.hover.withValues(alpha: 0.45),
-        child: content,
-      );
-    }
-    return content;
-  }
-}
-
 class SettingsActionTile extends StatelessWidget {
   const SettingsActionTile({
     super.key,

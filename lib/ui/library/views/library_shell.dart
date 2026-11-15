@@ -10,6 +10,7 @@ import '../../core/toast/toast_layout.dart';
 import '../../core/components/playback_pulse.dart';
 import '../../player/widgets/queue_panel.dart';
 import '../../player/views/player_queue_layout.dart';
+import '../../player/views/queue_slide_transition.dart';
 import '../../../utils/debouncer.dart';
 import '../library_browse_constants.dart';
 import '../widgets/library_status_banner.dart';
@@ -20,6 +21,7 @@ import 'mini_player_bar.dart';
 import 'music_view.dart';
 import 'now_playing_view.dart';
 import 'playlists_view.dart';
+import 'sidebar_transition.dart';
 import 'videos_view.dart';
 
 export 'library_section.dart';
@@ -86,6 +88,7 @@ class _LibraryShellState extends State<LibraryShell>
   String _searchQuery = '';
   final Debouncer _searchDebounce = Debouncer(delay: kLibrarySearchDebounce);
   bool _isOnDemandQueueOpen = false;
+  bool? _sidebarCollapsedOverride;
 
   /// Bumped on every explicit section change. Async section restores (the
   /// delayed [AnimationController.reverse] callback) capture the value when
@@ -114,8 +117,8 @@ class _LibraryShellState extends State<LibraryShell>
   late final AnimationController _miniPlayerVisibilityController =
       AnimationController(
         vsync: this,
-        duration: const Duration(milliseconds: 260),
-        reverseDuration: const Duration(milliseconds: 220),
+        duration: AppMotion.spatialDefault,
+        reverseDuration: AppMotion.spatialFast,
         value: (widget.controller.hasMedia && !widget.controller.isStopped)
             ? 1.0
             : 0.0,
@@ -127,9 +130,10 @@ class _LibraryShellState extends State<LibraryShell>
     reverseCurve: AppMotion.exit,
   );
 
-  late final AnimationController _queueSlide;
-  late final CurvedAnimation _queueSlideCurve;
+  late final QueueSlideTransition _queueSlide;
   bool _queueMounted = false;
+  late final SidebarTransition _sidebarSlide;
+  bool _sidebarLayoutSynced = false;
 
   MediaEntry? _lastDisplayEntry;
 
@@ -144,21 +148,11 @@ class _LibraryShellState extends State<LibraryShell>
     _driveQueueSlide();
   }
 
-  void _driveQueueSlide() {
-    if (_isQueueOpen) {
-      _queueSlide.forward();
-    } else {
-      _queueSlide.reverse();
-    }
-  }
+  void _driveQueueSlide() => _queueSlide.drive(_isQueueOpen);
 
-  void _handleQueueSlideStatus(AnimationStatus status) {
-    if (status != AnimationStatus.dismissed) return;
-    // A zero-length reverse can finish inside the build phase; unmount at the
-    // end of the frame instead.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) setState(() => _queueMounted = false);
-    });
+  void _handleQueueSlideDismissed() {
+    if (!mounted || _isQueueOpen) return;
+    setState(() => _queueMounted = false);
   }
 
   @override
@@ -170,17 +164,12 @@ class _LibraryShellState extends State<LibraryShell>
     _previousSection = widget.initialSection;
     _isOnDemandQueueOpen = widget.queueOpen ?? false;
     _queueMounted = _isQueueOpen;
-    _queueSlide = AnimationController(
+    _queueSlide = QueueSlideTransition(
       vsync: this,
-      duration: AppMotion.panelEnter,
-      reverseDuration: AppMotion.panelExit,
-      value: _isQueueOpen ? 1.0 : 0.0,
-    )..addStatusListener(_handleQueueSlideStatus);
-    _queueSlideCurve = CurvedAnimation(
-      parent: _queueSlide,
-      curve: AppMotion.panelEnterCurve,
-      reverseCurve: AppMotion.exit,
+      initialOpen: _isQueueOpen,
+      onDismissed: _handleQueueSlideDismissed,
     );
+    _sidebarSlide = SidebarTransition(vsync: this, initialExpanded: true);
     _lastDisplayEntry = widget.controller.current;
     _searchController.addListener(_onSearchChanged);
     widget.controller.structureListenable.addListener(_onPlaybackChanged);
@@ -189,13 +178,38 @@ class _LibraryShellState extends State<LibraryShell>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final reduced = AppMotion.reduce(context);
-    _queueSlide.duration = reduced
-        ? Duration.zero
-        : AppMotion.scaled(context, AppMotion.panelEnter);
-    _queueSlide.reverseDuration = reduced
-        ? Duration.zero
-        : AppMotion.scaled(context, AppMotion.panelExit);
+    _queueSlide.applyMotion(context);
+    _sidebarSlide.applyMotion(context);
+    _applyMotionSettings(context);
+  }
+
+  /// Re-reads the animation-speed preference and reduced-motion setting for
+  /// every controller this shell owns, so the preference covers the Now
+  /// Playing morph and the transport bar's reveal as well as the queue.
+  void _applyMotionSettings(BuildContext context) {
+    if (AppMotion.reduce(context)) {
+      _nowPlayingMorphController.duration = Duration.zero;
+      _nowPlayingMorphController.reverseDuration = Duration.zero;
+      _miniPlayerVisibilityController.duration = Duration.zero;
+      _miniPlayerVisibilityController.reverseDuration = Duration.zero;
+      return;
+    }
+    _nowPlayingMorphController.duration = AppMotion.scaled(
+      context,
+      AppMotion.sheetEnter,
+    );
+    _nowPlayingMorphController.reverseDuration = AppMotion.scaled(
+      context,
+      AppMotion.sheetExit,
+    );
+    _miniPlayerVisibilityController.duration = AppMotion.scaled(
+      context,
+      AppMotion.spatialDefault,
+    );
+    _miniPlayerVisibilityController.reverseDuration = AppMotion.scaled(
+      context,
+      AppMotion.spatialFast,
+    );
   }
 
   @override
@@ -252,9 +266,8 @@ class _LibraryShellState extends State<LibraryShell>
 
   @override
   void dispose() {
-    _queueSlide.removeStatusListener(_handleQueueSlideStatus);
-    _queueSlideCurve.dispose();
     _queueSlide.dispose();
+    _sidebarSlide.dispose();
     _nowPlayingMorphCurve.dispose();
     _miniPlayerVisibilityCurve.dispose();
     _nowPlayingMorphController.dispose();
@@ -516,33 +529,51 @@ class _LibraryShellState extends State<LibraryShell>
     bool isDesktopMedium,
     bool isCompact,
   ) {
+    final effectiveSection = _currentSection == LibrarySection.nowPlaying
+        ? _previousSection
+        : _currentSection;
+    final sidebarCollapsed = _sidebarCollapsedOverride ?? !isDesktopWide;
+    final desiredExpanded = !sidebarCollapsed;
+    if (isCompact) {
+      _sidebarLayoutSynced = false;
+    } else if (!_sidebarLayoutSynced) {
+      _sidebarLayoutSynced = true;
+      _sidebarSlide.snap(desiredExpanded);
+    } else if (_sidebarSlide.targetExpanded != desiredExpanded) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _sidebarSlide.drive(desiredExpanded);
+      });
+    }
     return Row(
       children: [
-        // 1. Navigation: 208px sidebar on >=1180, collapsed 64px rail on
-        // 960-1179, drawer on <960.
-        if (isDesktopWide) ...[
+        // 1. Navigation: collapsible 208px/64px sidebar on >=960, drawer on <960.
+        if (!isCompact) ...[
           ToastRegion(
-            child: SizedBox(
-              width: AppLayout.sidebarExpanded,
+            child: AnimatedBuilder(
+              animation: _sidebarSlide.progress,
               child: ShellSideNav(
                 section: _currentSection,
                 onSelect: _selectSection,
-                collapsed: false,
+                collapsed: sidebarCollapsed,
+                expandProgress: _sidebarSlide.progress,
                 showSettings: widget.onSettings != null,
+                onToggleCollapse: () {
+                  final nextCollapsed = !sidebarCollapsed;
+                  setState(() {
+                    _sidebarCollapsedOverride = nextCollapsed;
+                  });
+                  _sidebarSlide.drive(!nextCollapsed);
+                },
               ),
-            ),
-          ),
-          VerticalDivider(width: 1, color: context.palette.border),
-        ] else if (isDesktopMedium) ...[
-          ToastRegion(
-            child: SizedBox(
-              width: AppLayout.sidebarCollapsed,
-              child: ShellSideNav(
-                section: _currentSection,
-                onSelect: _selectSection,
-                collapsed: true,
-                showSettings: widget.onSettings != null,
-              ),
+              builder: (context, child) {
+                final t = _sidebarSlide.progress.value.clamp(0.0, 1.0);
+                final width =
+                    AppLayout.sidebarCollapsed +
+                    (AppLayout.sidebarExpanded - AppLayout.sidebarCollapsed) *
+                        t;
+                return SizedBox(width: width, child: child);
+              },
             ),
           ),
           VerticalDivider(width: 1, color: context.palette.border),
@@ -564,19 +595,20 @@ class _LibraryShellState extends State<LibraryShell>
                   ),
                 ),
               ),
-              LibraryTopBar(
-                section: _currentSection,
-                compact: isCompact,
-                canDockQueue: !isCompact,
-                queueOpen: _isQueueOpen,
-                searchController: _searchController,
-                searchFocus: _searchFocus,
-                onOpenNavigation: () => _scaffoldKey.currentState?.openDrawer(),
-                onToggleQueue: () => _setQueueOpen(!_isQueueOpen),
-                onBackToPlayer: widget.onBackToPlayer,
-                onOpenFiles: widget.onOpenFiles,
-                onOpenUrl: widget.onOpenUrl,
-              ),
+              if (effectiveSection != LibrarySection.home)
+                LibraryTopBar(
+                  section: _currentSection,
+                  compact: isCompact,
+                  canDockQueue: !isCompact,
+                  queueOpen: _isQueueOpen,
+                  searchController: _searchController,
+                  searchFocus: _searchFocus,
+                  onOpenNavigation: () =>
+                      _scaffoldKey.currentState?.openDrawer(),
+                  onToggleQueue: () => _setQueueOpen(!_isQueueOpen),
+                  onOpenFiles: widget.onOpenFiles,
+                  onOpenUrl: widget.onOpenUrl,
+                ),
               // Main Stage View
               Expanded(child: _buildContentStage()),
             ],
@@ -586,25 +618,28 @@ class _LibraryShellState extends State<LibraryShell>
         // 3. Docked Queue Panel
         if (!isCompact && (_isQueueOpen || _queueMounted))
           QueueSlideSlot(
-            progress: _queueSlideCurve,
-            child: IgnorePointer(
-              ignoring: !_isQueueOpen,
-              child: SizedBox(
-                width: AppLayout.queuePanelWidth + 1,
-                child: Row(
-                  children: [
-                    VerticalDivider(width: 1, color: context.palette.border),
-                    Expanded(
-                      child: ToastRegion(
-                        child: QueuePanel(
-                          controller: widget.controller,
-                          onQueueFocus: (_) {},
-                          onAddFiles: widget.onAddQueueFiles ?? () {},
-                          onClose: () => _setQueueOpen(false),
+            progress: _queueSlide.progress,
+            panelWidth: AppLayout.queuePanelWidth + 1,
+            child: RepaintBoundary(
+              child: IgnorePointer(
+                ignoring: !_isQueueOpen,
+                child: SizedBox(
+                  width: AppLayout.queuePanelWidth + 1,
+                  child: Row(
+                    children: [
+                      VerticalDivider(width: 1, color: context.palette.border),
+                      Expanded(
+                        child: ToastRegion(
+                          child: QueuePanel(
+                            controller: widget.controller,
+                            onQueueFocus: (_) {},
+                            onAddFiles: widget.onAddQueueFiles ?? () {},
+                            onClose: () => _setQueueOpen(false),
+                          ),
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),

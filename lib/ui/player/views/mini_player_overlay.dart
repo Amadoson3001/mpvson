@@ -2,7 +2,6 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/app_motion.dart';
-import '../../core/app_theme.dart';
 import '../player_controller.dart';
 
 /// Lightweight, hardware-composited touch & click overlay for the docked in-app mini video player.
@@ -94,10 +93,7 @@ class _MiniPlayerOverlayState extends State<MiniPlayerOverlay> {
   Widget build(BuildContext context) {
     final opacityScale = widget.visualOpacity.clamp(0.0, 1.0);
     final fillAlpha =
-        (_pressed ? 0.22 : (_hovered ? 0.12 : 0.0)) * opacityScale;
-    final borderAlpha =
-        (_pressed ? 0.45 : (_hovered ? 0.28 : 0.0)) * opacityScale;
-    final radius = BorderRadius.circular(AppLayout.dockedMiniVideoRadius);
+        (_pressed ? 0.22 : (_hovered ? 0.10 : 0.0)) * opacityScale;
 
     return Semantics(
       button: true,
@@ -131,20 +127,11 @@ class _MiniPlayerOverlayState extends State<MiniPlayerOverlay> {
                 duration: _pressed
                     ? Duration.zero
                     : AppMotion.duration(context, AppMotion.press),
-                decoration: BoxDecoration(
-                  color: fillAlpha > 0
-                      ? (_pressed
-                            ? Colors.black.withValues(alpha: fillAlpha)
-                            : Colors.white.withValues(alpha: fillAlpha))
-                      : Colors.transparent,
-                  borderRadius: radius,
-                  border: borderAlpha > 0
-                      ? Border.all(
-                          color: Colors.white.withValues(alpha: borderAlpha),
-                          width: 1,
-                        )
-                      : null,
-                ),
+                color: fillAlpha > 0
+                    ? (_pressed
+                          ? Colors.black.withValues(alpha: fillAlpha)
+                          : Colors.white.withValues(alpha: fillAlpha))
+                    : Colors.transparent,
               ),
             ),
           ),

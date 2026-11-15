@@ -72,6 +72,7 @@ class DiscoveredTrack {
     this.bitsPerSample,
     this.width,
     this.height,
+    this.fps,
   });
 
   final String id;
@@ -85,6 +86,7 @@ class DiscoveredTrack {
   final int? bitsPerSample;
   final int? width;
   final int? height;
+  final double? fps;
 }
 
 /// Information discovered during media stream and tag inspection.
@@ -96,6 +98,7 @@ class DiscoveredMediaInfo {
     this.hasEmbeddedArtwork = false,
     this.embeddedArtworkBytes,
     this.audioInfo,
+    this.videoInfo,
   });
 
   final List<DiscoveredTrack> tracks;
@@ -104,6 +107,7 @@ class DiscoveredMediaInfo {
   final bool hasEmbeddedArtwork;
   final Uint8List? embeddedArtworkBytes;
   final AudioTechnicalInfo? audioInfo;
+  final VideoTechnicalInfo? videoInfo;
 }
 
 /// Extraction boundary for media probing, supporting pluggable or mocked engines.
@@ -165,7 +169,16 @@ class PureDartMediaParser {
         return await _parseOgg(raf, length);
       }
 
-      // Check MP4 / M4A (ftyp atom or moov atom)
+      // Check EBML / Matroska / WebM (0x1A 0x45 0xDF 0xA3)
+      if (header.length >= 4 &&
+          header[0] == 0x1A &&
+          header[1] == 0x45 &&
+          header[2] == 0xDF &&
+          header[3] == 0xA3) {
+        return await _parseMatroska(raf, length);
+      }
+
+      // Check MP4 / M4A / MOV (ftyp atom or moov atom)
       if (header.length >= 8) {
         final boxType = String.fromCharCodes(header.sublist(4, 8));
         if (boxType == 'ftyp' || boxType == 'moov') {
@@ -403,21 +416,612 @@ class PureDartMediaParser {
           hasArtwork = true;
           artworkBytes = art;
         });
-        break;
+        return _parseMp4MoovDetails(
+          moovBytes,
+          rawTags: rawTags,
+          hasArtwork: hasArtwork,
+          artworkBytes: artworkBytes,
+        );
       } else {
         await raf.setPosition(atomStart + size);
       }
     }
 
     return DiscoveredMediaInfo(
-      // An MP4 container may contain video, audio, or both. The tag parser
-      // cannot infer its tracks, so let native inspection or the extension do it.
       tracks: const [],
       rawTags: rawTags,
       duration: duration,
       hasEmbeddedArtwork: hasArtwork,
       embeddedArtworkBytes: artworkBytes,
     );
+  }
+
+  static void _walkMp4Boxes(
+    Uint8List bytes,
+    int start,
+    int end,
+    void Function(String type, int dataStart, int dataEnd) onBox,
+  ) {
+    var pos = start;
+    while (pos + 8 <= end) {
+      final rawSize = _readUint32BE(bytes, pos);
+      final type = String.fromCharCodes(bytes, pos + 4, pos + 8);
+      var hdr = 8;
+      int size = rawSize;
+      if (rawSize == 1) {
+        if (pos + 16 > end) break;
+        final hi = _readUint32BE(bytes, pos + 8);
+        final lo = _readUint32BE(bytes, pos + 12);
+        if (hi > 0x7fffffff) break;
+        size = (hi << 32) | lo;
+        hdr = 16;
+      } else if (rawSize == 0) {
+        size = end - pos;
+      }
+      if (size < hdr || pos + size > end) break;
+      onBox(type, pos + hdr, pos + size);
+      pos += size;
+    }
+  }
+
+  static int _readUint16BE(Uint8List b, int o) => (b[o] << 8) | b[o + 1];
+
+  static int _readUint32BE(Uint8List b, int o) =>
+      ((b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]) &
+      0xFFFFFFFF;
+
+  static int _readUint64BE(Uint8List b, int o) =>
+      (_readUint32BE(b, o) << 32) | _readUint32BE(b, o + 4);
+
+  static String _normalizeMp4Codec(String fourCc, {required bool isVideo}) {
+    final lower = fourCc.trim().toLowerCase();
+    if (isVideo) {
+      switch (lower) {
+        case 'avc1':
+        case 'avc2':
+        case 'avc3':
+        case 'avc4':
+          return 'h264';
+        case 'hvc1':
+        case 'hev1':
+          return 'hevc';
+        case 'vp08':
+          return 'vp8';
+        case 'vp09':
+          return 'vp9';
+        case 'av01':
+          return 'av1';
+        case 'mp4v':
+          return 'mpeg4';
+        default:
+          return lower;
+      }
+    }
+    switch (lower) {
+      case 'mp4a':
+        return 'aac';
+      case 'ac-3':
+        return 'ac3';
+      case 'ec-3':
+        return 'eac3';
+      case 'opus':
+        return 'opus';
+      case 'alac':
+        return 'alac';
+      case 'flac':
+        return 'flac';
+      case 'mlpa':
+        return 'truehd';
+      default:
+        return lower;
+    }
+  }
+
+  static int? _readMp4BtrtAvgBitrate(
+    Uint8List bytes,
+    int subStart,
+    int subEnd,
+  ) {
+    int? bitrate;
+    _walkMp4Boxes(bytes, subStart, subEnd, (type, s, e) {
+      if (type == 'btrt' && e - s >= 12) {
+        final avg = _readUint32BE(bytes, s + 8);
+        if (avg > 0) bitrate = avg;
+      } else if (type == 'wave' || type == 'sinf') {
+        bitrate ??= _readMp4BtrtAvgBitrate(bytes, s, e);
+      }
+    });
+    return bitrate;
+  }
+
+  DiscoveredMediaInfo _parseMp4MoovDetails(
+    Uint8List moov, {
+    required Map<String, String> rawTags,
+    required bool hasArtwork,
+    required Uint8List? artworkBytes,
+  }) {
+    var movieDuration = Duration.zero;
+    final tracks = <DiscoveredTrack>[];
+    VideoTechnicalInfo? videoInfo;
+    AudioTechnicalInfo? audioInfo;
+
+    _walkMp4Boxes(moov, 0, moov.length, (type, start, end) {
+      if (type == 'mvhd' && end - start >= 20) {
+        final version = moov[start];
+        int timescale = 0;
+        int durUnits = 0;
+        if (version == 0 && end - start >= 20) {
+          timescale = _readUint32BE(moov, start + 12);
+          durUnits = _readUint32BE(moov, start + 16);
+        } else if (version == 1 && end - start >= 32) {
+          timescale = _readUint32BE(moov, start + 20);
+          durUnits = _readUint64BE(moov, start + 24);
+        }
+        if (timescale > 0 && durUnits > 0) {
+          movieDuration = Duration(
+            milliseconds: ((durUnits * 1000) / timescale).round(),
+          );
+        }
+      } else if (type == 'trak') {
+        int? tkhdWidth;
+        int? tkhdHeight;
+        int mdTimescale = 0;
+        int mdDurUnits = 0;
+        String? handlerType;
+        String? codec;
+        int? width;
+        int? height;
+        int? sampleRate;
+        int? channels;
+        int? bitrate;
+        int totalSamples = 0;
+
+        _walkMp4Boxes(moov, start, end, (tBox, ts, te) {
+          if (tBox == 'tkhd' && te - ts >= 84) {
+            final version = moov[ts];
+            final wOff = version == 1 ? ts + 88 : ts + 76;
+            final hOff = version == 1 ? ts + 92 : ts + 80;
+            if (hOff + 4 <= te) {
+              final w = _readUint32BE(moov, wOff) >> 16;
+              final h = _readUint32BE(moov, hOff) >> 16;
+              if (w > 0 && h > 0) {
+                tkhdWidth = w;
+                tkhdHeight = h;
+              }
+            }
+          } else if (tBox == 'mdia') {
+            _walkMp4Boxes(moov, ts, te, (mBox, ms, me) {
+              if (mBox == 'mdhd' && me - ms >= 20) {
+                final version = moov[ms];
+                if (version == 0 && me - ms >= 20) {
+                  mdTimescale = _readUint32BE(moov, ms + 12);
+                  mdDurUnits = _readUint32BE(moov, ms + 16);
+                } else if (version == 1 && me - ms >= 32) {
+                  mdTimescale = _readUint32BE(moov, ms + 20);
+                  mdDurUnits = _readUint64BE(moov, ms + 24);
+                }
+              } else if (mBox == 'hdlr' && me - ms >= 12) {
+                handlerType = String.fromCharCodes(moov, ms + 8, ms + 12);
+              } else if (mBox == 'minf') {
+                _walkMp4Boxes(moov, ms, me, (nBox, ns, ne) {
+                  if (nBox != 'stbl') return;
+                  _walkMp4Boxes(moov, ns, ne, (sBox, ss, se) {
+                    if (sBox == 'stsd' && se - ss >= 16) {
+                      final entryCount = _readUint32BE(moov, ss + 4);
+                      if (entryCount <= 0) return;
+                      final entryStart = ss + 8;
+                      if (entryStart + 8 > se) return;
+                      final entrySize = _readUint32BE(moov, entryStart);
+                      final entryEnd = (entryStart + entrySize).clamp(
+                        entryStart,
+                        se,
+                      );
+                      final fourCc = String.fromCharCodes(
+                        moov,
+                        entryStart + 4,
+                        entryStart + 8,
+                      );
+                      if (handlerType == 'vide') {
+                        codec = _normalizeMp4Codec(fourCc, isVideo: true);
+                        if (entryStart + 36 <= entryEnd) {
+                          final w = _readUint16BE(moov, entryStart + 32);
+                          final h = _readUint16BE(moov, entryStart + 34);
+                          if (w > 0 && h > 0) {
+                            width = w;
+                            height = h;
+                          }
+                        }
+                        if (entryStart + 86 < entryEnd) {
+                          bitrate ??= _readMp4BtrtAvgBitrate(
+                            moov,
+                            entryStart + 86,
+                            entryEnd,
+                          );
+                        }
+                      } else if (handlerType == 'soun') {
+                        codec = _normalizeMp4Codec(fourCc, isVideo: false);
+                        if (entryStart + 36 <= entryEnd) {
+                          final ch = _readUint16BE(moov, entryStart + 24);
+                          final sr = _readUint32BE(moov, entryStart + 32) >> 16;
+                          if (ch > 0) channels = ch;
+                          if (sr > 0) sampleRate = sr;
+                        }
+                        if (entryStart + 36 < entryEnd) {
+                          bitrate ??= _readMp4BtrtAvgBitrate(
+                            moov,
+                            entryStart + 36,
+                            entryEnd,
+                          );
+                        }
+                      }
+                    } else if (sBox == 'stts' && se - ss >= 8) {
+                      final entryCount = _readUint32BE(
+                        moov,
+                        ss + 4,
+                      ).clamp(0, 4096);
+                      var pOff = ss + 8;
+                      var sum = 0;
+                      for (var i = 0; i < entryCount && pOff + 8 <= se; i++) {
+                        sum += _readUint32BE(moov, pOff);
+                        pOff += 8;
+                      }
+                      totalSamples = sum;
+                    }
+                  });
+                });
+              }
+            });
+          }
+        });
+
+        if (handlerType == 'vide') {
+          width ??= tkhdWidth;
+          height ??= tkhdHeight;
+          double? fps;
+          if (totalSamples > 0 && mdTimescale > 0 && mdDurUnits > 0) {
+            final computed = (totalSamples * mdTimescale) / mdDurUnits;
+            if (computed >= 0.5 && computed <= 240.0) {
+              fps = double.parse(computed.toStringAsFixed(3));
+            }
+          }
+          tracks.add(
+            DiscoveredTrack(
+              id: 'video-${tracks.length}',
+              isVideo: true,
+              codec: codec,
+              width: width,
+              height: height,
+              fps: fps,
+              bitrate: bitrate,
+            ),
+          );
+          videoInfo ??= VideoTechnicalInfo(
+            codec: codec,
+            width: width,
+            height: height,
+            fps: fps,
+            bitrate: bitrate,
+          );
+        } else if (handlerType == 'soun') {
+          tracks.add(
+            DiscoveredTrack(
+              id: 'audio-${tracks.length}',
+              isVideo: false,
+              isAudio: true,
+              codec: codec,
+              sampleRate: sampleRate,
+              channels: channels,
+              bitrate: bitrate,
+            ),
+          );
+          audioInfo ??= AudioTechnicalInfo(
+            codec: codec,
+            sampleRate: sampleRate,
+            channels: channels,
+            bitrate: bitrate,
+          );
+        }
+      }
+    });
+
+    return DiscoveredMediaInfo(
+      tracks: tracks,
+      rawTags: rawTags,
+      duration: movieDuration,
+      hasEmbeddedArtwork: hasArtwork,
+      embeddedArtworkBytes: artworkBytes,
+      audioInfo: audioInfo,
+      videoInfo: (videoInfo != null && !videoInfo!.isEmpty) ? videoInfo : null,
+    );
+  }
+
+  Future<DiscoveredMediaInfo?> _parseMatroska(
+    RandomAccessFile raf,
+    int fileLength,
+  ) async {
+    Future<(int id, int size, int dataOffset)?> readElementHeaderAt(
+      int pos,
+    ) async {
+      if (pos >= fileLength) return null;
+      await raf.setPosition(pos);
+      final peek = await raf.read(12);
+      if (peek.isEmpty) return null;
+
+      final idRes = _readEbmlVint(peek, 0, maskLeadingBit: false, maxLen: 4);
+      if (idRes == null) return null;
+      final sizeRes = _readEbmlVint(
+        peek,
+        idRes.$2,
+        maskLeadingBit: true,
+        maxLen: 8,
+      );
+      if (sizeRes == null) return null;
+      return (idRes.$1, sizeRes.$1, pos + idRes.$2 + sizeRes.$2);
+    }
+
+    var cursor = 0;
+    int? segmentStart;
+    int segmentEnd = fileLength;
+    for (var i = 0; i < 8 && cursor < fileLength; i++) {
+      final el = await readElementHeaderAt(cursor);
+      if (el == null) return null;
+      final (id, size, dataStart) = el;
+      if (id == 0x18538067) {
+        segmentStart = dataStart;
+        segmentEnd = size >= 0
+            ? (dataStart + size).clamp(0, fileLength)
+            : fileLength;
+        break;
+      }
+      if (size < 0) break;
+      cursor = dataStart + size;
+    }
+    if (segmentStart == null) return null;
+
+    var timecodeScale = 1000000;
+    double? rawDuration;
+    final rawTags = <String, String>{};
+    final tracks = <DiscoveredTrack>[];
+    VideoTechnicalInfo? videoInfo;
+    AudioTechnicalInfo? audioInfo;
+    var sawInfo = false;
+    var sawTracks = false;
+
+    cursor = segmentStart;
+    for (var i = 0; i < 64 && cursor < segmentEnd; i++) {
+      final el = await readElementHeaderAt(cursor);
+      if (el == null) break;
+      final (id, size, dataStart) = el;
+      // Stop once Clusters begin or both Info and Tracks are loaded.
+      if (id == 0x1F43B675 || (sawInfo && sawTracks)) break;
+
+      if (id == 0x1549A966 && size > 0 && size <= 1024 * 1024) {
+        sawInfo = true;
+        await raf.setPosition(dataStart);
+        final infoBytes = await raf.read(size);
+        _walkEbmlChildren(infoBytes, 0, infoBytes.length, (cid, cs, ce) {
+          if (cid == 0x2AD7B1) {
+            final v = _readEbmlUint(infoBytes, cs, ce);
+            if (v > 0) timecodeScale = v;
+          } else if (cid == 0x4489) {
+            rawDuration = _readEbmlFloat(infoBytes, cs, ce);
+          } else if (cid == 0x7BA9 && ce > cs) {
+            final title = utf8
+                .decode(infoBytes.sublist(cs, ce), allowMalformed: true)
+                .trim();
+            if (title.isNotEmpty) rawTags['title'] = title;
+          }
+        });
+      } else if (id == 0x1654AE6B && size > 0 && size <= 2 * 1024 * 1024) {
+        sawTracks = true;
+        await raf.setPosition(dataStart);
+        final tracksBytes = await raf.read(size);
+        _walkEbmlChildren(tracksBytes, 0, tracksBytes.length, (cid, cs, ce) {
+          if (cid != 0xAE) return;
+          int? trackType;
+          String? codecId;
+          int? defaultDurationNs;
+          int? width;
+          int? height;
+          double? sampleRate;
+          int? channels;
+          int? bitDepth;
+
+          _walkEbmlChildren(tracksBytes, cs, ce, (tid, ts, te) {
+            if (tid == 0x83) {
+              trackType = _readEbmlUint(tracksBytes, ts, te);
+            } else if (tid == 0x86) {
+              codecId = ascii
+                  .decode(tracksBytes.sublist(ts, te), allowInvalid: true)
+                  .split('\u0000')
+                  .first
+                  .trim();
+            } else if (tid == 0x23E383) {
+              defaultDurationNs = _readEbmlUint(tracksBytes, ts, te);
+            } else if (tid == 0xE0) {
+              _walkEbmlChildren(tracksBytes, ts, te, (vid, vs, ve) {
+                if (vid == 0xB0) {
+                  width = _readEbmlUint(tracksBytes, vs, ve);
+                } else if (vid == 0xBA) {
+                  height = _readEbmlUint(tracksBytes, vs, ve);
+                }
+              });
+            } else if (tid == 0xE1) {
+              _walkEbmlChildren(tracksBytes, ts, te, (aid, as0, ae) {
+                if (aid == 0xB5) {
+                  sampleRate = _readEbmlFloat(tracksBytes, as0, ae);
+                } else if (aid == 0x9F) {
+                  channels = _readEbmlUint(tracksBytes, as0, ae);
+                } else if (aid == 0x6264) {
+                  bitDepth = _readEbmlUint(tracksBytes, as0, ae);
+                }
+              });
+            }
+          });
+
+          final normalizedCodec = _normalizeMatroskaCodec(codecId);
+          if (trackType == 1) {
+            double? fps;
+            if (defaultDurationNs != null && defaultDurationNs! > 0) {
+              final computed = 1e9 / defaultDurationNs!;
+              if (computed >= 0.5 && computed <= 240.0) {
+                fps = double.parse(computed.toStringAsFixed(3));
+              }
+            }
+            tracks.add(
+              DiscoveredTrack(
+                id: 'video-${tracks.length}',
+                isVideo: true,
+                codec: normalizedCodec,
+                width: width,
+                height: height,
+                fps: fps,
+              ),
+            );
+            videoInfo ??= VideoTechnicalInfo(
+              codec: normalizedCodec,
+              width: width,
+              height: height,
+              fps: fps,
+            );
+          } else if (trackType == 2) {
+            final sr = sampleRate?.round();
+            tracks.add(
+              DiscoveredTrack(
+                id: 'audio-${tracks.length}',
+                isVideo: false,
+                isAudio: true,
+                codec: normalizedCodec,
+                sampleRate: sr,
+                channels: channels,
+                bitsPerSample: bitDepth,
+              ),
+            );
+            audioInfo ??= AudioTechnicalInfo(
+              codec: normalizedCodec,
+              sampleRate: sr,
+              channels: channels,
+              bitsPerSample: bitDepth,
+            );
+          }
+        });
+      }
+
+      if (size < 0) break;
+      cursor = dataStart + size;
+    }
+
+    final duration = (rawDuration != null && rawDuration! > 0)
+        ? Duration(
+            milliseconds: ((rawDuration! * timecodeScale) / 1000000.0).round(),
+          )
+        : Duration.zero;
+
+    if (tracks.isEmpty && duration == Duration.zero && rawTags.isEmpty) {
+      return null;
+    }
+    return DiscoveredMediaInfo(
+      tracks: tracks,
+      rawTags: rawTags,
+      duration: duration,
+      audioInfo: audioInfo,
+      videoInfo: (videoInfo != null && !videoInfo!.isEmpty) ? videoInfo : null,
+    );
+  }
+
+  static (int value, int length)? _readEbmlVint(
+    Uint8List bytes,
+    int offset, {
+    required bool maskLeadingBit,
+    required int maxLen,
+  }) {
+    if (offset >= bytes.length) return null;
+    final first = bytes[offset];
+    if (first == 0) return null;
+    var len = 1;
+    var mask = 0x80;
+    while (len <= maxLen && (first & mask) == 0) {
+      mask >>= 1;
+      len++;
+    }
+    if (len > maxLen || offset + len > bytes.length) return null;
+    var value = maskLeadingBit ? (first & (mask - 1)) : first;
+    var allOnes = maskLeadingBit && value == (mask - 1);
+    for (var i = 1; i < len; i++) {
+      final b = bytes[offset + i];
+      if (b != 0xFF) allOnes = false;
+      value = (value << 8) | b;
+    }
+    if (maskLeadingBit && allOnes) {
+      return (-1, len);
+    }
+    return (value, len);
+  }
+
+  static void _walkEbmlChildren(
+    Uint8List bytes,
+    int start,
+    int end,
+    void Function(int id, int dataStart, int dataEnd) onChild,
+  ) {
+    var pos = start;
+    while (pos < end) {
+      final idRes = _readEbmlVint(bytes, pos, maskLeadingBit: false, maxLen: 4);
+      if (idRes == null) break;
+      final sizeRes = _readEbmlVint(
+        bytes,
+        pos + idRes.$2,
+        maskLeadingBit: true,
+        maxLen: 8,
+      );
+      if (sizeRes == null || sizeRes.$1 < 0) break;
+      final dataStart = pos + idRes.$2 + sizeRes.$2;
+      final dataEnd = dataStart + sizeRes.$1;
+      if (dataEnd > end) break;
+      onChild(idRes.$1, dataStart, dataEnd);
+      pos = dataEnd;
+    }
+  }
+
+  static int _readEbmlUint(Uint8List bytes, int start, int end) {
+    var value = 0;
+    for (var i = start; i < end; i++) {
+      value = (value << 8) | bytes[i];
+    }
+    return value;
+  }
+
+  static double? _readEbmlFloat(Uint8List bytes, int start, int end) {
+    final len = end - start;
+    if (len == 4) {
+      return ByteData.sublistView(bytes, start, end).getFloat32(0, Endian.big);
+    }
+    if (len == 8) {
+      return ByteData.sublistView(bytes, start, end).getFloat64(0, Endian.big);
+    }
+    return null;
+  }
+
+  static String? _normalizeMatroskaCodec(String? codecId) {
+    if (codecId == null || codecId.isEmpty) return null;
+    if (codecId.startsWith('V_MPEG4/ISO/AVC')) return 'h264';
+    if (codecId.startsWith('V_MPEGH/ISO/HEVC')) return 'hevc';
+    if (codecId.startsWith('V_VP9')) return 'vp9';
+    if (codecId.startsWith('V_VP8')) return 'vp8';
+    if (codecId.startsWith('V_AV1')) return 'av1';
+    if (codecId.startsWith('V_MPEG2')) return 'mpeg2video';
+    if (codecId.startsWith('V_MPEG4/ISO/')) return 'mpeg4';
+    if (codecId.startsWith('A_AAC')) return 'aac';
+    if (codecId.startsWith('A_OPUS')) return 'opus';
+    if (codecId.startsWith('A_VORBIS')) return 'vorbis';
+    if (codecId == 'A_AC3') return 'ac3';
+    if (codecId == 'A_EAC3') return 'eac3';
+    if (codecId == 'A_FLAC') return 'flac';
+    if (codecId.startsWith('A_DTS')) return 'dts';
+    if (codecId.startsWith('A_TRUEHD')) return 'truehd';
+    if (codecId == 'A_MPEG/L3') return 'mp3';
+    if (codecId.startsWith('A_PCM/')) return 'pcm';
+    return codecId.toLowerCase();
   }
 
   Future<DiscoveredMediaInfo?> _parseOgg(
@@ -772,13 +1376,17 @@ class MediaKitProbeEngine implements MediaProbeEngine {
   }) async {
     if (_disposed || (cancellationToken?.isCancelled ?? false)) return null;
 
-    // Fast path: pure Dart tag & container inspection for audio
+    // Fast path: pure Dart tag & container inspection for audio and video.
     final pureResult = await _pureDartParser.parse(filePath);
+    final hasCompleteTechnicalInfo =
+        pureResult != null &&
+        (isAudioHint
+            ? pureResult.audioInfo != null
+            : (pureResult.videoInfo != null && !pureResult.videoInfo!.isEmpty));
     if (pureResult != null &&
-        isAudioHint &&
         pureResult.duration > Duration.zero &&
-        pureResult.audioInfo != null) {
-      // Skip native inspection only if the container supplied stream details.
+        hasCompleteTechnicalInfo) {
+      // Skip native inspection when the container supplied stream details.
       return pureResult;
     }
 
@@ -960,18 +1568,42 @@ class MediaKitProbeEngine implements MediaProbeEngine {
                 isAudio: type == 'audio',
                 isArtwork: artwork,
                 codec: await readNativeProperty('track-list/$index/codec'),
-                sampleRate: int.tryParse(
-                  await readNativeProperty(
-                        'track-list/$index/demux-samplerate',
-                      ) ??
-                      '',
-                ),
-                channels: int.tryParse(
-                  await readNativeProperty(
-                        'track-list/$index/demux-channel-count',
-                      ) ??
-                      '',
-                ),
+                width: type == 'video'
+                    ? int.tryParse(
+                        await readNativeProperty('track-list/$index/demux-w') ??
+                            '',
+                      )
+                    : null,
+                height: type == 'video'
+                    ? int.tryParse(
+                        await readNativeProperty('track-list/$index/demux-h') ??
+                            '',
+                      )
+                    : null,
+                fps: type == 'video'
+                    ? double.tryParse(
+                        await readNativeProperty(
+                              'track-list/$index/demux-fps',
+                            ) ??
+                            '',
+                      )
+                    : null,
+                sampleRate: type == 'audio'
+                    ? int.tryParse(
+                        await readNativeProperty(
+                              'track-list/$index/demux-samplerate',
+                            ) ??
+                            '',
+                      )
+                    : null,
+                channels: type == 'audio'
+                    ? int.tryParse(
+                        await readNativeProperty(
+                              'track-list/$index/demux-channel-count',
+                            ) ??
+                            '',
+                      )
+                    : null,
                 bitrate: int.tryParse(
                   await readNativeProperty('track-list/$index/demux-bitrate') ??
                       '',
@@ -992,6 +1624,67 @@ class MediaKitProbeEngine implements MediaProbeEngine {
         final tags = <String, String>{
           if (pureResult != null) ...pureResult.rawTags,
         };
+        if (native is NativePlayer) {
+          final rawMeta = await readNativeProperty('metadata');
+          if (rawMeta != null && rawMeta.startsWith('{')) {
+            try {
+              final decoded = jsonDecode(rawMeta);
+              if (decoded is Map) {
+                for (final entry in decoded.entries) {
+                  final k = entry.key.toString().trim();
+                  final v = entry.value?.toString().trim() ?? '';
+                  if (k.isNotEmpty && v.isNotEmpty && !tags.containsKey(k)) {
+                    tags[k] = v;
+                  }
+                }
+              }
+            } catch (_) {}
+          }
+        }
+
+        VideoTechnicalInfo? videoInfo = pureResult?.videoInfo;
+        final videoTrack = discoveredTracks
+            .where((track) => track.isVideo && !track.isArtwork)
+            .firstOrNull;
+        if (videoTrack != null) {
+          var vWidth = videoTrack.width ?? videoInfo?.width;
+          var vHeight = videoTrack.height ?? videoInfo?.height;
+          var vFps = videoTrack.fps ?? videoInfo?.fps;
+          var vBitrate = videoTrack.bitrate ?? videoInfo?.bitrate;
+          if (native is NativePlayer) {
+            if (vFps == null || vFps <= 0) {
+              vFps = double.tryParse(
+                await readNativeProperty('container-fps') ?? '',
+              );
+            }
+            if (vBitrate == null || vBitrate <= 0) {
+              vBitrate = int.tryParse(
+                await readNativeProperty('video-bitrate') ?? '',
+              );
+            }
+            if (vWidth == null || vWidth <= 0) {
+              vWidth = int.tryParse(
+                await readNativeProperty('video-params/w') ?? '',
+              );
+            }
+            if (vHeight == null || vHeight <= 0) {
+              vHeight = int.tryParse(
+                await readNativeProperty('video-params/h') ?? '',
+              );
+            }
+          }
+          videoInfo = VideoTechnicalInfo(
+            codec: videoTrack.codec ?? videoInfo?.codec,
+            width: (vWidth != null && vWidth > 0) ? vWidth : videoInfo?.width,
+            height: (vHeight != null && vHeight > 0)
+                ? vHeight
+                : videoInfo?.height,
+            fps: (vFps != null && vFps > 0) ? vFps : videoInfo?.fps,
+            bitrate: (vBitrate != null && vBitrate > 0)
+                ? vBitrate
+                : videoInfo?.bitrate,
+          );
+        }
 
         AudioTechnicalInfo? audioInfo = pureResult?.audioInfo;
         final audioTrack = discoveredTracks
@@ -1059,6 +1752,7 @@ class MediaKitProbeEngine implements MediaProbeEngine {
           hasEmbeddedArtwork: hasEmbeddedArtwork,
           embeddedArtworkBytes: pureResult?.embeddedArtworkBytes,
           audioInfo: audioInfo,
+          videoInfo: videoInfo,
         );
       } catch (_) {
         return pureResult;
@@ -1256,6 +1950,7 @@ class MediaProbeServiceImpl implements MediaProbeService {
     required Map<String, String> rawTags,
     required Duration duration,
     AudioTechnicalInfo? audioInfo,
+    VideoTechnicalInfo? videoInfo,
     String? artworkUri,
   }) {
     // Normalize keys: lowercased and stripped of non-alphanumeric characters
@@ -1382,6 +2077,7 @@ class MediaProbeServiceImpl implements MediaProbeService {
               effectiveAudioInfo.channels != null)
           ? effectiveAudioInfo
           : null,
+      videoInfo: (videoInfo != null && !videoInfo.isEmpty) ? videoInfo : null,
     );
   }
 
@@ -1547,6 +2243,7 @@ class MediaProbeServiceImpl implements MediaProbeService {
         rawTags: rawTags,
         duration: duration,
         audioInfo: info?.audioInfo,
+        videoInfo: info?.videoInfo,
         artworkUri: artworkUri,
       );
 
