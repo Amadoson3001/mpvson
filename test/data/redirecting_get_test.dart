@@ -27,13 +27,13 @@ http.StreamedResponse _response(
   String? location,
   int length = 0,
 }) {
+  final headers = <String, String>{};
+  if (location != null) headers['location'] = location;
+  if (length > 0) headers['content-length'] = '$length';
   return http.StreamedResponse(
     Stream<List<int>>.value(utf8.encode('x' * length)),
     status,
-    headers: <String, String>{
-      if (location != null) 'location': location,
-      if (length > 0) 'content-length': '$length',
-    },
+    headers: headers,
   );
 }
 
