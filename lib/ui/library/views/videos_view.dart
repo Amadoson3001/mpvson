@@ -20,6 +20,7 @@ import '../../core/components/page_header.dart';
 import '../../core/toast/app_toast.dart';
 import '../library_browse_constants.dart';
 import '../library_reload_coordinator.dart';
+import '../media_pager.dart';
 import '../paged_media_loader.dart';
 import '../widgets/media_context_menu.dart';
 
@@ -55,10 +56,7 @@ class _VideosViewState extends State<VideosView> {
       ValueNotifier<Set<String>>(<String>{});
   String _sortBy = 'addedAt';
   bool _ascending = false;
-  List<MediaItemRecord>? _videos;
-  int _browseOffset = 0;
-  bool _hasMoreBrowse = false;
-  bool _loadingMoreBrowse = false;
+  late final MediaPager _pager;
   final ScrollController _browseScrollController = ScrollController();
   Object? _error;
   late final LibraryReloadCoordinator _reloadCoordinator;
@@ -66,6 +64,22 @@ class _VideosViewState extends State<VideosView> {
   @override
   void initState() {
     super.initState();
+    _pager = MediaPager(
+      fetch: (offset) => fetchMediaPage(
+        widget.repository,
+        offset: offset,
+        kind: MediaKind.video,
+        searchQuery: widget.searchQuery,
+        sortBy: _sortBy,
+        ascending: _ascending,
+      ),
+      onChanged: () {
+        if (mounted) setState(() {});
+      },
+      onError: (error) {
+        diagnosticDebug('videos.page', error: error);
+      },
+    );
     _reloadCoordinator = LibraryReloadCoordinator(
       onReload: _runReload,
       onError: (error) {
@@ -73,8 +87,7 @@ class _VideosViewState extends State<VideosView> {
         if (mounted) setState(() => _error = error);
       },
       onLoadingChanged: (loading) {
-        if (loading) _loadingMoreBrowse = false;
-        if (mounted && _videos == null) setState(() {});
+        if (mounted && !_pager.hasLoaded) setState(() {});
       },
       isDisposed: () => !mounted,
     );
@@ -85,41 +98,12 @@ class _VideosViewState extends State<VideosView> {
 
   void _onBrowseScroll() {
     if (!_browseScrollController.hasClients) return;
+    // A reload owns the list while it runs; appending to it would mix queries.
+    if (_reloadCoordinator.isLoading) return;
     final position = _browseScrollController.position;
     if (position.pixels >=
         position.maxScrollExtent - kLibraryBrowseScrollPrefetch) {
-      unawaited(_loadMoreBrowse());
-    }
-  }
-
-  Future<void> _loadMoreBrowse() async {
-    if (!_hasMoreBrowse || _loadingMoreBrowse || _reloadCoordinator.isLoading) {
-      return;
-    }
-    final epoch = _reloadCoordinator.epoch;
-    if (mounted) setState(() => _loadingMoreBrowse = true);
-    try {
-      final batch = await fetchMediaPage(
-        widget.repository,
-        offset: _browseOffset,
-        kind: MediaKind.video,
-        searchQuery: widget.searchQuery,
-        sortBy: _sortBy,
-        ascending: _ascending,
-      );
-      if (!mounted || epoch != _reloadCoordinator.epoch) return;
-      setState(() {
-        _videos ??= <MediaItemRecord>[];
-        _videos!.addAll(batch.items);
-        _browseOffset += batch.items.length;
-        _hasMoreBrowse = batch.hasMore;
-        _loadingMoreBrowse = false;
-      });
-    } catch (error) {
-      diagnosticDebug('videos.loadMore', error: error);
-      if (mounted && epoch == _reloadCoordinator.epoch) {
-        setState(() => _loadingMoreBrowse = false);
-      }
+      unawaited(_pager.loadMore());
     }
   }
 
@@ -157,23 +141,9 @@ class _VideosViewState extends State<VideosView> {
   Future<void> _reload() => _reloadCoordinator.reload();
 
   Future<void> _runReload(int epoch) async {
-    _browseOffset = 0;
-    _hasMoreBrowse = false;
-    final batch = await fetchMediaPage(
-      widget.repository,
-      offset: 0,
-      kind: MediaKind.video,
-      searchQuery: widget.searchQuery,
-      sortBy: _sortBy,
-      ascending: _ascending,
-    );
+    await _pager.loadFirst();
     if (!mounted || epoch != _reloadCoordinator.epoch) return;
-    setState(() {
-      _videos = List<MediaItemRecord>.from(batch.items);
-      _browseOffset = batch.items.length;
-      _hasMoreBrowse = batch.hasMore;
-      _error = null;
-    });
+    setState(() => _error = null);
   }
 
   Future<void> _showInFolder(String path) async {
@@ -277,8 +247,7 @@ class _VideosViewState extends State<VideosView> {
             ? _selectedVideoIds.value.last
             : null);
     if (targetId == null) return;
-    final videos = _videos;
-    if (videos == null) return;
+    final videos = _pager.items;
     for (final v in videos) {
       if (v.id == targetId &&
           v.isAvailable &&
@@ -291,7 +260,7 @@ class _VideosViewState extends State<VideosView> {
 
   @override
   Widget build(BuildContext context) {
-    final hasVideos = (_videos ?? const <MediaItemRecord>[]).isNotEmpty;
+    final hasVideos = _pager.items.isNotEmpty;
     final queryFailed = _error != null && !hasVideos;
     return CallbackShortcuts(
       bindings: <ShortcutActivator, VoidCallback>{
@@ -316,7 +285,7 @@ class _VideosViewState extends State<VideosView> {
               ],
               // Video Stage
               Expanded(
-                child: _reloadCoordinator.isLoading && _videos == null
+                child: _reloadCoordinator.isLoading && !_pager.hasLoaded
                     ? Center(
                         child: CircularProgressIndicator(
                           strokeWidth: 2,
@@ -350,8 +319,8 @@ class _VideosViewState extends State<VideosView> {
                             : widget.onAddFolders,
                       )
                     : _viewMode == VideoViewMode.grid
-                    ? _buildVideoGrid(_videos!)
-                    : _buildVideoList(_videos!),
+                    ? _buildVideoGrid(_pager.items)
+                    : _buildVideoList(_pager.items),
               ),
             ],
           ),
@@ -362,7 +331,7 @@ class _VideosViewState extends State<VideosView> {
 
   Widget _buildToolbar() {
     final accent = Theme.of(context).colorScheme.primary;
-    final count = _videos?.length ?? 0;
+    final count = _pager.items.length;
     return LayoutBuilder(
       builder: (context, constraints) {
         final width = constraints.maxWidth;
@@ -570,7 +539,7 @@ class _VideosViewState extends State<VideosView> {
             .ceil()
             .clamp(1, 12);
         final width = (available - (columns - 1) * 20) / columns;
-        final itemCount = videos.length + (_loadingMoreBrowse ? 1 : 0);
+        final itemCount = videos.length + (_pager.isLoadingMore ? 1 : 0);
         return GridView.builder(
           controller: _browseScrollController,
           addAutomaticKeepAlives: false,
@@ -706,7 +675,7 @@ class _VideosViewState extends State<VideosView> {
                 gutter,
                 0,
                 gutter,
-                _loadingMoreBrowse ? 0 : AppSpace.md,
+                _pager.isLoadingMore ? 0 : AppSpace.md,
               ),
               sliver: SliverFixedExtentList(
                 itemExtent: rowExtent,
@@ -926,7 +895,7 @@ class _VideosViewState extends State<VideosView> {
                 ),
               ),
             ),
-            if (_loadingMoreBrowse)
+            if (_pager.isLoadingMore)
               SliverPadding(
                 padding: EdgeInsets.symmetric(
                   horizontal: gutter,

@@ -18,6 +18,7 @@ import '../../core/components/playback_pulse.dart';
 import '../../core/toast/app_toast.dart';
 import '../library_browse_constants.dart';
 import '../library_reload_coordinator.dart';
+import '../media_pager.dart';
 import '../paged_media_loader.dart';
 import '../widgets/library_artwork.dart';
 import '../widgets/library_item_action_menu.dart';
@@ -65,10 +66,7 @@ class _MusicViewState extends State<MusicView> {
   String? _selectedAlbumArtist;
   String? _selectedArtist;
   final ScrollController _scrollController = ScrollController();
-  List<MediaItemRecord> _items = [];
-  int _browseOffset = 0;
-  bool _hasMoreBrowse = true;
-  bool _loadingMoreBrowse = false;
+  late final MediaPager _pager;
   List<MediaCollectionSummary>? _albumSummaries;
   List<MediaCollectionSummary>? _artistSummaries;
   int _albumGridVisible = _kGridNamePageSize;
@@ -91,6 +89,13 @@ class _MusicViewState extends State<MusicView> {
   @override
   void initState() {
     super.initState();
+    _pager = MediaPager(
+      fetch: (offset) => _fetchMediaPageForSubtab(offset: offset),
+      onChanged: () {
+        if (mounted) setState(() {});
+      },
+      onError: (error) => diagnosticDebug('music.page', error: error),
+    );
     _reloadCoordinator = LibraryReloadCoordinator(
       onReload: _runReload,
       onError: (error) {
@@ -98,7 +103,6 @@ class _MusicViewState extends State<MusicView> {
         if (mounted) setState(() => _error = error);
       },
       onLoadingChanged: (loading) {
-        if (loading) _loadingMoreBrowse = false;
         if (mounted && _shouldShowLoader()) setState(() {});
       },
       isDisposed: () => !mounted,
@@ -166,37 +170,21 @@ class _MusicViewState extends State<MusicView> {
   Future<void> _reload() => _reloadCoordinator.reload();
 
   bool _shouldShowLoader() =>
-      _items.isEmpty &&
+      _pager.items.isEmpty &&
       _albumSummaries == null &&
       _artistSummaries == null &&
       _albumTracks == null &&
       _artistSongs == null;
 
   void _patchFavoriteInLoadedLists(String mediaId, bool isFavorite) {
-    MediaItemRecord patch(MediaItemRecord item) =>
-        item.id == mediaId ? item.copyWith(isFavorite: isFavorite) : item;
-
-    if (_items.isNotEmpty) {
-      _items = _items.map(patch).toList();
-    }
-    if (_albumTracks != null) {
-      _albumTracks = _albumTracks!.map(patch).toList();
-    }
-    if (_artistSongs != null) {
-      _artistSongs = _artistSongs!.map(patch).toList();
-    }
+    _pager.patchItems(
+      (item) =>
+          item.id == mediaId ? item.copyWith(isFavorite: isFavorite) : item,
+    );
   }
 
   void _removeSongFromLoadedLists(String mediaId) {
-    if (_items.isNotEmpty) {
-      _items = _items.where((item) => item.id != mediaId).toList();
-    }
-    if (_albumTracks != null) {
-      _albumTracks = _albumTracks!.where((item) => item.id != mediaId).toList();
-    }
-    if (_artistSongs != null) {
-      _artistSongs = _artistSongs!.where((item) => item.id != mediaId).toList();
-    }
+    _pager.removeWhere((item) => item.id != mediaId);
   }
 
   Future<void> _runReload(int epoch) async {
@@ -228,17 +216,18 @@ class _MusicViewState extends State<MusicView> {
     } else {
       switch (_subtab) {
         case MusicSubtab.albums:
+          _pager.clear();
           final summaries = await widget.repository.getAlbumSummaries();
           if (!mounted || epoch != _reloadCoordinator.epoch) return;
           setState(() {
             _error = null;
             _albumSummaries = summaries;
             _artistSummaries = null;
-            _items = [];
             _albumGridVisible = _kGridNamePageSize;
           });
           return;
         case MusicSubtab.artists:
+          _pager.clear();
           final summaries = await widget.repository.getArtistSummaries(
             kind: MediaKind.audio,
           );
@@ -247,7 +236,6 @@ class _MusicViewState extends State<MusicView> {
             _error = null;
             _artistSummaries = summaries;
             _albumSummaries = null;
-            _items = [];
             _artistGridVisible = _kGridNamePageSize;
           });
           return;
@@ -255,18 +243,12 @@ class _MusicViewState extends State<MusicView> {
         case MusicSubtab.favorites:
         case MusicSubtab.recentlyAdded:
         case MusicSubtab.recentlyPlayed:
-          _browseOffset = 0;
-          _hasMoreBrowse = true;
-          _loadingMoreBrowse = false;
-          final batch = await _fetchMediaPageForSubtab(offset: 0);
+          await _pager.loadFirst();
           if (!mounted || epoch != _reloadCoordinator.epoch) return;
           setState(() {
             _error = null;
             _albumSummaries = null;
             _artistSummaries = null;
-            _items = List<MediaItemRecord>.from(batch.items);
-            _browseOffset = batch.items.length;
-            _hasMoreBrowse = batch.hasMore;
           });
           return;
       }
@@ -434,7 +416,7 @@ class _MusicViewState extends State<MusicView> {
         subtab == MusicSubtab.recentlyPlayed;
     final isGridSubtab =
         subtab == MusicSubtab.albums || subtab == MusicSubtab.artists;
-    final items = _items;
+    final items = _pager.items;
     final gridEmpty = switch (subtab) {
       MusicSubtab.albums => (_albumSummaries ?? const []).isEmpty,
       MusicSubtab.artists => (_artistSummaries ?? const []).isEmpty,
@@ -496,10 +478,6 @@ class _MusicViewState extends State<MusicView> {
       _selectedAlbum = null;
       _selectedAlbumArtist = null;
       _selectedArtist = null;
-      _items = [];
-      _browseOffset = 0;
-      _hasMoreBrowse = true;
-      _loadingMoreBrowse = false;
       _albumSummaries = null;
       _artistSummaries = null;
       _albumGridVisible = _kGridNamePageSize;
@@ -634,41 +612,13 @@ class _MusicViewState extends State<MusicView> {
 
   void _onBrowseScroll() {
     if (!_scrollController.hasClients) return;
+    // A reload owns the list while it runs; appending to it would mix queries.
+    if (_reloadCoordinator.isLoading) return;
+    if (_selectedAlbum != null || _selectedArtist != null) return;
     final position = _scrollController.position;
     if (position.maxScrollExtent - position.pixels <
         kLibraryBrowseScrollPrefetch) {
-      unawaited(_loadMoreBrowse());
-    }
-  }
-
-  Future<void> _loadMoreBrowse() async {
-    if (_reloadCoordinator.isLoading || _loadingMoreBrowse || !_hasMoreBrowse) {
-      return;
-    }
-    if (_selectedAlbum != null || _selectedArtist != null) return;
-    final subtab = _subtab;
-    if (subtab != MusicSubtab.songs &&
-        subtab != MusicSubtab.favorites &&
-        subtab != MusicSubtab.recentlyAdded &&
-        subtab != MusicSubtab.recentlyPlayed) {
-      return;
-    }
-    final epoch = _reloadCoordinator.epoch;
-    setState(() => _loadingMoreBrowse = true);
-    try {
-      final batch = await _fetchMediaPageForSubtab(offset: _browseOffset);
-      if (!mounted || epoch != _reloadCoordinator.epoch) return;
-      setState(() {
-        _items.addAll(batch.items);
-        _browseOffset += batch.items.length;
-        _hasMoreBrowse = batch.hasMore;
-        _loadingMoreBrowse = false;
-      });
-    } catch (error) {
-      diagnosticDebug('music.loadMore', error: error);
-      if (mounted && epoch == _reloadCoordinator.epoch) {
-        setState(() => _loadingMoreBrowse = false);
-      }
+      unawaited(_pager.loadMore());
     }
   }
 
@@ -776,7 +726,7 @@ class _MusicViewState extends State<MusicView> {
     List<MediaItemRecord> songs, {
     bool enablePaging = false,
   }) {
-    final showFooter = enablePaging && _loadingMoreBrowse;
+    final showFooter = enablePaging && _pager.isLoadingMore;
     final textScale = (MediaQuery.textScalerOf(context).scale(14) / 14.0).clamp(
       1.0,
       2.2,

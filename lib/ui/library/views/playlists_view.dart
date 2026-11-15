@@ -26,6 +26,7 @@ import '../widgets/media_context_menu.dart';
 import '../widgets/playlist_create_dialog.dart';
 import '../library_browse_constants.dart';
 import '../library_reload_coordinator.dart';
+import '../media_pager.dart';
 import '../paged_media_loader.dart';
 
 /// Playlists view featuring playlist management, detail tracklist view,
@@ -1362,14 +1363,9 @@ class _AddFromLibraryDialog extends StatefulWidget {
 
 class _AddFromLibraryDialogState extends State<_AddFromLibraryDialog> {
   final Set<String> _selected = <String>{};
-  final List<MediaItemRecord> _items = <MediaItemRecord>[];
   final ScrollController _scrollController = ScrollController();
   Set<String> _existingIds = <String>{};
-  int _browseOffset = 0;
-  int _browseEpoch = 0;
-  bool _hasMore = true;
-  bool _loading = true;
-  bool _loadingMore = false;
+  late final MediaPager _pager;
   String _activeSearch = '';
   final TextEditingController _searchController = TextEditingController();
   Timer? _searchDebounce;
@@ -1377,6 +1373,22 @@ class _AddFromLibraryDialogState extends State<_AddFromLibraryDialog> {
   @override
   void initState() {
     super.initState();
+    _pager = MediaPager(
+      // Rows already in the playlist are dropped after the page arrives, so the
+      // offset still advances by the unfiltered page length.
+      filter: (item) => !_existingIds.contains(item.id),
+      fetch: (offset) => fetchMediaPage(
+        widget.repository,
+        offset: offset,
+        searchQuery: _activeSearch.isEmpty ? null : _activeSearch,
+        sortBy: 'title',
+      ),
+      onChanged: () {
+        if (mounted) setState(() {});
+      },
+      onError: (error) =>
+          diagnosticDebug('playlists.addFromLibrary', error: error),
+    );
     _scrollController.addListener(_onScroll);
     unawaited(_bootstrap());
   }
@@ -1391,11 +1403,11 @@ class _AddFromLibraryDialogState extends State<_AddFromLibraryDialog> {
   }
 
   void _onScroll() {
-    if (!_scrollController.hasClients || _loadingMore || !_hasMore) return;
+    if (!_scrollController.hasClients) return;
     final position = _scrollController.position;
     if (position.maxScrollExtent - position.pixels <
         kLibraryBrowseScrollPrefetch) {
-      unawaited(_loadMore());
+      unawaited(_pager.loadMore());
     }
   }
 
@@ -1405,57 +1417,11 @@ class _AddFromLibraryDialogState extends State<_AddFromLibraryDialog> {
         widget.playlist.id,
       );
       _existingIds = currentEntries.map((e) => e.mediaId).toSet();
-      await _reload(reset: true);
-    } catch (_) {
-      if (mounted) setState(() => _loading = false);
+      await _pager.loadFirst();
+    } catch (error) {
+      diagnosticDebug('playlists.addFromLibrary', error: error);
+      if (mounted) setState(() {});
     }
-  }
-
-  Future<void> _reload({required bool reset}) async {
-    final epoch = reset ? ++_browseEpoch : _browseEpoch;
-    if (reset) {
-      if (mounted) {
-        setState(() {
-          _loading = true;
-          _loadingMore = false;
-          _browseOffset = 0;
-          _hasMore = true;
-          _items.clear();
-        });
-      }
-    }
-    try {
-      final batch = await fetchMediaPage(
-        widget.repository,
-        offset: _browseOffset,
-        searchQuery: _activeSearch.isEmpty ? null : _activeSearch,
-        sortBy: 'title',
-      );
-      if (!mounted || epoch != _browseEpoch) return;
-      final page = batch.items
-          .where((item) => !_existingIds.contains(item.id))
-          .toList();
-      setState(() {
-        _items.addAll(page);
-        _browseOffset += batch.items.length;
-        _hasMore = batch.hasMore;
-        _loading = false;
-        _loadingMore = false;
-      });
-    } catch (_) {
-      if (mounted && epoch == _browseEpoch) {
-        setState(() {
-          _loading = false;
-          _loadingMore = false;
-        });
-      }
-    }
-  }
-
-  Future<void> _loadMore() async {
-    if (_loadingMore || !_hasMore || _loading) return;
-    setState(() => _loadingMore = true);
-    await _reload(reset: false);
   }
 
   void _onSearchChanged(String value) {
@@ -1465,7 +1431,7 @@ class _AddFromLibraryDialogState extends State<_AddFromLibraryDialog> {
       final trimmed = value.trim();
       if (trimmed == _activeSearch) return;
       _activeSearch = trimmed;
-      unawaited(_reload(reset: true));
+      unawaited(_pager.loadFirst());
     });
   }
 
@@ -1493,11 +1459,11 @@ class _AddFromLibraryDialogState extends State<_AddFromLibraryDialog> {
             ),
             const SizedBox(height: 12),
             Expanded(
-              child: _loading
+              child: _pager.isLoading
                   ? const Center(
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : _items.isEmpty
+                  : _pager.items.isEmpty
                   ? Center(
                       child: Text(
                         _activeSearch.isNotEmpty
@@ -1508,9 +1474,10 @@ class _AddFromLibraryDialogState extends State<_AddFromLibraryDialog> {
                     )
                   : ListView.builder(
                       controller: _scrollController,
-                      itemCount: _items.length + (_loadingMore ? 1 : 0),
+                      itemCount:
+                          _pager.items.length + (_pager.isLoadingMore ? 1 : 0),
                       itemBuilder: (context, index) {
-                        if (index >= _items.length) {
+                        if (index >= _pager.items.length) {
                           return const Padding(
                             padding: EdgeInsets.all(AppSpace.md),
                             child: Center(
@@ -1518,7 +1485,7 @@ class _AddFromLibraryDialogState extends State<_AddFromLibraryDialog> {
                             ),
                           );
                         }
-                        final item = _items[index];
+                        final item = _pager.items[index];
                         final isChecked = _selected.contains(item.id);
                         return CheckboxListTile(
                           value: isChecked,
