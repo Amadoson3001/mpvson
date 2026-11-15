@@ -1,7 +1,7 @@
 import 'library_models.dart';
 
-/// Canonical sort keys for library queries. Both the SQL and in-memory
-/// repositories derive their ordering from this enum.
+/// Canonical sort keys for library queries. SQL ordering is derived from
+/// this enum; see [sqlOrderBy].
 enum MediaSortField {
   title,
   artist,
@@ -72,39 +72,6 @@ enum MediaSortField {
         return 'coalesce(media.disc_number, 1) $dir, coalesce(media.track_number, 0) $dir, lower(media.title) ASC';
       case MediaSortField.year:
         return 'media.year $dir';
-    }
-  }
-
-  int compare(MediaItemRecord a, MediaItemRecord b) {
-    switch (this) {
-      case MediaSortField.title:
-        return a.title.toLowerCase().compareTo(b.title.toLowerCase());
-      case MediaSortField.artist:
-        return a.artist.toLowerCase().compareTo(b.artist.toLowerCase());
-      case MediaSortField.album:
-        return a.album.toLowerCase().compareTo(b.album.toLowerCase());
-      case MediaSortField.duration:
-        return a.metadata.duration.compareTo(b.metadata.duration);
-      case MediaSortField.fileSize:
-        return a.fileSize.compareTo(b.fileSize);
-      case MediaSortField.addedAt:
-        return a.addedAt.compareTo(b.addedAt);
-      case MediaSortField.lastPlayedAt:
-        final aTime = a.lastPlayedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
-        final bTime = b.lastPlayedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
-        return aTime.compareTo(bTime);
-      case MediaSortField.trackNumber:
-        final discCompare = (a.metadata.discNumber ?? 1).compareTo(
-          b.metadata.discNumber ?? 1,
-        );
-        if (discCompare != 0) return discCompare;
-        return (a.metadata.trackNumber ?? 0).compareTo(
-          b.metadata.trackNumber ?? 0,
-        );
-      case MediaSortField.playCount:
-        return a.playCount.compareTo(b.playCount);
-      case MediaSortField.year:
-        return (a.metadata.year ?? 0).compareTo(b.metadata.year ?? 0);
     }
   }
 }
