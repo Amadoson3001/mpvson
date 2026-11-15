@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../../utils/file_utils.dart';
 import '../widgets/media_context_menu.dart';
+import '../widgets/library_item_actions.dart';
 
 import '../../../data/repositories/media_library_repository.dart';
 import '../../../domain/models/media_catalog.dart';
@@ -551,7 +552,7 @@ class _RecentTileState extends State<_RecentTile> {
     await showMediaContextMenu(
       context: context,
       globalPosition: position,
-      target: MediaContextMenuTarget.fromEntry(widget.entry),
+      target: LibraryItemTarget.fromEntry(widget.entry),
       repository: widget.repository,
       controller: widget.controller,
       onPlay: widget.onOpen,

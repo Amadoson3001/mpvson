@@ -25,6 +25,7 @@ import 'package:mpvson/ui/library/views/playlists_view.dart';
 import 'package:mpvson/ui/library/views/videos_view.dart';
 import 'package:mpvson/ui/library/widgets/library_item_action_menu.dart';
 import 'package:mpvson/ui/library/widgets/media_context_menu.dart';
+import 'package:mpvson/ui/library/widgets/library_item_actions.dart';
 import 'package:mpvson/ui/library/widgets/media_properties_dialog.dart';
 import 'package:mpvson/ui/player/player_controller.dart';
 import 'package:mpvson/ui/player/widgets/empty_library.dart';
@@ -541,7 +542,7 @@ void main() {
         tester.view.devicePixelRatio = 1.0;
         addTearDown(tester.view.reset);
 
-        final target = MediaContextMenuTarget(
+        final target = LibraryItemTarget(
           id: 'vid-a',
           path: videoFileA.path,
           title: 'Sample Video A',
@@ -594,7 +595,7 @@ void main() {
     testWidgets(
       'Properties and New playlist guard missing Navigator without throwing',
       (tester) async {
-        final target = MediaContextMenuTarget(
+        final target = LibraryItemTarget(
           id: 'vid-a',
           path: videoFileA.path,
           title: 'Sample Video A',
@@ -646,19 +647,19 @@ void main() {
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.reset);
 
-      final targetA = MediaContextMenuTarget(
+      final targetA = LibraryItemTarget(
         id: 'vid-a',
         path: videoFileA.path,
         title: 'Sample Video A',
         kind: MediaKind.video,
       );
-      final targetB = MediaContextMenuTarget(
+      final targetB = LibraryItemTarget(
         id: 'vid-b',
         path: videoFileB.path,
         title: 'Sample Video B',
         kind: MediaKind.video,
       );
-      final targetAudio = MediaContextMenuTarget(
+      final targetAudio = LibraryItemTarget(
         id: 'aud-a',
         path: audioFileA.path,
         title: 'Sample Audio A',
@@ -782,7 +783,7 @@ void main() {
         final missingPath =
             '${tempDir.path}${Platform.pathSeparator}deleted_item.mp4';
         final revealedPaths = <String>[];
-        final missingTarget = MediaContextMenuTarget(
+        final missingTarget = LibraryItemTarget(
           id: 'vid-missing',
           path: missingPath,
           title: 'Deleted Item',
@@ -840,7 +841,7 @@ void main() {
         var removed = false;
         var selected = false;
 
-        final target = MediaContextMenuTarget(
+        final target = LibraryItemTarget(
           id: 'vid-a',
           path: videoFileA.path,
           title: 'Sample Video A',

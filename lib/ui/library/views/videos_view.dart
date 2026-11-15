@@ -23,6 +23,7 @@ import '../library_reload_coordinator.dart';
 import '../media_pager.dart';
 import '../paged_media_loader.dart';
 import '../widgets/media_context_menu.dart';
+import '../widgets/library_item_actions.dart';
 
 enum VideoViewMode { grid, list }
 
@@ -226,7 +227,7 @@ class _VideosViewState extends State<VideosView> {
     await showMediaContextMenu(
       context: context,
       globalPosition: globalPosition,
-      target: MediaContextMenuTarget.fromRecord(video),
+      target: LibraryItemTarget.fromRecord(video),
       repository: widget.repository,
       controller: widget.controller,
       onPlay: video.isAvailable ? () => _playVideo(video) : null,

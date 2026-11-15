@@ -1,82 +1,23 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../data/repositories/media_library_repository.dart';
 import '../../../domain/models/library_models.dart';
-import '../../../domain/models/media_catalog.dart';
-import '../../../domain/models/media_entry.dart';
-import '../../../domain/models/media_source.dart';
-import '../../../utils/file_utils.dart';
 import '../../core/app_motion.dart';
 import '../../core/app_theme.dart';
 import '../../core/toast/app_toast.dart';
 import '../../player/player_controller.dart';
-import 'media_properties_dialog.dart';
+import 'library_item_actions.dart';
 import 'playlist_create_dialog.dart';
-
-/// Descriptor for a recent item or indexed library video shown in
-/// [showMediaContextMenu].
-@immutable
-class MediaContextMenuTarget {
-  const MediaContextMenuTarget({
-    required this.id,
-    required this.path,
-    required this.title,
-    required this.kind,
-    this.isAvailable = true,
-    this.duration = Duration.zero,
-    this.position = Duration.zero,
-    this.record,
-  });
-
-  factory MediaContextMenuTarget.fromEntry(MediaEntry entry) {
-    return MediaContextMenuTarget(
-      id: entry.id,
-      path: entry.path,
-      title: entry.title,
-      kind: MediaCatalog.kindFromExtension(entry.path),
-      duration: entry.duration,
-      position: entry.position,
-    );
-  }
-
-  factory MediaContextMenuTarget.fromRecord(
-    MediaItemRecord record, {
-    Duration position = Duration.zero,
-  }) {
-    return MediaContextMenuTarget(
-      id: record.id,
-      path: record.path,
-      title: record.title,
-      kind: record.kind,
-      isAvailable: record.isAvailable,
-      duration: record.metadata.duration,
-      position: position,
-      record: record,
-    );
-  }
-
-  final String id;
-  final String path;
-  final String title;
-  final MediaKind kind;
-  final bool isAvailable;
-  final Duration duration;
-  final Duration position;
-  final MediaItemRecord? record;
-
-  bool get isNetwork => MediaEntry.isNetworkUrl(path);
-}
 
 /// Opens a desktop context menu at [globalPosition] with playback, queue,
 /// playlist submenu, file explorer, properties, and selection actions.
 Future<void> showMediaContextMenu({
   required BuildContext context,
   required Offset globalPosition,
-  required MediaContextMenuTarget target,
+  required LibraryItemTarget target,
   required MediaLibraryRepository repository,
   required PlayerController controller,
   VoidCallback? onPlay,
@@ -143,7 +84,7 @@ class _MediaContextMenuOverlay extends StatefulWidget {
 
   final BuildContext hostContext;
   final Offset anchor;
-  final MediaContextMenuTarget target;
+  final LibraryItemTarget target;
   final MediaLibraryRepository repository;
   final PlayerController controller;
   final VoidCallback? onPlay;
@@ -258,98 +199,30 @@ class _MediaContextMenuOverlayState extends State<_MediaContextMenuOverlay>
     action();
   }
 
+  /// Shared item operations. Built per call so it always sees the current
+  /// widget fields; the menus hold no other copy of these rules.
+  LibraryItemActions get _actions => LibraryItemActions(
+    target: widget.target,
+    repository: widget.repository,
+    controller: widget.controller,
+    hostContext: widget.hostContext,
+    onShowInFolder: widget.onShowInFolder,
+  );
+
   Future<void> _playNow() async {
-    final target = widget.target;
-    final hostContext = widget.hostContext;
-    final onPlay = widget.onPlay;
     widget.onDismiss();
-    if (onPlay != null) {
-      onPlay();
-      return;
-    }
-    try {
-      await widget.controller.openPaths(
-        [target.path],
-        append: false,
-        initialIndex: 0,
-      );
-      if (hostContext.mounted && widget.controller.error != null) {
-        AppToast.show(
-          hostContext,
-          widget.controller.error!,
-          tone: AppToastTone.danger,
-        );
-      }
-    } catch (_) {
-      if (hostContext.mounted) {
-        AppToast.show(
-          hostContext,
-          'Could not play "${target.title}"',
-          tone: AppToastTone.danger,
-        );
-      }
-    }
+    await _actions.playNow(onPlay: widget.onPlay);
   }
 
-  Future<bool> _ensureSourceReachable() async {
-    if (widget.target.isNetwork) return true;
-    final validation = MediaSource.validate(widget.target.path);
-    if (!validation.isValid || validation.source == null) return false;
-    final normalized = MediaEntry.normalizeSourcePath(validation.source!);
-    if (MediaEntry.isBufferedNetworkSource(normalized)) return true;
-    try {
-      return await File(normalized).exists();
-    } catch (_) {
-      return false;
-    }
-  }
-
-  Future<void> _enqueueTarget({required bool playNext}) async {
-    final target = widget.target;
-    final hostContext = widget.hostContext;
+  Future<void> _playNext() async {
     widget.onDismiss();
-    if (!await _ensureSourceReachable()) {
-      if (hostContext.mounted) {
-        AppToast.show(
-          hostContext,
-          'File not found: ${target.title}',
-          tone: AppToastTone.danger,
-        );
-      }
-      return;
-    }
-    try {
-      if (playNext) {
-        await widget.controller.playNext([target.path]);
-      } else {
-        await widget.controller.addToQueue([target.path]);
-      }
-      if (!hostContext.mounted) return;
-      final error = widget.controller.error;
-      AppToast.show(
-        hostContext,
-        error ??
-            (playNext
-                ? 'Playing next: ${target.title}'
-                : 'Added to queue: ${target.title}'),
-        tone: error != null ? AppToastTone.danger : AppToastTone.neutral,
-      );
-    } catch (_) {
-      if (hostContext.mounted) {
-        AppToast.show(
-          hostContext,
-          playNext
-              ? 'Could not queue "${target.title}" next'
-              : 'Could not add "${target.title}" to queue',
-          tone: AppToastTone.danger,
-        );
-      }
-    }
+    await _actions.enqueue(playNext: true);
   }
 
-  Future<void> _playNext() => _enqueueTarget(playNext: true);
-
-  Future<void> _addToQueue() => _enqueueTarget(playNext: false);
+  Future<void> _addToQueue() async {
+    widget.onDismiss();
+    await _actions.enqueue(playNext: false);
+  }
 
   Future<void> _addToExistingPlaylist(PlaylistRecord playlist) async {
     final target = widget.target;
@@ -400,99 +273,18 @@ class _MediaContextMenuOverlayState extends State<_MediaContextMenuOverlay>
   }
 
   Future<void> _openWith() async {
-    final target = widget.target;
-    final hostContext = widget.hostContext;
     widget.onDismiss();
-    if (!await _ensureSourceReachable()) {
-      if (hostContext.mounted) {
-        AppToast.show(
-          hostContext,
-          'File not found: ${target.title}',
-          tone: AppToastTone.danger,
-        );
-      }
-      return;
-    }
-    try {
-      final launched = await openWith(target.path);
-      if (!launched && hostContext.mounted) {
-        AppToast.show(
-          hostContext,
-          'Could not open system app chooser',
-          tone: AppToastTone.danger,
-        );
-      }
-    } catch (_) {
-      if (hostContext.mounted) {
-        AppToast.show(
-          hostContext,
-          'Could not open system app chooser',
-          tone: AppToastTone.danger,
-        );
-      }
-    }
+    await _actions.openWith();
   }
 
   Future<void> _openInExplorer() async {
-    final target = widget.target;
-    final hostContext = widget.hostContext;
-    final onShow = widget.onShowInFolder;
     widget.onDismiss();
-    if (onShow != null) {
-      onShow(target.path);
-      return;
-    }
-    try {
-      final ok = await showInFolder(target.path);
-      if (!ok && hostContext.mounted) {
-        AppToast.show(
-          hostContext,
-          'Could not open File Explorer',
-          tone: AppToastTone.danger,
-        );
-      }
-    } catch (_) {
-      if (hostContext.mounted) {
-        AppToast.show(
-          hostContext,
-          'Could not open File Explorer',
-          tone: AppToastTone.danger,
-        );
-      }
-    }
+    await _actions.showInFolder();
   }
 
   Future<void> _showProperties() async {
-    final target = widget.target;
-    final hostContext = widget.hostContext;
-    final repo = widget.repository;
-    final onShow = widget.onShowInFolder;
     widget.onDismiss();
-    if (!hostContext.mounted ||
-        Navigator.maybeOf(hostContext, rootNavigator: true) == null) {
-      return;
-    }
-    try {
-      await MediaPropertiesDialog.show(
-        hostContext,
-        path: target.path,
-        title: target.title,
-        kind: target.kind,
-        repository: repo,
-        duration: target.duration,
-        position: target.position,
-        initialRecord: target.record,
-        onShowInFolder: onShow,
-      );
-    } catch (_) {
-      if (hostContext.mounted) {
-        AppToast.show(
-          hostContext,
-          'Could not open properties',
-          tone: AppToastTone.danger,
-        );
-      }
-    }
+    await _actions.showProperties();
   }
 
   double _estimatedMenuHeight({required bool hasRemove}) {

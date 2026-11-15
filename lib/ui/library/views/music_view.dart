@@ -23,6 +23,7 @@ import '../paged_media_loader.dart';
 import '../widgets/library_artwork.dart';
 import '../widgets/library_item_action_menu.dart';
 import '../widgets/media_context_menu.dart';
+import '../widgets/library_item_actions.dart';
 
 const int _kGridNamePageSize = 60;
 
@@ -330,7 +331,7 @@ class _MusicViewState extends State<MusicView> {
     await showMediaContextMenu(
       context: context,
       globalPosition: globalPosition,
-      target: MediaContextMenuTarget.fromRecord(song),
+      target: LibraryItemTarget.fromRecord(song),
       repository: widget.repository,
       controller: widget.controller,
       onPlay: song.isAvailable

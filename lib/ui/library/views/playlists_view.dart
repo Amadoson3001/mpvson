@@ -23,6 +23,7 @@ import '../../core/components/page_header.dart';
 import '../widgets/library_artwork.dart';
 import '../../core/components/empty_state.dart';
 import '../widgets/media_context_menu.dart';
+import '../widgets/library_item_actions.dart';
 import '../widgets/playlist_create_dialog.dart';
 import '../library_browse_constants.dart';
 import '../library_reload_coordinator.dart';
@@ -1846,7 +1847,7 @@ class _PlaylistTrackRowState extends State<_PlaylistTrackRow> {
     await showMediaContextMenu(
       context: rowContext,
       globalPosition: globalPosition,
-      target: MediaContextMenuTarget.fromRecord(item),
+      target: LibraryItemTarget.fromRecord(item),
       repository: widget.repository,
       controller: widget.controller,
       onPlay: widget.onPlay,

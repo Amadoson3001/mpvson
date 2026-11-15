@@ -1,18 +1,13 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 
 import '../../../data/repositories/media_library_repository.dart';
 import '../../../domain/models/library_models.dart';
-import '../../../domain/models/media_entry.dart';
-import '../../../domain/models/media_source.dart';
-import '../../../utils/file_utils.dart';
 import '../../core/app_theme.dart';
 import '../../core/components/app_popup_menu_item.dart';
 import '../../core/toast/app_toast.dart';
 import '../../player/player_controller.dart';
 import 'add_to_playlist_dialog.dart';
-import 'media_properties_dialog.dart';
+import 'library_item_actions.dart';
 
 /// Actions available in the Music and Videos item overflow menu.
 enum LibraryItemMenuAction {
@@ -45,64 +40,17 @@ class LibraryItemActionMenu extends StatelessWidget {
   final ValueChanged<String> onShowInFolder;
   final void Function(String mediaId, bool isFavorite)? onFavoriteToggled;
 
-  Future<bool> _ensureSourceReachable() async {
-    if (MediaEntry.isNetworkUrl(item.path)) return true;
-    final validation = MediaSource.validate(item.path);
-    if (!validation.isValid || validation.source == null) return false;
-    final normalized = MediaEntry.normalizeSourcePath(validation.source!);
-    if (MediaEntry.isBufferedNetworkSource(normalized)) return true;
-    try {
-      return await File(normalized).exists();
-    } catch (_) {
-      return false;
-    }
-  }
-
-  Future<void> _enqueueItem({required bool playNext}) async {
-    final hostContext = libraryContext;
-    if (!item.isAvailable) return;
-    if (!await _ensureSourceReachable()) {
-      if (hostContext.mounted) {
-        AppToast.show(
-          hostContext,
-          'File not found: ${item.title}',
-          tone: AppToastTone.danger,
-        );
-      }
-      return;
-    }
-    try {
-      if (playNext) {
-        await controller.playNext([item.path]);
-      } else {
-        await controller.addToQueue([item.path]);
-      }
-      if (!hostContext.mounted) return;
-      final error = controller.error;
-      AppToast.show(
-        hostContext,
-        error ??
-            (playNext
-                ? 'Playing next: ${item.title}'
-                : 'Added to queue: ${item.title}'),
-        tone: error != null ? AppToastTone.danger : AppToastTone.neutral,
-      );
-    } catch (_) {
-      if (hostContext.mounted) {
-        AppToast.show(
-          hostContext,
-          playNext
-              ? 'Could not queue "${item.title}" next'
-              : 'Could not add "${item.title}" to queue',
-          tone: AppToastTone.danger,
-        );
-      }
-    }
-  }
+  LibraryItemActions get _actions => LibraryItemActions(
+    target: LibraryItemTarget.fromRecord(item),
+    repository: repository,
+    controller: controller,
+    hostContext: libraryContext,
+    onShowInFolder: onShowInFolder,
+  );
 
   @override
   Widget build(BuildContext context) {
-    final isNetwork = MediaEntry.isNetworkUrl(item.path);
+    final isNetwork = LibraryItemTarget.fromRecord(item).isNetwork;
     final canOpenWith = item.isAvailable && !isNetwork;
 
     return PopupMenuButton<LibraryItemMenuAction>(
@@ -119,37 +67,16 @@ class LibraryItemActionMenu extends StatelessWidget {
       ),
       onSelected: (action) async {
         final hostContext = libraryContext;
+        final actions = _actions;
         switch (action) {
           case LibraryItemMenuAction.playNow:
-            if (!item.isAvailable) return;
-            try {
-              await controller.openPaths(
-                [item.path],
-                append: false,
-                initialIndex: 0,
-              );
-              if (hostContext.mounted && controller.error != null) {
-                AppToast.show(
-                  hostContext,
-                  controller.error!,
-                  tone: AppToastTone.danger,
-                );
-              }
-            } catch (_) {
-              if (hostContext.mounted) {
-                AppToast.show(
-                  hostContext,
-                  'Could not play "${item.title}"',
-                  tone: AppToastTone.danger,
-                );
-              }
-            }
+            await actions.playNow();
             break;
           case LibraryItemMenuAction.playNext:
-            await _enqueueItem(playNext: true);
+            await actions.enqueue(playNext: true);
             break;
           case LibraryItemMenuAction.addToQueue:
-            await _enqueueItem(playNext: false);
+            await actions.enqueue(playNext: false);
             break;
           case LibraryItemMenuAction.toggleFavorite:
             final next = !item.isFavorite;
@@ -198,63 +125,13 @@ class LibraryItemActionMenu extends StatelessWidget {
             break;
           case LibraryItemMenuAction.openWith:
             if (!canOpenWith) return;
-            if (!await _ensureSourceReachable()) {
-              if (hostContext.mounted) {
-                AppToast.show(
-                  hostContext,
-                  'File not found: ${item.title}',
-                  tone: AppToastTone.danger,
-                );
-              }
-              return;
-            }
-            try {
-              final launched = await openWith(item.path);
-              if (!launched && hostContext.mounted) {
-                AppToast.show(
-                  hostContext,
-                  'Could not open system app chooser',
-                  tone: AppToastTone.danger,
-                );
-              }
-            } catch (_) {
-              if (hostContext.mounted) {
-                AppToast.show(
-                  hostContext,
-                  'Could not open system app chooser',
-                  tone: AppToastTone.danger,
-                );
-              }
-            }
+            await actions.openWith();
             break;
           case LibraryItemMenuAction.showInFolder:
-            onShowInFolder(item.path);
+            await actions.showInFolder();
             break;
           case LibraryItemMenuAction.properties:
-            if (!hostContext.mounted ||
-                Navigator.maybeOf(hostContext, rootNavigator: true) == null) {
-              return;
-            }
-            try {
-              await MediaPropertiesDialog.show(
-                hostContext,
-                path: item.path,
-                title: item.title,
-                kind: item.kind,
-                repository: repository,
-                duration: item.metadata.duration,
-                initialRecord: item,
-                onShowInFolder: onShowInFolder,
-              );
-            } catch (_) {
-              if (hostContext.mounted) {
-                AppToast.show(
-                  hostContext,
-                  'Could not open properties',
-                  tone: AppToastTone.danger,
-                );
-              }
-            }
+            await actions.showProperties();
             break;
         }
       },
