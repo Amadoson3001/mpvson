@@ -1,5 +1,3 @@
-import 'library_models.dart';
-
 /// Canonical sort keys for library queries. SQL ordering is derived from
 /// this enum; see [sqlOrderBy].
 enum MediaSortField {
@@ -73,58 +71,5 @@ enum MediaSortField {
       case MediaSortField.year:
         return 'media.year $dir';
     }
-  }
-}
-
-/// Shared filter, search, pagination, and sort specification for library queries.
-class MediaQuerySpec {
-  const MediaQuerySpec({
-    this.kind,
-    this.searchQuery,
-    this.artist,
-    this.album,
-    this.onlyFavorites,
-    this.isAvailable,
-    this.limit,
-    this.offset,
-    this.sortBy,
-    this.ascending = true,
-  });
-
-  final MediaKind? kind;
-  final String? searchQuery;
-  final String? artist;
-  final String? album;
-  final bool? onlyFavorites;
-  final bool? isAvailable;
-  final int? limit;
-  final int? offset;
-  final MediaSortField? sortBy;
-  final bool ascending;
-
-  factory MediaQuerySpec.fromQuery({
-    MediaKind? kind,
-    String? searchQuery,
-    String? artist,
-    String? album,
-    bool? onlyFavorites,
-    bool? isAvailable,
-    int? limit,
-    int? offset,
-    String? sortBy,
-    bool ascending = true,
-  }) {
-    return MediaQuerySpec(
-      kind: kind,
-      searchQuery: searchQuery,
-      artist: artist,
-      album: album,
-      onlyFavorites: onlyFavorites,
-      isAvailable: isAvailable,
-      limit: limit,
-      offset: offset,
-      sortBy: MediaSortField.tryParse(sortBy),
-      ascending: ascending,
-    );
   }
 }
