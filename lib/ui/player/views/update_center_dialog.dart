@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart'
     show defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
+import 'package:window_manager/window_manager.dart';
 
 import '../../../data/services/engine_path_resolver.dart';
 import '../../../data/services/engine_update_service.dart';
@@ -131,6 +134,7 @@ class UpdateCenterDialog extends StatelessWidget {
                         updates: updates,
                         busy: appBusy,
                         onAction: _performApplicationAction,
+                        onShowInFolder: _openDownloadedFolder,
                       ),
                     ],
                   ),
@@ -171,10 +175,29 @@ class UpdateCenterDialog extends StatelessWidget {
         case 'available':
           return await updates.download();
         case 'ready':
+          if (updates.canLaunchInstaller) {
+            final launched = await updates.launchInstaller();
+            if (launched) {
+              try {
+                await windowManager.close();
+              } on Object {
+                // Best-effort close; installer uses /CLOSEAPPLICATIONS.
+              }
+            }
+            return;
+          }
           return await updates.openDownload();
         default:
           return await updates.check();
       }
+    } catch (_) {
+      // UpdateService publishes user-readable failures through its error field.
+    }
+  }
+
+  Future<void> _openDownloadedFolder() async {
+    try {
+      await updates.openDownload();
     } catch (_) {
       // UpdateService publishes user-readable failures through its error field.
     }
@@ -209,11 +232,13 @@ class _ApplicationTrack extends StatelessWidget {
     required this.updates,
     required this.busy,
     required this.onAction,
+    required this.onShowInFolder,
   });
 
   final UpdateService updates;
   final bool busy;
   final VoidCallback onAction;
+  final VoidCallback onShowInFolder;
 
   @override
   Widget build(BuildContext context) {
@@ -221,9 +246,10 @@ class _ApplicationTrack extends StatelessWidget {
     final accent = theme.colorScheme.primary;
     final release = updates.release;
     final (status, statusColor) = appUpdateStatusPresentation(context, updates);
+    final canInstall = updates.canLaunchInstaller;
     final action = switch (updates.status) {
       'available' => 'Download package',
-      'ready' => 'Open package',
+      'ready' => canInstall ? 'Install & close Mpvson' : 'Open package',
       'checking' => 'Checking…',
       'downloading' => 'Downloading…',
       _ => 'Check for updates',
@@ -245,6 +271,17 @@ class _ApplicationTrack extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          if (updates.configured) ...[
+            Text(
+              'Source: ${updates.sourceLabel}',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const SizedBox(height: 10),
+          ],
           AnimatedSize(
             duration: AppMotion.duration(context, AppMotion.standard),
             curve: AppMotion.enter,
@@ -287,9 +324,17 @@ class _ApplicationTrack extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 14),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
+          Wrap(
+            alignment: WrapAlignment.end,
+            spacing: 8,
+            runSpacing: 8,
             children: [
+              if (updates.status == 'ready' && canInstall)
+                OutlinedButton.icon(
+                  onPressed: busy ? null : onShowInFolder,
+                  icon: const Icon(Icons.folder_open_rounded, size: 16),
+                  label: const Text('Show in folder'),
+                ),
               FilledButton.icon(
                 onPressed: enabled ? onAction : null,
                 style: _busyButtonStyle(context, busy),
@@ -297,7 +342,9 @@ class _ApplicationTrack extends StatelessWidget {
                     ? _ActionProgress(reducedMotion: AppMotion.reduce(context))
                     : Icon(
                         updates.status == 'ready'
-                            ? Icons.folder_open_rounded
+                            ? (canInstall
+                                  ? Icons.system_update_alt_rounded
+                                  : Icons.folder_open_rounded)
                             : updates.status == 'available'
                             ? Icons.download_rounded
                             : Icons.refresh_rounded,

@@ -62,7 +62,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
     "$force = %FORCE% -eq 1;" ^
     "$progId = 'Mpvson.AssocFile';" ^
     "$appName = 'Mpvson';" ^
-    "$exts = @('mp3','flac','wav','m4a','aac','ogg','oga','opus','wma','aiff','aif','ape','mp4','mkv','avi','webm','mov','flv','wmv','m4v','ts','m2ts','vob','ogv','3gp');" ^
+    "$exts = @('mp3','flac','wav','m4a','aac','ogg','oga','opus','wma','aiff','aif','ape','alac','dsf','mp4','mkv','avi','webm','mov','flv','wmv','m4v','ts','m2ts','vob','ogv','3gp');" ^
     "$regCmd = (Get-ItemProperty -Path 'HKCU:\Software\Classes\Mpvson.AssocFile\shell\open\command' -ErrorAction SilentlyContinue).'(default)';" ^
     "if ($regCmd) { " ^
     "    if ($regCmd -match '\"?([^\"]+mpvson\.exe)\"?') { " ^

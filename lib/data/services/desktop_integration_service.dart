@@ -1,6 +1,9 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import '../../domain/models/media_metadata.dart';
+import 'windows_associations_core.dart';
+
+export 'windows_associations_core.dart' show WindowsRegistrationStatus;
 
 enum SystemPlaybackStatus { closed, stopped, playing, paused }
 
@@ -29,6 +32,14 @@ abstract class DesktopIntegrationService extends ChangeNotifier {
   /// Null when the AC/battery state is unavailable.
   Future<bool?> isOnAcPower();
   Future<void> openDefaultAppsSettings();
+
+  /// Returns the current Windows HKCU file-association status, or null on non-Windows.
+  Future<WindowsRegistrationStatus?> getWindowsAssociationStatus() async =>
+      null;
+
+  /// Registers Mpvson's HKCU ProgID, Capabilities, and file associations on Windows.
+  Future<bool> registerWindowsAssociations({bool force = true}) async => false;
+
   @override
   void dispose();
 }

@@ -93,7 +93,7 @@ BEGIN
             VALUE "FileDescription", "Mpvson video player" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "mpvson" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 Mpvson contributors. MIT License." "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 Mpvson contributors. Source: MIT; binary includes GPLv3 libmpv." "\0"
             VALUE "OriginalFilename", "mpvson.exe" "\0"
             VALUE "ProductName", "Mpvson" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"

@@ -75,6 +75,7 @@ cmake_install.cmake
 
 # --- Release packages and distributables -------------------------------------
 /dist/
+/smoke-out/
 /release/
 /releases/
 /artifacts/

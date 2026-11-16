@@ -119,6 +119,19 @@ extension PlayerControllerQueue on PlayerController {
     _queue.insert(newIndex, entry);
     _rebuildQueueIndex(min(oldIndex, newIndex));
     _currentIndex = currentId == null ? -1 : (_queueIdToIndex[currentId] ?? -1);
+    if (_navigationCursor >= 0 &&
+        _navigationCursor < _navigationHistory.length - 1) {
+      _navigationHistory.removeRange(
+        _navigationCursor + 1,
+        _navigationHistory.length,
+      );
+    }
+    if (shuffle &&
+        _currentIndex >= 0 &&
+        newIndex == _currentIndex + 1 &&
+        entry.id != currentId) {
+      _prioritizeShuffleEntries(<MediaEntry>[entry]);
+    }
     _publishQueue();
     _scheduleSave();
     _notifyIfOpen();

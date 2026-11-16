@@ -231,7 +231,8 @@ class AboutSettingsSection extends StatelessWidget {
               const _AboutTile(
                 icon: Icons.verified_user_outlined,
                 title: 'Open source & license',
-                subtitle: 'GPLv3 / LGPL · Built with Flutter and libmpv',
+                subtitle:
+                    'MIT (App) · GPLv3 (Bundled libmpv & FFmpeg) · Built with Flutter',
               ),
             ],
           ),

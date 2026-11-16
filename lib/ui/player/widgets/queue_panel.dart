@@ -13,6 +13,7 @@ import '../../core/components/app_dialog.dart';
 import '../../core/toast/app_toast.dart';
 import '../../core/components/playback_pulse.dart';
 import '../player_controller.dart';
+import '../views/player_drag_drop.dart';
 
 /// How long a row spends collapsing before the queue drops it.
 const Duration _queueRemovalDuration = Duration(milliseconds: 150);
@@ -24,12 +25,16 @@ class QueuePanel extends StatefulWidget {
     required this.onClose,
     required this.onQueueFocus,
     required this.onAddFiles,
+    this.enableNativeDrop = false,
+    this.onFilesDropped,
   });
 
   final PlayerController controller;
   final VoidCallback onClose;
   final ValueChanged<String?> onQueueFocus;
   final VoidCallback onAddFiles;
+  final bool enableNativeDrop;
+  final ValueChanged<List<String>>? onFilesDropped;
 
   @override
   State<QueuePanel> createState() => _QueuePanelState();
@@ -44,6 +49,7 @@ class _QueuePanelState extends State<QueuePanel> {
   final _removingIds = <String>{};
   Timer? _scrollDebounceTimer;
   String _query = '';
+  bool _draggingFiles = false;
   QueueSnapshot? _cachedFilterSnapshot;
   String? _cachedFilterQuery;
   List<(int, MediaEntry)> _cachedVisible = const <(int, MediaEntry)>[];
@@ -100,108 +106,166 @@ class _QueuePanelState extends State<QueuePanel> {
         final queue = snapshot.entries;
         final visible = _visibleFor(snapshot);
 
-        return Container(
-          decoration: BoxDecoration(
-            color: context.palette.surface,
-            border: Border(left: BorderSide(color: context.palette.border)),
-          ),
-          child: Column(
+        return PlayerDragDrop(
+          enabled: widget.enableNativeDrop && widget.onFilesDropped != null,
+          onDragStateChanged: (dragging) {
+            if (_draggingFiles == dragging) return;
+            setState(() => _draggingFiles = dragging);
+          },
+          onFilesDropped: (paths) => widget.onFilesDropped?.call(paths),
+          child: Stack(
             children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(
-                  AppSpace.md,
-                  10,
-                  AppSpace.xs,
-                  AppSpace.xs,
+              Container(
+                decoration: BoxDecoration(
+                  color: context.palette.surface,
+                  border: Border(
+                    left: BorderSide(color: context.palette.border),
+                  ),
                 ),
-                child: Row(
+                child: Column(
                   children: [
-                    Expanded(
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(
+                        AppSpace.md,
+                        10,
+                        AppSpace.xs,
+                        AppSpace.xs,
+                      ),
                       child: Row(
                         children: [
-                          const Icon(Icons.queue_music_rounded, size: 20),
-                          const SizedBox(width: 8),
-                          Text(
-                            'Queue',
-                            style: Theme.of(context).textTheme.titleMedium
-                                ?.copyWith(fontWeight: FontWeight.w700),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                          Expanded(
+                            child: Row(
+                              children: [
+                                const Icon(Icons.queue_music_rounded, size: 20),
+                                const SizedBox(width: 8),
+                                Text(
+                                  'Queue',
+                                  style: Theme.of(context).textTheme.titleMedium
+                                      ?.copyWith(fontWeight: FontWeight.w700),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                const SizedBox(width: 9),
+                                _QueueCount(count: queue.length),
+                              ],
+                            ),
                           ),
-                          const SizedBox(width: 9),
-                          _QueueCount(count: queue.length),
+                          ValueListenableBuilder<PlaybackMode>(
+                            valueListenable:
+                                widget.controller.playbackModeListenable,
+                            builder: (context, mode, _) => IconButton(
+                              key: const ValueKey('queue-shuffle-toggle'),
+                              tooltip: mode.shuffle
+                                  ? 'Turn shuffle off'
+                                  : 'Turn shuffle on',
+                              isSelected: mode.shuffle,
+                              onPressed: () =>
+                                  unawaited(widget.controller.toggleShuffle()),
+                              icon: const Icon(Icons.shuffle_rounded, size: 19),
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: 'Close queue',
+                            onPressed: widget.onClose,
+                            icon: const Icon(Icons.close_rounded, size: 20),
+                          ),
                         ],
                       ),
                     ),
-                    ValueListenableBuilder<PlaybackMode>(
-                      valueListenable: widget.controller.playbackModeListenable,
-                      builder: (context, mode, _) => IconButton(
-                        key: const ValueKey('queue-shuffle-toggle'),
-                        tooltip: mode.shuffle
-                            ? 'Turn shuffle off'
-                            : 'Turn shuffle on',
-                        isSelected: mode.shuffle,
-                        onPressed: () =>
-                            unawaited(widget.controller.toggleShuffle()),
-                        icon: const Icon(Icons.shuffle_rounded, size: 19),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(
+                        AppSpace.sm,
+                        0,
+                        AppSpace.sm,
+                        AppSpace.sm,
+                      ),
+                      child: TextField(
+                        key: const ValueKey('queue-search'),
+                        controller: _searchController,
+                        onChanged: (value) => setState(() => _query = value),
+                        textInputAction: TextInputAction.search,
+                        decoration: InputDecoration(
+                          hintText: 'Search queue',
+                          prefixIcon: const Icon(
+                            Icons.search_rounded,
+                            size: 19,
+                          ),
+                          suffixIcon: _query.isEmpty
+                              ? null
+                              : IconButton(
+                                  tooltip: 'Clear search',
+                                  onPressed: _clearSearch,
+                                  icon: const Icon(
+                                    Icons.close_rounded,
+                                    size: 18,
+                                  ),
+                                ),
+                          isDense: true,
+                        ),
                       ),
                     ),
-                    IconButton(
-                      tooltip: 'Close queue',
-                      onPressed: widget.onClose,
-                      icon: const Icon(Icons.close_rounded, size: 20),
+                    const Divider(height: 1),
+                    Expanded(
+                      child: NotificationListener<ScrollNotification>(
+                        onNotification: _onScrollNotification,
+                        child: _QueueScrollScope(
+                          isScrolling: _isScrollingNotifier,
+                          child: visible.isEmpty
+                              ? _buildEmpty(context, queue.isNotEmpty)
+                              : _buildList(context, snapshot, visible),
+                        ),
+                      ),
+                    ),
+                    AnimatedBuilder(
+                      animation: widget.controller,
+                      builder: (context, _) => _QueueFooter(
+                        canUndo: widget.controller.canUndo,
+                        hasItems: queue.isNotEmpty,
+                        onAddFiles: widget.onAddFiles,
+                        onUndo: () => unawaited(widget.controller.undoRemove()),
+                        onClear: () => _confirmClear(context),
+                      ),
                     ),
                   ],
                 ),
               ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(
-                  AppSpace.sm,
-                  0,
-                  AppSpace.sm,
-                  AppSpace.sm,
-                ),
-                child: TextField(
-                  key: const ValueKey('queue-search'),
-                  controller: _searchController,
-                  onChanged: (value) => setState(() => _query = value),
-                  textInputAction: TextInputAction.search,
-                  decoration: InputDecoration(
-                    hintText: 'Search queue',
-                    prefixIcon: const Icon(Icons.search_rounded, size: 19),
-                    suffixIcon: _query.isEmpty
-                        ? null
-                        : IconButton(
-                            tooltip: 'Clear search',
-                            onPressed: _clearSearch,
-                            icon: const Icon(Icons.close_rounded, size: 18),
+              if (_draggingFiles)
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: context.palette.background.withValues(
+                          alpha: 0.72,
+                        ),
+                        border: Border.all(
+                          color: Theme.of(context).colorScheme.primary,
+                          width: 2,
+                        ),
+                      ),
+                      child: Center(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: AppSpace.md,
+                            vertical: AppSpace.xs,
                           ),
-                    isDense: true,
+                          decoration: BoxDecoration(
+                            color: context.palette.raisedSurface,
+                            borderRadius: BorderRadius.circular(AppRadii.pill),
+                            border: Border.all(
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.primary.withValues(alpha: 0.5),
+                            ),
+                          ),
+                          child: Text(
+                            'Drop to add to queue',
+                            style: Theme.of(context).textTheme.labelLarge,
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
                 ),
-              ),
-              const Divider(height: 1),
-              Expanded(
-                child: NotificationListener<ScrollNotification>(
-                  onNotification: _onScrollNotification,
-                  child: _QueueScrollScope(
-                    isScrolling: _isScrollingNotifier,
-                    child: visible.isEmpty
-                        ? _buildEmpty(context, queue.isNotEmpty)
-                        : _buildList(context, snapshot, visible),
-                  ),
-                ),
-              ),
-              AnimatedBuilder(
-                animation: widget.controller,
-                builder: (context, _) => _QueueFooter(
-                  canUndo: widget.controller.canUndo,
-                  hasItems: queue.isNotEmpty,
-                  onAddFiles: widget.onAddFiles,
-                  onUndo: () => unawaited(widget.controller.undoRemove()),
-                  onClear: () => _confirmClear(context),
-                ),
-              ),
             ],
           ),
         );
@@ -814,79 +878,98 @@ class _QueueEntryState extends State<_QueueEntry> with WidgetsBindingObserver {
                         ),
                       ),
                     ),
-                    Material(
-                      color: Colors.transparent,
-                      child: InkWell(
-                        onTap: widget.onPlay,
-                        borderRadius: BorderRadius.circular(AppRadii.control),
-                        child: Padding(
-                          padding: const EdgeInsets.all(AppSpace.xxs),
-                          child: Row(
-                            children: [
-                              _buildDragHandle(context, active, motion),
-                              _QueueThumbnail(
-                                entry: entry,
-                                future: _thumbnailFuture,
-                                provisional: _lastResolvedThumbnail,
-                                width: thumbnailWidth,
-                                height: thumbnailHeight,
-                                selected: widget.isCurrent,
-                                playing: widget.isCurrent && widget.isPlaying,
-                                pulseIndex: widget.index,
-                              ),
-                              const SizedBox(width: AppSpace.sm - 2),
-                              Expanded(
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      entry.title,
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .titleSmall
-                                          ?.copyWith(
-                                            color: widget.isCurrent
-                                                ? palette.text
-                                                : palette.secondaryText,
-                                            fontSize: AppType.body,
-                                            fontWeight: widget.isCurrent
-                                                ? FontWeight.w700
-                                                : FontWeight.w600,
-                                          ),
-                                    ),
-                                    const SizedBox(height: 2),
-                                    Tooltip(
-                                      message: entry.path,
-                                      child: Text(
-                                        entry.path,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .labelSmall
-                                            ?.copyWith(
-                                              color: palette.muted,
-                                              fontSize: AppType.caption,
-                                            ),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: ReorderableDragStartListener(
+                            index: widget.index,
+                            enabled: widget.canReorder,
+                            child: Material(
+                              color: Colors.transparent,
+                              child: InkWell(
+                                onTap: widget.onPlay,
+                                borderRadius: BorderRadius.circular(
+                                  AppRadii.control,
+                                ),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(AppSpace.xxs),
+                                  child: Row(
+                                    children: [
+                                      _buildDragHandle(context, active, motion),
+                                      _QueueThumbnail(
+                                        entry: entry,
+                                        future: _thumbnailFuture,
+                                        provisional: _lastResolvedThumbnail,
+                                        width: thumbnailWidth,
+                                        height: thumbnailHeight,
+                                        selected: widget.isCurrent,
+                                        playing:
+                                            widget.isCurrent &&
+                                            widget.isPlaying,
+                                        pulseIndex: widget.index,
                                       ),
-                                    ),
-                                  ],
+                                      const SizedBox(width: AppSpace.sm - 2),
+                                      Expanded(
+                                        child: Column(
+                                          mainAxisSize: MainAxisSize.min,
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.center,
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              entry.title,
+                                              maxLines: 2,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .titleSmall
+                                                  ?.copyWith(
+                                                    color: widget.isCurrent
+                                                        ? palette.text
+                                                        : palette.secondaryText,
+                                                    fontSize: AppType.body,
+                                                    fontWeight: widget.isCurrent
+                                                        ? FontWeight.w700
+                                                        : FontWeight.w600,
+                                                  ),
+                                            ),
+                                            const SizedBox(height: 2),
+                                            Tooltip(
+                                              message: entry.path,
+                                              child: Text(
+                                                entry.path,
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: Theme.of(context)
+                                                    .textTheme
+                                                    .labelSmall
+                                                    ?.copyWith(
+                                                      color: palette.muted,
+                                                      fontSize: AppType.caption,
+                                                    ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ),
-                              _buildRemoveButton(
-                                context,
-                                active,
-                                motion,
-                                entry,
-                              ),
-                            ],
+                            ),
                           ),
                         ),
-                      ),
+                        Padding(
+                          padding: const EdgeInsets.only(right: AppSpace.xxs),
+                          child: _buildRemoveButton(
+                            context,
+                            active,
+                            motion,
+                            entry,
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -914,7 +997,7 @@ class _QueueEntryState extends State<_QueueEntry> with WidgetsBindingObserver {
   /// The grip lives in the row flow, not on top of the artwork, and search
   /// results keep the slot empty so rows never shift when the user types.
   Widget _buildDragHandle(BuildContext context, bool active, Duration motion) {
-    const width = 18.0;
+    const width = 22.0;
     if (!widget.canReorder) return const SizedBox(width: width);
 
     return Tooltip(
@@ -922,22 +1005,20 @@ class _QueueEntryState extends State<_QueueEntry> with WidgetsBindingObserver {
       child: ExcludeSemantics(
         child: MouseRegion(
           cursor: SystemMouseCursors.grab,
-          child: ReorderableDragStartListener(
-            index: widget.index,
-            enabled: true,
-            child: SizedBox(
-              width: width,
-              height: 40,
-              child: Center(
-                child: AnimatedOpacity(
-                  opacity: active ? 1 : 0,
-                  duration: motion,
-                  curve: AppMotion.standardCurve,
-                  child: Icon(
-                    Icons.drag_indicator_rounded,
-                    size: 15,
-                    color: context.palette.muted,
-                  ),
+          child: SizedBox(
+            width: width,
+            height: 40,
+            child: Center(
+              child: AnimatedOpacity(
+                opacity: active ? 1.0 : 0.45,
+                duration: motion,
+                curve: AppMotion.standardCurve,
+                child: Icon(
+                  Icons.drag_indicator_rounded,
+                  size: 16,
+                  color: active
+                      ? context.palette.secondaryText
+                      : context.palette.muted,
                 ),
               ),
             ),

@@ -79,6 +79,20 @@ class _MusicViewState extends State<MusicView> {
   late final LibraryReloadCoordinator _reloadCoordinator;
   String? _currentRowPath;
   bool _currentRowPlaying = false;
+
+  /// Identity of the query the visible song rows came from.
+  ///
+  /// A repository notification re-runs the same query, which refreshes in
+  /// place. A change to the search text or the subtab is a new query, which
+  /// shows the initial-loading state.
+  ({MediaLibraryRepository repository, String? search, MusicSubtab subtab})?
+  _loadedSongsQuery;
+
+  /// Reload epoch the pager may publish results for.
+  ///
+  /// [LibraryReloadCoordinator] advances its epoch as soon as it queues a newer
+  /// reload, which can be before the pager has finished the one in flight.
+  int _activeReloadEpoch = 0;
   late Listenable _playbackListenable;
 
   Listenable _playbackSignals(PlayerController controller) =>
@@ -96,6 +110,11 @@ class _MusicViewState extends State<MusicView> {
         if (mounted) setState(() {});
       },
       onError: (error) => diagnosticDebug('music.page', error: error),
+      // The coordinator's epoch moves as soon as it queues a newer reload, so
+      // a superseded request has to be discarded where the pager commits,
+      // before it can publish rows for a query the view has left behind.
+      isCurrent: () =>
+          mounted && _activeReloadEpoch == _reloadCoordinator.epoch,
     );
     _reloadCoordinator = LibraryReloadCoordinator(
       onReload: _runReload,
@@ -178,17 +197,39 @@ class _MusicViewState extends State<MusicView> {
       _artistSongs == null;
 
   void _patchFavoriteInLoadedLists(String mediaId, bool isFavorite) {
-    _pager.patchItems(
-      (item) =>
-          item.id == mediaId ? item.copyWith(isFavorite: isFavorite) : item,
-    );
+    MediaItemRecord patch(MediaItemRecord item) =>
+        item.id == mediaId ? item.copyWith(isFavorite: isFavorite) : item;
+    _pager.patchItems(patch);
+    _patchDetailTracks(patch);
   }
 
   void _removeSongFromLoadedLists(String mediaId) {
-    _pager.removeWhere((item) => item.id != mediaId);
+    _pager.removeWhere((item) => item.id == mediaId);
+    final albumTracks = _albumTracks;
+    if (albumTracks != null) {
+      _albumTracks = albumTracks.where((item) => item.id != mediaId).toList();
+    }
+    final artistSongs = _artistSongs;
+    if (artistSongs != null) {
+      _artistSongs = artistSongs.where((item) => item.id != mediaId).toList();
+    }
+  }
+
+  /// Applies [patch] to the album and artist detail lists, which are rendered
+  /// instead of the paged list while a detail view is open.
+  void _patchDetailTracks(MediaItemRecord Function(MediaItemRecord) patch) {
+    final albumTracks = _albumTracks;
+    if (albumTracks != null) {
+      _albumTracks = albumTracks.map(patch).toList();
+    }
+    final artistSongs = _artistSongs;
+    if (artistSongs != null) {
+      _artistSongs = artistSongs.map(patch).toList();
+    }
   }
 
   Future<void> _runReload(int epoch) async {
+    _activeReloadEpoch = epoch;
     final album = _selectedAlbum;
     final albumArtist = _selectedAlbumArtist;
     final artist = _selectedArtist;
@@ -244,13 +285,7 @@ class _MusicViewState extends State<MusicView> {
         case MusicSubtab.favorites:
         case MusicSubtab.recentlyAdded:
         case MusicSubtab.recentlyPlayed:
-          await _pager.loadFirst();
-          if (!mounted || epoch != _reloadCoordinator.epoch) return;
-          setState(() {
-            _error = null;
-            _albumSummaries = null;
-            _artistSummaries = null;
-          });
+          await _loadSongsPage(epoch);
           return;
       }
     }
@@ -264,6 +299,32 @@ class _MusicViewState extends State<MusicView> {
       }
     });
   }
+
+  /// Loads the paged song list, refreshing in place when the query is the one
+  /// the visible rows came from.
+  Future<void> _loadSongsPage(int epoch) async {
+    final query = _songsQuery;
+    final refresh = query == _loadedSongsQuery && _pager.hasLoaded;
+    _loadedSongsQuery = query;
+    if (refresh) {
+      await _pager.refresh();
+    } else {
+      await _pager.loadFirst();
+    }
+    if (!mounted || epoch != _reloadCoordinator.epoch) return;
+    setState(() {
+      _error = null;
+      _albumSummaries = null;
+      _artistSummaries = null;
+    });
+  }
+
+  ({MediaLibraryRepository repository, String? search, MusicSubtab subtab})
+  get _songsQuery => (
+    repository: widget.repository,
+    search: widget.searchQuery,
+    subtab: _subtab,
+  );
 
   Future<void> _showInFolder(String path) async {
     if (widget.onShowInFolder != null) {
@@ -310,12 +371,12 @@ class _MusicViewState extends State<MusicView> {
     if (!confirmed || !mounted) return;
     await widget.repository.deleteMedia(song.id);
     if (!mounted) return;
-    setState(() {
-      _removeSongFromLoadedLists(song.id);
-      if (_selectedSongPath.value == song.path) {
-        _selectedSongPath.value = null;
-      }
-    });
+    // The pager notifies the view, so this must not also be wrapped in
+    // setState; the selection notifier rebuilds only the row it belongs to.
+    _removeSongFromLoadedLists(song.id);
+    if (_selectedSongPath.value == song.path) {
+      _selectedSongPath.value = null;
+    }
     AppToast.show(context, 'Removed "${song.title}" from library');
   }
 
@@ -1032,9 +1093,7 @@ class _MusicViewState extends State<MusicView> {
                         final next = !song.isFavorite;
                         await widget.repository.toggleFavorite(song.id, next);
                         if (!mounted) return;
-                        setState(() {
-                          _patchFavoriteInLoadedLists(song.id, next);
-                        });
+                        _patchFavoriteInLoadedLists(song.id, next);
                       },
                     ),
                   ),
@@ -1056,9 +1115,7 @@ class _MusicViewState extends State<MusicView> {
       onShowInFolder: _showInFolder,
       onFavoriteToggled: (mediaId, isFavorite) {
         if (!mounted) return;
-        setState(() {
-          _patchFavoriteInLoadedLists(mediaId, isFavorite);
-        });
+        _patchFavoriteInLoadedLists(mediaId, isFavorite);
       },
     );
   }

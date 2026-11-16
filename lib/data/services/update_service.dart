@@ -1,13 +1,19 @@
+// Public constructor names intentionally differ from private backing fields.
+// ignore_for_file: prefer_initializing_formals
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import '../../domain/updates/app_version.dart';
+import '../../domain/updates/github_app_release.dart';
 import '../../domain/updates/release_info.dart';
 import '../../domain/updates/semantic_version.dart';
 import '../../domain/updates/update_manifest.dart';
@@ -16,6 +22,7 @@ import '../../domain/updates/update_url.dart';
 import '../../utils/file_utils.dart';
 import 'download_manager.dart';
 import 'http_response_length.dart';
+import 'process_runner.dart';
 import 'redirecting_get.dart';
 
 /// Checks for complete desktop application bundles and verifies them before
@@ -26,11 +33,25 @@ class UpdateService extends ChangeNotifier {
     http.Client? client,
     Future<Directory> Function()? supportDirectoryProvider,
     UpdatePlatform Function()? platformProvider,
-    this.currentVersion = '0.1.0',
+    bool useGitHubReleases = true,
+    bool? preferInstaller,
+    bool Function()? isWindowsProvider,
+    Future<void> Function(String installerPath)? installerLauncher,
+    this.currentVersion = AppVersion.current,
   }) : _manifestUri = manifestUri ?? _manifestUriFromEnvironment(),
-       _configured = manifestUri == null
-           ? _configuredManifest.trim().isNotEmpty
-           : manifestUri.toString().trim().isNotEmpty,
+       _usesOfficialGitHubSource =
+           (manifestUri ?? _manifestUriFromEnvironment()) == null &&
+           useGitHubReleases,
+       _configured =
+           ((manifestUri ?? _manifestUriFromEnvironment()) != null &&
+               (manifestUri ?? _manifestUriFromEnvironment())
+                   .toString()
+                   .trim()
+                   .isNotEmpty) ||
+           useGitHubReleases,
+       _preferInstaller = preferInstaller,
+       _isWindowsProvider = isWindowsProvider ?? (() => Platform.isWindows),
+       _installerLauncher = installerLauncher,
        _client = client ?? http.Client(),
        _ownsClient = client == null,
        _supportDirectoryProvider =
@@ -53,7 +74,11 @@ class UpdateService extends ChangeNotifier {
   static const int _maxDownloadBytes = 2 * 1024 * 1024 * 1024;
 
   final Uri? _manifestUri;
+  final bool _usesOfficialGitHubSource;
   final bool _configured;
+  final bool? _preferInstaller;
+  final bool Function() _isWindowsProvider;
+  final Future<void> Function(String installerPath)? _installerLauncher;
   final http.Client _client;
   final bool _ownsClient;
   final Future<Directory> Function() _supportDirectoryProvider;
@@ -79,6 +104,16 @@ class UpdateService extends ChangeNotifier {
 
   bool get configured => _configured;
   bool get busy => _busy;
+  bool get usesOfficialGitHubSource => _usesOfficialGitHubSource;
+  String get sourceLabel => _usesOfficialGitHubSource
+      ? GitHubAppRelease.sourceLabel
+      : 'Custom update feed';
+
+  bool get canLaunchInstaller =>
+      _isWindowsProvider() &&
+      _status == 'ready' &&
+      _downloadPath != null &&
+      _downloadPath!.toLowerCase().endsWith('.exe');
 
   String get status => _status;
   double get progress => _progress;
@@ -99,9 +134,12 @@ class UpdateService extends ChangeNotifier {
     return value.isEmpty ? null : Uri.tryParse(value);
   }
 
-  /// Fetches the configured manifest and exposes a release only when it is
-  /// newer than the running application.
-  Future<void> check() async {
+  /// Fetches the configured manifest or official GitHub release and exposes a
+  /// release only when it is newer than the running application.
+  ///
+  /// When [silent] is true (e.g. a startup background check), transient offline
+  /// or HTTP failures keep the service in `'idle'` instead of surfacing an error.
+  Future<void> check({bool silent = false}) async {
     if (_disposed || _busy) return;
     if (!configured) {
       _setState(status: 'unconfigured', progress: 0, error: null);
@@ -124,29 +162,21 @@ class UpdateService extends ChangeNotifier {
 
     try {
       SemanticVersion.parse(currentVersion);
-      final manifestUri = _manifestUri;
-      if (manifestUri == null) {
-        throw const _UpdateException(
-          'Configured update manifest URL is invalid.',
-        );
-      }
-      _requireHttps(manifestUri, 'Manifest URL');
       final platform = _platformProvider();
-      final response = await _sendGet(manifestUri, abortCompleter);
-      if (response.statusCode != HttpStatus.ok) {
-        await _cancelBody(response);
-        throw _UpdateException(
-          'Update manifest request failed (HTTP ${response.statusCode}).',
-        );
+      final ReleaseInfo release;
+      if (_usesOfficialGitHubSource) {
+        release = await _fetchGitHubRelease(platform, abortCompleter);
+      } else {
+        final manifestUri = _manifestUri;
+        if (manifestUri == null) {
+          throw const _UpdateException(
+            'Configured update manifest URL is invalid.',
+          );
+        }
+        release = await _fetchManifest(manifestUri, platform, abortCompleter);
       }
-
-      final body = await _readTextBody(
-        response,
-        _maxManifestBytes,
-        abortCompleter,
-      );
       if (_disposed) return;
-      final release = UpdateManifest.parse(body, platform: platform).release;
+
       final current = SemanticVersion.parse(currentVersion);
       final latest = SemanticVersion.parse(release.version);
       if (latest.compareTo(current) > 0) {
@@ -157,7 +187,12 @@ class UpdateService extends ChangeNotifier {
       }
     } on Object catch (error) {
       if (!_disposed) {
-        _fail(error);
+        if (silent) {
+          _failureKind = null;
+          _setState(status: 'idle', progress: 0, error: null);
+        } else {
+          _fail(error);
+        }
       }
     } finally {
       _activeAbortCompleters.remove(abortCompleter);
@@ -165,6 +200,108 @@ class UpdateService extends ChangeNotifier {
         abortCompleter.complete();
       }
       _finishOperation();
+    }
+  }
+
+  Future<ReleaseInfo> _fetchManifest(
+    Uri manifestUri,
+    UpdatePlatform platform,
+    Completer<void> abortCompleter,
+  ) async {
+    _requireHttps(manifestUri, 'Manifest URL');
+    final response = await _sendGet(manifestUri, abortCompleter);
+    if (response.statusCode != HttpStatus.ok) {
+      await _cancelBody(response);
+      throw _UpdateException(
+        'Update manifest request failed (HTTP ${response.statusCode}).',
+      );
+    }
+
+    final body = await _readTextBody(
+      response,
+      _maxManifestBytes,
+      abortCompleter,
+    );
+    return UpdateManifest.parse(body, platform: platform).release;
+  }
+
+  Future<ReleaseInfo> _fetchGitHubRelease(
+    UpdatePlatform platform,
+    Completer<void> abortCompleter,
+  ) async {
+    final response = await _sendGet(
+      GitHubAppRelease.latestApiUri,
+      abortCompleter,
+      headers: <String, String>{
+        'Accept': 'application/vnd.github+json',
+        'User-Agent':
+            'Mpvson/${currentVersion.replaceAll(RegExp(r'[\r\n]'), '')}',
+        'X-GitHub-Api-Version': '2022-11-28',
+      },
+    );
+    if (response.statusCode == HttpStatus.notFound) {
+      await _cancelBody(response);
+      throw const _UpdateException('No published release was found yet.');
+    }
+    if (response.statusCode != HttpStatus.ok) {
+      await _cancelBody(response);
+      throw _UpdateException(
+        'GitHub release check failed (HTTP ${response.statusCode}).',
+      );
+    }
+
+    final body = await _readTextBody(
+      response,
+      _maxManifestBytes,
+      abortCompleter,
+    );
+    final outcome = GitHubAppRelease.parseLatest(
+      body,
+      platform: platform,
+      preferInstaller: _preferInstaller ?? _detectInstalledWindows(),
+    );
+
+    if (outcome.manifestUri != null) {
+      return _fetchManifest(outcome.manifestUri!, platform, abortCompleter);
+    }
+
+    final release = outcome.release!;
+    final checksumsUri = outcome.checksumsUri;
+    if (checksumsUri == null) return release;
+
+    final sumsResponse = await _sendGet(checksumsUri, abortCompleter);
+    if (sumsResponse.statusCode != HttpStatus.ok) {
+      await _cancelBody(sumsResponse);
+      throw _UpdateException(
+        'Could not fetch SHA256SUMS (HTTP ${sumsResponse.statusCode}).',
+      );
+    }
+    final sumsText = await _readTextBody(
+      sumsResponse,
+      _maxManifestBytes,
+      abortCompleter,
+    );
+    final resolvedHash = GitHubAppRelease.parseSha256Sums(
+      sumsText,
+      assetName: outcome.selectedAssetName!,
+    );
+    return ReleaseInfo(
+      version: release.version,
+      notes: release.notes,
+      engineVersion: release.engineVersion,
+      downloadUri: release.downloadUri,
+      sha256: resolvedHash,
+      releaseUri: release.releaseUri,
+    );
+  }
+
+  static bool _detectInstalledWindows() {
+    if (!Platform.isWindows) return false;
+    try {
+      final exeDir = File(Platform.resolvedExecutable).parent;
+      return File(p.join(exeDir.path, 'unins000.exe')).existsSync();
+    } on Object {
+      return false;
     }
   }
 
@@ -371,6 +508,57 @@ class UpdateService extends ChangeNotifier {
     }
   }
 
+  /// Re-verifies the downloaded Windows installer's SHA-256 digest and launches
+  /// it detached so the user can close Mpvson and complete the upgrade.
+  Future<bool> launchInstaller() async {
+    if (_disposed || _busy) return false;
+    _failurePhase = 'apply';
+    final path = _downloadPath;
+    final release = _release;
+    if (!canLaunchInstaller || path == null || release == null) {
+      _fail(
+        const _UpdateException('There is no verified installer to launch.'),
+      );
+      return false;
+    }
+
+    _busy = true;
+    notifyListeners();
+    try {
+      final file = File(path);
+      if (!await file.exists()) {
+        throw const _UpdateException(
+          'The verified installer file is no longer available.',
+        );
+      }
+      final digest = (await sha256.bind(file.openRead()).first).toString();
+      if (digest != release.sha256.toLowerCase()) {
+        throw const _UpdateException(
+          'The installer failed its SHA-256 verification before launch.',
+        );
+      }
+      if (_disposed) return false;
+      final launcher = _installerLauncher;
+      if (launcher != null) {
+        await launcher(path);
+      } else {
+        await ProcessRunner.standard.start(
+          path,
+          const <String>['/CLOSEAPPLICATIONS', '/RESTARTAPPLICATIONS'],
+          workingDirectory: file.parent.path,
+          mode: ProcessStartMode.detached,
+        );
+      }
+      _setState(status: 'ready', error: null);
+      return true;
+    } on Object catch (error) {
+      _fail(error);
+      return false;
+    } finally {
+      _finishOperation();
+    }
+  }
+
   void _finishOperation() {
     _busy = false;
     if (!_disposed) notifyListeners();
@@ -378,8 +566,9 @@ class UpdateService extends ChangeNotifier {
 
   Future<http.StreamedResponse> _sendGet(
     Uri uri,
-    Completer<void> abortCompleter,
-  ) async {
+    Completer<void> abortCompleter, {
+    Map<String, String>? headers,
+  }) async {
     return sendGetFollowingRedirects(
       uri: uri,
       maxRedirects: _maxRedirects,
@@ -405,8 +594,10 @@ class UpdateService extends ChangeNotifier {
               )
               ..followRedirects = false
               ..maxRedirects = 0
-              ..headers['Accept'] =
-                  'application/json, application/octet-stream';
+              ..headers.addAll(<String, String>{
+                'Accept': 'application/json, application/octet-stream',
+                ...?headers,
+              });
         final pendingResponse = _client.send(request).then((response) {
           if (_disposed || abortCompleter.isCompleted) {
             unawaited(_cancelBody(response));

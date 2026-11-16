@@ -32,6 +32,7 @@ import 'data/services/update_service.dart';
 import 'domain/models/graphics_settings.dart';
 import 'domain/models/hardware_profile.dart';
 import 'domain/models/open_request.dart';
+import 'domain/updates/app_version.dart';
 import 'domain/updates/bundled_engine.dart';
 import 'domain/updates/engine_selection.dart';
 import 'ui/core/app_theme.dart';
@@ -203,10 +204,12 @@ Future<void> main(List<String> arguments) async {
 
   final versionFuture = () async {
     try {
-      return (await PackageInfo.fromPlatform()).version;
+      final version = (await PackageInfo.fromPlatform()).version.trim();
+      if (version.isNotEmpty) return version;
     } on Object {
-      return '0.1.0';
+      // Fall back to the synchronized build-time version constant.
     }
+    return AppVersion.current;
   }();
 
   final windowInitFuture = () async {
@@ -333,6 +336,11 @@ Future<void> main(List<String> arguments) async {
     await appPreferences.load();
     final graphicsSettings = appPreferences.graphicsSettings;
     readyController.applyGraphicsSettings(graphicsSettings);
+    void syncGraphicsPreferences() {
+      readyController.applyGraphicsSettings(appPreferences.graphicsSettings);
+    }
+
+    appPreferences.addListener(syncGraphicsPreferences);
     await _applyGpuLaunchPreference(graphicsSettings);
 
     final mediaProbeService = MediaProbeServiceImpl();
@@ -429,6 +437,8 @@ Future<void> main(List<String> arguments) async {
       engineLibraryPath: engineSelection?.libraryPath,
       navigatorKey: navigatorKey,
       appPreferences: appPreferences,
+      onBeforePreferencesDispose: () =>
+          appPreferences.removeListener(syncGraphicsPreferences),
       libraryRepository: libraryRepository,
       libraryPlaybackTracker: libraryPlaybackTracker,
       mediaProbeService: mediaProbeService,
@@ -502,6 +512,12 @@ Future<void> main(List<String> arguments) async {
       }
     }
     unawaited(engineUpdates.initialize());
+    unawaited(
+      Future<void>.delayed(
+        const Duration(seconds: 3),
+        () => readyUpdates.check(silent: true),
+      ),
+    );
     unawaited(readyPlayback.prepare());
 
     unawaited(
@@ -567,6 +583,7 @@ class _DesktopLifecycle extends WindowListener {
     required this.engineLibraryPath,
     required this.navigatorKey,
     this.appPreferences,
+    this.onBeforePreferencesDispose,
     this.libraryRepository,
     this.libraryPlaybackTracker,
     this.mediaProbeService,
@@ -579,6 +596,7 @@ class _DesktopLifecycle extends WindowListener {
   final String? engineLibraryPath;
   final GlobalKey<NavigatorState> navigatorKey;
   final AppPreferencesRepository? appPreferences;
+  final VoidCallback? onBeforePreferencesDispose;
   final MediaLibraryRepository? libraryRepository;
   final LibraryPlaybackTracker? libraryPlaybackTracker;
   final MediaProbeService? mediaProbeService;
@@ -682,6 +700,7 @@ class _DesktopLifecycle extends WindowListener {
     // detaches the app's listeners. The guard above keeps a retry or a
     // re-entered close path from disposing it twice.
     try {
+      onBeforePreferencesDispose?.call();
       appPreferences?.dispose();
     } on Object {
       // Best-effort preferences release.

@@ -347,10 +347,7 @@ extension PlayerControllerEngine on PlayerController {
       _rebuildQueueIndex(insertIndex);
       _queueStructureRevision++;
       if (shuffle) {
-        for (final entry in stagedEntries.reversed) {
-          _shuffleRemaining.remove(entry.id);
-          _shuffleRemaining.insert(0, entry.id);
-        }
+        _prioritizeShuffleEntries(stagedEntries);
       }
     } else {
       final oldLength = _queue.length;

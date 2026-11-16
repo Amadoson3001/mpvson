@@ -738,6 +738,16 @@ extension PlayerControllerTransport on PlayerController {
     _shuffleRemaining.addAll(added);
   }
 
+  void _prioritizeShuffleEntries(Iterable<MediaEntry> entries) {
+    // `_takeShuffleNextIndex` pops from the end of `_shuffleRemaining`, so append
+    // prioritized entries in reverse order for immediate next playback.
+    for (final entry in entries.toList().reversed) {
+      _shuffleVisited.remove(entry.id);
+      _shuffleRemaining.remove(entry.id);
+      _shuffleRemaining.add(entry.id);
+    }
+  }
+
   void _resetShuffleCycle() {
     _shuffleVisited.clear();
     final currentId = _currentQueueId;

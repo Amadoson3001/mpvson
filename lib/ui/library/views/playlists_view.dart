@@ -964,8 +964,14 @@ class _PlaylistsViewState extends State<PlaylistsView> {
                               ),
                               sliver: SliverReorderableList(
                                 itemCount: entries.length,
-                                onReorder: (oldIndex, newIndex) =>
-                                    _reorderEntries(pl, oldIndex, newIndex),
+                                onReorderItem: (oldIndex, targetIndex) =>
+                                    _reorderEntries(
+                                      pl,
+                                      oldIndex,
+                                      targetIndex > oldIndex
+                                          ? targetIndex + 1
+                                          : targetIndex,
+                                    ),
                                 proxyDecorator: (child, index, animation) {
                                   return Material(
                                     color: Colors.transparent,
@@ -1418,6 +1424,22 @@ class _AddFromLibraryDialogState extends State<_AddFromLibraryDialog> {
         widget.playlist.id,
       );
       _existingIds = currentEntries.map((e) => e.mediaId).toSet();
+    } catch (error) {
+      diagnosticDebug('playlists.addFromLibrary', error: error);
+      if (mounted) setState(() {});
+      return;
+    }
+    await _loadFirstPage();
+  }
+
+  /// Loads the first page, keeping a failed query from escaping as an unhandled
+  /// error.
+  ///
+  /// The pager reports a first-page failure by throwing, and both entry points
+  /// here start one unawaited. Loading settles in the pager's own completion
+  /// path, so this only has to record the failure.
+  Future<void> _loadFirstPage() async {
+    try {
       await _pager.loadFirst();
     } catch (error) {
       diagnosticDebug('playlists.addFromLibrary', error: error);
@@ -1432,7 +1454,7 @@ class _AddFromLibraryDialogState extends State<_AddFromLibraryDialog> {
       final trimmed = value.trim();
       if (trimmed == _activeSearch) return;
       _activeSearch = trimmed;
-      unawaited(_pager.loadFirst());
+      unawaited(_loadFirstPage());
     });
   }
 

@@ -317,6 +317,14 @@ class _PlayerContentState extends State<PlayerContent>
           onClose: widget.chrome.toggleQueue,
           onQueueFocus: widget.chrome.setFocusedQueueEntry,
           onAddFiles: widget.media.addQueueFiles,
+          enableNativeDrop: widget.enableNativeDrop,
+          onFilesDropped: (paths) => unawaited(
+            widget.media.openPaths(
+              paths,
+              append: true,
+              origin: OpenOrigin.dragAndDrop,
+            ),
+          ),
         ),
       ),
     );

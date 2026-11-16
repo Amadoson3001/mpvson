@@ -2,9 +2,11 @@
 ; Generates a per-user, non-elevated installer with complete shell associations.
 
 #define MyAppName "Mpvson"
+#ifndef MyAppVersion
 #define MyAppVersion "0.1.0"
+#endif
 #define MyAppPublisher "Mpvson"
-#define MyAppURL "https://github.com/mpvson/mpvson"
+#define MyAppURL "https://github.com/Amadoson3001/mpvson"
 #define MyAppExeName "mpvson.exe"
 #define MyAppAssocProgID "Mpvson.AssocFile"
 #define MyAppAssocName "Mpvson Media File"
@@ -29,6 +31,8 @@ Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
 ChangesAssociations=yes
+CloseApplications=yes
+RestartApplications=yes
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -69,6 +73,8 @@ Root: HKCU; Subkey: "Software\{#MyAppName}\Capabilities\FileAssociations"; Value
 Root: HKCU; Subkey: "Software\{#MyAppName}\Capabilities\FileAssociations"; ValueType: string; ValueName: ".aiff"; ValueData: "{#MyAppAssocProgID}"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\{#MyAppName}\Capabilities\FileAssociations"; ValueType: string; ValueName: ".aif"; ValueData: "{#MyAppAssocProgID}"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\{#MyAppName}\Capabilities\FileAssociations"; ValueType: string; ValueName: ".ape"; ValueData: "{#MyAppAssocProgID}"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\{#MyAppName}\Capabilities\FileAssociations"; ValueType: string; ValueName: ".alac"; ValueData: "{#MyAppAssocProgID}"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\{#MyAppName}\Capabilities\FileAssociations"; ValueType: string; ValueName: ".dsf"; ValueData: "{#MyAppAssocProgID}"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\{#MyAppName}\Capabilities\FileAssociations"; ValueType: string; ValueName: ".mp4"; ValueData: "{#MyAppAssocProgID}"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\{#MyAppName}\Capabilities\FileAssociations"; ValueType: string; ValueName: ".mkv"; ValueData: "{#MyAppAssocProgID}"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\{#MyAppName}\Capabilities\FileAssociations"; ValueType: string; ValueName: ".avi"; ValueData: "{#MyAppAssocProgID}"; Flags: uninsdeletekey
@@ -94,6 +100,8 @@ Root: HKCU; Subkey: "Software\{#MyAppName}\Capabilities\MIMEAssociations"; Value
 Root: HKCU; Subkey: "Software\{#MyAppName}\Capabilities\MIMEAssociations"; ValueType: string; ValueName: "audio/x-ms-wma"; ValueData: "{#MyAppAssocProgID}"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\{#MyAppName}\Capabilities\MIMEAssociations"; ValueType: string; ValueName: "audio/x-aiff"; ValueData: "{#MyAppAssocProgID}"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\{#MyAppName}\Capabilities\MIMEAssociations"; ValueType: string; ValueName: "audio/x-ape"; ValueData: "{#MyAppAssocProgID}"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\{#MyAppName}\Capabilities\MIMEAssociations"; ValueType: string; ValueName: "audio/alac"; ValueData: "{#MyAppAssocProgID}"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\{#MyAppName}\Capabilities\MIMEAssociations"; ValueType: string; ValueName: "audio/x-dsf"; ValueData: "{#MyAppAssocProgID}"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\{#MyAppName}\Capabilities\MIMEAssociations"; ValueType: string; ValueName: "video/mp4"; ValueData: "{#MyAppAssocProgID}"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\{#MyAppName}\Capabilities\MIMEAssociations"; ValueType: string; ValueName: "video/x-matroska"; ValueData: "{#MyAppAssocProgID}"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\{#MyAppName}\Capabilities\MIMEAssociations"; ValueType: string; ValueName: "video/x-msvideo"; ValueData: "{#MyAppAssocProgID}"; Flags: uninsdeletekey
@@ -112,9 +120,11 @@ Root: HKCU; Subkey: "Software\{#MyAppName}\Capabilities\MIMEAssociations"; Value
 ; -----------------------------------------------------------------------------
 Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExeName}"; ValueType: string; ValueName: "FriendlyAppName"; ValueData: "{#MyAppName}"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExeName}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"",0"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExeName}\shell\open"; ValueType: string; ValueName: "MultiSelectModel"; ValueData: "Player"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExeName}\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExeName}\shell\enqueue"; ValueType: string; ValueName: ""; ValueData: "Add to queue"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExeName}\shell\enqueue"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\{#MyAppExeName}"",0"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExeName}\shell\enqueue"; ValueType: string; ValueName: "MultiSelectModel"; ValueData: "Player"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExeName}\shell\enqueue\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" --enqueue ""%1"""; Flags: uninsdeletekey
 
 ; SupportedTypes for Applications\mpvson.exe
@@ -130,6 +140,8 @@ Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExeName}\SupportedType
 Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExeName}\SupportedTypes"; ValueType: string; ValueName: ".aiff"; ValueData: ""; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExeName}\SupportedTypes"; ValueType: string; ValueName: ".aif"; ValueData: ""; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExeName}\SupportedTypes"; ValueType: string; ValueName: ".ape"; ValueData: ""; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExeName}\SupportedTypes"; ValueType: string; ValueName: ".alac"; ValueData: ""; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExeName}\SupportedTypes"; ValueType: string; ValueName: ".dsf"; ValueData: ""; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExeName}\SupportedTypes"; ValueType: string; ValueName: ".mp4"; ValueData: ""; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExeName}\SupportedTypes"; ValueType: string; ValueName: ".mkv"; ValueData: ""; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\Applications\{#MyAppExeName}\SupportedTypes"; ValueType: string; ValueName: ".avi"; ValueData: ""; Flags: uninsdeletekey
@@ -155,11 +167,13 @@ Root: HKCU; Subkey: "Software\Classes\{#MyAppAssocProgID}\DefaultIcon"; ValueTyp
 Root: HKCU; Subkey: "Software\Classes\{#MyAppAssocProgID}\shell"; ValueType: string; ValueName: ""; ValueData: "open"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\{#MyAppAssocProgID}\shell\open"; ValueType: string; ValueName: ""; ValueData: "&Play with Mpvson"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\{#MyAppAssocProgID}\shell\open"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\{#MyAppExeName}"",0"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\{#MyAppAssocProgID}\shell\open"; ValueType: string; ValueName: "MultiSelectModel"; ValueData: "Player"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\{#MyAppAssocProgID}\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Flags: uninsdeletekey
 
 ; Context menu action: Add to queue
 Root: HKCU; Subkey: "Software\Classes\{#MyAppAssocProgID}\shell\enqueue"; ValueType: string; ValueName: ""; ValueData: "Add to &queue"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\{#MyAppAssocProgID}\shell\enqueue"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\{#MyAppExeName}"",0"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\{#MyAppAssocProgID}\shell\enqueue"; ValueType: string; ValueName: "MultiSelectModel"; ValueData: "Player"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\{#MyAppAssocProgID}\shell\enqueue\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" --enqueue ""%1"""; Flags: uninsdeletekey
 
 ; -----------------------------------------------------------------------------
@@ -246,6 +260,18 @@ Root: HKCU; Subkey: "Software\Classes\.ape\OpenWithProgids"; Flags: uninsdeletek
 Root: HKCU; Subkey: "Software\Classes\.ape\OpenWithList\{#MyAppExeName}"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\.ape\OpenWithList"; Flags: uninsdeletekeyifempty
 Root: HKCU; Subkey: "Software\Classes\.ape"; Flags: uninsdeletekeyifempty
+
+Root: HKCU; Subkey: "Software\Classes\.alac\OpenWithProgids"; ValueType: none; ValueName: "{#MyAppAssocProgID}"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\.alac\OpenWithProgids"; Flags: uninsdeletekeyifempty
+Root: HKCU; Subkey: "Software\Classes\.alac\OpenWithList\{#MyAppExeName}"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\.alac\OpenWithList"; Flags: uninsdeletekeyifempty
+Root: HKCU; Subkey: "Software\Classes\.alac"; Flags: uninsdeletekeyifempty
+
+Root: HKCU; Subkey: "Software\Classes\.dsf\OpenWithProgids"; ValueType: none; ValueName: "{#MyAppAssocProgID}"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\.dsf\OpenWithProgids"; Flags: uninsdeletekeyifempty
+Root: HKCU; Subkey: "Software\Classes\.dsf\OpenWithList\{#MyAppExeName}"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\.dsf\OpenWithList"; Flags: uninsdeletekeyifempty
+Root: HKCU; Subkey: "Software\Classes\.dsf"; Flags: uninsdeletekeyifempty
 
 ; Video
 Root: HKCU; Subkey: "Software\Classes\.mp4\OpenWithProgids"; ValueType: none; ValueName: "{#MyAppAssocProgID}"; Flags: uninsdeletevalue

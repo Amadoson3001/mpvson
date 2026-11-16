@@ -14,6 +14,7 @@ import '../../../domain/models/player_hotkeys.dart';
 import '../../core/app_motion.dart';
 import '../../core/toast/app_toast.dart';
 import '../player_controller.dart';
+import 'update_center_dialog.dart';
 import 'player_chrome_controller.dart';
 import 'player_content.dart';
 import 'player_error_banner.dart';
@@ -89,6 +90,7 @@ class _PlayerScreenState extends State<PlayerScreen>
   bool _draggingFiles = false;
   String? _lastVideoEntryId;
   String? _preparedPausedVideoId;
+  String? _notifiedUpdateVersion;
   Listenable? _playerEvents;
 
   bool get _nativeWindow =>
@@ -205,6 +207,7 @@ class _PlayerScreenState extends State<PlayerScreen>
       _lastVideoEntryId = widget.controller.current?.id;
     }
     _bindPlayerEvents(widget.controller);
+    widget.updates.addListener(_handleAppUpdateNotification);
     WidgetsBinding.instance.addObserver(this);
     FocusManager.instance.addListener(_hotkeyHandler.handlePrimaryFocusChange);
     HardwareKeyboard.instance.addHandler(_chrome.recordKeyboardInput);
@@ -229,11 +232,41 @@ class _PlayerScreenState extends State<PlayerScreen>
     if (mounted) _chrome.showControls();
   }
 
+  void _handleAppUpdateNotification() {
+    if (!mounted) return;
+    if (widget.updates.status != 'available') return;
+    final release = widget.updates.release;
+    if (release == null || _notifiedUpdateVersion == release.version) return;
+    _notifiedUpdateVersion = release.version;
+    AppToast.show(
+      context,
+      'Mpvson v${release.version} is available',
+      actionLabel: 'Update',
+      duration: const Duration(seconds: 6),
+      onAction: () {
+        if (!mounted) return;
+        showMorphDialog<void>(
+          context: context,
+          builder: (_) => UpdateCenterDialog(
+            updates: widget.updates,
+            engineUpdates: widget.engineUpdates,
+            engineVersion: widget.controller.engineVersion,
+          ),
+        );
+      },
+    );
+  }
+
   @override
   void didUpdateWidget(covariant PlayerScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.controller != widget.controller) {
       _bindPlayerEvents(widget.controller);
+    }
+    if (oldWidget.updates != widget.updates) {
+      oldWidget.updates.removeListener(_handleAppUpdateNotification);
+      widget.updates.addListener(_handleAppUpdateNotification);
+      _notifiedUpdateVersion = null;
     }
     _media
       ..controller = widget.controller
@@ -265,6 +298,7 @@ class _PlayerScreenState extends State<PlayerScreen>
     HardwareKeyboard.instance.removeHandler(_chrome.recordKeyboardInput);
     _playerEvents?.removeListener(_handleControllerChange);
     _playerEvents = null;
+    widget.updates.removeListener(_handleAppUpdateNotification);
     _chrome.removeListener(_onVisualStateChanged);
     _navigation.removeListener(_onVisualStateChanged);
     _navigation.dispose();
@@ -365,7 +399,7 @@ class _PlayerScreenState extends State<PlayerScreen>
     if (widget.controller.isStopped || !widget.controller.hasMedia) {
       unawaited(widget.controller.closePlayer());
     }
-    _navigation.backToHome();
+    _navigation.openLibrary();
     if (wasFullscreen) unawaited(_layoutManager.setFullscreen(false));
   }
 

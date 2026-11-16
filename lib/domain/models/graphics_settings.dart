@@ -40,7 +40,7 @@ extension VideoMemoryModeLabel on VideoMemoryMode {
 @immutable
 class GraphicsSettings {
   const GraphicsSettings({
-    this.preferredGpu = GpuPreferenceMode.highPerformance,
+    this.preferredGpu = GpuPreferenceMode.automatic,
     this.videoMemoryMode = VideoMemoryMode.zeroCopy,
     this.trimOnMinimize = true,
     this.limitDemuxerCache = true,
@@ -183,7 +183,7 @@ GpuPreferenceMode _parseGpuPreference(Object? value) => switch (value) {
   'highPerformance' => GpuPreferenceMode.highPerformance,
   'automatic' => GpuPreferenceMode.automatic,
   'systemDefault' => GpuPreferenceMode.systemDefault,
-  _ => GpuPreferenceMode.systemDefault,
+  _ => GraphicsSettings.defaults.preferredGpu,
 };
 
 VideoMemoryMode _parseVideoMemoryMode(Object? value) => switch (value) {

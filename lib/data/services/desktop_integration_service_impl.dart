@@ -16,6 +16,7 @@ import 'desktop_integration_service.dart';
 import 'media_probe_service.dart';
 import 'open_request_coordinator.dart';
 import 'process_runner.dart';
+import 'windows_associations_core.dart' as win_assoc;
 
 /// Implementation of [DesktopIntegrationService] bridging OS platform channels,
 /// [PlayerController], and [OpenRequestCoordinator].
@@ -259,7 +260,39 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
   }
 
   @override
+  Future<WindowsRegistrationStatus?> getWindowsAssociationStatus() async {
+    if (!Platform.isWindows) return null;
+    return win_assoc.checkWindowsRegistration(Platform.resolvedExecutable);
+  }
+
+  @override
+  Future<bool> registerWindowsAssociations({bool force = true}) async {
+    if (!Platform.isWindows) return false;
+    final ok = await win_assoc.registerWindowsAssociations(
+      targetExe: Platform.resolvedExecutable,
+      force: force,
+    );
+    if (ok && !_disposed) notifyListeners();
+    return ok;
+  }
+
+  @override
   Future<void> openDefaultAppsSettings() async {
+    if (Platform.isWindows) {
+      // Ensure Windows 10/11 Default Apps lists Mpvson even for portable builds.
+      try {
+        final status = await getWindowsAssociationStatus();
+        if (status != null &&
+            (!status.isRegistered ||
+                !status.hasRegisteredApplication ||
+                (!status.matchesTarget && !status.otherInstallExists))) {
+          await registerWindowsAssociations(force: false);
+        }
+      } on Object {
+        // Never block opening OS settings if pre-registration fails.
+      }
+    }
+
     try {
       final result = await mediaControlsChannel.invokeMethod<bool>(
         'openDefaultAppsSettings',
@@ -271,31 +304,42 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
       // Fallback to URL launch or process start.
     }
 
-    const settingsUriString = 'ms-settings:defaultapps';
-    final uri = Uri.parse(settingsUriString);
+    final win11 =
+        Platform.isWindows &&
+        win_assoc.isWindows11Build(
+          win_assoc.parseWindowsBuildNumber(Platform.operatingSystemVersion),
+        );
+    final candidateUris = <String>[
+      if (win11)
+        'ms-settings:defaultapps?registeredAppUser=${win_assoc.windowsAppName}',
+      'ms-settings:defaultapps',
+    ];
 
-    final launcher = _urlLauncher;
-    if (launcher != null) {
+    for (final settingsUriString in candidateUris) {
+      final uri = Uri.parse(settingsUriString);
+      final launcher = _urlLauncher;
+      if (launcher != null) {
+        try {
+          if (await launcher(uri)) return;
+        } on Object {
+          // Fall through to url_launcher / explorer fallback.
+        }
+      }
+
       try {
-        final launched = await launcher(uri);
-        if (launched) return;
+        if (await canLaunchUrl(uri) && await launchUrl(uri)) {
+          return;
+        }
       } on Object {
-        // Fall through to system fallback.
+        // Fall through to explorer.exe fallback.
       }
-    }
-
-    try {
-      if (await canLaunchUrl(uri)) {
-        final launched = await launchUrl(uri);
-        if (launched) return;
-      }
-    } on Object {
-      // Fall through to Process run.
     }
 
     if (Platform.isWindows) {
       try {
-        await ProcessRunner.standard.run('explorer.exe', [settingsUriString]);
+        await ProcessRunner.standard.run('explorer.exe', [
+          'ms-settings:defaultapps',
+        ]);
       } on Object {
         // Best effort.
       }

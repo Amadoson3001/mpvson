@@ -12,6 +12,7 @@ import 'package:path/path.dart' as p;
 
 import '../../data/repositories/engine_installation_repository.dart';
 import '../../data/repositories/engine_update_preferences_repository.dart';
+import '../../domain/updates/app_version.dart';
 import '../../domain/updates/engine_release.dart';
 import '../../domain/updates/engine_update_channel.dart';
 import '../../domain/updates/engine_selection.dart';
@@ -53,7 +54,7 @@ class EngineUpdateService extends ChangeNotifier {
     bool? useOfficialMpvSource,
     EngineUpdatePlatform Function()? platformProvider,
     EngineUpdatePreferencesRepository? preferencesRepository,
-    this.appVersion = '0.1.0',
+    this.appVersion = AppVersion.current,
     this.supportedMediaKitVersion = '1.2.6',
     String currentVersion = '0.0.0',
     Duration requestTimeout = const Duration(seconds: 20),

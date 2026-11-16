@@ -46,14 +46,26 @@ class PlayerTopBar extends StatelessWidget {
                 if (!isMiniPlayer && hasLibraryRepository) ...[
                   Focus(
                     onFocusChange: onFocusChange,
-                    child: TextButton.icon(
-                      onPressed: onBackToHome,
-                      icon: const Icon(Icons.arrow_back_rounded, size: 20),
-                      label: const Text('Home'),
-                      style: TextButton.styleFrom(
-                        foregroundColor: AppTheme.onStage,
-                        backgroundColor: AppTheme.stage.withValues(alpha: 0.65),
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: Tooltip(
+                      message: 'Mini player',
+                      child: IconButton(
+                        key: const ValueKey('player-mini-button'),
+                        onPressed: onBackToHome,
+                        icon: const Icon(
+                          Icons.keyboard_arrow_down_rounded,
+                          size: 24,
+                        ),
+                        style: IconButton.styleFrom(
+                          foregroundColor: AppTheme.onStage,
+                          backgroundColor: AppTheme.stage.withValues(
+                            alpha: 0.65,
+                          ),
+                          side: BorderSide(
+                            color: AppTheme.onStage.withValues(alpha: 0.14),
+                          ),
+                          minimumSize: const Size(38, 38),
+                          padding: EdgeInsets.zero,
+                        ),
                       ),
                     ),
                   ),

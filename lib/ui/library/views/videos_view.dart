@@ -62,6 +62,25 @@ class _VideosViewState extends State<VideosView> {
   Object? _error;
   late final LibraryReloadCoordinator _reloadCoordinator;
 
+  /// Identity of the query the visible rows came from.
+  ///
+  /// A repository notification re-runs the same query, which refreshes in
+  /// place. A change to the search text, the sort field, or the direction is a
+  /// new query, which shows the initial-loading state.
+  ({
+    MediaLibraryRepository repository,
+    String? search,
+    String sortBy,
+    bool ascending,
+  })?
+  _loadedQuery;
+
+  /// Reload epoch the pager may publish results for.
+  ///
+  /// [LibraryReloadCoordinator] advances its epoch as soon as it queues a newer
+  /// reload, which can be before the pager has finished the one in flight.
+  int _activeReloadEpoch = 0;
+
   @override
   void initState() {
     super.initState();
@@ -80,6 +99,11 @@ class _VideosViewState extends State<VideosView> {
       onError: (error) {
         diagnosticDebug('videos.page', error: error);
       },
+      // The coordinator's epoch moves as soon as it queues a newer reload, so
+      // a superseded request has to be discarded where the pager commits,
+      // before it can publish rows for a query the view has left behind.
+      isCurrent: () =>
+          mounted && _activeReloadEpoch == _reloadCoordinator.epoch,
     );
     _reloadCoordinator = LibraryReloadCoordinator(
       onReload: _runReload,
@@ -142,10 +166,36 @@ class _VideosViewState extends State<VideosView> {
   Future<void> _reload() => _reloadCoordinator.reload();
 
   Future<void> _runReload(int epoch) async {
-    await _pager.loadFirst();
+    _activeReloadEpoch = epoch;
+    final query = _query;
+    final refresh = query == _loadedQuery && _pager.hasLoaded;
+    _loadedQuery = query;
+    if (refresh) {
+      await _pager.refresh();
+    } else {
+      await _pager.loadFirst();
+    }
     if (!mounted || epoch != _reloadCoordinator.epoch) return;
     setState(() => _error = null);
   }
+
+  /// Identity of the query the visible rows came from.
+  ///
+  /// A repository notification re-runs the same query, which refreshes in
+  /// place. A change to the search text, the sort field, or the direction is a
+  /// new query, which shows the initial-loading state.
+  ({
+    MediaLibraryRepository repository,
+    String? search,
+    String sortBy,
+    bool ascending,
+  })
+  get _query => (
+    repository: widget.repository,
+    search: widget.searchQuery,
+    sortBy: _sortBy,
+    ascending: _ascending,
+  );
 
   Future<void> _showInFolder(String path) async {
     if (widget.onShowInFolder != null) {

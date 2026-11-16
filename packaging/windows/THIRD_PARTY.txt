@@ -1,20 +1,37 @@
-Mpvson uses Flutter, media_kit, libmpv, FFmpeg, ANGLE and their dependencies.
-Each dependency retains its upstream copyright and license.
-Flutter/Dart dependency notices are included in data/flutter_assets/NOTICES.Z.
+Mpvson Third-Party Software and Licensing Notices
+===================================================
 
-Flutter source and license: https://github.com/flutter/flutter
-media_kit source and license: https://github.com/media-kit/media-kit
-Windows playback engine shipped in the bundle: the pinned mpv development build
-  recorded in packaging/windows/engine-provenance.json, produced from the
-  mpv-player/mpv GPL build artifacts. Its GPLv2 license text is installed beside
-  the application as LICENSE.libmpv-GPL.txt.
-media_kit's plugin runtime (libmpv-win32-video-build 2023-09-24, mpv 652a1dd907)
-  still provides the remaining Windows helper DLLs and the DLL used by test
-  processes; the Windows build replaces its libmpv-2.dll with the pinned engine.
-mpv source: https://github.com/mpv-player/mpv
-FFmpeg source and licenses: https://ffmpeg.org/legal.html
-ANGLE source and license: https://chromium.googlesource.com/angle/angle/
+Mpvson source code is licensed under the MIT License (see LICENSE in the
+repository). Compiled Windows release packages ship with native GPL components
+and are therefore distributed under the GNU General Public License, version 3 or
+later (GPL-3.0-or-later).
 
-Before public distribution, assemble the complete licenses and corresponding
-source offers required by the exact native builds used. No public release
-or production update feeds have been published by this workspace.
+1. Flutter and Dart packages
+   License notices for Flutter and Dart dependencies are bundled in:
+     data/flutter_assets/NOTICES.Z
+   Source: https://github.com/flutter/flutter
+
+2. media_kit (MIT License)
+   Source: https://github.com/media-kit/media-kit
+
+3. Windows playback engine: libmpv (mpv v0.42.0) and FFmpeg (n7.1-stable)
+   Provenance record: engine-provenance.json
+   Bundled module: libmpv-2.dll (official mpv-player/mpv x86_64 MinGW GPL build)
+   Upstream release: https://github.com/mpv-player/mpv/releases/tag/v0.42.0
+   mpv source: https://github.com/mpv-player/mpv (tag v0.42.0)
+   FFmpeg source: https://ffmpeg.org/ (n7.1-stable, built with --enable-gpl --enable-version3)
+   License: GPL-2.0-or-later for mpv (LICENSE.libmpv-GPL.txt beside the app)
+   and GPL-3.0-or-later for the linked FFmpeg libraries.
+
+   Written Offer for Corresponding Source Code (GPLv3 Section 6):
+   Complete corresponding source code for Mpvson is available at
+   https://github.com/Amadoson3001/mpvson, and upstream mpv/FFmpeg source
+   tarballs matching the pinned v0.42.0 / n7.1-stable builds are available from
+   https://github.com/mpv-player/mpv/releases/tag/v0.42.0 and
+   https://ffmpeg.org/releases/.
+
+4. ANGLE / Vulkan companions (from media_kit_libs_windows_video)
+   ANGLE (d3dcompiler_47.dll, libEGL.dll, libGLESv2.dll) and vulkan-1.dll serve
+   the video renderer's OpenGL ES / Direct3D 11 translation layer.
+   ANGLE source and BSD-3-Clause license: https://chromium.googlesource.com/angle/angle/
+   Vulkan-Loader (Apache-2.0): https://github.com/KhronosGroup/Vulkan-Loader
