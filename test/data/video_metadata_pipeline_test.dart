@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mpvson/data/repositories/database/library_database.dart';
 import 'package:mpvson/data/services/media_probe_service_impl.dart';
 import 'package:mpvson/domain/models/library_models.dart';
+import 'package:mpvson/domain/models/media_entry.dart';
 import 'package:sqlite3/sqlite3.dart' as sqlite;
 
 List<int> _be16(int v) => [(v >> 8) & 0xFF, v & 0xFF];
@@ -370,14 +371,21 @@ void main() {
       );
       PRAGMA user_version = 2;
     ''');
-      legacyDb.execute('''
+      final legacyPath = Platform.isWindows
+          ? r'C:\Videos\legacy.mp4'
+          : '/videos/legacy.mp4';
+      final legacyCanonical = MediaEntry.canonicalSource(legacyPath);
+      legacyDb.execute(
+        '''
       INSERT INTO media (
         id, canonical_source, path, kind, title, duration_ms, file_size, added_at
       ) VALUES (
-        'v1', 'c:\\videos\\legacy.mp4', 'C:\\Videos\\legacy.mp4', 'video',
+        'v1', ?, ?, 'video',
         'Legacy Clip', 15000, 1024, 1700000000000
       );
-    ''');
+    ''',
+        [legacyCanonical, legacyPath],
+      );
       legacyDb.close();
 
       final db = await LibraryDatabase.open(path: dbPath);
@@ -390,7 +398,7 @@ void main() {
           bitrate: 12000000,
         );
         await db.updateMediaMetadata(
-          'C:\\Videos\\legacy.mp4',
+          legacyPath,
           kind: MediaKind.video,
           metadata: const MediaMetadata(
             title: 'Legacy Clip',
@@ -406,9 +414,7 @@ void main() {
           modifiedAt: DateTime.fromMillisecondsSinceEpoch(1700000005000),
         );
 
-        final loaded = await db.getMediaByCanonicalSource(
-          'C:\\Videos\\legacy.mp4',
-        );
+        final loaded = await db.getMediaByCanonicalSource(legacyPath);
         expect(loaded, isNotNull);
         expect(loaded!.metadata.videoInfo, videoInfo);
         expect(loaded.metadata.audioInfo?.codec, 'aac');

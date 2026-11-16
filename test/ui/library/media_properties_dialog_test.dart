@@ -230,7 +230,12 @@ void main() {
 
       await tester.tap(find.text('Open in File Explorer'));
       await tester.pump();
-      expect(revealedPath, p.windows.normalize(file.path));
+      expect(
+        revealedPath,
+        Platform.isWindows
+            ? p.windows.normalize(file.path)
+            : p.normalize(file.path),
+      );
 
       // Default showInFolder path when revealInFolder returns false shows toast.
       await tester.pumpWidget(

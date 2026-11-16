@@ -158,7 +158,7 @@ void main() {
           processRunner: (exe, args) async {
             capturedExe = exe;
             capturedArgs = args;
-            return ProcessResult(0, 1, '', '');
+            return ProcessResult(0, Platform.isWindows ? 1 : 0, '', '');
           },
         );
 
