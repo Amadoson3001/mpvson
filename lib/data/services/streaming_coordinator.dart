@@ -56,7 +56,7 @@ class StreamingCoordinator {
   final DiagnosticSink? diagnostics;
 
   final StreamController<StreamPlaybackState> _stateController =
-      StreamController<StreamPlaybackState>.broadcast();
+      StreamController<StreamPlaybackState>.broadcast(sync: true);
   Stream<StreamPlaybackState> get streamState => _stateController.stream;
 
   StreamPlaybackState _currentState = const StreamPlaybackState();
@@ -75,11 +75,72 @@ class StreamingCoordinator {
   ResolvedStream? get activeResolvedPage => _activeResolvedPage;
   StreamManifestInfo? get activeManifest => _activeManifest;
 
+  /// Returns the current stream format (HLS, DASH, direct, or progressive).
+  StreamFormat get activeFormat {
+    if (_activeManifest != null) {
+      return _activeManifest!.format;
+    }
+    if (_activeResolvedPage != null) {
+      return StreamFormat.direct;
+    }
+    final lower = _currentState.streamUrl.toLowerCase();
+    if (lower.contains('.m3u8')) return StreamFormat.hls;
+    if (lower.contains('.mpd')) return StreamFormat.dash;
+    return StreamFormat.progressive;
+  }
+
   // Auto-quality tracking
   DateTime? _lastQualitySwitchTime;
   int _consecutiveUnderruns = 0;
   DateTime? _firstUnderrunWindowStart;
   DateTime? _healthyBufferStart;
+
+  /// Callback invoked when a transient stream drop needs to be reopened.
+  Future<void> Function(int attemptId, Duration resumePosition)?
+  onReconnectRequired;
+
+  /// Callback invoked when Auto Quality decides to adapt to a new rendition.
+  Future<void> Function(StreamRendition target)? onAutoQualitySwitch;
+
+  /// Last known playback position reported by demuxer / transport.
+  Duration _lastKnownPosition = Duration.zero;
+
+  void updatePosition(Duration position) {
+    if (position > Duration.zero) {
+      _lastKnownPosition = position;
+    }
+  }
+
+  /// Refreshes signed stream tokens via yt-dlp if active page has expiring tokens.
+  Future<ResolvedStream?> refreshExpiringStream() async {
+    final page = _activeResolvedPage;
+    if (page == null) return null;
+    try {
+      final refreshed = await ytDlpResolver.refresh(page);
+      _activeResolvedPage = refreshed;
+      _emit(_currentState.copyWith(streamUrl: refreshed.streamUrl));
+      diagnostics?.record(
+        'stream.refresh.success',
+        sourceId: MediaSource.redact(_currentState.originalUrl),
+      );
+      return refreshed;
+    } on Object catch (e) {
+      diagnostics?.record(
+        'stream.refresh.failed',
+        sourceId: MediaSource.redact(_currentState.originalUrl),
+        error: e.toString(),
+      );
+      return null;
+    }
+  }
+
+  /// Completely stops streaming, cancels attempts, and clears state.
+  void stop() {
+    cancelActiveAttempt(reason: 'playback stopped');
+    _activeResolvedPage = null;
+    _activeManifest = null;
+    _emit(const StreamPlaybackState());
+  }
 
   static const Duration _switchCooldown = Duration(seconds: 15);
   static const int _initialBitrateBudget =
@@ -125,7 +186,7 @@ class StreamingCoordinator {
     final cancelToken = CancellationToken();
     _currentCancelToken = cancelToken;
     _attemptStartTime = DateTime.now();
-    _lastQualitySwitchTime = DateTime.now();
+    _lastQualitySwitchTime = null;
     _consecutiveUnderruns = 0;
     _firstUnderrunWindowStart = null;
     _healthyBufferStart = null;
@@ -420,6 +481,8 @@ class StreamingCoordinator {
 
       case NativeMediaEventKind.chaptersChanged:
         break;
+      case NativeMediaEventKind.demuxerStatsChanged:
+        break;
     }
   }
 
@@ -459,8 +522,17 @@ class StreamingCoordinator {
       _healthyBufferStart = null;
     }
 
+    final isResolutionDelivered =
+        _currentState.stage == StreamStage.switchingQuality &&
+        (width != null && height != null);
+    final nextStage = isResolutionDelivered
+        ? StreamStage.ready
+        : _currentState.stage;
+
     _emit(
       _currentState.copyWith(
+        stage: nextStage,
+        clearStageMessage: isResolutionDelivered,
         bufferedDuration: bufferedDuration,
         inputBitrate: bitrateBps ?? _currentState.inputBitrate,
         decodedWidth: width ?? _currentState.decodedWidth,
@@ -539,6 +611,9 @@ class StreamingCoordinator {
         stageMessage: 'Switching to ${target.label}',
       ),
     );
+    if (onAutoQualitySwitch != null) {
+      onAutoQualitySwitch!(target);
+    }
   }
 
   /// Manually selects a rendition. Locks the selection for the current entry.
@@ -570,9 +645,38 @@ class StreamingCoordinator {
 
   /// Handles playback error with bounded transient retries.
   void _handlePlaybackError(int errorCode) {
-    // If we have not exceeded the cap of 2 reconnects
+    // 1. Check for terminal error codes
+    final isTerminal =
+        errorCode == -4 || // MPV_ERROR_FILE_NOT_FOUND (includes HTTP 404)
+        errorCode == -3 || // MPV_ERROR_UNKNOWN_FORMAT
+        errorCode == -2; // MPV_ERROR_NOT_IMPLEMENTED
+
+    if (isTerminal) {
+      diagnostics?.record(
+        'stream.error.terminal',
+        sourceId: MediaSource.redact(_currentState.originalUrl),
+        error: 'Terminal playback error: $errorCode',
+      );
+      _emit(
+        _currentState.copyWith(
+          stage: StreamStage.failed,
+          clearStageMessage: true,
+          error: errorCode == -4
+              ? 'Stream not found (404). Check the URL.'
+              : 'Stream failed to load (error $errorCode).',
+        ),
+      );
+      return;
+    }
+
+    // 2. Transient error: attempt real reconnection up to 2 times
     if (_currentState.reconnectAttempts < 2) {
       final nextAttempts = _currentState.reconnectAttempts + 1;
+      diagnostics?.record(
+        'stream.reconnect.attempt',
+        sourceId: MediaSource.redact(_currentState.originalUrl),
+        message: 'Reconnecting ($nextAttempts/2) after error $errorCode',
+      );
       _emit(
         _currentState.copyWith(
           stage: StreamStage.reconnecting,
@@ -580,10 +684,28 @@ class StreamingCoordinator {
           reconnectAttempts: nextAttempts,
         ),
       );
+
+      final currentAttempt = _currentState.attemptId;
+      final currentPos = _lastKnownPosition;
+      if (onReconnectRequired != null) {
+        Future<void>.delayed(Duration(milliseconds: 300 * nextAttempts), () {
+          if (currentAttempt == _currentState.attemptId &&
+              _currentState.stage == StreamStage.reconnecting) {
+            onReconnectRequired!(currentAttempt, currentPos);
+          }
+        });
+      }
     } else {
+      diagnostics?.record(
+        'stream.reconnect.exhausted',
+        sourceId: MediaSource.redact(_currentState.originalUrl),
+        message:
+            'Max reconnect attempts (2) reached for attempt ${_currentState.attemptId}',
+      );
       _emit(
         _currentState.copyWith(
           stage: StreamStage.failed,
+          clearStageMessage: true,
           error: 'Streaming connection lost. Tap Retry to reconnect.',
         ),
       );

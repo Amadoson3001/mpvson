@@ -549,28 +549,77 @@ class StreamManifestService {
     );
   }
 
-  /// Resolves [child] relative to [baseUri], preserving advertised child query
-  /// parameters and inheriting missing parent query parameters for same-origin
-  /// requests.
+  /// Resolves [child] relative to [baseUri], preserving raw query tokens,
+  /// respecting repeated keys without map collapse, and preventing query leakage
+  /// across different origins or hosts.
   static Uri resolveChildUri(Uri baseUri, String child) {
     final trimmed = child.trim();
     final targetUri = Uri.tryParse(trimmed) ?? Uri();
     final resolved = baseUri.resolveUri(targetUri);
 
-    if (baseUri.hasQuery && baseUri.queryParameters.isNotEmpty) {
-      final isSameOriginOrRelative =
-          !targetUri.hasScheme ||
-          targetUri.host.isEmpty ||
-          targetUri.host == baseUri.host;
+    if (baseUri.hasQuery && baseUri.query.isNotEmpty) {
+      final hasExplicitHost = targetUri.host.isNotEmpty;
+      final isDifferentHost =
+          hasExplicitHost &&
+          targetUri.host.toLowerCase() != baseUri.host.toLowerCase();
+      final isDifferentScheme =
+          targetUri.hasScheme &&
+          targetUri.scheme.toLowerCase() != baseUri.scheme.toLowerCase();
+      final isDifferentPort =
+          targetUri.hasPort &&
+          targetUri.port != (baseUri.hasPort ? baseUri.port : null);
 
-      if (isSameOriginOrRelative) {
-        final merged = Map<String, String>.from(baseUri.queryParameters);
-        merged.addAll(targetUri.queryParameters);
-        return resolved.replace(queryParameters: merged);
+      if (isDifferentHost || isDifferentScheme || isDifferentPort) {
+        // Never leak parent query parameters to another host or origin.
+        return resolved;
       }
+
+      if (!targetUri.hasQuery || targetUri.query.isEmpty) {
+        // Child has no query: inherit parent's exact raw query string
+        return resolved.replace(query: baseUri.query);
+      }
+
+      // Both have queries: merge without collapsing repeated keys or destroying encoding
+      final childParamPairs = _splitQuery(targetUri.query);
+      final childParamNames = childParamPairs.map((p) => p.$1).toSet();
+      final parentParamPairs = _splitQuery(baseUri.query);
+
+      final resultTokens = <String>[];
+      // First, all child query parameters in their original order
+      for (final pair in childParamPairs) {
+        resultTokens.add(pair.$3);
+      }
+      // Second, all parent query parameters whose names are NOT overridden by child
+      for (final pair in parentParamPairs) {
+        if (!childParamNames.contains(pair.$1)) {
+          resultTokens.add(pair.$3);
+        }
+      }
+
+      final mergedQueryString = resultTokens.join('&');
+      return resolved.replace(query: mergedQueryString);
     }
 
     return resolved;
+  }
+
+  /// Splits a raw query string into (paramName, paramValue, rawToken) triples
+  /// preserving raw tokens without collapsing repeated names.
+  static List<(String, String, String)> _splitQuery(String query) {
+    final result = <(String, String, String)>[];
+    final pairs = query.split('&');
+    for (final pair in pairs) {
+      if (pair.isEmpty) continue;
+      final eq = pair.indexOf('=');
+      if (eq < 0) {
+        result.add((pair, '', pair));
+      } else {
+        final name = pair.substring(0, eq);
+        final value = pair.substring(eq + 1);
+        result.add((name, value, pair));
+      }
+    }
+    return result;
   }
 
   /// Parses HLS attribute lists, honoring quoted values containing commas and

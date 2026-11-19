@@ -251,6 +251,57 @@ sub/720p.m3u8?child_tag=alpha&auth=child_secret
       },
     );
 
+    test(
+      'resolveChildUri preserves repeated keys, encodings and rejects cross-host query leakage',
+      () {
+        final parent = Uri.parse(
+          'https://cdn.example.org/path/master.m3u8?token=A+B%2FC&tag=first&tag=second&sig=XYZ123',
+        );
+
+        // 1. Relative child inherits parent raw query with repeated keys and exact tokens intact
+        final relUri = StreamManifestService.resolveChildUri(
+          parent,
+          'variants/1080p.m3u8',
+        );
+        expect(
+          relUri.toString(),
+          'https://cdn.example.org/path/variants/1080p.m3u8?token=A+B%2FC&tag=first&tag=second&sig=XYZ123',
+        );
+
+        // 2. Child pointing to a different host never inherits parent query
+        final crossHostUri = StreamManifestService.resolveChildUri(
+          parent,
+          'https://external-cdn.other.com/variants/1080p.m3u8',
+        );
+        expect(
+          crossHostUri.toString(),
+          'https://external-cdn.other.com/variants/1080p.m3u8',
+        );
+        expect(crossHostUri.hasQuery, isFalse);
+
+        // 3. Scheme-relative different host never inherits parent query
+        final schemeRelCrossHost = StreamManifestService.resolveChildUri(
+          parent,
+          '//external-cdn.other.com/variants/1080p.m3u8',
+        );
+        expect(
+          schemeRelCrossHost.toString(),
+          'https://external-cdn.other.com/variants/1080p.m3u8',
+        );
+        expect(schemeRelCrossHost.hasQuery, isFalse);
+
+        // 4. Same host child with its own query merges without collapsing parent repeated keys
+        final childWithQuery = StreamManifestService.resolveChildUri(
+          parent,
+          'variants/720p.m3u8?custom=123',
+        );
+        expect(
+          childWithQuery.toString(),
+          'https://cdn.example.org/path/variants/720p.m3u8?custom=123&token=A+B%2FC&tag=first&tag=second&sig=XYZ123',
+        );
+      },
+    );
+
     test('parses HLS media playlists (single rendition VOD vs live)', () {
       const vodPlaylist = '''
 #EXTM3U

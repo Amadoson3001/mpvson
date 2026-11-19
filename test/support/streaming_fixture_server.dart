@@ -154,7 +154,12 @@ class RangeNotSatisfiableException implements Exception {
 
 /// Helper that generates a minimal valid ISO Base Media File Format (MP4) byte array
 /// with fast-start structure (ftyp followed immediately by moov, before mdat).
-Uint8List generateFastStartMp4Bytes({int mdatPayloadSize = 2048}) {
+Uint8List generateFastStartMp4Bytes({
+  int mdatPayloadSize = 2048,
+  int width = 640,
+  int height = 360,
+  int bitrate = 800000,
+}) {
   List<int> box(String type, List<int> payload) {
     final size = 8 + payload.length;
     final header = ByteData(8);
@@ -206,8 +211,8 @@ Uint8List generateFastStartMp4Bytes({int mdatPayloadSize = 2048}) {
   tkhdData.setUint32(36, 0x00010000);
   tkhdData.setUint32(52, 0x00010000);
   tkhdData.setUint32(68, 0x40000000);
-  tkhdData.setUint32(76, 640 << 16); // width 640.0
-  tkhdData.setUint32(80, 360 << 16); // height 360.0
+  tkhdData.setUint32(76, width << 16); // width
+  tkhdData.setUint32(80, height << 16); // height
   final tkhdBox = box('tkhd', tkhdData.buffer.asUint8List());
 
   // mdia: mdhd + hdlr + minf
@@ -242,7 +247,28 @@ Uint8List generateFastStartMp4Bytes({int mdatPayloadSize = 2048}) {
   final drefBox = box('dref', drefPayload);
   final dinfBox = box('dinf', drefBox);
 
-  final stsdBox = box('stsd', [0, 0, 0, 0, 0, 0, 0, 0]);
+  final btrtData = ByteData(16);
+  btrtData.setUint32(8, bitrate);
+  btrtData.setUint32(12, bitrate);
+  final btrtBox = box('btrt', btrtData.buffer.asUint8List());
+
+  final avc1Payload = <int>[
+    ...List<int>.filled(24, 0),
+    (width >> 8) & 0xFF,
+    width & 0xFF,
+    (height >> 8) & 0xFF,
+    height & 0xFF,
+    ...List<int>.filled(50, 0),
+    ...btrtBox,
+  ];
+  final avc1Box = box('avc1', avc1Payload);
+
+  final stsdPayload = <int>[
+    0, 0, 0, 0, // version + flags
+    0, 0, 0, 1, // entry count = 1
+    ...avc1Box,
+  ];
+  final stsdBox = box('stsd', stsdPayload);
   final sttsBox = box('stts', [0, 0, 0, 0, 0, 0, 0, 0]);
   final stscBox = box('stsc', [0, 0, 0, 0, 0, 0, 0, 0]);
   final stszBox = box('stsz', [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
@@ -298,6 +324,10 @@ class StreamingFixtureServer {
   StreamingFixtureServer({
     Uint8List? videoMp4Bytes,
     Uint8List? tsSegmentBytes,
+    Uint8List? video360pBytes,
+    Uint8List? video720pBytes,
+    Uint8List? ts360pSegmentBytes,
+    Uint8List? ts720pSegmentBytes,
     this.throttleBytesPerSecond,
     this.transferDelayPerChunk,
     this.pauseBeforeResponse,
@@ -305,8 +335,25 @@ class StreamingFixtureServer {
     this.expectedSignedToken = 'valid-token',
     this.signedUrlValidator,
     this.stallDuration,
-  }) : videoMp4Bytes = videoMp4Bytes ?? generateFastStartMp4Bytes(),
-       tsSegmentBytes = tsSegmentBytes ?? generateMpegTsBytes();
+  }) : videoMp4Bytes =
+           videoMp4Bytes ?? generateFastStartMp4Bytes(width: 640, height: 360),
+       video360pBytes =
+           video360pBytes ??
+           generateFastStartMp4Bytes(width: 640, height: 360, bitrate: 800000),
+       video720pBytes =
+           video720pBytes ??
+           generateFastStartMp4Bytes(
+             width: 1280,
+             height: 720,
+             bitrate: 2500000,
+           ),
+       tsSegmentBytes = tsSegmentBytes ?? generateMpegTsBytes(),
+       ts360pSegmentBytes =
+           ts360pSegmentBytes ??
+           generateMpegTsBytes(packetCount: 10, pid: 0x100),
+       ts720pSegmentBytes =
+           ts720pSegmentBytes ??
+           generateMpegTsBytes(packetCount: 10, pid: 0x101);
 
   HttpServer? _server;
   final List<RecordedRequest> _ledger = <RecordedRequest>[];
@@ -316,11 +363,23 @@ class StreamingFixtureServer {
   /// Byte payload served for `/video.mp4` and other MP4 routes.
   final Uint8List videoMp4Bytes;
 
+  /// Byte payload served for 360p MP4 representations.
+  final Uint8List video360pBytes;
+
+  /// Byte payload served for 720p MP4 representations.
+  final Uint8List video720pBytes;
+
   /// Alias for [videoMp4Bytes].
   Uint8List get fastStartMp4Bytes => videoMp4Bytes;
 
   /// Byte payload served for MPEG-TS segment routes.
   final Uint8List tsSegmentBytes;
+
+  /// Byte payload served for 360p MPEG-TS segments.
+  final Uint8List ts360pSegmentBytes;
+
+  /// Byte payload served for 720p MPEG-TS segments.
+  final Uint8List ts720pSegmentBytes;
 
   /// Chunk size in bytes used when streaming throttled or delayed responses.
   int chunkSize = 1024;
@@ -477,6 +536,10 @@ class StreamingFixtureServer {
   static Future<StreamingFixtureServer> startServer({
     Uint8List? videoMp4Bytes,
     Uint8List? tsSegmentBytes,
+    Uint8List? video360pBytes,
+    Uint8List? video720pBytes,
+    Uint8List? ts360pSegmentBytes,
+    Uint8List? ts720pSegmentBytes,
     int? throttleBytesPerSecond,
     Duration? transferDelayPerChunk,
     Duration? pauseBeforeResponse,
@@ -488,6 +551,10 @@ class StreamingFixtureServer {
     final server = StreamingFixtureServer(
       videoMp4Bytes: videoMp4Bytes,
       tsSegmentBytes: tsSegmentBytes,
+      video360pBytes: video360pBytes,
+      video720pBytes: video720pBytes,
+      ts360pSegmentBytes: ts360pSegmentBytes,
+      ts720pSegmentBytes: ts720pSegmentBytes,
       throttleBytesPerSecond: throttleBytesPerSecond,
       transferDelayPerChunk: transferDelayPerChunk,
       pauseBeforeResponse: pauseBeforeResponse,
@@ -609,9 +676,12 @@ class StreamingFixtureServer {
 
       // 12. HLS Segment routes: `/hls/seg-*.ts` or any `.ts` segment
       if (path.startsWith('/hls/') && path.endsWith('.ts')) {
+        final bytes = path.contains('720p')
+            ? ts720pSegmentBytes
+            : (path.contains('360p') ? ts360pSegmentBytes : tsSegmentBytes);
         await _serveByteResource(
           request,
-          tsSegmentBytes,
+          bytes,
           contentType: ContentType('video', 'mp2t'),
         );
         return;
@@ -625,9 +695,12 @@ class StreamingFixtureServer {
 
       // 14. DASH Media segments / representations: `/dash/*.mp4`
       if (path.startsWith('/dash/') && path.endsWith('.mp4')) {
+        final bytes = path.contains('720p')
+            ? video720pBytes
+            : (path.contains('360p') ? video360pBytes : videoMp4Bytes);
         await _serveByteResource(
           request,
-          videoMp4Bytes,
+          bytes,
           contentType: ContentType('video', 'mp4'),
         );
         return;

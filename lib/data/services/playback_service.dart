@@ -44,8 +44,19 @@ PlaybackSnapshot applyNativeEvent(
     case NativeMediaEventKind.loaded:
       return state.copyWith(isBuffering: false);
     case NativeMediaEventKind.ended:
+      final isError =
+          event.endReason == NativeEndReason.error || (event.errorCode != 0);
+      final isStop =
+          event.endReason == NativeEndReason.stop ||
+          event.endReason == NativeEndReason.quit;
+      final isEof =
+          event.endReason == NativeEndReason.eof ||
+          (!isError &&
+              !isStop &&
+              event.endReason == null &&
+              state.position > Duration.zero);
       return state.copyWith(
-        completed: true,
+        completed: isEof,
         isPlaying: false,
         isBuffering: false,
       );
@@ -53,6 +64,8 @@ PlaybackSnapshot applyNativeEvent(
       return state.copyWith(seekable: event.seekable);
     case NativeMediaEventKind.chaptersChanged:
       return state.copyWith(chapters: event.chapters);
+    case NativeMediaEventKind.demuxerStatsChanged:
+      return state;
   }
 }
 
@@ -285,6 +298,62 @@ class MediaKitPlaybackService
     _propertyReader = _readNativeProperty;
     _hasRuntimePropertyBridge = _player.platform is NativePlayer;
     _streamingCoordinator = StreamingCoordinator(diagnostics: diagnostics);
+    _streamingCoordinator
+        .onReconnectRequired = (int attemptId, Duration resumePos) async {
+      if (_disposed || attemptId != _streamingCoordinator.currentAttemptId) {
+        return;
+      }
+      final originalUrl = _streamingCoordinator.state.originalUrl;
+      if (originalUrl.isEmpty) {
+        return;
+      }
+
+      String targetUrl = originalUrl;
+      Map<String, String>? headers;
+      String? audioUrl;
+      if (_streamingCoordinator.activeResolvedPage?.isExpiring == true) {
+        final refreshed = await _streamingCoordinator.refreshExpiringStream();
+        if (refreshed != null) {
+          targetUrl = refreshed.streamUrl;
+          headers = refreshed.httpHeaders;
+          audioUrl = refreshed.audioUrl;
+        }
+      }
+
+      final platform = _player.platform;
+      if (platform is NativePlayer) {
+        if (audioUrl != null) {
+          await platform.setProperty('audio-files', audioUrl);
+        }
+        await _streamingCoordinator.applyStreamingSettings(
+          platform,
+          isNetwork: true,
+          isLive: _streamingCoordinator.state.isLive,
+          isLowSpec: _appliedPlaybackSettings.isLowSpecOrRamPreserved,
+          limitDemuxerCache: _limitDemuxerCache,
+        );
+        await _player.open(Media(targetUrl, httpHeaders: headers), play: true);
+        if (resumePos > Duration.zero) {
+          await seek(resumePos);
+        }
+      }
+    };
+    _streamingCoordinator.onAutoQualitySwitch = (StreamRendition target) async {
+      final platform = _player.platform;
+      if (platform is! NativePlayer) return;
+      final format = _streamingCoordinator.activeFormat;
+      if (format == StreamFormat.hls) {
+        if (target.bitrate != null && target.bitrate! > 0) {
+          await platform.setProperty('hls-bitrate', '${target.bitrate}');
+        }
+        final editionIdx = int.tryParse(target.id);
+        if (editionIdx != null) {
+          await platform.setProperty('edition', '$editionIdx');
+        }
+      } else if (format == StreamFormat.dash) {
+        await platform.setProperty('vid', target.id);
+      }
+    };
     _subscriptions.add(
       _streamingCoordinator.streamState.listen((streamState) {
         _emit(_state.copyWith(streamPlaybackState: streamState));
@@ -307,10 +376,11 @@ class MediaKitPlaybackService
         _player.stream.buffering,
         (state, value) => state.copyWith(isBuffering: value),
       ),
-      _listen<bool>(
-        _player.stream.completed,
-        (state, value) => state.copyWith(completed: value),
-      ),
+      _listen<bool>(_player.stream.completed, (state, value) {
+        final isRealCompleted =
+            value && state.sourceLoaded && state.error == null;
+        return state.copyWith(completed: isRealCompleted);
+      }),
       _listen<Duration>(
         _player.stream.position,
         (state, value) => state.copyWith(position: value),
@@ -373,6 +443,9 @@ class MediaKitPlaybackService
   VideoController? _videoController;
   late final StreamingCoordinator _streamingCoordinator;
 
+  int _activeEngineAttemptId = 0;
+  final Map<int, int> _playlistEntryToAttemptId = <int, int>{};
+
   @override
   StreamingCoordinator get streamingCoordinator => _streamingCoordinator;
 
@@ -380,12 +453,43 @@ class MediaKitPlaybackService
   Future<void> selectQuality(StreamRendition rendition) async {
     _streamingCoordinator.selectRendition(rendition);
     final platform = _player.platform;
-    if (platform is NativePlayer && rendition.url != null) {
-      final pos = _state.position;
-      final play = _state.isPlaying;
-      await open(rendition.url!, play: play);
-      if (pos > Duration.zero) {
-        await seek(pos);
+    if (platform is! NativePlayer) return;
+
+    final format = _streamingCoordinator.activeFormat;
+    if (format == StreamFormat.hls) {
+      if (rendition.isAuto) {
+        await platform.setProperty('hls-bitrate', '0');
+        await platform.setProperty('edition', 'auto');
+      } else {
+        if (rendition.bitrate != null && rendition.bitrate! > 0) {
+          await platform.setProperty('hls-bitrate', '${rendition.bitrate}');
+        }
+        final editionIdx = int.tryParse(rendition.id);
+        if (editionIdx != null) {
+          await platform.setProperty('edition', '$editionIdx');
+        }
+      }
+    } else if (format == StreamFormat.dash) {
+      if (rendition.isAuto) {
+        await platform.setProperty('vid', 'auto');
+      } else {
+        await platform.setProperty('vid', rendition.id);
+      }
+    } else {
+      // Direct progressive or yt-dlp formats: switch engine input while keeping logical queue source
+      if (rendition.url != null) {
+        final pos = _state.position;
+        final play = _state.isPlaying;
+        if (rendition.audioUrl != null) {
+          await platform.setProperty('audio-files', rendition.audioUrl!);
+        }
+        await _player.open(
+          Media(rendition.url!, httpHeaders: rendition.httpHeaders),
+          play: play,
+        );
+        if (pos > Duration.zero) {
+          await seek(pos);
+        }
       }
     }
   }
@@ -759,6 +863,9 @@ class MediaKitPlaybackService
     // Registering the request with the identity tracker must stay synchronous:
     // it assigns the boundary later opens use to detect they were superseded.
     final boundary = _identity.beginOpen(path);
+    _streamingCoordinator.cancelActiveAttempt(
+      reason: 'superseded by open boundary $boundary',
+    );
     _diagnostics?.record(
       'playback.open',
       sourceId: MediaSource.redact(path),
@@ -821,6 +928,7 @@ class MediaKitPlaybackService
       String targetUrl = path;
       Map<String, String>? headers;
       bool isLive = false;
+      int attemptId = 0;
       if (MediaSource.isNetworkUrl(path)) {
         final prepared = await _streamingCoordinator.prepareStream(
           path,
@@ -832,6 +940,7 @@ class MediaKitPlaybackService
           return;
         }
         if (prepared != null) {
+          attemptId = prepared.attemptId;
           targetUrl = prepared.playableUrl;
           headers = prepared.httpHeaders;
           isLive = prepared.isLive;
@@ -871,6 +980,7 @@ class MediaKitPlaybackService
         return;
       }
 
+      _activeEngineAttemptId = attemptId;
       _syncVideoDecoding(_videoOutputPolicy.visible);
       await _player.open(
         Media(targetUrl, httpHeaders: headers),
@@ -1054,6 +1164,9 @@ class MediaKitPlaybackService
     _hiddenVideoSuspendTimer = null;
     final boundary = _identity.beginStop();
     _diagnostics?.record('playback.stop', message: 'boundary $boundary');
+    _streamingCoordinator.stop();
+    _activeEngineAttemptId = 0;
+    _playlistEntryToAttemptId.clear();
     _emit(
       _state.copyWith(
         sourceStart: boundary,
@@ -1065,6 +1178,7 @@ class MediaKitPlaybackService
         chapters: const <PlaybackChapter>[],
         clearNativeSource: true,
         sourceLoaded: false,
+        streamPlaybackState: const StreamPlaybackState(),
       ),
     );
     final hasActiveVideo =
@@ -1480,10 +1594,42 @@ class MediaKitPlaybackService
   /// Attributes one engine event to the source the engine reported.
   void _handleNativeEvent(NativeMediaEvent event) {
     if (_disposed) return;
+    final eventAttemptId =
+        (event.playlistEntryId != null
+            ? _playlistEntryToAttemptId[event.playlistEntryId!]
+            : null) ??
+        _activeEngineAttemptId;
+
+    if (event.kind == NativeMediaEventKind.started &&
+        event.playlistEntryId != null) {
+      _playlistEntryToAttemptId[event.playlistEntryId!] =
+          _activeEngineAttemptId;
+    }
+
     _streamingCoordinator.handleNativeLifecycleEvent(
       event,
-      attemptId: _streamingCoordinator.currentAttemptId,
+      attemptId: eventAttemptId,
     );
+
+    if (event.kind == NativeMediaEventKind.demuxerStatsChanged) {
+      if (event.timePos != null) {
+        _streamingCoordinator.updatePosition(event.timePos!);
+      }
+      _streamingCoordinator.updateDemuxerStats(
+        bufferedDuration: event.demuxerCacheDuration ?? Duration.zero,
+        rawInputRate: event.rawInputRate,
+        pausedForCache: event.pausedForCache,
+        width: event.dwidth,
+        height: event.dheight,
+      );
+      return;
+    }
+
+    if (event.kind == NativeMediaEventKind.ended &&
+        event.playlistEntryId != null) {
+      _playlistEntryToAttemptId.remove(event.playlistEntryId!);
+    }
+
     _diagnostics?.record(
       'native.event',
       sourceId: event.source.isEmpty ? null : MediaSource.redact(event.source),
@@ -1514,6 +1660,8 @@ class MediaKitPlaybackService
         _emit(_stamped(applyNativeEvent(_state, event)));
       case NativeMediaEventKind.chaptersChanged:
         _emit(_stamped(applyNativeEvent(_state, event)));
+      case NativeMediaEventKind.demuxerStatsChanged:
+        break;
     }
   }
 
