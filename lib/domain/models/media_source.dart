@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'media_entry.dart';
+
 /// User-supplied media source validation shared by every entry point.
 ///
 /// Command-line arguments, drag and drop, file dialogs, the URL dialog and
@@ -11,6 +13,44 @@ abstract final class MediaSource {
 
   static final RegExp _windowsDrive = RegExp(r'^[a-zA-Z]:[\\/]');
   static final RegExp _textualScheme = RegExp(r'^([a-zA-Z][a-zA-Z0-9+.\-]*):');
+
+  /// Strips the fragment part (`#...`) from a URL or source without re-encoding.
+  static String stripFragment(String source) {
+    final index = source.indexOf('#');
+    return index >= 0 ? source.substring(0, index) : source;
+  }
+
+  /// Whether [source] represents a network HTTP or HTTPS address.
+  static bool isNetworkUrl(String source) {
+    final trimmed = source.trim();
+    if (trimmed.isEmpty) return false;
+    final uri = Uri.tryParse(trimmed);
+    if (uri != null) {
+      final scheme = uri.scheme.toLowerCase();
+      return networkSchemes.contains(scheme);
+    }
+    final textualScheme = _textualScheme
+        .firstMatch(trimmed)
+        ?.group(1)
+        ?.toLowerCase();
+    return textualScheme != null && networkSchemes.contains(textualScheme);
+  }
+
+  /// Returns a deduplication key for [source].
+  ///
+  /// Network URLs keep their exact casing and query parameters apart from
+  /// surrounding whitespace and the fragment that HTTP omits.
+  /// Local paths and file URIs are normalized, with Windows case folding
+  /// applied only to local paths.
+  static String deduplicationKey(String source, {bool? isWindows}) {
+    final trimmed = source.trim();
+    if (isNetworkUrl(trimmed)) {
+      return stripFragment(trimmed);
+    }
+    final normalized = MediaEntry.normalizeSourcePath(trimmed);
+    final windows = isWindows ?? Platform.isWindows;
+    return windows ? normalized.toLowerCase() : normalized;
+  }
 
   /// Splits a raw user string into a usable source or an explicit reason.
   static MediaSourceValidation validate(String raw) {
@@ -63,7 +103,7 @@ abstract final class MediaSource {
           'The stream URL is missing a host name: ${redact(trimmed)}',
         );
       }
-      return MediaSourceValidation.valid(trimmed);
+      return MediaSourceValidation.valid(stripFragment(trimmed));
     }
 
     if (scheme == 'file') {
@@ -94,18 +134,26 @@ abstract final class MediaSource {
   );
   static final RegExp _trailingUrlPunctuation = RegExp(r'[.,;:!?)}\]]+$');
 
-  /// Strips credentials, query strings and fragments from a source or text so it
-  /// can be written to a local diagnostic record.
+  static final RegExp _sensitiveHeaderPattern = RegExp(
+    r'\b(authorization|proxy-authorization|cookie|set-cookie)\s*:\s*(?:bearer\s+)?[^\r\n,;]+',
+    caseSensitive: false,
+  );
+
+  /// Strips credentials, query strings, path segments, and fragments from a source or text so it
+  /// can be written to a local diagnostic record or user error message.
   static String redact(String source) {
     final trimmed = source.trim();
     return redactText(trimmed);
   }
 
-  /// Strips credentials, query strings and fragments from all URLs in [text].
+  /// Strips credentials, query strings, path segments, sensitive headers, and fragments from all URLs in [text].
   static String redactText(String text) {
     if (text.isEmpty) return text;
-    return text.replaceAllMapped(_urlInText, (match) {
+    final sanitizedUrls = text.replaceAllMapped(_urlInText, (match) {
       return _redactUrl(match.group(0)!);
+    });
+    return sanitizedUrls.replaceAllMapped(_sensitiveHeaderPattern, (match) {
+      return '${match.group(1)}: [REDACTED]';
     });
   }
 
@@ -126,13 +174,11 @@ abstract final class MediaSource {
       if (uri.host.isEmpty) {
         return _redactMalformedUrl(raw) + trailing;
       }
-      // Rebuilding instead of `Uri.replace` keeps no empty `?`/`#` markers
-      // behind.
+      // Rebuilding with only scheme, host, and port omits path, query, userinfo, and fragment.
       return Uri(
             scheme: uri.scheme,
             host: uri.host,
             port: uri.hasPort ? uri.port : null,
-            path: uri.path,
           ).toString() +
           trailing;
     } on Object {
@@ -141,8 +187,8 @@ abstract final class MediaSource {
     }
   }
 
-  /// Keeps only the portion of a malformed URL that cannot contain user info,
-  /// a query token, or a fragment. Diagnostics must remain safe even when the
+  /// Keeps only the origin portion of a malformed URL that cannot contain user info,
+  /// a path, query token, or a fragment. Diagnostics must remain safe even when the
   /// URI parser rejects the URL before it can identify its authority.
   static String _redactMalformedUrl(String raw) {
     final scheme = RegExp(
@@ -158,17 +204,11 @@ abstract final class MediaSource {
       if (index >= 0 && index < authorityEnd) authorityEnd = index;
     }
     final authority = remainder.substring(0, authorityEnd);
-    final at = authority.lastIndexOf('@');
-    final safeAuthority = at >= 0 ? authority.substring(at + 1) : authority;
-
-    final rest = remainder.substring(authorityEnd);
-    var pathEnd = rest.length;
-    for (final delimiter in <String>['?', '#']) {
-      final index = rest.indexOf(delimiter);
-      if (index >= 0 && index < pathEnd) pathEnd = index;
-    }
-    final safePath = rest.substring(0, pathEnd);
-    return '${scheme.group(0)}$safeAuthority$safePath';
+    final userDelimiter = authority.indexOf('@');
+    final hostPort = userDelimiter >= 0
+        ? authority.substring(userDelimiter + 1)
+        : authority;
+    return '${scheme.group(0)}$hostPort';
   }
 }
 

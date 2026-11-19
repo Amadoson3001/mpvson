@@ -12,12 +12,15 @@ import '../../domain/models/media_kind.dart';
 import '../../domain/models/media_source.dart';
 import '../../domain/models/playback_chapter.dart';
 import '../../domain/models/playback_settings.dart';
+import '../../domain/models/stream_playback_state.dart';
+import '../../domain/models/stream_rendition.dart';
 import '../../domain/models/video_output_policy.dart';
 import 'diagnostic_log.dart';
 import 'engine_path_resolver.dart';
 import 'native_media_events.dart';
 import 'playback_source_identity.dart';
 import 'snapshot_emitter.dart';
+import 'streaming_coordinator.dart';
 
 /// The playback state a native engine event describes, before identity stamping.
 ///
@@ -75,6 +78,7 @@ class PlaybackSnapshot {
     this.sourceStart = 0,
     this.nativeSource,
     this.sourceLoaded = false,
+    this.streamPlaybackState = const StreamPlaybackState(),
   });
 
   final bool isPlaying;
@@ -113,6 +117,9 @@ class PlaybackSnapshot {
   /// still describe the previous source during a load.
   final bool sourceLoaded;
 
+  /// Observable streaming state for network media sources.
+  final StreamPlaybackState streamPlaybackState;
+
   PlaybackSnapshot copyWith({
     bool? isPlaying,
     bool? isBuffering,
@@ -135,6 +142,7 @@ class PlaybackSnapshot {
     String? nativeSource,
     bool clearNativeSource = false,
     bool? sourceLoaded,
+    StreamPlaybackState? streamPlaybackState,
   }) {
     return PlaybackSnapshot(
       isPlaying: isPlaying ?? this.isPlaying,
@@ -158,6 +166,7 @@ class PlaybackSnapshot {
           ? null
           : nativeSource ?? this.nativeSource,
       sourceLoaded: sourceLoaded ?? this.sourceLoaded,
+      streamPlaybackState: streamPlaybackState ?? this.streamPlaybackState,
     );
   }
 }
@@ -190,6 +199,8 @@ abstract interface class PlaybackService {
   Future<void> prepare();
 
   Future<void> open(String path, {bool play = true});
+  StreamingCoordinator get streamingCoordinator;
+  Future<void> selectQuality(StreamRendition rendition);
   Future<void> stop();
   Future<void> play();
   Future<void> pause();
@@ -273,6 +284,12 @@ class MediaKitPlaybackService
     _propertyWriter = _writeNativeProperty;
     _propertyReader = _readNativeProperty;
     _hasRuntimePropertyBridge = _player.platform is NativePlayer;
+    _streamingCoordinator = StreamingCoordinator(diagnostics: diagnostics);
+    _subscriptions.add(
+      _streamingCoordinator.streamState.listen((streamState) {
+        _emit(_state.copyWith(streamPlaybackState: streamState));
+      }),
+    );
     _state = _snapshotFrom(
       _player.state,
     ).copyWith(sourceStart: 0, clearNativeSource: true);
@@ -354,6 +371,24 @@ class MediaKitPlaybackService
   final bool _ownsNativeEvents;
   DiagnosticSink? _diagnostics;
   VideoController? _videoController;
+  late final StreamingCoordinator _streamingCoordinator;
+
+  @override
+  StreamingCoordinator get streamingCoordinator => _streamingCoordinator;
+
+  @override
+  Future<void> selectQuality(StreamRendition rendition) async {
+    _streamingCoordinator.selectRendition(rendition);
+    final platform = _player.platform;
+    if (platform is NativePlayer && rendition.url != null) {
+      final pos = _state.position;
+      final play = _state.isPlaying;
+      await open(rendition.url!, play: play);
+      if (pos > Duration.zero) {
+        await seek(pos);
+      }
+    }
+  }
 
   /// Runtime mpv property bridge.
   ///
@@ -782,22 +817,65 @@ class MediaKitPlaybackService
         videoController;
       }
       _scheduleResize(force: true);
-      await _applyBufferingPolicy(
-        isNetwork: MediaEntry.isBufferedNetworkSource(path),
-      );
-      if (done.isCompleted || _disposed) return;
-      // The policy writes above can be slow; re-check staleness immediately
-      // before the engine open so a rapid next/previous never races this load.
-      if (_identity.boundaryCounter != boundary) {
-        _diagnostics?.record(
-          'playback.open',
-          sourceId: MediaSource.redact(path),
-          message: 'boundary $boundary superseded before the engine open',
+
+      String targetUrl = path;
+      Map<String, String>? headers;
+      bool isLive = false;
+      if (MediaSource.isNetworkUrl(path)) {
+        final prepared = await _streamingCoordinator.prepareStream(
+          path,
+          play: play,
         );
+        if (_identity.boundaryCounter != boundary ||
+            done.isCompleted ||
+            _disposed) {
+          return;
+        }
+        if (prepared != null) {
+          targetUrl = prepared.playableUrl;
+          headers = prepared.httpHeaders;
+          isLive = prepared.isLive;
+          if (prepared.audioUrl != null && _player.platform is NativePlayer) {
+            await (_player.platform as NativePlayer).setProperty(
+              'audio-files',
+              prepared.audioUrl!,
+              waitForInitialization: false,
+            );
+          }
+        }
+      } else {
+        _streamingCoordinator.cancelActiveAttempt(reason: 'local open');
+        if (_player.platform is NativePlayer) {
+          await (_player.platform as NativePlayer).setProperty(
+            'audio-files',
+            '',
+            waitForInitialization: false,
+          );
+        }
+      }
+
+      if (_player.platform is NativePlayer) {
+        await _streamingCoordinator.applyStreamingSettings(
+          _player.platform as NativePlayer,
+          isNetwork:
+              MediaSource.isNetworkUrl(path) ||
+              MediaEntry.isBufferedNetworkSource(path),
+          isLive: isLive,
+          isLowSpec: _appliedPlaybackSettings.isLowSpecOrRamPreserved,
+          limitDemuxerCache: _limitDemuxerCache,
+        );
+      }
+      if (done.isCompleted ||
+          _disposed ||
+          _identity.boundaryCounter != boundary) {
         return;
       }
+
       _syncVideoDecoding(_videoOutputPolicy.visible);
-      await _player.open(Media(path), play: play || _traceAutoplay);
+      await _player.open(
+        Media(targetUrl, httpHeaders: headers),
+        play: play || _traceAutoplay,
+      );
       _reconcileVideoSuspensionAfterLoad();
       _ensureTraceTimer();
       if (!_identity.observationActive && !_disposed) {
@@ -1395,12 +1473,17 @@ class MediaKitPlaybackService
     } on Object {
       // Native player disposal must still run if the Dart stream has an issue.
     }
+    _streamingCoordinator.dispose();
     await _player.dispose();
   }
 
   /// Attributes one engine event to the source the engine reported.
   void _handleNativeEvent(NativeMediaEvent event) {
     if (_disposed) return;
+    _streamingCoordinator.handleNativeLifecycleEvent(
+      event,
+      attemptId: _streamingCoordinator.currentAttemptId,
+    );
     _diagnostics?.record(
       'native.event',
       sourceId: event.source.isEmpty ? null : MediaSource.redact(event.source),

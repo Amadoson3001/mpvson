@@ -45,36 +45,31 @@ class InitializerIsolate {
     final receiver = ReceivePort();
     late SendPort port;
     late Pointer<generated.mpv_handle> handle;
-    final isolate = await Isolate.spawn(
-      _mainloop,
-      receiver.sendPort,
-    );
-    receiver.listen(
-      (message) async {
-        if (!completer.isCompleted && message is SendPort) {
-          port = message;
-          port.send(options);
-          port.send(libmpv);
-        } else if (!completer.isCompleted && message is int) {
-          handle = Pointer.fromAddress(message);
-          // Intialiation complete.
-          completer.complete();
+    final isolate = await Isolate.spawn(_mainloop, receiver.sendPort);
+    receiver.listen((message) async {
+      if (!completer.isCompleted && message is SendPort) {
+        port = message;
+        port.send(options);
+        port.send(libmpv);
+      } else if (!completer.isCompleted && message is int) {
+        handle = Pointer.fromAddress(message);
+        // Intialiation complete.
+        completer.complete();
+      }
+      // Forward events to the supplied callback.
+      else if (message != null) {
+        Pointer<generated.mpv_event> event = Pointer.fromAddress(message);
+        try {
+          await callback(event);
+        } catch (exception, stacktrace) {
+          print(exception.toString());
+          print(stacktrace.toString());
         }
-        // Forward events to the supplied callback.
-        else if (message != null) {
-          Pointer<generated.mpv_event> event = Pointer.fromAddress(message);
-          try {
-            await callback(event);
-          } catch (exception, stacktrace) {
-            print(exception.toString());
-            print(stacktrace.toString());
-          }
-          port.send(true);
-        } else {
-          receiver.close();
-        }
-      },
-    );
+        port.send(true);
+      } else {
+        receiver.close();
+      }
+    });
     // Awaiting the retrieval of [Pointer<mpv_handle>].
     await completer.future;
 
@@ -116,23 +111,21 @@ class InitializerIsolate {
 
     Pointer<generated.mpv_handle>? handle;
 
-    receiver.listen(
-      (message) {
-        if (message is Map<String, String>) {
-          options = message;
-        } else if (message is String) {
-          mpv = generated.MPV(DynamicLibrary.open(message));
+    receiver.listen((message) {
+      if (message is Map<String, String>) {
+        options = message;
+      } else if (message is String) {
+        mpv = generated.MPV(DynamicLibrary.open(message));
+        completer.complete();
+      } else if (message is bool) {
+        completer.complete();
+      } else if (message == null) {
+        if (handle != null) {
+          disposed = true;
           completer.complete();
-        } else if (message is bool) {
-          completer.complete();
-        } else if (message == null) {
-          if (handle != null) {
-            disposed = true;
-            completer.complete();
-          }
         }
-      },
-    );
+      }
+    });
 
     await completer.future;
 

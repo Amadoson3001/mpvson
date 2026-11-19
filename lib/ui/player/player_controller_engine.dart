@@ -156,6 +156,7 @@ extension PlayerControllerEngine on PlayerController {
   bool get isClosing => _closingState != ControllerClosingState.running;
 
   TransportState get transport => transportListenable.value;
+  TransportState get transportState => transportListenable.value;
 
   /// Thumbnail extraction and caching service, if configured.
   ThumbnailService? get thumbnails => _thumbnails;
@@ -846,6 +847,13 @@ extension PlayerControllerEngine on PlayerController {
   void _setError(String message) {
     if (!_acceptsCommands) return;
     _error = message;
+    _publishTransport();
+    _notifyIfOpen();
+  }
+
+  void _clearError() {
+    if (!_acceptsCommands || _error == null) return;
+    _error = null;
     _publishTransport();
     _notifyIfOpen();
   }

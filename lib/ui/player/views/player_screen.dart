@@ -520,7 +520,10 @@ class _PlayerScreenState extends State<PlayerScreen>
                       ),
                     ),
                     if (widget.controller.error case final error?)
-                      PlayerErrorBanner(message: error),
+                      PlayerErrorBanner(
+                        message: error,
+                        onRetry: () => widget.controller.retryCurrentStream(),
+                      ),
                   ],
                 ),
               ),

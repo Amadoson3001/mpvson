@@ -92,9 +92,7 @@ extension on XHRSetupCallback {
 @anonymous
 @staticInterop
 class HlsOptions {
-  external factory HlsOptions({
-    XHRSetupCallback? xhrSetup,
-  });
+  external factory HlsOptions({XHRSetupCallback? xhrSetup});
 }
 
 @JS()

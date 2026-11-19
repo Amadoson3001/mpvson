@@ -25,34 +25,57 @@ enum NativeMediaEventKind {
 
 /// A native engine notification about the source it has attached.
 class NativeMediaEvent {
-  const NativeMediaEvent.started(this.source)
+  const NativeMediaEvent.started(this.source, {this.playlistEntryId})
     : kind = NativeMediaEventKind.started,
       seekable = true,
-      chapters = const <PlaybackChapter>[];
+      chapters = const <PlaybackChapter>[],
+      endReason = null,
+      errorCode = 0;
   const NativeMediaEvent.loaded()
     : kind = NativeMediaEventKind.loaded,
       source = '',
+      playlistEntryId = null,
       seekable = true,
-      chapters = const <PlaybackChapter>[];
-  const NativeMediaEvent.ended()
-    : kind = NativeMediaEventKind.ended,
-      source = '',
-      seekable = true,
-      chapters = const <PlaybackChapter>[];
+      chapters = const <PlaybackChapter>[],
+      endReason = null,
+      errorCode = 0;
+  const NativeMediaEvent.ended({
+    this.endReason,
+    this.errorCode = 0,
+    this.playlistEntryId,
+  }) : kind = NativeMediaEventKind.ended,
+       source = '',
+       seekable = true,
+       chapters = const <PlaybackChapter>[];
   const NativeMediaEvent.seekable(this.seekable)
     : kind = NativeMediaEventKind.seekableChanged,
       source = '',
-      chapters = const <PlaybackChapter>[];
+      playlistEntryId = null,
+      chapters = const <PlaybackChapter>[],
+      endReason = null,
+      errorCode = 0;
   const NativeMediaEvent.chapters(this.chapters)
     : kind = NativeMediaEventKind.chaptersChanged,
       source = '',
-      seekable = true;
+      playlistEntryId = null,
+      seekable = true,
+      endReason = null,
+      errorCode = 0;
 
   final NativeMediaEventKind kind;
 
   /// Raw source string reported by the engine for [NativeMediaEventKind.started]
   /// (may include a Windows long-path prefix or a URL), empty otherwise.
   final String source;
+
+  /// Optional playlist entry ID reported by mpv for START_FILE or END_FILE.
+  final int? playlistEntryId;
+
+  /// End reason (EOF, stop, error, redirect) for [NativeMediaEventKind.ended].
+  final NativeEndReason? endReason;
+
+  /// Engine error code (0 for success).
+  final int errorCode;
 
   /// Whether the attached source supports arbitrary seeking.
   final bool seekable;
@@ -200,6 +223,8 @@ class MediaKitNativeMediaEvents implements NativeMediaEvents {
   final StreamController<NativeMediaEvent> _events =
       StreamController<NativeMediaEvent>.broadcast(sync: true);
   final List<String> _observedProperties = [];
+  StreamSubscription<NativeLifecycleEvent>? _lifecycleSubscription;
+  String? _lastObservedSource;
   bool _started = false;
   bool _disposed = false;
 
@@ -213,12 +238,41 @@ class MediaKitNativeMediaEvents implements NativeMediaEvents {
     final platform = _player.platform;
     if (platform is! NativePlayer) return false;
     try {
+      _lifecycleSubscription = platform.nativeLifecycle.listen((event) {
+        if (_disposed) return;
+        switch (event.kind) {
+          case NativeLifecycleKind.startFile:
+            _events.add(
+              NativeMediaEvent.started(
+                _lastObservedSource ?? '',
+                playlistEntryId: event.playlistEntryId,
+              ),
+            );
+            break;
+          case NativeLifecycleKind.fileLoaded:
+            _events.add(const NativeMediaEvent.loaded());
+            break;
+          case NativeLifecycleKind.endFile:
+            _events.add(
+              NativeMediaEvent.ended(
+                endReason: event.reason,
+                errorCode: event.error,
+                playlistEntryId: event.playlistEntryId,
+              ),
+            );
+            break;
+        }
+      });
+
       for (final property in NativePropertyNames.all) {
         if (_disposed) {
           await _unobserveAll(platform);
           return false;
         }
         await platform.observeProperty(property, (value) async {
+          if (property == NativePropertyNames.path) {
+            _lastObservedSource = value.trim();
+          }
           _handle(property, value);
         });
         _observedProperties.add(property);
@@ -234,6 +288,8 @@ class MediaKitNativeMediaEvents implements NativeMediaEvents {
   }
 
   Future<void> _unobserveAll(NativePlayer platform) async {
+    await _lifecycleSubscription?.cancel();
+    _lifecycleSubscription = null;
     final toRemove = List<String>.of(_observedProperties);
     _observedProperties.clear();
     for (final prop in toRemove) {
@@ -254,6 +310,8 @@ class MediaKitNativeMediaEvents implements NativeMediaEvents {
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
+    await _lifecycleSubscription?.cancel();
+    _lifecycleSubscription = null;
     final platform = _player.platform;
     if (platform is NativePlayer) {
       await _unobserveAll(platform);

@@ -2,6 +2,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
 import '../../domain/models/gpu_adapter.dart';
+import '../../domain/models/stream_playback_state.dart';
 import 'gpu_info_service.dart';
 
 typedef PlaybackPropertyReader = Future<String> Function(String name);
@@ -27,6 +28,7 @@ class PlaybackStatistics {
     'avsync': 'Audio/video difference',
     'demuxer-cache-duration': 'Buffered media',
     'paused-for-cache': 'Cache underrun',
+    'raw-input-rate': 'Network throughput',
   };
 
   static const gpuProperties = <String>[
@@ -41,6 +43,7 @@ class PlaybackStatistics {
     Duration timeout = const Duration(seconds: 2),
     PlaybackGpuRowReader? readGpuRows,
     PlaybackNativeStatsReader? readNativeStats,
+    StreamPlaybackState? streamState,
   }) async {
     final values = await Future.wait(
       properties.entries.map((entry) async {
@@ -90,6 +93,32 @@ class PlaybackStatistics {
         // Native renderer stats are optional.
       }
     }
+    if (streamState != null && streamState.isStreaming) {
+      merged['Stream stage'] = streamState.stage.name;
+      if (streamState.stageMessage != null) {
+        merged['Stream status'] = streamState.stageMessage!;
+      }
+      if (streamState.attemptId > 0) {
+        merged['Attempt ID'] = '${streamState.attemptId}';
+      }
+      final selected = streamState.selectedRendition;
+      final active = streamState.activeRendition;
+      merged['Selected rendition'] = selected?.label ?? 'Auto';
+      if (active != null) {
+        merged['Active resolution'] = active.resolution;
+        if (active.bitrate != null) {
+          merged['Stream bitrate'] =
+              '${(active.bitrate! / 1000000).toStringAsFixed(2)} Mbps';
+        }
+      }
+      if (streamState.bufferedDuration > Duration.zero) {
+        merged['Stream buffer duration'] =
+            '${streamState.bufferedDuration.inSeconds} s';
+      }
+      if (streamState.reconnectAttempts > 0) {
+        merged['Reconnections'] = '${streamState.reconnectAttempts}';
+      }
+    }
     return PlaybackStatistics(Map.unmodifiable(merged));
   }
 
@@ -129,6 +158,15 @@ class PlaybackStatistics {
     if (property == 'paused-for-cache') {
       return raw == 'yes' ? 'Yes' : 'No';
     }
+    if (property == 'raw-input-rate') {
+      final number = double.tryParse(raw);
+      if (number == null || !number.isFinite) return 'Unavailable';
+      final bitsPerSec = number * 8;
+      if (bitsPerSec >= 1000000) {
+        return '${(bitsPerSec / 1000000).toStringAsFixed(2)} Mbps';
+      }
+      return '${(bitsPerSec / 1000).toStringAsFixed(0)} kbps';
+    }
     if (property == 'avsync' ||
         property == 'demuxer-cache-duration' ||
         property == 'container-fps' ||
@@ -151,6 +189,7 @@ Future<PlaybackStatistics> readNativePlaybackStatistics(
   Player player, {
   GpuInfoService? gpuInfo,
   VideoController? videoController,
+  StreamPlaybackState? streamPlaybackState,
 }) async {
   final native = player.platform;
   if (native is! NativePlayer) {
@@ -167,6 +206,7 @@ Future<PlaybackStatistics> readNativePlaybackStatistics(
             final platform = await videoController.platform.future;
             return platform.getNativeStats();
           },
+    streamState: streamPlaybackState,
   );
 }
 

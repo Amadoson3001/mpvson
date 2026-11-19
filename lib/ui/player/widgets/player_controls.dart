@@ -13,6 +13,7 @@ import '../player_controller.dart';
 import 'player_control_style.dart';
 import 'controls/playback_rate_menu.dart';
 import 'controls/seek_bar_section.dart';
+import 'controls/stream_quality_menu.dart';
 import 'controls/transport_buttons.dart';
 import 'controls/volume_section.dart';
 
@@ -275,6 +276,15 @@ class _PlayerControlsState extends State<PlayerControls> {
                       ),
                     if (prefs.showSpeedButton)
                       PlaybackRateMenu(
+                        controller: controller,
+                        onMenuVisibilityChanged: widget.onMenuVisibilityChanged,
+                      ),
+                    if (controller.transportState.isStreaming &&
+                        controller
+                            .transportState
+                            .availableRenditions
+                            .isNotEmpty)
+                      StreamQualityMenu(
                         controller: controller,
                         onMenuVisibilityChanged: widget.onMenuVisibilityChanged,
                       ),

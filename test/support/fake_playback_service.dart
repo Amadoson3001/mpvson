@@ -4,7 +4,9 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
 import 'package:mpvson/data/services/playback_service.dart';
+import 'package:mpvson/data/services/streaming_coordinator.dart';
 import 'package:mpvson/domain/models/media_entry.dart';
+import 'package:mpvson/domain/models/stream_rendition.dart';
 import 'package:mpvson/domain/models/video_output_policy.dart';
 
 /// In-memory [PlaybackService] so player UI tests can drive the controller
@@ -23,6 +25,18 @@ class FakePlaybackService implements PlaybackService {
   /// Reported for the next [open] call. Defaults to the opened path's
   /// canonical form, which is what the controller compares identity against.
   String? nativeSourceOverride;
+
+  final StreamingCoordinator _streamingCoordinator = StreamingCoordinator();
+
+  @override
+  StreamingCoordinator get streamingCoordinator => _streamingCoordinator;
+
+  @override
+  Future<void> selectQuality(StreamRendition rendition) async {
+    _streamingCoordinator.selectRendition(rendition);
+    _state = _state.copyWith(streamPlaybackState: _streamingCoordinator.state);
+    _states.add(_state);
+  }
 
   @override
   Player get player => throw UnimplementedError('Native Player not used');

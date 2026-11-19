@@ -9,8 +9,10 @@ import 'package:mpvson/app.dart';
 import 'package:mpvson/data/repositories/app_preferences_repository.dart';
 import 'package:mpvson/data/repositories/media_library_repository.dart';
 import 'package:mpvson/data/services/playback_service.dart';
+import 'package:mpvson/data/services/streaming_coordinator.dart';
 import 'package:mpvson/domain/models/library_models.dart';
 import 'package:mpvson/domain/models/media_entry.dart';
+import 'package:mpvson/domain/models/stream_rendition.dart';
 import 'package:mpvson/domain/models/video_output_policy.dart';
 import 'package:mpvson/ui/core/app_theme.dart';
 import 'package:mpvson/ui/core/components/media_accent_scope.dart';
@@ -24,6 +26,12 @@ class FakePlaybackService implements PlaybackService {
   final StreamController<PlaybackSnapshot> _states =
       StreamController<PlaybackSnapshot>.broadcast();
   final List<String> openedPaths = <String>[];
+
+  @override
+  late final StreamingCoordinator streamingCoordinator = StreamingCoordinator();
+
+  @override
+  Future<void> selectQuality(StreamRendition rendition) async {}
 
   @override
   Player get player => throw UnimplementedError('Native Player not used');
