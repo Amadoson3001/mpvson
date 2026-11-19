@@ -347,6 +347,7 @@ class PlayerMediaCoordinator {
           readStatistics: () => readNativePlaybackStatistics(
             controller.player,
             gpuInfo: gpuInfo,
+            streamPlaybackState: controller.transportState.streamPlaybackState,
             videoController: controller.hasMedia && controller.isVideo
                 ? controller.videoController
                 : null,

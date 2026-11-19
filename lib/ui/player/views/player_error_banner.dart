@@ -3,9 +3,10 @@ import 'package:flutter/material.dart';
 import '../../core/app_theme.dart';
 
 class PlayerErrorBanner extends StatelessWidget {
-  const PlayerErrorBanner({super.key, required this.message});
+  const PlayerErrorBanner({super.key, required this.message, this.onRetry});
 
   final String message;
+  final VoidCallback? onRetry;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -33,6 +34,18 @@ class PlayerErrorBanner extends StatelessWidget {
             ),
           ),
         ),
+        if (onRetry != null) ...[
+          const SizedBox(width: AppSpace.sm),
+          TextButton(
+            onPressed: onRetry,
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: AppSpace.sm),
+              minimumSize: const Size(48, 28),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: const Text('Retry'),
+          ),
+        ],
       ],
     ),
   );

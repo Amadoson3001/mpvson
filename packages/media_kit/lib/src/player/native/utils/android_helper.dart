@@ -28,14 +28,10 @@ abstract class AndroidHelper {
         // * libmediakitandroidhelper.so.
         DynamicLibrary? libmpv, libavcodec, libmediakitandroidhelper;
         try {
-          libmpv = DynamicLibrary.open(
-            'libmpv.so',
-          );
+          libmpv = DynamicLibrary.open('libmpv.so');
         } catch (_) {}
         try {
-          libavcodec = DynamicLibrary.open(
-            'libavcodec.so',
-          );
+          libavcodec = DynamicLibrary.open('libavcodec.so');
         } catch (_) {}
         try {
           libmediakitandroidhelper = DynamicLibrary.open(
@@ -44,48 +40,45 @@ abstract class AndroidHelper {
         } catch (_) {}
         // Look for the required symbols.
         try {
-          _mpv_lavc_set_java_vm = libmpv?.lookupFunction<
-              mpv_lavc_set_java_vmCXX, mpv_lavc_set_java_vmDart>(
-            'mpv_lavc_set_java_vm',
-          );
+          _mpv_lavc_set_java_vm = libmpv
+              ?.lookupFunction<
+                mpv_lavc_set_java_vmCXX,
+                mpv_lavc_set_java_vmDart
+              >('mpv_lavc_set_java_vm');
         } catch (_) {}
         try {
           _av_jni_set_java_vm = libavcodec
               ?.lookupFunction<av_jni_set_java_vmCXX, av_jni_set_java_vmDart>(
-            'av_jni_set_java_vm',
-          );
+                'av_jni_set_java_vm',
+              );
         } catch (_) {}
         try {
-          _MediaKitAndroidHelperGetJavaVM =
-              libmediakitandroidhelper?.lookupFunction<
-                  MediaKitAndroidHelperGetJavaVMCXX,
-                  MediaKitAndroidHelperGetJavaVMDart>(
-            'MediaKitAndroidHelperGetJavaVM',
-          );
+          _MediaKitAndroidHelperGetJavaVM = libmediakitandroidhelper
+              ?.lookupFunction<
+                MediaKitAndroidHelperGetJavaVMCXX,
+                MediaKitAndroidHelperGetJavaVMDart
+              >('MediaKitAndroidHelperGetJavaVM');
         } catch (_) {}
         try {
-          MediaKitAndroidHelperGetFilesDir =
-              libmediakitandroidhelper?.lookupFunction<
-                  MediaKitAndroidHelperGetFilesDirCXX,
-                  MediaKitAndroidHelperGetFilesDirDart>(
-            'MediaKitAndroidHelperGetFilesDir',
-          );
+          MediaKitAndroidHelperGetFilesDir = libmediakitandroidhelper
+              ?.lookupFunction<
+                MediaKitAndroidHelperGetFilesDirCXX,
+                MediaKitAndroidHelperGetFilesDirDart
+              >('MediaKitAndroidHelperGetFilesDir');
         } catch (_) {}
         try {
-          _MediaKitAndroidHelperIsEmulator =
-              libmediakitandroidhelper?.lookupFunction<
-                  MediaKitAndroidHelperIsEmulatorCXX,
-                  MediaKitAndroidHelperIsEmulatorDart>(
-            'MediaKitAndroidHelperIsEmulator',
-          );
+          _MediaKitAndroidHelperIsEmulator = libmediakitandroidhelper
+              ?.lookupFunction<
+                MediaKitAndroidHelperIsEmulatorCXX,
+                MediaKitAndroidHelperIsEmulatorDart
+              >('MediaKitAndroidHelperIsEmulator');
         } catch (_) {}
         try {
-          _MediaKitAndroidHelperGetAPILevel =
-              libmediakitandroidhelper?.lookupFunction<
-                  MediaKitAndroidHelperGetAPILevelCXX,
-                  MediaKitAndroidHelperGetAPILevelDart>(
-            'MediaKitAndroidHelperGetAPILevel',
-          );
+          _MediaKitAndroidHelperGetAPILevel = libmediakitandroidhelper
+              ?.lookupFunction<
+                MediaKitAndroidHelperGetAPILevelCXX,
+                MediaKitAndroidHelperGetAPILevelDart
+              >('MediaKitAndroidHelperGetAPILevel');
         } catch (_) {}
 
         if ((_mpv_lavc_set_java_vm ?? _av_jni_set_java_vm) == null) {
@@ -162,7 +155,7 @@ abstract class AndroidHelper {
   static MediaKitAndroidHelperGetFilesDirDart? MediaKitAndroidHelperGetFilesDir;
   static MediaKitAndroidHelperIsEmulatorDart? _MediaKitAndroidHelperIsEmulator;
   static MediaKitAndroidHelperGetAPILevelDart?
-      _MediaKitAndroidHelperGetAPILevel;
+  _MediaKitAndroidHelperGetAPILevel;
 }
 
 typedef av_jni_set_java_vmCXX = Int32 Function(Pointer<Void> vm);

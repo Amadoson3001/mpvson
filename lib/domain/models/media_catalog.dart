@@ -98,7 +98,22 @@ class MediaCatalog {
 
   /// Initial hint of media kind based on file extension.
   static MediaKind kindFromExtension(String filePath) {
-    final ext = p.extension(filePath).toLowerCase().replaceFirst('.', '');
+    var candidate = filePath;
+    if (filePath.startsWith('http://') ||
+        filePath.startsWith('https://') ||
+        filePath.startsWith('HTTP://') ||
+        filePath.startsWith('HTTPS://')) {
+      final uri = Uri.tryParse(filePath);
+      if (uri != null && uri.path.isNotEmpty) {
+        candidate = uri.path;
+      } else {
+        final queryIndex = candidate.indexOf('?');
+        if (queryIndex >= 0) candidate = candidate.substring(0, queryIndex);
+        final hashIndex = candidate.indexOf('#');
+        if (hashIndex >= 0) candidate = candidate.substring(0, hashIndex);
+      }
+    }
+    final ext = p.extension(candidate).toLowerCase().replaceFirst('.', '');
     if (audioExtensions.contains(ext)) return MediaKind.audio;
     if (videoExtensions.contains(ext)) return MediaKind.video;
     return MediaKind.unknown;

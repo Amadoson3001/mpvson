@@ -24,6 +24,7 @@ import '../../domain/models/playback_chapter.dart';
 import '../../domain/models/playback_session.dart';
 import '../../domain/models/playback_settings.dart';
 import '../../domain/models/session_progress.dart';
+import '../../domain/models/stream_rendition.dart';
 import '../../domain/models/video_output_policy.dart';
 import '../../utils/memory_trimmer.dart';
 

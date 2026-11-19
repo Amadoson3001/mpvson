@@ -4,6 +4,8 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 
 import '../../domain/models/media_entry.dart';
+import '../../domain/models/stream_playback_state.dart';
+import '../../domain/models/stream_rendition.dart';
 
 /// Shutdown phase of the controller.
 ///
@@ -336,6 +338,7 @@ class TransportState {
     this.hasMedia = false,
     this.completed = false,
     this.error,
+    this.streamPlaybackState = const StreamPlaybackState(),
   });
 
   static const TransportState idle = TransportState();
@@ -346,6 +349,17 @@ class TransportState {
   final bool hasMedia;
   final bool completed;
   final String? error;
+  final StreamPlaybackState streamPlaybackState;
+
+  bool get isStreaming => streamPlaybackState.isStreaming;
+  String? get streamStageMessage => streamPlaybackState.stageMessage;
+  StreamStage get streamStage => streamPlaybackState.stage;
+  List<StreamRendition> get availableRenditions =>
+      streamPlaybackState.availableRenditions;
+  StreamRendition? get selectedRendition =>
+      streamPlaybackState.selectedRendition;
+  StreamRendition? get activeRendition => streamPlaybackState.activeRendition;
+  int? get inputBitrate => streamPlaybackState.inputBitrate;
 
   @override
   bool operator ==(Object other) =>
@@ -355,7 +369,8 @@ class TransportState {
       other.isLoading == isLoading &&
       other.hasMedia == hasMedia &&
       other.completed == completed &&
-      other.error == error;
+      other.error == error &&
+      other.streamPlaybackState == streamPlaybackState;
 
   @override
   int get hashCode => Object.hash(
@@ -365,6 +380,7 @@ class TransportState {
     hasMedia,
     completed,
     error,
+    streamPlaybackState,
   );
 }
 

@@ -34,6 +34,20 @@ extension PlayerControllerTransport on PlayerController {
 
   Future<void> playIndex(int index) => _openIndex(index);
 
+  /// Selects a stream rendition (or Auto) for the active network stream.
+  Future<void> selectStreamQuality(StreamRendition rendition) async {
+    await _playback.selectQuality(rendition);
+  }
+
+  /// Retries opening the current queue entry after a transient or stream interruption.
+  Future<void> retryCurrentStream() async {
+    final entry = current;
+    if (entry != null) {
+      _clearError();
+      await _openIndex(_currentIndex, play: true);
+    }
+  }
+
   /// Loads the restored current entry without starting playback so the player
   /// can present its paused frame instead of a resume placeholder.
   Future<void> prepareCurrentPaused() async {
@@ -45,7 +59,9 @@ extension PlayerControllerTransport on PlayerController {
       return;
     }
     final entry = current;
-    if (entry == null || !MediaCatalog.kindFromExtension(entry.path).isVideo) {
+    if (entry == null ||
+        MediaEntry.isNetworkUrl(entry.path) ||
+        !MediaCatalog.kindFromExtension(entry.path).isVideo) {
       return;
     }
     await _openIndex(_currentIndex, play: false);
@@ -779,6 +795,7 @@ extension PlayerControllerTransport on PlayerController {
       hasMedia: _engineHasMedia,
       completed: _playbackState.completed,
       error: _error,
+      streamPlaybackState: _playbackState.streamPlaybackState,
     );
     _updateProgressTimer();
   }

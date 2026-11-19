@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../domain/models/media_source.dart';
 import '../../core/app_motion.dart';
 import '../../core/app_theme.dart';
 import '../../core/components/app_dialog.dart';
@@ -23,15 +24,15 @@ class _OpenUrlDialogState extends State<OpenUrlDialog> {
 
   void _open() {
     final value = _textController.text.trim();
-    final uri = Uri.tryParse(value);
-    if (uri == null ||
-        !uri.hasAuthority ||
-        uri.host.isEmpty ||
-        !const {'http', 'https'}.contains(uri.scheme.toLowerCase())) {
-      setState(() => _error = 'Enter a valid http or https address.');
+    final validation = MediaSource.validate(value);
+    if (!validation.isValid || !MediaSource.isNetworkUrl(validation.source!)) {
+      setState(
+        () =>
+            _error = validation.error ?? 'Enter a valid http or https address.',
+      );
       return;
     }
-    Navigator.of(context).pop(uri.toString());
+    Navigator.of(context).pop(validation.source!);
   }
 
   @override

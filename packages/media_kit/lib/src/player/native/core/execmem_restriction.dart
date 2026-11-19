@@ -21,11 +21,11 @@ bool _checkIfExecmemRestricted() {
         'mmap',
         isLeaf: true,
       );
-      final munmap =
-          libs.lookupFunction<MunmapFunctionNative, MunmapFunctionDart>(
-        'munmap',
-        isLeaf: true,
-      );
+      final munmap = libs
+          .lookupFunction<MunmapFunctionNative, MunmapFunctionDart>(
+            'munmap',
+            isLeaf: true,
+          );
       final mapping = mmap(
         nullptr,
         4096,
@@ -54,10 +54,10 @@ const MAP_FAILED = -1;
 const MAP_PRIVATE = 0x2;
 const MAP_ANONYMOUS = 0x20;
 
-typedef MmapFunctionNative = Pointer<Void> Function(
-    Pointer<Void>, Size, Int32, Int32, Int32, Long);
-typedef MmapFunctionDart = Pointer<Void> Function(
-    Pointer<Void>, int, int, int, int, int);
+typedef MmapFunctionNative =
+    Pointer<Void> Function(Pointer<Void>, Size, Int32, Int32, Int32, Long);
+typedef MmapFunctionDart =
+    Pointer<Void> Function(Pointer<Void>, int, int, int, int, int);
 
 typedef MunmapFunctionNative = Int32 Function(Pointer<Void>, Size);
 typedef MunmapFunctionDart = int Function(Pointer<Void>, int);

@@ -156,6 +156,7 @@ extension PlayerControllerEngine on PlayerController {
   bool get isClosing => _closingState != ControllerClosingState.running;
 
   TransportState get transport => transportListenable.value;
+  TransportState get transportState => transportListenable.value;
 
   /// Thumbnail extraction and caching service, if configured.
   ThumbnailService? get thumbnails => _thumbnails;
@@ -649,6 +650,7 @@ extension PlayerControllerEngine on PlayerController {
     final oldSubtitle = _playbackState.currentSubtitleTrack;
     final oldError = _error;
     final wasCompleted = _playbackState.completed;
+    final oldStreamPlaybackState = _playbackState.streamPlaybackState;
 
     snapshot = _applyResumeFloor(snapshot);
     _applySnapshot(snapshot, notify: false);
@@ -680,6 +682,8 @@ extension PlayerControllerEngine on PlayerController {
     }
     if (!_isStopped &&
         snapshot.completed &&
+        _engineHasMedia &&
+        snapshot.sourceLoaded &&
         !wasCompleted &&
         !_completionHandled) {
       _completionHandled = true;
@@ -709,7 +713,8 @@ extension PlayerControllerEngine on PlayerController {
         oldAudio != currentAudioTrack ||
         oldSubtitle != currentSubtitleTrack ||
         oldError != _error ||
-        snapshot.completed != wasCompleted;
+        snapshot.completed != wasCompleted ||
+        oldStreamPlaybackState != snapshot.streamPlaybackState;
 
     _publishPosition(position);
     if (oldDuration != duration) {
@@ -846,6 +851,13 @@ extension PlayerControllerEngine on PlayerController {
   void _setError(String message) {
     if (!_acceptsCommands) return;
     _error = message;
+    _publishTransport();
+    _notifyIfOpen();
+  }
+
+  void _clearError() {
+    if (!_acceptsCommands || _error == null) return;
+    _error = null;
     _publishTransport();
     _notifyIfOpen();
   }

@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import '../../domain/models/media_catalog.dart';
+import '../../domain/models/media_source.dart';
 import '../../domain/models/open_request.dart';
 import '../repositories/app_preferences_repository.dart';
 
@@ -108,20 +109,18 @@ class OpenRequestCoordinator {
     var rejected = 0;
     String? message;
     for (final rawPath in request.sources) {
-      final source = rawPath.trim();
-      if (source.isEmpty) {
+      final validation = MediaSource.validate(rawPath);
+      if (!validation.isValid) {
         rejected++;
+        message ??= validation.error;
         continue;
       }
+      final source = validation.source!;
       try {
-        final uri = Uri.tryParse(source);
-        if (uri != null && (uri.scheme == 'http' || uri.scheme == 'https')) {
-          if (uri.host.isEmpty) {
-            rejected++;
-          } else {
-            validPaths.add(source);
-          }
+        if (MediaSource.isNetworkUrl(source)) {
+          validPaths.add(source);
         } else {
+          final uri = Uri.tryParse(source);
           final path = uri != null && uri.scheme == 'file'
               ? uri.toFilePath(windows: Platform.isWindows)
               : source;
@@ -157,12 +156,13 @@ class OpenRequestCoordinator {
     }
 
     // Dropping a folder alongside one of its own files would otherwise queue
-    // the same media twice.
+    // the same media twice. Case folding on Windows applies only to local files,
+    // preserving case-sensitive URL paths, tokens and signatures.
     final dedupedPaths = <String>[];
-    final seenPaths = <String>{};
+    final seenKeys = <String>{};
     for (final path in validPaths) {
-      final identity = Platform.isWindows ? path.toLowerCase() : path;
-      if (seenPaths.add(identity)) dedupedPaths.add(path);
+      final key = MediaSource.deduplicationKey(path);
+      if (seenKeys.add(key)) dedupedPaths.add(path);
     }
 
     if (dedupedPaths.isEmpty) {

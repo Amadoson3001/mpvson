@@ -21,32 +21,93 @@ enum NativeMediaEventKind {
 
   /// libmpv reported the chapter list of the attached source.
   chaptersChanged,
+
+  /// libmpv reported updated demuxer cache, bitrate, resolution or position.
+  demuxerStatsChanged,
 }
 
 /// A native engine notification about the source it has attached.
 class NativeMediaEvent {
-  const NativeMediaEvent.started(this.source)
+  const NativeMediaEvent.started(this.source, {this.playlistEntryId})
     : kind = NativeMediaEventKind.started,
       seekable = true,
-      chapters = const <PlaybackChapter>[];
+      chapters = const <PlaybackChapter>[],
+      endReason = null,
+      errorCode = 0,
+      demuxerCacheDuration = null,
+      rawInputRate = null,
+      pausedForCache = null,
+      dwidth = null,
+      dheight = null,
+      timePos = null;
   const NativeMediaEvent.loaded()
     : kind = NativeMediaEventKind.loaded,
       source = '',
+      playlistEntryId = null,
       seekable = true,
-      chapters = const <PlaybackChapter>[];
-  const NativeMediaEvent.ended()
-    : kind = NativeMediaEventKind.ended,
-      source = '',
-      seekable = true,
-      chapters = const <PlaybackChapter>[];
+      chapters = const <PlaybackChapter>[],
+      endReason = null,
+      errorCode = 0,
+      demuxerCacheDuration = null,
+      rawInputRate = null,
+      pausedForCache = null,
+      dwidth = null,
+      dheight = null,
+      timePos = null;
+  const NativeMediaEvent.ended({
+    this.endReason,
+    this.errorCode = 0,
+    this.playlistEntryId,
+  }) : kind = NativeMediaEventKind.ended,
+       source = '',
+       seekable = true,
+       chapters = const <PlaybackChapter>[],
+       demuxerCacheDuration = null,
+       rawInputRate = null,
+       pausedForCache = null,
+       dwidth = null,
+       dheight = null,
+       timePos = null;
   const NativeMediaEvent.seekable(this.seekable)
     : kind = NativeMediaEventKind.seekableChanged,
       source = '',
-      chapters = const <PlaybackChapter>[];
+      playlistEntryId = null,
+      chapters = const <PlaybackChapter>[],
+      endReason = null,
+      errorCode = 0,
+      demuxerCacheDuration = null,
+      rawInputRate = null,
+      pausedForCache = null,
+      dwidth = null,
+      dheight = null,
+      timePos = null;
   const NativeMediaEvent.chapters(this.chapters)
     : kind = NativeMediaEventKind.chaptersChanged,
       source = '',
-      seekable = true;
+      playlistEntryId = null,
+      seekable = true,
+      endReason = null,
+      errorCode = 0,
+      demuxerCacheDuration = null,
+      rawInputRate = null,
+      pausedForCache = null,
+      dwidth = null,
+      dheight = null,
+      timePos = null;
+  const NativeMediaEvent.demuxerStats({
+    this.demuxerCacheDuration,
+    this.rawInputRate,
+    this.pausedForCache,
+    this.dwidth,
+    this.dheight,
+    this.timePos,
+  }) : kind = NativeMediaEventKind.demuxerStatsChanged,
+       source = '',
+       playlistEntryId = null,
+       seekable = true,
+       chapters = const <PlaybackChapter>[],
+       endReason = null,
+       errorCode = 0;
 
   final NativeMediaEventKind kind;
 
@@ -54,11 +115,38 @@ class NativeMediaEvent {
   /// (may include a Windows long-path prefix or a URL), empty otherwise.
   final String source;
 
+  /// Optional playlist entry ID reported by mpv for START_FILE or END_FILE.
+  final int? playlistEntryId;
+
+  /// End reason (EOF, stop, error, redirect) for [NativeMediaEventKind.ended].
+  final NativeEndReason? endReason;
+
+  /// Engine error code (0 for success).
+  final int errorCode;
+
   /// Whether the attached source supports arbitrary seeking.
   final bool seekable;
 
   /// Chapter markers reported for [NativeMediaEventKind.chaptersChanged].
   final List<PlaybackChapter> chapters;
+
+  /// Demuxer cache duration in seconds.
+  final Duration? demuxerCacheDuration;
+
+  /// Raw input rate in bytes per second.
+  final int? rawInputRate;
+
+  /// Whether demuxer is paused waiting for cache.
+  final bool? pausedForCache;
+
+  /// Display width in pixels.
+  final int? dwidth;
+
+  /// Display height in pixels.
+  final int? dheight;
+
+  /// Current playback position.
+  final Duration? timePos;
 
   @override
   String toString() =>
@@ -79,6 +167,12 @@ abstract final class NativePropertyNames {
   static const String idleActive = 'idle-active';
   static const String seekable = 'seekable';
   static const String chapterList = 'chapter-list';
+  static const String demuxerCacheDuration = 'demuxer-cache-duration';
+  static const String rawInputRate = 'raw-input-rate';
+  static const String pausedForCache = 'paused-for-cache';
+  static const String dwidth = 'dwidth';
+  static const String dheight = 'dheight';
+  static const String timePos = 'time-pos';
 
   /// Every property the adapter observes, in registration order.
   static const List<String> all = <String>[
@@ -89,6 +183,12 @@ abstract final class NativePropertyNames {
     idleActive,
     seekable,
     chapterList,
+    demuxerCacheDuration,
+    rawInputRate,
+    pausedForCache,
+    dwidth,
+    dheight,
+    timePos,
   ];
 }
 
@@ -116,12 +216,55 @@ NativeMediaEvent? interpretNativeProperty(String property, String value) {
           ? null
           : const NativeMediaEvent.loaded();
     case NativePropertyNames.eofReached:
+      return _isYes(value)
+          ? const NativeMediaEvent.ended(endReason: NativeEndReason.eof)
+          : null;
     case NativePropertyNames.idleActive:
-      return _isYes(value) ? const NativeMediaEvent.ended() : null;
+      return _isYes(value)
+          ? const NativeMediaEvent.ended(endReason: NativeEndReason.stop)
+          : null;
     case NativePropertyNames.seekable:
       return NativeMediaEvent.seekable(_isYes(value));
     case NativePropertyNames.chapterList:
       return NativeMediaEvent.chapters(parseChapterList(value));
+    case NativePropertyNames.demuxerCacheDuration:
+      final seconds = double.tryParse(value.trim());
+      if (seconds != null && seconds >= 0) {
+        return NativeMediaEvent.demuxerStats(
+          demuxerCacheDuration: Duration(
+            milliseconds: (seconds * 1000).round(),
+          ),
+        );
+      }
+      return null;
+    case NativePropertyNames.rawInputRate:
+      final bytesPerSec = int.tryParse(value.trim());
+      if (bytesPerSec != null && bytesPerSec >= 0) {
+        return NativeMediaEvent.demuxerStats(rawInputRate: bytesPerSec);
+      }
+      return null;
+    case NativePropertyNames.pausedForCache:
+      return NativeMediaEvent.demuxerStats(pausedForCache: _isYes(value));
+    case NativePropertyNames.dwidth:
+      final width = int.tryParse(value.trim());
+      if (width != null && width > 0) {
+        return NativeMediaEvent.demuxerStats(dwidth: width);
+      }
+      return null;
+    case NativePropertyNames.dheight:
+      final height = int.tryParse(value.trim());
+      if (height != null && height > 0) {
+        return NativeMediaEvent.demuxerStats(dheight: height);
+      }
+      return null;
+    case NativePropertyNames.timePos:
+      final seconds = double.tryParse(value.trim());
+      if (seconds != null && seconds >= 0) {
+        return NativeMediaEvent.demuxerStats(
+          timePos: Duration(milliseconds: (seconds * 1000).round()),
+        );
+      }
+      return null;
     default:
       return null;
   }
@@ -200,6 +343,8 @@ class MediaKitNativeMediaEvents implements NativeMediaEvents {
   final StreamController<NativeMediaEvent> _events =
       StreamController<NativeMediaEvent>.broadcast(sync: true);
   final List<String> _observedProperties = [];
+  StreamSubscription<NativeLifecycleEvent>? _lifecycleSubscription;
+  String? _lastObservedSource;
   bool _started = false;
   bool _disposed = false;
 
@@ -213,12 +358,41 @@ class MediaKitNativeMediaEvents implements NativeMediaEvents {
     final platform = _player.platform;
     if (platform is! NativePlayer) return false;
     try {
+      _lifecycleSubscription = platform.nativeLifecycle.listen((event) {
+        if (_disposed) return;
+        switch (event.kind) {
+          case NativeLifecycleKind.startFile:
+            _events.add(
+              NativeMediaEvent.started(
+                _lastObservedSource ?? '',
+                playlistEntryId: event.playlistEntryId,
+              ),
+            );
+            break;
+          case NativeLifecycleKind.fileLoaded:
+            _events.add(const NativeMediaEvent.loaded());
+            break;
+          case NativeLifecycleKind.endFile:
+            _events.add(
+              NativeMediaEvent.ended(
+                endReason: event.reason,
+                errorCode: event.error,
+                playlistEntryId: event.playlistEntryId,
+              ),
+            );
+            break;
+        }
+      });
+
       for (final property in NativePropertyNames.all) {
         if (_disposed) {
           await _unobserveAll(platform);
           return false;
         }
         await platform.observeProperty(property, (value) async {
+          if (property == NativePropertyNames.path) {
+            _lastObservedSource = value.trim();
+          }
           _handle(property, value);
         });
         _observedProperties.add(property);
@@ -234,6 +408,8 @@ class MediaKitNativeMediaEvents implements NativeMediaEvents {
   }
 
   Future<void> _unobserveAll(NativePlayer platform) async {
+    await _lifecycleSubscription?.cancel();
+    _lifecycleSubscription = null;
     final toRemove = List<String>.of(_observedProperties);
     _observedProperties.clear();
     for (final prop in toRemove) {
@@ -254,6 +430,8 @@ class MediaKitNativeMediaEvents implements NativeMediaEvents {
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
+    await _lifecycleSubscription?.cancel();
+    _lifecycleSubscription = null;
     final platform = _player.platform;
     if (platform is NativePlayer) {
       await _unobserveAll(platform);

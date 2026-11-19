@@ -33,6 +33,7 @@ dependencies:
   url_launcher: ^6.3.2
   sqlite3: 3.7.1
   watcher: 1.2.1
+  xml: ^7.0.1
 
 dev_dependencies:
   flutter_test:

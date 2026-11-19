@@ -4,7 +4,10 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
 import 'package:mpvson/data/services/playback_service.dart';
+import 'package:mpvson/data/services/streaming_coordinator.dart';
 import 'package:mpvson/domain/models/media_entry.dart';
+import 'package:mpvson/domain/models/stream_playback_state.dart';
+import 'package:mpvson/domain/models/stream_rendition.dart';
 import 'package:mpvson/domain/models/video_output_policy.dart';
 
 /// In-memory [PlaybackService] so player UI tests can drive the controller
@@ -13,16 +16,36 @@ import 'package:mpvson/domain/models/video_output_policy.dart';
 /// `open()` reports the source as attached and playing, which is all the
 /// controller needs to mark the engine as having media.
 class FakePlaybackService implements PlaybackService {
-  FakePlaybackService();
+  FakePlaybackService({StreamingCoordinator? streamingCoordinator})
+    : _streamingCoordinator = streamingCoordinator ?? StreamingCoordinator() {
+    _state = _state.copyWith(streamPlaybackState: _streamingCoordinator.state);
+    _streamSub = _streamingCoordinator.streamState.listen((streamState) {
+      _state = _state.copyWith(streamPlaybackState: streamState);
+      _states.add(_state);
+    });
+  }
 
   PlaybackSnapshot _state = const PlaybackSnapshot();
   final StreamController<PlaybackSnapshot> _states =
-      StreamController<PlaybackSnapshot>.broadcast();
+      StreamController<PlaybackSnapshot>.broadcast(sync: true);
   final List<String> openedPaths = <String>[];
+  late final StreamSubscription<StreamPlaybackState> _streamSub;
 
   /// Reported for the next [open] call. Defaults to the opened path's
   /// canonical form, which is what the controller compares identity against.
   String? nativeSourceOverride;
+
+  final StreamingCoordinator _streamingCoordinator;
+
+  @override
+  StreamingCoordinator get streamingCoordinator => _streamingCoordinator;
+
+  @override
+  Future<void> selectQuality(StreamRendition rendition) async {
+    _streamingCoordinator.selectRendition(rendition);
+    _state = _state.copyWith(streamPlaybackState: _streamingCoordinator.state);
+    _states.add(_state);
+  }
 
   @override
   Player get player => throw UnimplementedError('Native Player not used');
@@ -61,6 +84,7 @@ class FakePlaybackService implements PlaybackService {
       nativeSource: nativeSourceOverride ?? MediaEntry.canonicalSource(path),
       sourceStart: _state.sourceStart + 1,
       duration: const Duration(minutes: 2),
+      streamPlaybackState: _streamingCoordinator.state,
     );
     _states.add(_state);
   }
@@ -132,6 +156,7 @@ class FakePlaybackService implements PlaybackService {
 
   @override
   Future<void> dispose() async {
+    await _streamSub.cancel();
     await _states.close();
   }
 }

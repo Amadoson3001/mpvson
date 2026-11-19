@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 
 import 'media_catalog.dart';
+import 'media_source.dart';
 
 /// A single source in the player's queue or listening history.
 ///
@@ -97,13 +98,7 @@ class MediaEntry {
   }
 
   /// Whether [source] represents a network HTTP or HTTPS address.
-  static bool isNetworkUrl(String source) {
-    final trimmed = source.trim();
-    final uri = Uri.tryParse(trimmed);
-    if (uri == null) return false;
-    final scheme = uri.scheme.toLowerCase();
-    return scheme == 'http' || scheme == 'https';
-  }
+  static bool isNetworkUrl(String source) => MediaSource.isNetworkUrl(source);
 
   /// Whether [source] benefits from network-style buffering (HTTP(S), streaming
   /// protocols, or SMB/UNC network shares).
@@ -162,21 +157,8 @@ class MediaEntry {
   }
 
   /// Returns a stable key for a source, independent of its queue occurrence.
-  static String canonicalSource(String source) {
-    final trimmed = source.trim();
-    if (isNetworkUrl(trimmed)) {
-      final uri = Uri.tryParse(trimmed);
-      if (uri != null) {
-        // The fragment never reaches the engine, so it must not make two
-        // identities differ. `removeFragment` also avoids an empty `#` marker.
-        return uri.removeFragment().toString();
-      }
-      return trimmed;
-    }
-
-    final normalized = normalizeSourcePath(trimmed);
-    return Platform.isWindows ? normalized.toLowerCase() : normalized;
-  }
+  static String canonicalSource(String source) =>
+      MediaSource.deduplicationKey(source);
 
   /// Removes the Windows long-path prefix (`\\?\`) that libmpv reports for a
   /// loaded source, so engine identity compares equal to the user's path.

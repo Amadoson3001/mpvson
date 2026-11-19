@@ -47,25 +47,11 @@ abstract class NativeLibrary {
     } catch (_) {}
     // Attempt to load default names.
     final names = {
-      'windows': [
-        'libmpv-2.dll',
-        'mpv-2.dll',
-        'mpv-1.dll',
-      ],
-      'linux': [
-        'libmpv.so',
-        'libmpv.so.2',
-        'libmpv.so.1',
-      ],
-      'macos': [
-        'Mpv.framework/Mpv',
-      ],
-      'ios': [
-        'Mpv.framework/Mpv',
-      ],
-      'android': [
-        'libmpv.so',
-      ],
+      'windows': ['libmpv-2.dll', 'mpv-2.dll', 'mpv-1.dll'],
+      'linux': ['libmpv.so', 'libmpv.so.2', 'libmpv.so.1'],
+      'macos': ['Mpv.framework/Mpv'],
+      'ios': ['Mpv.framework/Mpv'],
+      'android': ['libmpv.so'],
     }[Platform.operatingSystem];
     if (names != null) {
       // Try to load the dynamic library from the system using [DynamicLibrary.open].

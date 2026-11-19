@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 
 import '../../../domain/models/player_hotkeys.dart';
+import '../../../domain/models/stream_rendition.dart';
 import '../../core/app_motion.dart';
 import '../../core/app_theme.dart';
 import '../player_controller.dart';
@@ -144,6 +145,14 @@ class PlayerContextMenu extends StatelessWidget {
         label: 'Playback speed',
         children: _speedOptions(context, accent),
       ),
+      if (playerController.transportState.isStreaming &&
+          playerController.transportState.availableRenditions.isNotEmpty)
+        _submenu(
+          context,
+          icon: Icons.high_quality_rounded,
+          label: 'Quality',
+          children: _qualityOptions(context, accent),
+        ),
       _submenu(
         context,
         icon: Icons.audiotrack_rounded,
@@ -254,6 +263,42 @@ class PlayerContextMenu extends StatelessWidget {
         onPressed: () => unawaited(playerController.setRate(rate)),
       ),
   ];
+
+  List<Widget> _qualityOptions(BuildContext context, Color accent) {
+    final renditions = playerController.transportState.availableRenditions;
+    final selected = playerController.transportState.selectedRendition;
+    final active = playerController.transportState.activeRendition;
+    final isAuto = selected == null || selected.isAuto;
+
+    return [
+      _menuAction(
+        context,
+        icon: null,
+        label: isAuto && active != null
+            ? 'Auto (${active.qualityLabel})'
+            : 'Auto',
+        checked: isAuto,
+        accent: accent,
+        onPressed: () => unawaited(
+          playerController.selectStreamQuality(StreamRendition.auto),
+        ),
+      ),
+      if (renditions.isNotEmpty) const _MenuDivider(),
+      for (final rendition in renditions)
+        if (!rendition.isAuto)
+          _menuAction(
+            context,
+            icon: null,
+            label: rendition.bitrate != null
+                ? '${rendition.qualityLabel} (${(rendition.bitrate! / 1000000).toStringAsFixed(1)} Mbps)'
+                : rendition.qualityLabel,
+            checked: !isAuto && (selected.id == rendition.id),
+            accent: accent,
+            onPressed: () =>
+                unawaited(playerController.selectStreamQuality(rendition)),
+          ),
+    ];
+  }
 
   List<Widget> _audioOptions(
     BuildContext context,
