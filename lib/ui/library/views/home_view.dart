@@ -7,8 +7,10 @@ import '../widgets/media_context_menu.dart';
 import '../widgets/library_item_actions.dart';
 
 import '../../../data/repositories/media_library_repository.dart';
+import '../../../domain/models/library_models.dart';
 import '../../../domain/models/media_catalog.dart';
 import '../../../domain/models/media_entry.dart';
+import '../../../domain/models/media_source.dart';
 import '../../../domain/models/media_thumbnail.dart';
 import '../../../utils/format.dart';
 import '../../core/app_motion.dart';
@@ -18,8 +20,9 @@ import '../../core/components/player_icon_button.dart';
 import '../../core/toast/app_toast.dart';
 import '../../player/player_controller.dart';
 import '../widgets/library_artwork.dart';
+import 'library_shell.dart';
 
-class HomeView extends StatelessWidget {
+class HomeView extends StatefulWidget {
   const HomeView({
     super.key,
     required this.recent,
@@ -31,6 +34,9 @@ class HomeView extends StatelessWidget {
     this.onRemoveRecent,
     this.onClearRecent,
     this.isDragging = false,
+    this.searchController,
+    this.searchFocus,
+    this.onOpenLibraryItem,
   });
 
   final List<MediaEntry> recent;
@@ -42,12 +48,151 @@ class HomeView extends StatelessWidget {
   final ValueChanged<MediaEntry>? onRemoveRecent;
   final VoidCallback? onClearRecent;
   final bool isDragging;
+  final TextEditingController? searchController;
+  final FocusNode? searchFocus;
+  final ValueChanged<MediaItemRecord>? onOpenLibraryItem;
+
+  @override
+  State<HomeView> createState() => _HomeViewState();
+}
+
+class _HomeViewState extends State<HomeView> {
+  TextEditingController? _ownedSearchController;
+  FocusNode? _ownedSearchFocus;
+  TextEditingController? _attachedController;
+  Timer? _searchDebounce;
+  String _query = '';
+  bool _searchingLibrary = false;
+  List<MediaItemRecord> _libraryMatches = const <MediaItemRecord>[];
+  int _searchGeneration = 0;
+
+  TextEditingController _resolveSearchController(BuildContext context) {
+    return widget.searchController ??
+        LibrarySearchScope.maybeOf(context)?.controller ??
+        (_ownedSearchController ??= TextEditingController());
+  }
+
+  FocusNode _resolveSearchFocus(BuildContext context) {
+    return widget.searchFocus ??
+        LibrarySearchScope.maybeOf(context)?.focusNode ??
+        (_ownedSearchFocus ??= FocusNode(debugLabel: 'Home search'));
+  }
+
+  void _attachSearchController(TextEditingController controller) {
+    if (identical(_attachedController, controller)) return;
+    _attachedController?.removeListener(_onSearchControllerChanged);
+    _attachedController = controller;
+    _attachedController!.addListener(_onSearchControllerChanged);
+    if (_query != controller.text) {
+      _query = controller.text;
+      _scheduleLibraryQuery(_query);
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _attachSearchController(_resolveSearchController(context));
+  }
+
+  @override
+  void didUpdateWidget(covariant HomeView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.searchController != widget.searchController) {
+      _attachSearchController(_resolveSearchController(context));
+    }
+    if (oldWidget.repository != widget.repository && _query.trim().isNotEmpty) {
+      _scheduleLibraryQuery(_query);
+    }
+  }
+
+  @override
+  void dispose() {
+    _searchDebounce?.cancel();
+    _searchGeneration++;
+    _attachedController?.removeListener(_onSearchControllerChanged);
+    _ownedSearchController?.dispose();
+    _ownedSearchFocus?.dispose();
+    super.dispose();
+  }
+
+  void _onSearchControllerChanged() {
+    final next = _attachedController?.text ?? '';
+    if (_query == next) return;
+    setState(() {
+      _query = next;
+    });
+    _scheduleLibraryQuery(next);
+  }
+
+  void _scheduleLibraryQuery(String rawQuery) {
+    _searchDebounce?.cancel();
+    final trimmed = rawQuery.trim();
+    if (trimmed.isEmpty) {
+      _searchGeneration++;
+      if (_libraryMatches.isNotEmpty || _searchingLibrary) {
+        setState(() {
+          _libraryMatches = const <MediaItemRecord>[];
+          _searchingLibrary = false;
+        });
+      }
+      return;
+    }
+    if (!widget.repository.isReady) {
+      if (_libraryMatches.isNotEmpty || _searchingLibrary) {
+        setState(() {
+          _libraryMatches = const <MediaItemRecord>[];
+          _searchingLibrary = false;
+        });
+      }
+      return;
+    }
+    final generation = ++_searchGeneration;
+    setState(() => _searchingLibrary = true);
+    _searchDebounce = Timer(const Duration(milliseconds: 180), () async {
+      try {
+        final results = await widget.repository.queryMedia(
+          searchQuery: trimmed,
+          limit: 24,
+        );
+        if (!mounted || generation != _searchGeneration) return;
+        setState(() {
+          _libraryMatches = results;
+          _searchingLibrary = false;
+        });
+      } catch (_) {
+        if (!mounted || generation != _searchGeneration) return;
+        setState(() {
+          _libraryMatches = const <MediaItemRecord>[];
+          _searchingLibrary = false;
+        });
+      }
+    });
+  }
+
+  void _clearSearch() {
+    _attachedController?.clear();
+  }
 
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
     final primary = Theme.of(context).colorScheme.primary;
     final hasDrawer = Scaffold.maybeOf(context)?.hasDrawer ?? false;
+    final searchController = _resolveSearchController(context);
+    final searchFocus = _resolveSearchFocus(context);
+    final trimmedQuery = _query.trim();
+    final isSearching = trimmedQuery.isNotEmpty;
+    final lowerQuery = trimmedQuery.toLowerCase();
+    final displayedRecent = isSearching
+        ? widget.recent
+              .where(
+                (entry) =>
+                    entry.title.toLowerCase().contains(lowerQuery) ||
+                    entry.path.toLowerCase().contains(lowerQuery),
+              )
+              .toList(growable: false)
+        : widget.recent;
 
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -62,12 +207,13 @@ class HomeView extends StatelessWidget {
           ],
           stops: const [0.0, 0.45, 1.0],
         ),
-        border: isDragging ? Border.all(color: primary, width: 2) : null,
+        border: widget.isDragging ? Border.all(color: primary, width: 2) : null,
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
           const gap = 18.0;
           final compact = constraints.maxWidth < AppLayout.compactBreakpoint;
+          final inlineSearch = constraints.maxWidth >= 860 && !compact;
           final inset = PageHeader.gutterFor(constraints.maxWidth);
           final gridWidth = (constraints.maxWidth - inset * 2).clamp(
             0.0,
@@ -83,17 +229,22 @@ class HomeView extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               FilledButton.icon(
-                onPressed: onOpenFiles,
+                onPressed: widget.onOpenFiles,
                 icon: const Icon(Icons.file_open_rounded, size: 16),
                 label: const Text('Open file'),
               ),
               const SizedBox(width: AppSpace.xs),
               OutlinedButton.icon(
-                onPressed: onOpenUrl,
+                onPressed: widget.onOpenUrl,
                 icon: const Icon(Icons.link_rounded, size: 16),
                 label: const Text('Open URL'),
               ),
             ],
+          );
+
+          final searchField = _HomeSearchField(
+            controller: searchController,
+            focusNode: searchFocus,
           );
 
           final headerRow = Row(
@@ -108,8 +259,8 @@ class HomeView extends StatelessWidget {
                 ),
                 const SizedBox(width: AppSpace.xs),
               ],
-              Expanded(
-                child: Semantics(
+              if (inlineSearch) ...[
+                Semantics(
                   header: true,
                   child: Text(
                     'Home',
@@ -118,7 +269,28 @@ class HomeView extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
-              ),
+                const SizedBox(width: AppSpace.md),
+                Expanded(
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 320),
+                      child: searchField,
+                    ),
+                  ),
+                ),
+              ] else
+                Expanded(
+                  child: Semantics(
+                    header: true,
+                    child: Text(
+                      'Home',
+                      style: palette.pageTitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ),
               const SizedBox(width: AppSpace.sm),
               if (!compact)
                 openButtons
@@ -131,12 +303,12 @@ class HomeView extends StatelessWidget {
                     alignment: WrapAlignment.end,
                     children: [
                       FilledButton.icon(
-                        onPressed: onOpenFiles,
+                        onPressed: widget.onOpenFiles,
                         icon: const Icon(Icons.file_open_rounded, size: 16),
                         label: const Text('Open'),
                       ),
                       IconButton.outlined(
-                        onPressed: onOpenUrl,
+                        onPressed: widget.onOpenUrl,
                         tooltip: 'Open URL',
                         icon: const Icon(Icons.link_rounded, size: 18),
                       ),
@@ -153,14 +325,20 @@ class HomeView extends StatelessWidget {
                   inset,
                   AppSpace.md,
                   inset,
-                  recent.isEmpty ? AppSpace.lg : AppSpace.md,
+                  displayedRecent.isEmpty && !isSearching
+                      ? AppSpace.lg
+                      : AppSpace.md,
                 ),
                 sliver: SliverToBoxAdapter(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       headerRow,
-                      if (isDragging && recent.isNotEmpty) ...[
+                      if (!inlineSearch) ...[
+                        const SizedBox(height: AppSpace.sm),
+                        searchField,
+                      ],
+                      if (widget.isDragging && widget.recent.isNotEmpty) ...[
                         const SizedBox(height: AppSpace.sm),
                         Container(
                           width: double.infinity,
@@ -195,7 +373,7 @@ class HomeView extends StatelessWidget {
                           ),
                         ),
                       ],
-                      if (recent.isEmpty) ...[
+                      if (!isSearching && widget.recent.isEmpty) ...[
                         const SizedBox(height: AppSpace.lg),
                         Center(
                           child: ConstrainedBox(
@@ -203,9 +381,9 @@ class HomeView extends StatelessWidget {
                             child: Column(
                               children: [
                                 _DropZoneCard(
-                                  isDragging: isDragging,
-                                  onOpenFiles: onOpenFiles,
-                                  onOpenUrl: onOpenUrl,
+                                  isDragging: widget.isDragging,
+                                  onOpenFiles: widget.onOpenFiles,
+                                  onOpenUrl: widget.onOpenUrl,
                                 ),
                                 const _HomeEmptyGuide(),
                               ],
@@ -213,24 +391,25 @@ class HomeView extends StatelessWidget {
                           ),
                         ),
                       ],
-                      if (recent.isNotEmpty) ...[
+                      if (displayedRecent.isNotEmpty) ...[
                         const SizedBox(height: AppSpace.lg),
                         _RecentSectionHeader(
-                          recentCount: recent.length,
+                          recentCount: displayedRecent.length,
+                          showClearAll: !isSearching,
                           onClearRecent: () {
                             _homeSelectedRecentIds.value = <String>{};
-                            if (onClearRecent != null) {
-                              onClearRecent!();
+                            if (widget.onClearRecent != null) {
+                              widget.onClearRecent!();
                               return;
                             }
-                            final cleared = controller.clearRecent();
+                            final cleared = widget.controller.clearRecent();
                             if (cleared.isNotEmpty && context.mounted) {
                               AppToast.show(
                                 context,
                                 'Recently played cleared',
                                 actionLabel: 'Undo',
-                                onAction: () =>
-                                    controller.restoreRecentList(cleared),
+                                onAction: () => widget.controller
+                                    .restoreRecentList(cleared),
                               );
                             }
                           },
@@ -240,18 +419,102 @@ class HomeView extends StatelessWidget {
                   ),
                 ),
               ),
-              if (recent.isNotEmpty)
+              if (displayedRecent.isNotEmpty)
                 _RecentSliverGrid(
-                  recent: recent,
+                  recent: displayedRecent,
                   columns: columns,
                   gap: gap,
                   inset: inset,
                   tileWidth: tileWidth,
                   textHeight: textHeight,
-                  controller: controller,
-                  repository: repository,
-                  onOpenRecent: onOpenRecent,
-                  onRemoveRecent: onRemoveRecent,
+                  controller: widget.controller,
+                  repository: widget.repository,
+                  onOpenRecent: widget.onOpenRecent,
+                  onRemoveRecent: widget.onRemoveRecent,
+                ),
+              if (isSearching && _libraryMatches.isNotEmpty) ...[
+                SliverPadding(
+                  padding: EdgeInsets.fromLTRB(
+                    inset,
+                    AppSpace.sm,
+                    inset,
+                    AppSpace.sm,
+                  ),
+                  sliver: SliverToBoxAdapter(
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.baseline,
+                      textBaseline: TextBaseline.alphabetic,
+                      children: [
+                        Text(
+                          'Library matches',
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(fontWeight: FontWeight.w600),
+                        ),
+                        const SizedBox(width: AppSpace.sm),
+                        Text(
+                          '${_libraryMatches.length} ${_libraryMatches.length == 1 ? 'item' : 'items'}',
+                          style: palette.metadata,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                SliverPadding(
+                  padding: EdgeInsets.fromLTRB(inset, 0, inset, AppSpace.xl),
+                  sliver: SliverList.builder(
+                    itemCount: _libraryMatches.length,
+                    itemBuilder: (context, index) {
+                      final item = _libraryMatches[index];
+                      return _HomeLibraryMatchRow(
+                        item: item,
+                        repository: widget.repository,
+                        onOpen: () {
+                          if (widget.onOpenLibraryItem != null) {
+                            widget.onOpenLibraryItem!(item);
+                          } else {
+                            unawaited(widget.controller.openPaths([item.path]));
+                          }
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ],
+              if (isSearching &&
+                  displayedRecent.isEmpty &&
+                  _libraryMatches.isEmpty &&
+                  !_searchingLibrary)
+                SliverPadding(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: inset,
+                    vertical: AppSpace.xl,
+                  ),
+                  sliver: SliverToBoxAdapter(
+                    child: Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.search_off_rounded,
+                            size: 32,
+                            color: palette.muted,
+                          ),
+                          const SizedBox(height: AppSpace.sm),
+                          Text(
+                            'No matches for “$trimmedQuery”',
+                            style: palette.rowPrimary.copyWith(
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(height: AppSpace.xs),
+                          TextButton(
+                            onPressed: _clearSearch,
+                            child: const Text('Clear search'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                 ),
             ],
           );
@@ -268,10 +531,12 @@ class _RecentSectionHeader extends StatelessWidget {
   const _RecentSectionHeader({
     required this.recentCount,
     required this.onClearRecent,
+    this.showClearAll = true,
   });
 
   final int recentCount;
   final VoidCallback onClearRecent;
+  final bool showClearAll;
 
   @override
   Widget build(BuildContext context) {
@@ -336,16 +601,17 @@ class _RecentSectionHeader extends StatelessWidget {
               ),
             ],
             const Spacer(),
-            TextButton.icon(
-              onPressed: onClearRecent,
-              icon: const Icon(Icons.clear_all_rounded, size: 16),
-              label: const Text('Clear all'),
-              style: TextButton.styleFrom(
-                foregroundColor: palette.mutedText,
-                visualDensity: VisualDensity.compact,
-                textStyle: Theme.of(context).textTheme.bodySmall,
+            if (showClearAll)
+              TextButton.icon(
+                onPressed: onClearRecent,
+                icon: const Icon(Icons.clear_all_rounded, size: 16),
+                label: const Text('Clear all'),
+                style: TextButton.styleFrom(
+                  foregroundColor: palette.mutedText,
+                  visualDensity: VisualDensity.compact,
+                  textStyle: Theme.of(context).textTheme.bodySmall,
+                ),
               ),
-            ),
           ],
         );
       },
@@ -576,15 +842,21 @@ class _RecentTileState extends State<_RecentTile> {
   @override
   Widget build(BuildContext context) {
     final entry = widget.entry;
+    final isNetwork = MediaSource.isNetworkUrl(entry.path);
+    final networkHost = isNetwork ? (Uri.tryParse(entry.path)?.host ?? '') : '';
     final kind = MediaCatalog.kindFromExtension(entry.path);
-    final icon = kind == MediaKind.audio
+    final icon = isNetwork
+        ? Icons.public_rounded
+        : kind == MediaKind.audio
         ? Icons.music_note_rounded
         : Icons.movie_rounded;
-    final type = switch (kind) {
-      MediaKind.audio => 'Audio',
-      MediaKind.video => 'Video',
-      _ => 'Media',
-    };
+    final type = isNetwork
+        ? (networkHost.isNotEmpty ? 'Stream  $networkHost' : 'Stream')
+        : switch (kind) {
+            MediaKind.audio => 'Audio',
+            MediaKind.video => 'Video',
+            _ => 'Media',
+          };
     final hasProgress =
         entry.duration > Duration.zero && entry.position > Duration.zero;
     final progress = hasProgress
@@ -667,6 +939,46 @@ class _RecentTileState extends State<_RecentTile> {
                                   );
                           },
                         ),
+                        if (isNetwork && !widget.isSelected)
+                          Positioned(
+                            top: 8,
+                            left: 8,
+                            child: Container(
+                              key: ValueKey('recent-stream-badge-${entry.id}'),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 7,
+                                vertical: 3,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withValues(alpha: 0.72),
+                                borderRadius: BorderRadius.circular(
+                                  AppRadii.control,
+                                ),
+                                border: Border.all(
+                                  color: Colors.white.withValues(alpha: 0.14),
+                                ),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.link_rounded,
+                                    size: 12,
+                                    color: accent,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    'Stream',
+                                    style: context.palette.metadata.copyWith(
+                                      color: AppColors.onStage,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
                         if (widget.isSelected)
                           Positioned(
                             top: 8,
@@ -817,6 +1129,195 @@ class _RecentTileState extends State<_RecentTile> {
                 ],
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _HomeSearchField extends StatelessWidget {
+  const _HomeSearchField({required this.controller, required this.focusNode});
+
+  final TextEditingController controller;
+  final FocusNode focusNode;
+
+  KeyEventResult _onKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent ||
+        event.logicalKey != LogicalKeyboardKey.escape) {
+      return KeyEventResult.ignored;
+    }
+    if (controller.text.isNotEmpty) {
+      controller.clear();
+    } else {
+      focusNode.unfocus();
+    }
+    return KeyEventResult.handled;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final accent = palette.accent;
+    OutlineInputBorder border(Color color, [double width = 1]) =>
+        OutlineInputBorder(
+          borderRadius: BorderRadius.circular(AppRadii.control),
+          borderSide: BorderSide(color: color, width: width),
+        );
+    return Focus(
+      canRequestFocus: false,
+      onKeyEvent: _onKey,
+      child: SizedBox(
+        height: 38,
+        child: ListenableBuilder(
+          listenable: controller,
+          builder: (context, _) => TextField(
+            key: const ValueKey('home-search-field'),
+            controller: controller,
+            focusNode: focusNode,
+            style: palette.rowPrimary,
+            cursorColor: accent,
+            textInputAction: TextInputAction.search,
+            decoration: InputDecoration(
+              hintText: 'Search recent & library',
+              hintStyle: palette.metadata.copyWith(fontSize: AppType.small),
+              isDense: true,
+              prefixIcon: Icon(
+                Icons.search_rounded,
+                size: 18,
+                color: palette.mutedText,
+              ),
+              suffixIcon: controller.text.isNotEmpty
+                  ? IconButton(
+                      icon: const Icon(Icons.close_rounded, size: 16),
+                      color: palette.mutedText,
+                      tooltip: 'Clear search',
+                      onPressed: controller.clear,
+                    )
+                  : Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: Center(
+                        widthFactor: 1,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: palette.background.withValues(alpha: 0.6),
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(color: palette.border),
+                          ),
+                          child: Text(
+                            'Ctrl+F',
+                            style: palette.metadata.copyWith(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                              color: palette.mutedText,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+              filled: true,
+              fillColor: palette.raisedSurface,
+              contentPadding: const EdgeInsets.symmetric(vertical: AppSpace.xs),
+              enabledBorder: border(palette.border),
+              focusedBorder: border(accent, 1.5),
+              border: border(palette.border),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _HomeLibraryMatchRow extends StatelessWidget {
+  const _HomeLibraryMatchRow({
+    required this.item,
+    required this.repository,
+    required this.onOpen,
+  });
+
+  final MediaItemRecord item;
+  final MediaLibraryRepository repository;
+  final VoidCallback onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    final isAudio = item.kind == MediaKind.audio;
+    final detailParts = <String>[
+      if (item.artist.trim().isNotEmpty) item.artist.trim(),
+      if (item.album.trim().isNotEmpty) item.album.trim(),
+    ];
+    final subtitle = detailParts.isNotEmpty
+        ? detailParts.join('  ')
+        : (isAudio ? 'Audio' : 'Video');
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(AppRadii.control),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(AppRadii.control),
+          onTap: onOpen,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            child: Row(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(AppRadii.control),
+                  child: SizedBox(
+                    width: 44,
+                    height: 44,
+                    child: LibraryArtwork(
+                      path: item.metadata.artworkUri,
+                      mediaPath: item.path,
+                      repository: repository,
+                      icon: isAudio
+                          ? Icons.music_note_rounded
+                          : Icons.movie_rounded,
+                      iconSize: 20,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        item.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: palette.rowPrimary.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: palette.metadata,
+                      ),
+                    ],
+                  ),
+                ),
+                if (item.metadata.duration > Duration.zero) ...[
+                  const SizedBox(width: 12),
+                  Text(
+                    formatTime(item.metadata.duration, compactMinutes: true),
+                    style: palette.metadata.copyWith(
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ],
+              ],
+            ),
           ),
         ),
       ),

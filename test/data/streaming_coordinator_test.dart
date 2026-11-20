@@ -1,8 +1,14 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:mpvson/data/services/native_media_events.dart';
+import 'package:mpvson/data/services/process_runner.dart';
 import 'package:mpvson/data/services/stream_manifest_service.dart';
 import 'package:mpvson/data/services/streaming_coordinator.dart';
+import 'package:mpvson/data/services/yt_dlp_resolver.dart';
 import 'package:mpvson/domain/models/stream_playback_state.dart';
 import 'package:mpvson/domain/models/stream_rendition.dart';
 
@@ -264,7 +270,145 @@ void main() {
         autoCoordinator.dispose();
       },
     );
+
+    test(
+      'updateDemuxerStats preserves bufferedDuration when null and completes switchingQuality across split width/height events',
+      () async {
+        await coordinator.prepareStream('https://example.com/master.m3u8');
+        coordinator.handleNativeLifecycleEvent(
+          const NativeMediaEvent.loaded(),
+          attemptId: coordinator.currentAttemptId,
+        );
+
+        coordinator.updateDemuxerStats(
+          bufferedDuration: const Duration(seconds: 12),
+          rawInputRate: 500000,
+        );
+        expect(
+          coordinator.state.bufferedDuration,
+          equals(const Duration(seconds: 12)),
+        );
+
+        coordinator.selectRendition(
+          const StreamRendition(id: '720p', label: '720p', height: 720),
+        );
+        expect(coordinator.state.stage, equals(StreamStage.switchingQuality));
+
+        // Partial stat updates without bufferedDuration preserve previous buffer.
+        coordinator.updateDemuxerStats(rawInputRate: 750000);
+        expect(
+          coordinator.state.bufferedDuration,
+          equals(const Duration(seconds: 12)),
+        );
+        expect(coordinator.state.stage, equals(StreamStage.switchingQuality));
+
+        // Split width then height events complete the quality switch cleanly.
+        coordinator.updateDemuxerStats(width: 1280);
+        expect(coordinator.state.stage, equals(StreamStage.switchingQuality));
+        expect(coordinator.state.decodedWidth, equals(1280));
+
+        coordinator.updateDemuxerStats(height: 720);
+        expect(coordinator.state.stage, equals(StreamStage.ready));
+        expect(coordinator.state.decodedWidth, equals(1280));
+        expect(coordinator.state.decodedHeight, equals(720));
+      },
+    );
+
+    test(
+      'real libmpv terminal error codes and HTTP 404/403 fail immediately without reconnecting',
+      () async {
+        for (final code in [-16, -17, -18, -19]) {
+          await coordinator.prepareStream('https://example.com/bad-$code.mp4');
+          coordinator.handleNativeLifecycleEvent(
+            NativeMediaEvent.ended(
+              endReason: NativeEndReason.error,
+              errorCode: code,
+            ),
+            attemptId: coordinator.currentAttemptId,
+          );
+          expect(coordinator.state.stage, equals(StreamStage.failed));
+          expect(coordinator.state.reconnectAttempts, equals(0));
+        }
+
+        await coordinator.prepareStream('https://example.com/missing.mp4');
+        coordinator.handleNativeLifecycleEvent(
+          const NativeMediaEvent.ended(
+            endReason: NativeEndReason.error,
+            errorCode: -13,
+          ),
+          attemptId: coordinator.currentAttemptId,
+          httpStatusCode: 404,
+        );
+        expect(coordinator.state.stage, equals(StreamStage.failed));
+        expect(coordinator.state.reconnectAttempts, equals(0));
+        expect(coordinator.state.error, contains('404'));
+
+        await coordinator.prepareStream('https://example.com/forbidden.mp4');
+        coordinator.handleNativeLifecycleEvent(
+          const NativeMediaEvent.ended(
+            endReason: NativeEndReason.error,
+            errorCode: -13,
+          ),
+          attemptId: coordinator.currentAttemptId,
+          httpStatusCode: 403,
+        );
+        expect(coordinator.state.stage, equals(StreamStage.failed));
+        expect(coordinator.state.reconnectAttempts, equals(0));
+        expect(coordinator.state.error, contains('403'));
+      },
+    );
+
+    test(
+      'missing yt-dlp on known video host fails cleanly instead of falling back',
+      () async {
+        final missingResolver = YtDlpResolver(
+          runner: _MissingYtDlpRunner(),
+          executablePath: 'yt-dlp',
+        );
+        final ytCoordinator = StreamingCoordinator(
+          ytDlpResolver: missingResolver,
+        );
+        addTearDown(ytCoordinator.dispose);
+
+        final prepared = await ytCoordinator.prepareStream(
+          'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+        );
+        expect(prepared, isNull);
+        expect(ytCoordinator.state.stage, equals(StreamStage.failed));
+        expect(ytCoordinator.state.error, contains('yt-dlp'));
+      },
+    );
   });
+}
+
+class _MissingYtDlpRunner extends ProcessRunner {
+  @override
+  Future<ProcessExecutionResult> run(
+    String executable,
+    List<String> arguments, {
+    String? workingDirectory,
+    Map<String, String>? environment,
+    bool includeParentEnvironment = true,
+    bool runInShell = false,
+    Encoding? stdoutEncoding = systemEncoding,
+    Encoding? stderrEncoding = systemEncoding,
+    Duration? timeout,
+  }) {
+    throw ProcessException(executable, arguments, 'Not found', 2);
+  }
+
+  @override
+  Future<Process> start(
+    String executable,
+    List<String> arguments, {
+    String? workingDirectory,
+    Map<String, String>? environment,
+    bool includeParentEnvironment = true,
+    bool runInShell = false,
+    ProcessStartMode mode = ProcessStartMode.normal,
+  }) {
+    throw ProcessException(executable, arguments, 'Not found', 2);
+  }
 }
 
 class _FakeStreamManifestService extends StreamManifestService {

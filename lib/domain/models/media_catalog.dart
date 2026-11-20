@@ -30,6 +30,15 @@ class MediaCatalog {
     'bmp',
   };
 
+  static const Set<String> subtitleExtensions = <String>{
+    'ass',
+    'idx',
+    'srt',
+    'ssa',
+    'sub',
+    'vtt',
+  };
+
   static const Set<String> videoExtensions = <String>{
     'mp4',
     'mkv',
@@ -94,6 +103,12 @@ class MediaCatalog {
   static bool isSupportedImage(String filePath) {
     final ext = p.extension(filePath).toLowerCase().replaceFirst('.', '');
     return imageExtensions.contains(ext);
+  }
+
+  /// Returns whether a given file path has a supported subtitle extension.
+  static bool isSubtitleFile(String filePath) {
+    final ext = p.extension(filePath).toLowerCase().replaceFirst('.', '');
+    return subtitleExtensions.contains(ext);
   }
 
   /// Initial hint of media kind based on file extension.

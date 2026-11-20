@@ -147,6 +147,25 @@ void main() {
         expect(resolver.canResolve('   '), isFalse);
       },
     );
+
+    test(
+      'isKnownVideoHost matches known video domains and rejects generic domains',
+      () {
+        expect(
+          resolver.isKnownVideoHost(
+            'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+          ),
+          isTrue,
+        );
+        expect(resolver.isKnownVideoHost('https://youtu.be/abc123'), isTrue);
+        expect(resolver.isKnownVideoHost('https://vimeo.com/12345'), isTrue);
+        expect(
+          resolver.isKnownVideoHost('https://example.com/watch/video'),
+          isFalse,
+        );
+        expect(resolver.isKnownVideoHost('file:///C:/video.mp4'), isFalse);
+      },
+    );
   });
 
   group('YtDlpResolver arguments & process execution', () {
@@ -197,12 +216,14 @@ void main() {
       final r1080 = result.renditions.firstWhere((r) => r.formatId == '137');
       expect(r1080.height, equals(1080));
       expect(r1080.isMuxed, isFalse);
+      expect(r1080.bitrate, equals(4000000));
       expect(r1080.audioUrl, equals('https://cdn.example.com/140.m4a'));
 
       // 720p rendition (muxed)
       final r720 = result.renditions.firstWhere((r) => r.formatId == '22');
       expect(r720.height, equals(720));
       expect(r720.isMuxed, isTrue);
+      expect(r720.bitrate, equals(1500000));
       expect(r720.audioUrl, isNull);
     });
 

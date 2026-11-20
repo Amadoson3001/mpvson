@@ -1,13 +1,21 @@
 import 'dart:async';
+import 'dart:io';
 
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 
+import '../../../../data/repositories/app_preferences_repository.dart';
+import '../../../../data/services/yt_dlp_resolver.dart';
+import '../../../../domain/models/playback_settings.dart';
+import '../../../../utils/file_utils.dart';
 import '../../../core/app_theme.dart';
 import '../../../core/toast/app_toast.dart';
-import '../../../../domain/models/playback_settings.dart';
 import '../../player_controller.dart';
 import 'settings_shared_widgets.dart';
+
+typedef YtDlpStatusChecker = Future<YtDlpStatus> Function(String? customPath);
+typedef YtDlpExecutablePicker = Future<String?> Function();
 
 class PlaybackSettingsSection extends StatelessWidget {
   const PlaybackSettingsSection({
@@ -15,6 +23,10 @@ class PlaybackSettingsSection extends StatelessWidget {
     required this.controller,
     required this.pickSubtitle,
     this.embedded = false,
+    this.appPreferences,
+    this.checkYtDlpStatus,
+    this.pickYtDlpExecutable,
+    this.onOpenAppFolder,
   });
 
   final PlayerController controller;
@@ -23,6 +35,10 @@ class PlaybackSettingsSection extends StatelessWidget {
   /// True when these settings render inline in the library shell rather than
   /// in their own dialog route. Only a dialog route may be popped here.
   final bool embedded;
+  final AppPreferencesRepository? appPreferences;
+  final YtDlpStatusChecker? checkYtDlpStatus;
+  final YtDlpExecutablePicker? pickYtDlpExecutable;
+  final VoidCallback? onOpenAppFolder;
 
   @override
   Widget build(BuildContext context) {
@@ -159,9 +175,6 @@ class PlaybackSettingsSection extends StatelessWidget {
                     final route = ModalRoute.of(context);
                     final navigator = Navigator.maybeOf(context);
                     final toastContext = navigator?.context ?? context;
-                    if (!embedded && route != null && route.isCurrent) {
-                      Navigator.of(context).pop();
-                    }
                     String? path;
                     try {
                       path = await pickSubtitle();
@@ -175,10 +188,10 @@ class PlaybackSettingsSection extends StatelessWidget {
                       return;
                     }
                     if (path == null || path.isEmpty) return;
-                    // Close the settings sheet only after a successful pick,
-                    // and only while this route is still the current one and
-                    // can actually be popped.
-                    if (navigator != null &&
+                    // Close the settings sheet once after a successful pick,
+                    // only when mounted in its own dialog route.
+                    if (!embedded &&
+                        navigator != null &&
                         (route?.isCurrent ?? false) &&
                         navigator.canPop()) {
                       navigator.pop();
@@ -196,6 +209,12 @@ class PlaybackSettingsSection extends StatelessWidget {
                   },
                 ),
               ],
+            ),
+            _StreamingSettingsCard(
+              appPreferences: appPreferences,
+              checkYtDlpStatus: checkYtDlpStatus,
+              pickYtDlpExecutable: pickYtDlpExecutable,
+              onOpenAppFolder: onOpenAppFolder,
             ),
           ],
         ),
@@ -430,6 +449,300 @@ class _VideoAudioSettingsSectionState extends State<VideoAudioSettingsSection> {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _StreamingSettingsCard extends StatefulWidget {
+  const _StreamingSettingsCard({
+    this.appPreferences,
+    this.checkYtDlpStatus,
+    this.pickYtDlpExecutable,
+    this.onOpenAppFolder,
+  });
+
+  final AppPreferencesRepository? appPreferences;
+  final YtDlpStatusChecker? checkYtDlpStatus;
+  final YtDlpExecutablePicker? pickYtDlpExecutable;
+  final VoidCallback? onOpenAppFolder;
+
+  @override
+  State<_StreamingSettingsCard> createState() => _StreamingSettingsCardState();
+}
+
+class _StreamingSettingsCardState extends State<_StreamingSettingsCard> {
+  YtDlpStatus? _status;
+  bool _checking = false;
+  int _probeGeneration = 0;
+
+  String? get _customPath => widget.appPreferences?.preferences.ytDlpPath;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_probe());
+  }
+
+  @override
+  void didUpdateWidget(covariant _StreamingSettingsCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.appPreferences != widget.appPreferences) {
+      unawaited(_probe());
+    }
+  }
+
+  Future<void> _probe({String? customPathOverride}) async {
+    final generation = ++_probeGeneration;
+    final path = customPathOverride ?? _customPath;
+    setState(() => _checking = true);
+    YtDlpStatus result;
+    try {
+      if (widget.checkYtDlpStatus != null) {
+        result = await widget.checkYtDlpStatus!(path);
+      } else {
+        final resolved = YtDlpResolver.resolveDefaultExecutablePath(
+          customPath: path,
+        );
+        result = await YtDlpResolver(
+          executablePath: resolved,
+        ).checkAvailability();
+      }
+    } catch (error) {
+      result = YtDlpStatus(
+        availability: YtDlpAvailability.failed,
+        executablePath: path,
+        message: 'Could not check yt-dlp: $error',
+      );
+    }
+    if (!mounted || generation != _probeGeneration) return;
+    setState(() {
+      _status = result;
+      _checking = false;
+    });
+  }
+
+  Future<void> _chooseExecutable() async {
+    final prefs = widget.appPreferences;
+    String? picked;
+    try {
+      if (widget.pickYtDlpExecutable != null) {
+        picked = await widget.pickYtDlpExecutable!();
+      } else {
+        final typeGroup = XTypeGroup(
+          label: 'yt-dlp executable',
+          extensions: Platform.isWindows ? const ['exe'] : const <String>[],
+        );
+        final file = await openFile(
+          acceptedTypeGroups: Platform.isWindows ? [typeGroup] : const [],
+        );
+        picked = file?.path;
+      }
+    } catch (_) {
+      if (mounted) {
+        AppToast.show(
+          context,
+          'The file picker could not be opened.',
+          tone: AppToastTone.danger,
+        );
+      }
+      return;
+    }
+    if (picked == null || picked.trim().isEmpty) return;
+    final trimmed = picked.trim();
+    if (prefs != null) {
+      await prefs.setYtDlpPath(trimmed);
+    }
+    if (!mounted) return;
+    await _probe(customPathOverride: trimmed);
+  }
+
+  Future<void> _resetExecutable() async {
+    final prefs = widget.appPreferences;
+    if (prefs != null) {
+      await prefs.setYtDlpPath(null);
+    }
+    if (!mounted) return;
+    await _probe(customPathOverride: '');
+  }
+
+  Future<void> _openAppFolder() async {
+    if (widget.onOpenAppFolder != null) {
+      widget.onOpenAppFolder!();
+      return;
+    }
+    final exeDir = File(Platform.resolvedExecutable).parent.path;
+    final ok = await showInFolder(exeDir);
+    if (!ok && mounted) {
+      AppToast.show(
+        context,
+        'Could not open the application folder.',
+        tone: AppToastTone.danger,
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final prefs = widget.appPreferences;
+    if (prefs == null) {
+      return _buildCard(context, null);
+    }
+    return ListenableBuilder(
+      listenable: prefs,
+      builder: (context, _) => _buildCard(context, prefs.preferences),
+    );
+  }
+
+  Widget _buildCard(BuildContext context, DesktopPreferences? desktopPrefs) {
+    final palette = context.palette;
+    final customPath = desktopPrefs?.ytDlpPath;
+    final status = _status;
+
+    final (String badgeText, Color badgeColor) = switch (status?.availability) {
+      _ when _checking => ('Checking…', palette.mutedText),
+      YtDlpAvailability.available => (
+        status?.version != null && status!.version!.isNotEmpty
+            ? 'Detected (${status.version})'
+            : 'Detected',
+        AppTheme.success,
+      ),
+      YtDlpAvailability.outdated => (
+        status?.version != null && status!.version!.isNotEmpty
+            ? 'Outdated (${status.version})'
+            : 'Outdated',
+        AppTheme.warning,
+      ),
+      YtDlpAvailability.missing => ('Missing', palette.danger),
+      YtDlpAvailability.failed => ('Unavailable', palette.danger),
+      null => ('Not checked', palette.mutedText),
+    };
+
+    final resolvedLabel =
+        customPath ??
+        status?.executablePath ??
+        YtDlpResolver.defaultExecutablePath;
+
+    return SettingsCardGroup(
+      title: 'Streaming & yt-dlp',
+      description:
+          'Configure link resolution and default stream quality for web videos.',
+      children: [
+        if (desktopPrefs != null && widget.appPreferences != null)
+          DropdownSettingTile<PreferredStreamQuality>(
+            key: const ValueKey('preferred-stream-quality'),
+            icon: Icons.high_quality_rounded,
+            label: 'Default stream quality',
+            value: desktopPrefs.preferredStreamQuality,
+            items: PreferredStreamQuality.values
+                .map(
+                  (q) => DropdownMenuItem<PreferredStreamQuality>(
+                    value: q,
+                    child: Text(q.label),
+                  ),
+                )
+                .toList(),
+            onChanged: (q) {
+              if (q != null) {
+                unawaited(widget.appPreferences!.setPreferredStreamQuality(q));
+              }
+            },
+          ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.terminal_rounded, size: 18, color: palette.muted),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'yt-dlp resolver',
+                      style: palette.rowPrimary.copyWith(
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                  Container(
+                    key: const ValueKey('yt-dlp-status-badge'),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: badgeColor.withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(AppRadii.pill),
+                      border: Border.all(
+                        color: badgeColor.withValues(alpha: 0.35),
+                      ),
+                    ),
+                    child: Text(
+                      badgeText,
+                      style: palette.metadata.copyWith(
+                        color: badgeColor,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  IconButton(
+                    key: const ValueKey('yt-dlp-refresh'),
+                    tooltip: 'Re-check yt-dlp',
+                    onPressed: _checking ? null : () => unawaited(_probe()),
+                    icon: const Icon(Icons.refresh_rounded, size: 18),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Padding(
+                padding: const EdgeInsets.only(left: 30),
+                child: Text(
+                  resolvedLabel,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: palette.rowSecondary,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Padding(
+                padding: const EdgeInsets.only(left: 30),
+                child: Wrap(
+                  spacing: AppSpace.xs,
+                  runSpacing: AppSpace.xs,
+                  children: [
+                    if (widget.appPreferences != null ||
+                        widget.pickYtDlpExecutable != null)
+                      OutlinedButton.icon(
+                        key: const ValueKey('yt-dlp-choose'),
+                        onPressed: () => unawaited(_chooseExecutable()),
+                        icon: const Icon(Icons.folder_open_rounded, size: 16),
+                        label: Text(
+                          Platform.isWindows
+                              ? 'Choose yt-dlp.exe…'
+                              : 'Choose yt-dlp…',
+                        ),
+                      ),
+                    if (customPath != null && customPath.isNotEmpty)
+                      TextButton.icon(
+                        key: const ValueKey('yt-dlp-reset'),
+                        onPressed: () => unawaited(_resetExecutable()),
+                        icon: const Icon(Icons.restore_rounded, size: 16),
+                        label: const Text('Reset'),
+                      ),
+                    TextButton.icon(
+                      key: const ValueKey('yt-dlp-open-folder'),
+                      onPressed: () => unawaited(_openAppFolder()),
+                      icon: const Icon(Icons.launch_rounded, size: 16),
+                      label: const Text('Open app folder'),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }

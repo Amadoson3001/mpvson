@@ -1,10 +1,12 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../../data/services/playback_statistics.dart';
 import '../../core/app_theme.dart';
 import '../../core/components/app_dialog.dart';
+import '../../core/toast/app_toast.dart';
 
 /// Refreshes once per second so GPU and frame-drop counters stay current
 /// without polling while the dialog is closed.
@@ -21,8 +23,10 @@ class _PlaybackInfoDialogState extends State<PlaybackInfoDialog> {
   PlaybackStatistics? _statistics;
   bool _busy = false;
   bool _inFlight = false;
+  bool _copied = false;
   String? _error;
   Timer? _pollTimer;
+  Timer? _copiedResetTimer;
 
   @override
   void initState() {
@@ -37,7 +41,24 @@ class _PlaybackInfoDialogState extends State<PlaybackInfoDialog> {
   @override
   void dispose() {
     _pollTimer?.cancel();
+    _copiedResetTimer?.cancel();
     super.dispose();
+  }
+
+  Future<void> _copyDiagnostics() async {
+    final statistics = _statistics;
+    if (statistics == null) return;
+    final text = statistics.values.entries
+        .map((e) => '${e.key}: ${e.value}')
+        .join('\n');
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) return;
+    _copiedResetTimer?.cancel();
+    setState(() => _copied = true);
+    AppToast.show(context, 'Diagnostics copied');
+    _copiedResetTimer = Timer(const Duration(seconds: 2), () {
+      if (mounted) setState(() => _copied = false);
+    });
   }
 
   Future<void> _refresh({bool silent = false}) async {
@@ -119,6 +140,21 @@ class _PlaybackInfoDialogState extends State<PlaybackInfoDialog> {
         ],
       ),
       actions: [
+        TextButton.icon(
+          key: const ValueKey('playback-info-copy'),
+          style: TextButton.styleFrom(
+            foregroundColor: accent,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AppRadii.control),
+            ),
+          ),
+          onPressed: _statistics == null ? null : _copyDiagnostics,
+          icon: Icon(
+            _copied ? Icons.check_rounded : Icons.copy_rounded,
+            size: 16,
+          ),
+          label: Text(_copied ? 'Copied' : 'Copy diagnostics'),
+        ),
         TextButton(
           style: TextButton.styleFrom(
             foregroundColor: accent,

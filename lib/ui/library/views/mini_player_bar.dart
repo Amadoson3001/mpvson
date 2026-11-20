@@ -5,10 +5,12 @@ import 'package:flutter/material.dart';
 import '../../../data/repositories/media_library_repository.dart';
 import '../../../domain/models/library_models.dart';
 import '../../../domain/models/media_entry.dart';
+import '../../../domain/models/stream_playback_state.dart';
 import '../../core/app_theme.dart';
 import '../../core/components/playback_pulse.dart';
 import '../../core/components/seek_bar.dart';
 import '../../player/player_controller.dart';
+import '../../player/views/player_loading_overlay.dart';
 import '../../player/widgets/player_controls.dart';
 import '../widgets/audio_volume_control.dart';
 import '../widgets/library_artwork.dart';
@@ -184,6 +186,7 @@ class MiniPlayerBar extends StatelessWidget {
                                   alignment: Alignment.centerLeft,
                                   child: _MiniPlayerSubtitle(
                                     key: ValueKey(entry.path),
+                                    controller: controller,
                                     repository: repository,
                                     path: entry.path,
                                     fallbackTitle: entry.title,
@@ -342,12 +345,14 @@ class _OpenAreaState extends State<_OpenArea> {
 class _MiniPlayerSubtitle extends StatefulWidget {
   const _MiniPlayerSubtitle({
     super.key,
+    required this.controller,
     required this.repository,
     required this.path,
     required this.fallbackTitle,
     required this.isVideo,
   });
 
+  final PlayerController controller;
   final MediaLibraryRepository repository;
   final String path;
   final String fallbackTitle;
@@ -405,23 +410,52 @@ class _MiniPlayerSubtitleState extends State<_MiniPlayerSubtitle> {
 
   @override
   Widget build(BuildContext context) {
-    if (widget.isVideo) {
-      return _lines(widget.fallbackTitle, 'Video');
-    }
-    final record = _record;
-    if (record == null) {
-      return _lines(widget.fallbackTitle, 'Unknown artist');
-    }
-    return FutureBuilder<MediaItemRecord?>(
-      future: record,
-      builder: (context, snapshot) => _lines(
-        snapshot.data?.title ?? widget.fallbackTitle,
-        snapshot.data?.artist ?? 'Unknown artist',
-      ),
+    return ValueListenableBuilder<TransportState>(
+      valueListenable: widget.controller.transportListenable,
+      builder: (context, transport, _) {
+        final stage = transport.streamStage;
+        final activeStatus =
+            (transport.isLoading ||
+                transport.isBuffering ||
+                stage == StreamStage.reconnecting ||
+                stage == StreamStage.switchingQuality)
+            ? resolveLoadingStageLabel(
+                transport: transport,
+                entry: widget.controller.current,
+              )
+            : null;
+        final currentTitle = widget.controller.current?.path == widget.path
+            ? widget.controller.current!.title
+            : widget.fallbackTitle;
+
+        if (widget.isVideo) {
+          return _lines(
+            currentTitle,
+            activeStatus ?? 'Video',
+            isStatus: activeStatus != null,
+          );
+        }
+        final record = _record;
+        if (record == null) {
+          return _lines(
+            currentTitle,
+            activeStatus ?? 'Unknown artist',
+            isStatus: activeStatus != null,
+          );
+        }
+        return FutureBuilder<MediaItemRecord?>(
+          future: record,
+          builder: (context, snapshot) => _lines(
+            snapshot.data?.title ?? currentTitle,
+            activeStatus ?? snapshot.data?.artist ?? 'Unknown artist',
+            isStatus: activeStatus != null,
+          ),
+        );
+      },
     );
   }
 
-  Widget _lines(String title, String subtitle) {
+  Widget _lines(String title, String subtitle, {bool isStatus = false}) {
     final palette = context.palette;
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -442,6 +476,8 @@ class _MiniPlayerSubtitleState extends State<_MiniPlayerSubtitle> {
           style: palette.rowSecondary.copyWith(
             fontSize: MiniPlayerBar._subtitleSize,
             height: 1.3,
+            color: isStatus ? palette.accent : palette.secondaryText,
+            fontWeight: isStatus ? FontWeight.w500 : FontWeight.normal,
           ),
           maxLines: 1,
           overflow: TextOverflow.ellipsis,

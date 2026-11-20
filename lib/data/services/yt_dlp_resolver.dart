@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:mpvson/data/services/process_runner.dart';
 import 'package:mpvson/domain/models/resolved_stream.dart';
+import 'package:path/path.dart' as p;
 
 /// Availability status of the yt-dlp executable.
 enum YtDlpAvailability { available, missing, outdated, failed }
@@ -148,11 +149,43 @@ class YtDlpResolver {
 
   YtDlpResolver({ProcessRunner? runner, String? executablePath})
     : runner = runner ?? ProcessRunner.standard,
-      executablePath = executablePath ?? defaultExecutablePath;
+      executablePath = executablePath ?? resolveDefaultExecutablePath();
 
   /// Default executable name for the current platform.
   static String get defaultExecutablePath =>
       Platform.isWindows ? 'yt-dlp.exe' : 'yt-dlp';
+
+  /// Resolves the `yt-dlp` executable path from [customPath], `MPVSON_YTDLP_PATH`,
+  /// beside the running binary (or its `bin/` directory), or by falling back to PATH.
+  static String resolveDefaultExecutablePath({String? customPath}) {
+    final trimmedCustom = customPath?.trim();
+    if (trimmedCustom != null &&
+        trimmedCustom.isNotEmpty &&
+        File(trimmedCustom).existsSync()) {
+      return trimmedCustom;
+    }
+    final envPath = Platform.environment['MPVSON_YTDLP_PATH']?.trim();
+    if (envPath != null && envPath.isNotEmpty && File(envPath).existsSync()) {
+      return envPath;
+    }
+    final exeName = defaultExecutablePath;
+    try {
+      final exeDir = File(Platform.resolvedExecutable).parent.path;
+      for (final candidate in <String>[
+        p.join(exeDir, exeName),
+        p.join(exeDir, 'bin', exeName),
+      ]) {
+        if (File(candidate).existsSync()) {
+          return candidate;
+        }
+      }
+    } on Object {
+      // Fall back to PATH lookup if resolvedExecutable cannot be inspected.
+    }
+    return trimmedCustom != null && trimmedCustom.isNotEmpty
+        ? trimmedCustom
+        : exeName;
+  }
 
   static final RegExp _knownVideoHosts = RegExp(
     r'(^|\.)('
@@ -199,6 +232,20 @@ class YtDlpResolver {
     'proxy-connection',
     'host',
   };
+
+  /// Whether [url] points to a known public video page host that requires
+  /// extractor resolution rather than direct engine playback.
+  bool isKnownVideoHost(String url) {
+    final trimmed = url.trim();
+    if (trimmed.isEmpty) return false;
+    final uri = Uri.tryParse(trimmed);
+    if (uri == null) return false;
+    final scheme = uri.scheme.toLowerCase();
+    if (scheme != 'http' && scheme != 'https') return false;
+    final host = uri.host.toLowerCase();
+    if (host.isEmpty) return false;
+    return _knownVideoHosts.hasMatch(host);
+  }
 
   /// Determines whether [url] is a candidate for resolution via yt-dlp.
   bool canResolve(String url) {
@@ -663,8 +710,14 @@ class YtDlpResolver {
     final width = (item['width'] as num?)?.toInt() ?? 0;
     final height = (item['height'] as num?)?.toInt() ?? 0;
     final fps = (item['fps'] as num?)?.toDouble() ?? 0.0;
-    final bitrate = ((item['tbr'] ?? item['vbr']) as num?)?.toInt() ?? 0;
-    final audioBitrate = ((item['abr'] ?? item['tbr']) as num?)?.toInt() ?? 0;
+    final rawBitrateKbps = (item['tbr'] ?? item['vbr']) as num?;
+    final bitrate = rawBitrateKbps != null && rawBitrateKbps > 0
+        ? (rawBitrateKbps * 1000).round()
+        : 0;
+    final rawAudioBitrateKbps = (item['abr'] ?? item['tbr']) as num?;
+    final audioBitrate = rawAudioBitrateKbps != null && rawAudioBitrateKbps > 0
+        ? (rawAudioBitrateKbps * 1000).round()
+        : 0;
     final vcodec = item['vcodec'] as String?;
     final acodec = item['acodec'] as String?;
     final formatNote = (item['format_note'] ?? item['format'])?.toString();

@@ -32,46 +32,76 @@ class _SeekBarState extends State<SeekBar> {
       listenable: Listenable.merge([
         widget.controller.displayPositionListenable,
         widget.controller.durationListenable,
+        widget.controller.transportListenable,
       ]),
-      builder: (context, _) => Row(
-        children: [
-          SizedBox(width: SeekBar.sideInset),
-          Text(
-            formatTime(
-              _preview ?? widget.controller.displayPosition,
-              compactMinutes: true,
-            ),
-            style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: context.palette.primaryText.withValues(alpha: 0.85),
-              fontWeight: FontWeight.w500,
-              fontFeatures: const [FontFeature.tabularFigures()],
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: PlayerControlStyle(
-              compact: true,
-              child: SharedSeekBar(
-                controller: widget.controller,
-                onPreviewChanged: (value) {
-                  if (mounted) setState(() => _preview = value);
-                },
-                onInteractionChanged: null,
+      builder: (context, _) {
+        final isLive =
+            widget.controller.transportState.streamPlaybackState.isLive;
+        return Row(
+          children: [
+            SizedBox(width: SeekBar.sideInset),
+            Text(
+              formatTime(
+                _preview ?? widget.controller.displayPosition,
+                compactMinutes: true,
+              ),
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: context.palette.primaryText.withValues(alpha: 0.85),
+                fontWeight: FontWeight.w500,
+                fontFeatures: const [FontFeature.tabularFigures()],
               ),
             ),
-          ),
-          const SizedBox(width: 10),
-          Text(
-            formatTime(widget.controller.duration, compactMinutes: true),
-            style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: context.palette.primaryText.withValues(alpha: 0.85),
-              fontWeight: FontWeight.w500,
-              fontFeatures: const [FontFeature.tabularFigures()],
+            const SizedBox(width: 10),
+            Expanded(
+              child: PlayerControlStyle(
+                compact: true,
+                child: SharedSeekBar(
+                  controller: widget.controller,
+                  onPreviewChanged: (value) {
+                    if (mounted) setState(() => _preview = value);
+                  },
+                  onInteractionChanged: null,
+                ),
+              ),
             ),
-          ),
-          SizedBox(width: SeekBar.sideInset),
-        ],
-      ),
+            const SizedBox(width: 10),
+            if (isLive)
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const SizedBox(
+                    width: 6,
+                    height: 6,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: Color(0xFFEF4444),
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 5),
+                  Text(
+                    'Live',
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: context.palette.primaryText,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              )
+            else
+              Text(
+                formatTime(widget.controller.duration, compactMinutes: true),
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: context.palette.primaryText.withValues(alpha: 0.85),
+                  fontWeight: FontWeight.w500,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
+            SizedBox(width: SeekBar.sideInset),
+          ],
+        );
+      },
     ),
   );
 }

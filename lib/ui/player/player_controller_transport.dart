@@ -48,6 +48,59 @@ extension PlayerControllerTransport on PlayerController {
     }
   }
 
+  /// Dismisses the currently displayed playback error.
+  void clearError() {
+    if (!_acceptsCommands) return;
+    final engineState = _playback.state;
+    if (engineState.error != null && engineState.error!.isNotEmpty) {
+      _dismissedEngineError = engineState.error;
+      _dismissedEngineErrorSourceStart = engineState.sourceStart;
+    } else if (_playbackState.error != null &&
+        _playbackState.error!.isNotEmpty) {
+      _dismissedEngineError = _playbackState.error;
+      _dismissedEngineErrorSourceStart = _playbackState.sourceStart;
+    }
+    _clearError();
+  }
+
+  /// Cancels an in-flight media open (such as a slow or unresponsive stream).
+  Future<void> cancelLoading() async {
+    if (!_acceptsCommands || !isLoading) return;
+    _transportCommandRevision++;
+    _operation++;
+    _cancelPendingOpen(reason: 'cancelled by user');
+    final currentId = current?.id;
+    if (currentId != null) {
+      _clearPendingNavigation(currentId);
+    } else {
+      _pendingNavigationEntryId = null;
+      _pendingNavigationCursor = null;
+    }
+    _clearResume();
+    _markSourceDisplaced();
+    _isStopped = true;
+    _completionHandled = true;
+    _engineHasMedia = false;
+    _engineEntryId = null;
+    _error = null;
+    _dismissedEngineError = null;
+    _dismissedEngineErrorSourceStart = null;
+    _playbackState = _playbackState.copyWith(
+      isPlaying: false,
+      isBuffering: false,
+      completed: false,
+      clearError: true,
+      clearNativeSource: true,
+      sourceLoaded: false,
+      streamPlaybackState: const StreamPlaybackState(),
+    );
+    _seekPreview.setSource(null);
+    _publishTransport();
+    _notifyIfOpen();
+    _scheduleSave();
+    await _ignorePlaybackFailure(_playback.stop);
+  }
+
   /// Loads the restored current entry without starting playback so the player
   /// can present its paused frame instead of a resume placeholder.
   Future<void> prepareCurrentPaused() async {
@@ -116,6 +169,9 @@ extension PlayerControllerTransport on PlayerController {
     _currentIndex = -1;
     _engineHasMedia = false;
     _engineEntryId = null;
+    _error = null;
+    _dismissedEngineError = null;
+    _dismissedEngineErrorSourceStart = null;
     _clearResume();
     _mediaKind = MediaKind.unknown;
     _metadata = MediaMetadata.empty;
@@ -656,6 +712,80 @@ extension PlayerControllerTransport on PlayerController {
       _playbackSettingsError = 'Could not apply playback settings: $error';
     }
     _notifyIfOpen();
+  }
+
+  Future<void> frameStep({required bool forward}) async {
+    if (!_acceptsCommands || !hasMedia || isAudio) return;
+    final playback = _playback;
+    if (playback is FrameStepCapability) {
+      await _runPlaybackCommand(
+        () => (playback as FrameStepCapability).frameStep(forward: forward),
+      );
+    }
+  }
+
+  Future<String?> cycleAudioTrack() async {
+    if (!_acceptsCommands || !hasMedia) return null;
+    final candidates = <AudioTrack>[
+      for (final track in audioTracks)
+        if (track.id != 'auto' && track.id != 'no') track,
+    ];
+    if (candidates.isEmpty) return 'No audio tracks';
+    if (candidates.length == 1) {
+      await setAudioTrack(candidates.first);
+      return 'Audio: ${_formatTrackDisplay(candidates.first.id, candidates.first.title, candidates.first.language)}';
+    }
+    final currentIdx = candidates.indexWhere(
+      (t) => t.id == currentAudioTrack.id,
+    );
+    final next = candidates[(currentIdx + 1) % candidates.length];
+    await setAudioTrack(next);
+    return 'Audio: ${_formatTrackDisplay(next.id, next.title, next.language)}';
+  }
+
+  Future<String?> cycleSubtitleTrack() async {
+    if (!_acceptsCommands || !hasMedia) return null;
+    final realTracks = <SubtitleTrack>[
+      for (final track in subtitleTracks)
+        if (track.id != 'auto' && track.id != 'no') track,
+    ];
+    if (realTracks.isEmpty) return 'No subtitle tracks';
+    final candidates = <SubtitleTrack>[SubtitleTrack.no(), ...realTracks];
+    final currentIdx = candidates.indexWhere(
+      (t) => t.id == currentSubtitleTrack.id,
+    );
+    final next = currentIdx < 0
+        ? candidates[1]
+        : candidates[(currentIdx + 1) % candidates.length];
+    await setSubtitleTrack(next);
+    return next.id == 'no'
+        ? 'Subtitles: Off'
+        : 'Subtitles: ${_formatTrackDisplay(next.id, next.title, next.language)}';
+  }
+
+  Future<double?> adjustPlaybackRate({required double delta}) async {
+    if (!_acceptsCommands) return null;
+    final next = (((rate + delta) * 100).round() / 100).clamp(0.25, 4.0);
+    await setRate(next);
+    return next;
+  }
+
+  Future<void> resetPlaybackRate() async {
+    if (!_acceptsCommands) return;
+    await setRate(1.0);
+  }
+
+  static String _formatTrackDisplay(
+    String id,
+    String? rawTitle,
+    String? rawLanguage,
+  ) {
+    final title = (rawTitle ?? '').trim();
+    final language = (rawLanguage ?? '').trim();
+    if (title.isEmpty && language.isEmpty) return 'Track $id';
+    if (title.isEmpty) return language;
+    if (language.isEmpty) return title;
+    return '$title ($language)';
   }
 
   Future<void> setAudioTrack(AudioTrack track) async {

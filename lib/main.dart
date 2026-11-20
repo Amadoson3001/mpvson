@@ -40,6 +40,7 @@ import 'ui/core/components/app_dialog.dart';
 import 'ui/core/tokens/motion.dart';
 import 'ui/player/player_controller.dart';
 import 'ui/player/views/open_preference_dialog.dart';
+import 'utils/cli_arguments.dart';
 
 const WindowOptions _windowOptions = WindowOptions(
   size: Size(1240, 780),
@@ -336,8 +337,16 @@ Future<void> main(List<String> arguments) async {
     await appPreferences.load();
     final graphicsSettings = appPreferences.graphicsSettings;
     readyController.applyGraphicsSettings(graphicsSettings);
+    readyController.applyStreamingPreferences(
+      ytDlpPath: appPreferences.preferences.ytDlpPath,
+      preferredQuality: appPreferences.preferences.preferredStreamQuality,
+    );
     void syncGraphicsPreferences() {
       readyController.applyGraphicsSettings(appPreferences.graphicsSettings);
+      readyController.applyStreamingPreferences(
+        ytDlpPath: appPreferences.preferences.ytDlpPath,
+        preferredQuality: appPreferences.preferences.preferredStreamQuality,
+      );
     }
 
     appPreferences.addListener(syncGraphicsPreferences);
@@ -526,16 +535,15 @@ Future<void> main(List<String> arguments) async {
       }),
     );
 
-    final isEnqueue = arguments.contains('--enqueue');
-    final paths = arguments.where((argument) => !argument.startsWith('--'));
-    if (paths.isNotEmpty) {
+    final parsedCli = parseCliArguments(arguments);
+    if (parsedCli.sources.isNotEmpty) {
       final origin = OpenOrigin.startupArgs;
-      final intent = isEnqueue ? OpenIntent.enqueue : OpenIntent.normal;
+      final intent = parsedCli.enqueue ? OpenIntent.enqueue : OpenIntent.normal;
       unawaited(
         openCoordinator.handleOpenRequest(
           OpenRequest(
             id: DateTime.now().microsecondsSinceEpoch.toString(),
-            sources: paths.toList(growable: false),
+            sources: parsedCli.sources,
             intent: intent,
             origin: origin,
           ),

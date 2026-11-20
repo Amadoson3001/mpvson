@@ -37,6 +37,15 @@ class PlayerHotkeyHandler {
     required this.onAdjustDelay,
     required this.onShowPlaybackInfo,
     required this.onShowControls,
+    this.onHoldSpeedChanged,
+    this.onPreviousTrack,
+    this.onNextTrack,
+    this.onCycleSubtitle,
+    this.onCycleAudio,
+    this.onAdjustSpeed,
+    this.onResetSpeed,
+    this.onFrameStep,
+    this.onScreenshot,
   });
 
   final PlayerController controller;
@@ -69,6 +78,15 @@ class PlayerHotkeyHandler {
   onAdjustDelay;
   final VoidCallback onShowPlaybackInfo;
   final VoidCallback onShowControls;
+  final ValueChanged<bool>? onHoldSpeedChanged;
+  final VoidCallback? onPreviousTrack;
+  final VoidCallback? onNextTrack;
+  final VoidCallback? onCycleSubtitle;
+  final VoidCallback? onCycleAudio;
+  final ValueChanged<double>? onAdjustSpeed;
+  final VoidCallback? onResetSpeed;
+  final ValueChanged<bool>? onFrameStep;
+  final VoidCallback? onScreenshot;
 
   static const _spaceHoldDelay = Duration(milliseconds: 180);
 
@@ -85,6 +103,7 @@ class PlayerHotkeyHandler {
     _spaceHeld = false;
     if (_longSpacePress) {
       _longSpacePress = false;
+      onHoldSpeedChanged?.call(false);
       unawaited(controller.setRate(_rateBeforeHold));
     }
   }
@@ -164,6 +183,7 @@ class PlayerHotkeyHandler {
           if (_isDisposed || !_spaceHeld) return;
           _longSpacePress = true;
           _rateBeforeHold = controller.rate;
+          onHoldSpeedChanged?.call(true);
           if (!controller.isPlaying) {
             unawaited(controller.togglePlayPause());
           }
@@ -221,6 +241,14 @@ class PlayerHotkeyHandler {
           unawaited(onSetFullscreen(false));
           return KeyEventResult.handled;
         }
+        if (controller.isLoading) {
+          unawaited(controller.cancelLoading());
+          return KeyEventResult.handled;
+        }
+        if (controller.error != null) {
+          controller.clearError();
+          return KeyEventResult.handled;
+        }
         break;
       default:
         break;
@@ -239,6 +267,24 @@ class PlayerHotkeyHandler {
             ? stepSeconds
             : -stepSeconds;
         unawaited(controller.seekRelative(Duration(seconds: step)));
+        onShowControls();
+        return KeyEventResult.handled;
+      case PlayerAction.previousTrack:
+        if (_sliderFocused || queueOwnsFocus) return KeyEventResult.ignored;
+        if (onPreviousTrack != null) {
+          onPreviousTrack!();
+        } else {
+          unawaited(controller.previous());
+        }
+        onShowControls();
+        return KeyEventResult.handled;
+      case PlayerAction.nextTrack:
+        if (_sliderFocused || queueOwnsFocus) return KeyEventResult.ignored;
+        if (onNextTrack != null) {
+          onNextTrack!();
+        } else {
+          unawaited(controller.next());
+        }
         onShowControls();
         return KeyEventResult.handled;
       case PlayerAction.volumeUp:
@@ -268,6 +314,20 @@ class PlayerHotkeyHandler {
         if (!isNativeWindow) return KeyEventResult.ignored;
         onToggleMiniPlayer();
         return KeyEventResult.handled;
+      case PlayerAction.cycleSubtitle:
+        if (onCycleSubtitle != null) {
+          onCycleSubtitle!();
+        } else {
+          unawaited(controller.cycleSubtitleTrack());
+        }
+        return KeyEventResult.handled;
+      case PlayerAction.cycleAudio:
+        if (onCycleAudio != null) {
+          onCycleAudio!();
+        } else {
+          unawaited(controller.cycleAudioTrack());
+        }
+        return KeyEventResult.handled;
       case PlayerAction.subtitleEarlier:
         unawaited(onAdjustDelay(audio: false, later: false));
         return KeyEventResult.handled;
@@ -279,6 +339,46 @@ class PlayerHotkeyHandler {
         return KeyEventResult.handled;
       case PlayerAction.audioLater:
         unawaited(onAdjustDelay(audio: true, later: true));
+        return KeyEventResult.handled;
+      case PlayerAction.speedDown:
+        if (onAdjustSpeed != null) {
+          onAdjustSpeed!(-0.25);
+        } else {
+          unawaited(controller.adjustPlaybackRate(delta: -0.25));
+        }
+        return KeyEventResult.handled;
+      case PlayerAction.speedUp:
+        if (onAdjustSpeed != null) {
+          onAdjustSpeed!(0.25);
+        } else {
+          unawaited(controller.adjustPlaybackRate(delta: 0.25));
+        }
+        return KeyEventResult.handled;
+      case PlayerAction.speedReset:
+        if (onResetSpeed != null) {
+          onResetSpeed!();
+        } else {
+          unawaited(controller.resetPlaybackRate());
+        }
+        return KeyEventResult.handled;
+      case PlayerAction.frameStepBackward:
+        if (_sliderFocused || queueOwnsFocus) return KeyEventResult.ignored;
+        if (onFrameStep != null) {
+          onFrameStep!(false);
+        } else {
+          unawaited(controller.frameStep(forward: false));
+        }
+        return KeyEventResult.handled;
+      case PlayerAction.frameStepForward:
+        if (_sliderFocused || queueOwnsFocus) return KeyEventResult.ignored;
+        if (onFrameStep != null) {
+          onFrameStep!(true);
+        } else {
+          unawaited(controller.frameStep(forward: true));
+        }
+        return KeyEventResult.handled;
+      case PlayerAction.screenshot:
+        onScreenshot?.call();
         return KeyEventResult.handled;
     }
   }

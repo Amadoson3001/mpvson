@@ -66,8 +66,8 @@ class PlayerDragOverlay extends StatelessWidget {
         alignment: Alignment.center,
         child: Text(
           hasMedia
-              ? 'Drop videos to add them to the queue'
-              : 'Drop a video to start playback',
+              ? 'Drop media to queue or subtitles to load'
+              : 'Drop media files or folders to start playback',
           style: Theme.of(context).textTheme.titleMedium,
         ),
       ),

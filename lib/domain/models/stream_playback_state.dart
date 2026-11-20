@@ -22,6 +22,7 @@ class StreamPlaybackState {
     this.originalUrl = '',
     this.streamUrl = '',
     this.audioUrl,
+    this.resolvedTitle,
     this.stage = StreamStage.idle,
     this.stageMessage,
     this.selectedRendition,
@@ -51,6 +52,9 @@ class StreamPlaybackState {
 
   /// Optional external audio URL loaded concurrently.
   final String? audioUrl;
+
+  /// Human-readable title resolved from the stream source (for example by yt-dlp).
+  final String? resolvedTitle;
 
   /// The active lifecycle stage.
   final StreamStage stage;
@@ -115,6 +119,8 @@ class StreamPlaybackState {
     String? streamUrl,
     String? audioUrl,
     bool clearAudioUrl = false,
+    String? resolvedTitle,
+    bool clearResolvedTitle = false,
     StreamStage? stage,
     String? stageMessage,
     bool clearStageMessage = false,
@@ -142,6 +148,9 @@ class StreamPlaybackState {
       originalUrl: originalUrl ?? this.originalUrl,
       streamUrl: streamUrl ?? this.streamUrl,
       audioUrl: clearAudioUrl ? null : (audioUrl ?? this.audioUrl),
+      resolvedTitle: clearResolvedTitle
+          ? null
+          : (resolvedTitle ?? this.resolvedTitle),
       stage: stage ?? this.stage,
       stageMessage: clearStageMessage
           ? null
@@ -177,6 +186,7 @@ class StreamPlaybackState {
         other.originalUrl == originalUrl &&
         other.streamUrl == streamUrl &&
         other.audioUrl == audioUrl &&
+        other.resolvedTitle == resolvedTitle &&
         other.stage == stage &&
         other.stageMessage == stageMessage &&
         other.selectedRendition == selectedRendition &&
@@ -216,7 +226,7 @@ class StreamPlaybackState {
     seekable,
     firstOutputTime,
     timeToFirstOutput,
-    error,
+    Object.hash(resolvedTitle, error),
   );
 
   @override

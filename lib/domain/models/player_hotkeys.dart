@@ -6,6 +6,8 @@ enum PlayerAction {
   playPause,
   seekBackward,
   seekForward,
+  previousTrack,
+  nextTrack,
   volumeUp,
   volumeDown,
   mute,
@@ -13,10 +15,18 @@ enum PlayerAction {
   queue,
   playbackInfo,
   miniPlayer,
+  cycleSubtitle,
+  cycleAudio,
   subtitleEarlier,
   subtitleLater,
   audioEarlier,
   audioLater,
+  speedDown,
+  speedUp,
+  speedReset,
+  frameStepBackward,
+  frameStepForward,
+  screenshot,
 }
 
 extension PlayerActionDetails on PlayerAction {
@@ -24,6 +34,8 @@ extension PlayerActionDetails on PlayerAction {
     PlayerAction.playPause => 'Play or pause',
     PlayerAction.seekBackward => 'Seek backward',
     PlayerAction.seekForward => 'Seek forward',
+    PlayerAction.previousTrack => 'Previous in queue',
+    PlayerAction.nextTrack => 'Next in queue',
     PlayerAction.volumeUp => 'Volume up',
     PlayerAction.volumeDown => 'Volume down',
     PlayerAction.mute => 'Mute or unmute',
@@ -31,10 +43,18 @@ extension PlayerActionDetails on PlayerAction {
     PlayerAction.queue => 'Show or hide the queue',
     PlayerAction.playbackInfo => 'Playback information',
     PlayerAction.miniPlayer => 'Mini player',
+    PlayerAction.cycleSubtitle => 'Cycle subtitles',
+    PlayerAction.cycleAudio => 'Cycle audio track',
     PlayerAction.subtitleEarlier => 'Subtitles earlier',
     PlayerAction.subtitleLater => 'Subtitles later',
     PlayerAction.audioEarlier => 'Audio earlier',
     PlayerAction.audioLater => 'Audio later',
+    PlayerAction.speedDown => 'Decrease speed',
+    PlayerAction.speedUp => 'Increase speed',
+    PlayerAction.speedReset => 'Reset speed',
+    PlayerAction.frameStepBackward => 'Previous frame',
+    PlayerAction.frameStepForward => 'Next frame',
+    PlayerAction.screenshot => 'Save screenshot',
   };
 }
 
@@ -79,6 +99,13 @@ class HotkeyBinding {
       LogicalKeyboardKey.arrowRight => '→',
       LogicalKeyboardKey.arrowUp => '↑',
       LogicalKeyboardKey.arrowDown => '↓',
+      LogicalKeyboardKey.pageUp => 'PgUp',
+      LogicalKeyboardKey.pageDown => 'PgDn',
+      LogicalKeyboardKey.backspace => 'Backspace',
+      LogicalKeyboardKey.minus => '-',
+      LogicalKeyboardKey.equal => '=',
+      LogicalKeyboardKey.comma => ',',
+      LogicalKeyboardKey.period => '.',
       LogicalKeyboardKey.tab => 'Tab',
       LogicalKeyboardKey.enter => 'Enter',
       _ => key?.keyLabel ?? '',
@@ -151,6 +178,8 @@ class PlayerHotkeys {
     PlayerAction.playPause: HotkeyBinding.key(LogicalKeyboardKey.space),
     PlayerAction.seekBackward: HotkeyBinding.key(LogicalKeyboardKey.arrowLeft),
     PlayerAction.seekForward: HotkeyBinding.key(LogicalKeyboardKey.arrowRight),
+    PlayerAction.previousTrack: HotkeyBinding.key(LogicalKeyboardKey.pageUp),
+    PlayerAction.nextTrack: HotkeyBinding.key(LogicalKeyboardKey.pageDown),
     PlayerAction.volumeUp: HotkeyBinding.key(LogicalKeyboardKey.arrowUp),
     PlayerAction.volumeDown: HotkeyBinding.key(LogicalKeyboardKey.arrowDown),
     PlayerAction.mute: HotkeyBinding.key(LogicalKeyboardKey.keyM),
@@ -161,6 +190,8 @@ class PlayerHotkeys {
       LogicalKeyboardKey.keyI,
       shift: true,
     ),
+    PlayerAction.cycleSubtitle: HotkeyBinding.key(LogicalKeyboardKey.keyV),
+    PlayerAction.cycleAudio: HotkeyBinding.key(LogicalKeyboardKey.keyB),
     PlayerAction.subtitleEarlier: HotkeyBinding.key(LogicalKeyboardKey.keyZ),
     PlayerAction.subtitleLater: HotkeyBinding.key(
       LogicalKeyboardKey.keyZ,
@@ -170,6 +201,12 @@ class PlayerHotkeys {
       LogicalKeyboardKey.bracketLeft,
     ),
     PlayerAction.audioLater: HotkeyBinding.key(LogicalKeyboardKey.bracketRight),
+    PlayerAction.speedDown: HotkeyBinding.key(LogicalKeyboardKey.minus),
+    PlayerAction.speedUp: HotkeyBinding.key(LogicalKeyboardKey.equal),
+    PlayerAction.speedReset: HotkeyBinding.key(LogicalKeyboardKey.backspace),
+    PlayerAction.frameStepBackward: HotkeyBinding.key(LogicalKeyboardKey.comma),
+    PlayerAction.frameStepForward: HotkeyBinding.key(LogicalKeyboardKey.period),
+    PlayerAction.screenshot: HotkeyBinding.key(LogicalKeyboardKey.keyS),
   };
 
   final Map<PlayerAction, HotkeyBinding> _bindings;
@@ -205,6 +242,33 @@ class PlayerHotkeys {
       for (final action in PlayerAction.values) {
         final binding = HotkeyBinding.tryParse(value[action.name]);
         if (binding != null) overrides[action] = binding;
+      }
+      // Avoid duplicate bindings when upgrading saved preferences from older
+      // versions where a newly introduced action's default key was already bound.
+      final used = Set<HotkeyBinding>.from(overrides.values);
+      for (final action in PlayerAction.values) {
+        if (overrides.containsKey(action)) continue;
+        final fallback = defaults._bindings[action]!;
+        if (!used.add(fallback)) {
+          final shifted = HotkeyBinding(
+            keyId: fallback.keyId,
+            ctrl: fallback.ctrl,
+            alt: fallback.alt,
+            shift: !fallback.shift,
+          );
+          if (used.add(shifted)) {
+            overrides[action] = shifted;
+          } else {
+            final ctrlShifted = HotkeyBinding(
+              keyId: fallback.keyId,
+              ctrl: true,
+              alt: fallback.alt,
+              shift: true,
+            );
+            used.add(ctrlShifted);
+            overrides[action] = ctrlShifted;
+          }
+        }
       }
     }
     return PlayerHotkeys(overrides);

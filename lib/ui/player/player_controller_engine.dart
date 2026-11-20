@@ -70,6 +70,16 @@ extension PlayerControllerEngine on PlayerController {
     }
   }
 
+  void applyStreamingPreferences({
+    String? ytDlpPath,
+    PreferredStreamQuality? preferredQuality,
+  }) {
+    _playback.streamingCoordinator.configureStreamingPreferences(
+      ytDlpPath: ytDlpPath,
+      preferredQuality: preferredQuality,
+    );
+  }
+
   List<MediaEntry> get queue => _queueSnapshot.entries;
 
   QueueSnapshot get queueSnapshot => _queueSnapshot;
@@ -653,7 +663,9 @@ extension PlayerControllerEngine on PlayerController {
     final oldStreamPlaybackState = _playbackState.streamPlaybackState;
 
     snapshot = _applyResumeFloor(snapshot);
+    final shouldSurfaceError = _shouldSurfaceSnapshotError(snapshot);
     _applySnapshot(snapshot, notify: false);
+    final titleChanged = _syncResolvedStreamTitle(snapshot);
     _confirmedRate = PlayerController._normalizeRate(snapshot.rate);
     if (oldDuration != _playbackState.duration && _engineHasMedia) {
       // Duration is queue metadata and should refresh queue rows once when the
@@ -666,7 +678,7 @@ extension PlayerControllerEngine on PlayerController {
       _publishVolume();
     }
 
-    if (snapshot.error != null && snapshot.error!.isNotEmpty) {
+    if (shouldSurfaceError) {
       _error = snapshot.error;
       _diagnostics?.record(
         'playback.engine',
@@ -700,6 +712,7 @@ extension PlayerControllerEngine on PlayerController {
     }
 
     final changed =
+        titleChanged ||
         oldKind != _mediaKind ||
         oldPlaying != isPlaying ||
         oldBuffering != isBuffering ||
@@ -786,10 +799,56 @@ extension PlayerControllerEngine on PlayerController {
     if (chaptersChanged && !_notifierDisposed) {
       chaptersListenable.value = snapshot.chapters;
     }
-    if (snapshot.error != null && snapshot.error!.isNotEmpty) {
+    if (_shouldSurfaceSnapshotError(snapshot)) {
       _error = snapshot.error;
     }
     if (notify) _notifyIfOpen();
+  }
+
+  bool _shouldSurfaceSnapshotError(PlaybackSnapshot snapshot) {
+    final error = snapshot.error;
+    if (error == null || error.isEmpty) {
+      _dismissedEngineError = null;
+      _dismissedEngineErrorSourceStart = null;
+      return false;
+    }
+    if (_dismissedEngineError == error &&
+        _dismissedEngineErrorSourceStart == snapshot.sourceStart) {
+      return false;
+    }
+    return true;
+  }
+
+  bool _syncResolvedStreamTitle(PlaybackSnapshot snapshot) {
+    final rawTitle = snapshot.streamPlaybackState.resolvedTitle?.trim();
+    if (rawTitle == null ||
+        rawTitle.isEmpty ||
+        _currentIndex < 0 ||
+        _currentIndex >= _queue.length) {
+      return false;
+    }
+    final entry = _queue[_currentIndex];
+    if (!MediaEntry.isNetworkUrl(entry.path)) return false;
+    if (entry.title == rawTitle ||
+        entry.title != MediaEntry.titleFromPath(entry.path)) {
+      return false;
+    }
+    final updated = entry.copyWith(title: rawTitle);
+    _queue[_currentIndex] = updated;
+    final recentIndex =
+        _recentIndexById[updated.id] ??
+        _recentIndexById[MediaEntry.canonicalSource(updated.path)] ??
+        -1;
+    if (recentIndex >= 0 && recentIndex < _recent.length) {
+      _recent[recentIndex] = _recent[recentIndex].copyWith(title: rawTitle);
+      _unmodifiableRecent = List<MediaEntry>.unmodifiable(_recent);
+    }
+    if (_currentQueueId == entry.id) {
+      _metadata = _metadata.copyWith(title: rawTitle);
+    }
+    _publishQueue();
+    _publishStructureIfChanged();
+    return true;
   }
 
   void _updateQueueProgress(
@@ -850,6 +909,8 @@ extension PlayerControllerEngine on PlayerController {
 
   void _setError(String message) {
     if (!_acceptsCommands) return;
+    _dismissedEngineError = null;
+    _dismissedEngineErrorSourceStart = null;
     _error = message;
     _publishTransport();
     _notifyIfOpen();

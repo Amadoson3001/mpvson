@@ -5,12 +5,14 @@ import 'package:flutter/material.dart';
 import '../../../data/repositories/media_library_repository.dart';
 import '../../../domain/models/library_models.dart';
 import '../../../domain/models/media_entry.dart';
+import '../../../domain/models/stream_playback_state.dart';
 import '../../player/player_controller.dart';
 import '../../core/app_motion.dart';
 import '../../core/app_theme.dart';
 import '../../core/components/seek_bar.dart';
 import '../../core/toast/app_toast.dart';
 import '../../core/toast/toast_layout.dart';
+import '../../player/widgets/controls/stream_quality_menu.dart';
 import '../../player/widgets/player_controls.dart';
 import '../../player/widgets/player_control_style.dart';
 import '../../player/widgets/queue_panel.dart';
@@ -28,6 +30,7 @@ class NowPlayingView extends StatefulWidget {
     this.onBack,
     this.onOpenQueue,
     this.onAddQueueFiles,
+    this.onAddQueueUrl,
   });
 
   final PlayerController controller;
@@ -35,6 +38,7 @@ class NowPlayingView extends StatefulWidget {
   final VoidCallback? onBack;
   final VoidCallback? onOpenQueue;
   final VoidCallback? onAddQueueFiles;
+  final VoidCallback? onAddQueueUrl;
 
   @override
   State<NowPlayingView> createState() => _NowPlayingViewState();
@@ -491,6 +495,7 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                               ),
+                              _buildTransportStatus(context),
                               SizedBox(
                                 height: NowPlayingLayout.gapAboveTransport(
                                   isCompactHeight: isCompactHeight,
@@ -533,6 +538,7 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                           onClose: () =>
                               setState(() => _sideQueueHidden = true),
                           onAddFiles: widget.onAddQueueFiles ?? () {},
+                          onAddUrl: widget.onAddQueueUrl,
                         ),
                       ),
                     ),
@@ -540,6 +546,85 @@ class _NowPlayingViewState extends State<NowPlayingView> {
                 ],
               ),
             ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildTransportStatus(BuildContext context) {
+    return ValueListenableBuilder<TransportState>(
+      valueListenable: widget.controller.transportListenable,
+      builder: (context, transport, _) {
+        final streamState = transport.streamPlaybackState;
+        final isActiveStreamStage =
+            streamState.stage == StreamStage.resolving ||
+            streamState.stage == StreamStage.connecting ||
+            streamState.stage == StreamStage.buffering ||
+            streamState.stage == StreamStage.switchingQuality ||
+            streamState.stage == StreamStage.reconnecting;
+        final showStatus =
+            transport.isLoading || transport.isBuffering || isActiveStreamStage;
+        if (!showStatus) return const SizedBox.shrink();
+
+        final palette = context.palette;
+        final accent = Theme.of(context).colorScheme.primary;
+        final statusText =
+            streamState.stageMessage != null &&
+                streamState.stageMessage!.trim().isNotEmpty
+            ? streamState.stageMessage!.trim()
+            : (transport.isLoading ? 'Loading media…' : 'Buffering…');
+
+        return Padding(
+          padding: const EdgeInsets.only(top: AppSpace.xs),
+          child: Container(
+            key: const ValueKey('now-playing-status'),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+            decoration: BoxDecoration(
+              color: palette.raisedSurface,
+              borderRadius: BorderRadius.circular(AppRadii.pill),
+              border: Border.all(color: palette.border),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  width: 12,
+                  height: 12,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 1.8,
+                    color: accent,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    statusText,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: palette.metadata.copyWith(
+                      color: palette.primaryText,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+                if (transport.isLoading) ...[
+                  const SizedBox(width: 6),
+                  TextButton(
+                    key: const ValueKey('now-playing-cancel-load'),
+                    style: TextButton.styleFrom(
+                      minimumSize: const Size(44, 28),
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    onPressed: () =>
+                        unawaited(widget.controller.cancelLoading()),
+                    child: const Text('Cancel'),
+                  ),
+                ],
+              ],
+            ),
           ),
         );
       },
@@ -561,10 +646,32 @@ class _NowPlayingViewState extends State<NowPlayingView> {
         ),
         const SizedBox(height: NowPlayingLayout.transportVolumeGap),
         Center(
-          child: AudioVolumeControl(
-            controller: widget.controller,
-            compact: isCompactHeight,
-            showPercent: true,
+          child: ValueListenableBuilder<TransportState>(
+            valueListenable: widget.controller.transportListenable,
+            builder: (context, transport, _) {
+              final stream = transport.streamPlaybackState;
+              final showQuality =
+                  stream.isStreaming && stream.availableRenditions.isNotEmpty;
+              return Wrap(
+                alignment: WrapAlignment.center,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 8,
+                runSpacing: 4,
+                children: [
+                  AudioVolumeControl(
+                    controller: widget.controller,
+                    compact: isCompactHeight,
+                    showPercent: true,
+                  ),
+                  if (showQuality)
+                    StreamQualityMenu(
+                      controller: widget.controller,
+                      foregroundColor: context.palette.primaryText,
+                      onMenuVisibilityChanged: null,
+                    ),
+                ],
+              );
+            },
           ),
         ),
       ],

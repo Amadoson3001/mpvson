@@ -313,8 +313,7 @@ class NativeVideoController extends PlatformVideoController {
                 case 'VideoOutput.Error':
                   {
                     final int handle = call.arguments['handle'];
-                    final String error =
-                        (call.arguments['error'] as String?) ??
+                    final String error = (call.arguments['error'] as String?) ??
                         'VideoOutput initialization failed.';
                     final completer = _createCompleters.remove(handle);
                     if (completer != null && !completer.isCompleted) {

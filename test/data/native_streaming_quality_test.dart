@@ -1,8 +1,12 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:media_kit/media_kit.dart';
+import 'package:media_kit_video/media_kit_video.dart';
+import 'package:media_kit_video/src/video_controller/platform_video_controller.dart';
+import 'package:path/path.dart' as p;
 import 'package:mpvson/data/repositories/session_repository.dart';
 import 'package:mpvson/data/services/native_media_events.dart';
 import 'package:mpvson/data/services/playback_service.dart';
@@ -15,14 +19,40 @@ import '../support/fake_playback_service.dart';
 import '../support/streaming_fixture_server.dart';
 
 void main() {
+  var nativeLibmpvReady = false;
+
   setUpAll(() {
-    // Initialize libmpv native engine if available on Windows
-    final dllPath =
-        '${Directory.current.path}\\build\\windows\\x64\\runner\\Debug\\libmpv-2.dll';
-    if (File(dllPath).existsSync()) {
-      try {
-        MediaKit.ensureInitialized(libmpv: dllPath);
-      } catch (_) {}
+    // Initialize libmpv native engine if available on Windows.
+    if (Platform.isWindows) {
+      final candidates = <String>[
+        p.join(
+          Directory.current.path,
+          'build',
+          'windows',
+          'x64',
+          'runner',
+          'Debug',
+          'libmpv-2.dll',
+        ),
+        p.join(
+          Directory.current.path,
+          'build',
+          'windows',
+          'x64',
+          'runner',
+          'Release',
+          'libmpv-2.dll',
+        ),
+      ];
+      for (final dllPath in candidates) {
+        if (File(dllPath).existsSync()) {
+          try {
+            MediaKit.ensureInitialized(libmpv: dllPath);
+            nativeLibmpvReady = true;
+            break;
+          } catch (_) {}
+        }
+      }
     }
   });
 
@@ -303,5 +333,127 @@ void main() {
         expect(snapshot.completed, isFalse);
       },
     );
+
+    test(
+      'setPropertyList clears audio-files without triggering external file open error',
+      () async {
+        if (!nativeLibmpvReady) return;
+        final samplePath = p.join(
+          Directory.current.path,
+          'packaging',
+          'linux',
+          'smoke-sample.mp4',
+        );
+        expect(File(samplePath).existsSync(), isTrue);
+
+        final player = Player(
+          configuration: const PlayerConfiguration(vo: 'null'),
+        );
+        final service = MediaKitPlaybackService(
+          player: player,
+          videoController: _TestVideoController(player),
+        );
+        addTearDown(service.dispose);
+
+        final errors = <String>[];
+        final stateSub = service.states.listen((s) {
+          if (s.error != null && s.error!.isNotEmpty) {
+            errors.add(s.error!);
+          }
+        });
+        final playerErrSub = player.stream.error.listen((msg) {
+          if (msg.isNotEmpty) {
+            errors.add(msg);
+          }
+        });
+        addTearDown(() async {
+          await stateSub.cancel();
+          await playerErrSub.cancel();
+        });
+
+        final native = player.platform! as NativePlayer;
+        await native.future;
+
+        await native.setPropertyList('audio-files', <String>[
+          samplePath,
+        ], waitForInitialization: false);
+        await native.setPropertyList(
+          'audio-files',
+          const <String>[],
+          waitForInitialization: false,
+        );
+
+        await service.open(samplePath, play: false);
+        final deadline = DateTime.now().add(const Duration(seconds: 3));
+        while (DateTime.now().isBefore(deadline) &&
+            !service.state.sourceLoaded &&
+            errors.isEmpty) {
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        }
+
+        expect(
+          errors.where((e) => e.contains('Can not open external file')),
+          isEmpty,
+        );
+        expect(service.state.error, isNull);
+      },
+    );
+
+    test('PlayerController.closePlayer clears active error state', () async {
+      final tempDir = Directory.systemTemp.createTempSync('mpvson-close-err-');
+      addTearDown(() => tempDir.deleteSync(recursive: true));
+
+      final playback = FakePlaybackService();
+      final controller = PlayerController(
+        playback: playback,
+        sessions: SessionRepository(
+          directory: tempDir,
+          encoder: (s) => s.toJson().toString(),
+        ),
+      );
+      addTearDown(() async {
+        await controller.close(discard: true);
+        controller.dispose();
+        await playback.dispose();
+      });
+
+      await controller.initialize();
+      await controller.openPaths([p.join(tempDir.path, 'does-not-exist.mp4')]);
+      expect(controller.error, isNotNull);
+
+      await controller.closePlayer();
+      expect(controller.current, isNull);
+      expect(controller.error, isNull);
+    });
   });
+}
+
+class _TestVideoController implements VideoController {
+  _TestVideoController(this.player);
+
+  @override
+  final Player player;
+
+  @override
+  final Completer<PlatformVideoController> platform =
+      Completer<PlatformVideoController>();
+
+  @override
+  final ValueNotifier<PlatformVideoController?> notifier =
+      ValueNotifier<PlatformVideoController?>(null);
+
+  @override
+  final ValueNotifier<int?> id = ValueNotifier<int?>(null);
+
+  @override
+  final ValueNotifier<Rect?> rect = ValueNotifier<Rect?>(null);
+
+  @override
+  Future<void> setSize({int? width, int? height}) async {}
+
+  @override
+  Future<void> setRenderVisibility(bool visible) async {}
+
+  @override
+  Future<void> get waitUntilFirstFrameRendered async {}
 }

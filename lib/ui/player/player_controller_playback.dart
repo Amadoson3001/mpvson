@@ -33,6 +33,8 @@ extension PlayerControllerPlayback on PlayerController {
     _engineHasMedia = false;
     _engineEntryId = null;
     _error = null;
+    _dismissedEngineError = null;
+    _dismissedEngineErrorSourceStart = null;
     _mediaKind = PlayerController._classifyMediaKind(
       entry: entry,
       snapshot: _playbackState,
@@ -55,6 +57,7 @@ extension PlayerControllerPlayback on PlayerController {
       clearError: true,
       clearNativeSource: true,
       sourceLoaded: false,
+      streamPlaybackState: const StreamPlaybackState(),
     );
     _publishTransport();
     _notifyIfOpen();
@@ -155,10 +158,12 @@ extension PlayerControllerPlayback on PlayerController {
       ),
       notify: false,
     );
-    if (snapshot.error != null && snapshot.error!.isNotEmpty) {
+    if (_shouldSurfaceSnapshotError(snapshot)) {
       _error = snapshot.error;
     }
+    final titleChanged = _syncResolvedStreamTitle(snapshot);
     final changed =
+        titleChanged ||
         previous.isPlaying != isPlaying ||
         previous.volume != volume ||
         previous.rate != rate ||
@@ -166,7 +171,8 @@ extension PlayerControllerPlayback on PlayerController {
         previous.audioTracks != audioTracks ||
         previous.subtitleTracks != subtitleTracks ||
         previous.currentAudioTrack != currentAudioTrack ||
-        previous.currentSubtitleTrack != currentSubtitleTrack;
+        previous.currentSubtitleTrack != currentSubtitleTrack ||
+        previous.streamPlaybackState != _playbackState.streamPlaybackState;
     if (changed) {
       // Views read the transport glyph from [transportListenable], so a loading
       // snapshot that changes transport state has to publish it as well.
@@ -272,6 +278,8 @@ extension PlayerControllerPlayback on PlayerController {
     _engineHasMedia = true;
     _engineEntryId = entryId;
     _activeSourceStart = boundary;
+    _dismissedEngineError = null;
+    _dismissedEngineErrorSourceStart = null;
     _finishPendingOpen(publish: false);
     final effectiveDuration = duration > Duration.zero
         ? duration

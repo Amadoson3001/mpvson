@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
@@ -16,6 +18,7 @@ import 'player_drag_drop.dart';
 import 'player_top_bar.dart';
 import '../../../../data/repositories/app_preferences_repository.dart';
 import 'mini_player_overlay.dart';
+import 'player_loading_overlay.dart';
 import 'settings/floating_video_settings.dart';
 
 typedef PlayerVideoBuilder =
@@ -69,6 +72,7 @@ class PlayerStage extends StatelessWidget {
     required this.onUpdateViewportDimensions,
     this.videoSettingsOpen = false,
     this.videoSettingsMounted = false,
+    this.holdSpeedActive = false,
     this.miniProgress = 0.0,
     this.miniProgressAnimation,
     this.onExpandFromMini,
@@ -78,6 +82,9 @@ class PlayerStage extends StatelessWidget {
     this.onOpenFullSettings,
     this.appPreferences,
     this.onPickSubtitle,
+    this.onSaveScreenshot,
+    this.onCopyUrl,
+    this.onShowInFolder,
   });
 
   final PlayerController controller;
@@ -101,6 +108,7 @@ class PlayerStage extends StatelessWidget {
   final PlayerHotkeys hotkeys;
   final bool videoSettingsOpen;
   final bool videoSettingsMounted;
+  final bool holdSpeedActive;
   final double miniProgress;
   final Animation<double>? miniProgressAnimation;
   final VoidCallback? onExpandFromMini;
@@ -110,6 +118,9 @@ class PlayerStage extends StatelessWidget {
   final VoidCallback? onOpenFullSettings;
   final AppPreferencesRepository? appPreferences;
   final Future<String?> Function()? onPickSubtitle;
+  final VoidCallback? onSaveScreenshot;
+  final VoidCallback? onCopyUrl;
+  final VoidCallback? onShowInFolder;
 
   final void Function(PointerSignalEvent event) onPointerSignal;
   final VoidCallback onVideoTap;
@@ -237,6 +248,9 @@ class PlayerStage extends StatelessWidget {
           onMenuVisibilityChanged: onMenuVisibilityChanged,
           onFullscreen: desktopWindow ? onFullscreen : null,
           onToggleMiniPlayer: nativeWindow ? onToggleMiniPlayer : null,
+          onSaveScreenshot: onSaveScreenshot,
+          onCopyUrl: onCopyUrl,
+          onShowInFolder: onShowInFolder,
           isFullscreen: isFullscreen,
           isMiniPlayer: isMiniPlayer,
           queueOpen: queueOpen,
@@ -336,6 +350,33 @@ class PlayerStage extends StatelessWidget {
           child: _DockFade(
             progress: progress,
             fadeWithDock: false,
+            child: PlayerStageLoadingOverlay(controller: controller),
+          ),
+        ),
+        Positioned.fill(
+          child: _DockFade(
+            progress: progress,
+            fadeWithDock: false,
+            child: IgnorePointer(
+              child: Align(
+                alignment: Alignment.topCenter,
+                child: Padding(
+                  padding: const EdgeInsets.only(top: AppSpace.lg),
+                  child: AnimatedSwitcher(
+                    duration: AppMotion.duration(context, AppMotion.quick),
+                    child: holdSpeedActive
+                        ? _HoldSpeedPill(key: const ValueKey('hold-speed-pill'))
+                        : const SizedBox.shrink(),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+        Positioned.fill(
+          child: _DockFade(
+            progress: progress,
+            fadeWithDock: false,
             child: IgnorePointer(
               child: Align(
                 alignment: feedbackCentered
@@ -414,6 +455,8 @@ class PlayerStage extends StatelessWidget {
                                 onInteractionChanged:
                                     onControlInteractionChanged,
                                 onVolumeChanged: onVolumeChanged,
+                                onLoadSubtitle: () =>
+                                    unawaited(onLoadSubtitle()),
                                 showPlaybackControls: controller.hasMedia,
                                 timelineActive: controlsVisible,
                                 actions: isMiniPlayer
@@ -624,4 +667,37 @@ class _DockTapSurface extends StatelessWidget {
       },
     );
   }
+}
+
+class _HoldSpeedPill extends StatelessWidget {
+  const _HoldSpeedPill({super.key});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+    decoration: BoxDecoration(
+      color: const Color(0xD612141A),
+      borderRadius: BorderRadius.circular(AppRadii.pill),
+      border: Border.all(color: Colors.white.withValues(alpha: 0.14)),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          Icons.fast_forward_rounded,
+          size: 16,
+          color: Theme.of(context).colorScheme.primary,
+        ),
+        const SizedBox(width: 6),
+        Text(
+          '2×',
+          style: Theme.of(context).textTheme.labelMedium?.copyWith(
+            color: AppTheme.onStage,
+            fontWeight: FontWeight.w700,
+            fontFeatures: const [FontFeature.tabularFigures()],
+          ),
+        ),
+      ],
+    ),
+  );
 }

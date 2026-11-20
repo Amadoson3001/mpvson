@@ -77,6 +77,7 @@ class PlayerEmbeddedLibrary extends StatelessWidget {
       onOpenFiles: media.pickAndOpenFiles,
       onOpenUrl: media.openUrl,
       onAddQueueFiles: media.addQueueFiles,
+      onAddQueueUrl: media.addQueueUrl,
       onBackToPlayer: canReturnToPlayer ? onReturnToPlayerAnimated : null,
       onAddFolders: media.addLibraryFolder,
       showSettings: settingsOpen,

@@ -344,7 +344,6 @@ class MediaKitNativeMediaEvents implements NativeMediaEvents {
       StreamController<NativeMediaEvent>.broadcast(sync: true);
   final List<String> _observedProperties = [];
   StreamSubscription<NativeLifecycleEvent>? _lifecycleSubscription;
-  String? _lastObservedSource;
   bool _started = false;
   bool _disposed = false;
 
@@ -364,7 +363,7 @@ class MediaKitNativeMediaEvents implements NativeMediaEvents {
           case NativeLifecycleKind.startFile:
             _events.add(
               NativeMediaEvent.started(
-                _lastObservedSource ?? '',
+                '',
                 playlistEntryId: event.playlistEntryId,
               ),
             );
@@ -390,9 +389,6 @@ class MediaKitNativeMediaEvents implements NativeMediaEvents {
           return false;
         }
         await platform.observeProperty(property, (value) async {
-          if (property == NativePropertyNames.path) {
-            _lastObservedSource = value.trim();
-          }
           _handle(property, value);
         });
         _observedProperties.add(property);

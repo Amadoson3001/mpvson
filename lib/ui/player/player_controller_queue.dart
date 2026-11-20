@@ -25,7 +25,7 @@ extension PlayerControllerQueue on PlayerController {
     final willEmptyQueue = _queue.length == 1;
     final displacedActiveSource =
         removedCurrent || removedOpening || willEmptyQueue;
-    _undo = _QueueUndo(
+    _undo = _QueueUndo.single(
       entry: removedEntry,
       index: index,
       previousCurrentId: oldCurrentId,
@@ -139,10 +139,10 @@ extension PlayerControllerQueue on PlayerController {
 
   Future<void> undoRemove() async {
     final undo = _undo;
-    if (!_acceptsCommands || undo == null) return;
+    if (!_acceptsCommands || undo == null || undo.entries.isEmpty) return;
     _queueStructureRevision++;
     final insertIndex = undo.index.clamp(0, _queue.length);
-    _queue.insert(insertIndex, undo.entry);
+    _queue.insertAll(insertIndex, undo.entries);
     _rebuildQueueIndex(insertIndex);
     if (shuffle) _prepareShuffleRemaining();
     final restoredIndex = undo.previousCurrentId == null
@@ -150,7 +150,9 @@ extension PlayerControllerQueue on PlayerController {
         : (_queueIdToIndex[undo.previousCurrentId] ?? -1);
     _currentIndex = restoredIndex >= 0
         ? restoredIndex
-        : (insertIndex <= _currentIndex ? _currentIndex + 1 : _currentIndex);
+        : (_currentIndex >= 0 && insertIndex <= _currentIndex
+              ? _currentIndex + undo.entries.length
+              : _currentIndex);
     _undo = null;
 
     if (!undo.displacedActiveSource) {
@@ -195,6 +197,14 @@ extension PlayerControllerQueue on PlayerController {
 
   Future<void> clearQueue() async {
     if (!_acceptsCommands) return;
+    _syncCurrentProgress();
+    final clearedEntries = List<MediaEntry>.of(_queue);
+    final oldCurrentId = current?.id;
+    final wasActive = isPlaying || _pendingOpen != null;
+    final displacedActiveSource =
+        _engineHasMedia || _pendingOpen != null || _currentIndex >= 0;
+    final displacedCurrent = _currentIndex >= 0;
+
     _operation++;
     _queueStructureRevision++;
     _importOperation++;
@@ -209,7 +219,17 @@ extension PlayerControllerQueue on PlayerController {
     _shuffleRemaining.clear();
     _shuffleVisited.clear();
     _currentIndex = -1;
-    _undo = null;
+    _undo = clearedEntries.isEmpty
+        ? null
+        : _QueueUndo(
+            entries: clearedEntries,
+            index: 0,
+            previousCurrentId: oldCurrentId,
+            wasPlaying: wasActive,
+            displacedActiveSource: displacedActiveSource,
+            displacedCurrent: displacedCurrent,
+            isClearAll: true,
+          );
     _clearResume();
     _engineHasMedia = false;
     _engineEntryId = null;

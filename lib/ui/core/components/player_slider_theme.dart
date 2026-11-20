@@ -49,6 +49,7 @@ class PlayerSliderTheme {
     Color? inactiveColor,
   }) {
     final primary = Theme.of(context).colorScheme.primary;
+    final inactive = inactiveColor ?? Colors.white.withValues(alpha: 0.25);
     return SliderTheme.of(context).copyWith(
       trackHeight: trackHeight,
       trackShape: trackShape,
@@ -56,7 +57,8 @@ class PlayerSliderTheme {
       thumbShape: thumbShape,
       overlayShape: RoundSliderOverlayShape(overlayRadius: overlayRadius),
       activeTrackColor: primary,
-      inactiveTrackColor: inactiveColor ?? Colors.white.withValues(alpha: 0.25),
+      secondaryActiveTrackColor: inactive.withValues(alpha: 0.42),
+      inactiveTrackColor: inactive,
       overlayColor: primary.withValues(alpha: 0.16),
       thumbColor: primary,
       padding: EdgeInsets.zero,

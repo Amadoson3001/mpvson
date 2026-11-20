@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:media_kit/media_kit.dart';
@@ -6,6 +7,8 @@ import 'package:media_kit/media_kit.dart';
 import '../../domain/models/media_source.dart';
 import '../../domain/models/resolved_stream.dart';
 import '../../domain/models/stream_playback_state.dart';
+import '../repositories/app_preferences_repository.dart'
+    show PreferredStreamQuality;
 import 'diagnostic_log.dart';
 import 'native_media_events.dart';
 import 'stream_manifest_service.dart';
@@ -22,6 +25,7 @@ class ResolvedStreamInfo {
     this.title,
     this.renditions = const [],
     this.selectedRendition,
+    this.isAutoQuality = true,
     this.isLive = false,
     this.isExpiring = false,
     this.expiresAt,
@@ -35,6 +39,7 @@ class ResolvedStreamInfo {
   final String? title;
   final List<StreamRendition> renditions;
   final StreamRendition? selectedRendition;
+  final bool isAutoQuality;
   final bool isLive;
   final bool isExpiring;
   final DateTime? expiresAt;
@@ -48,12 +53,42 @@ class StreamingCoordinator {
     YtDlpResolver? ytDlpResolver,
     StreamManifestService? manifestService,
     this.diagnostics,
-  }) : ytDlpResolver = ytDlpResolver ?? YtDlpResolver(),
+  }) : _ytDlpResolver = ytDlpResolver ?? YtDlpResolver(),
        manifestService = manifestService ?? StreamManifestService();
 
-  final YtDlpResolver ytDlpResolver;
+  YtDlpResolver _ytDlpResolver;
+  YtDlpResolver get ytDlpResolver => _ytDlpResolver;
   final StreamManifestService manifestService;
   final DiagnosticSink? diagnostics;
+
+  String? _configuredYtDlpPath;
+  PreferredStreamQuality _preferredQuality = PreferredStreamQuality.auto;
+
+  PreferredStreamQuality get preferredQuality => _preferredQuality;
+
+  /// Updates the configured yt-dlp executable path and preferred stream quality
+  /// at runtime without disrupting active playback.
+  void configureStreamingPreferences({
+    String? ytDlpPath,
+    PreferredStreamQuality? preferredQuality,
+  }) {
+    final normalizedPath = ytDlpPath?.trim();
+    final effectivePath = normalizedPath != null && normalizedPath.isNotEmpty
+        ? normalizedPath
+        : null;
+    if (effectivePath != _configuredYtDlpPath) {
+      _configuredYtDlpPath = effectivePath;
+      _ytDlpResolver = YtDlpResolver(
+        runner: _ytDlpResolver.runner,
+        executablePath: YtDlpResolver.resolveDefaultExecutablePath(
+          customPath: effectivePath,
+        ),
+      );
+    }
+    if (preferredQuality != null) {
+      _preferredQuality = preferredQuality;
+    }
+  }
 
   final StreamController<StreamPlaybackState> _stateController =
       StreamController<StreamPlaybackState>.broadcast(sync: true);
@@ -223,6 +258,12 @@ class StreamingCoordinator {
         if (cancelToken.isCancelled || attemptId != _attemptCounter) {
           return null;
         }
+        _emit(
+          _currentState.copyWith(
+            stage: StreamStage.resolving,
+            stageMessage: 'Resolving link',
+          ),
+        );
         try {
           final resolved = await ytDlpResolver.resolve(
             url,
@@ -241,6 +282,50 @@ class StreamingCoordinator {
           isExpiring = resolved.isExpiring;
           expiresAt = resolved.expiresAt;
           httpHeaders = resolved.httpHeaders;
+        } on YtDlpCancelledException {
+          return null;
+        } on YtDlpNotFoundException catch (e) {
+          if (cancelToken.isCancelled || attemptId != _attemptCounter) {
+            return null;
+          }
+          diagnostics?.record(
+            'stream.ytdlp.missing',
+            sourceId: MediaSource.redact(url),
+            error: MediaSource.redactText(e.toString()),
+          );
+          if (ytDlpResolver.isKnownVideoHost(url)) {
+            _emit(
+              _currentState.copyWith(
+                stage: StreamStage.failed,
+                clearStageMessage: true,
+                error: Platform.isWindows
+                    ? 'yt-dlp is required to play links from this site. Place yt-dlp.exe next to mpvson.exe or install yt-dlp on PATH.'
+                    : 'yt-dlp is required to play links from this site. Install yt-dlp on PATH.',
+              ),
+            );
+            return null;
+          }
+          // Non-known hosts may be extensionless direct media; fall back.
+        } on YtDlpResolutionException catch (e) {
+          if (cancelToken.isCancelled || attemptId != _attemptCounter) {
+            return null;
+          }
+          diagnostics?.record(
+            'stream.ytdlp.error',
+            sourceId: MediaSource.redact(url),
+            error: MediaSource.redactText(e.message),
+          );
+          if (ytDlpResolver.isKnownVideoHost(url) &&
+              e.errorType != YtDlpErrorType.unsupportedUrl) {
+            _emit(
+              _currentState.copyWith(
+                stage: StreamStage.failed,
+                clearStageMessage: true,
+                error: _ytDlpUserErrorMessage(e.errorType),
+              ),
+            );
+            return null;
+          }
         } on Object catch (e) {
           if (cancelToken.isCancelled || attemptId != _attemptCounter) {
             return null;
@@ -248,9 +333,9 @@ class StreamingCoordinator {
           diagnostics?.record(
             'stream.ytdlp.error',
             sourceId: MediaSource.redact(url),
-            error: e.toString(),
+            error: MediaSource.redactText(e.toString()),
           );
-          // If yt-dlp fails or is missing, fall back to direct opening attempt
+          // If yt-dlp fails or is missing on non-known hosts, fall back to direct opening attempt.
         }
       }
 
@@ -265,6 +350,12 @@ class StreamingCoordinator {
         if (cancelToken.isCancelled || attemptId != _attemptCounter) {
           return null;
         }
+        _emit(
+          _currentState.copyWith(
+            stage: StreamStage.resolving,
+            stageMessage: 'Loading stream info',
+          ),
+        );
         try {
           final manifest = await manifestService.discover(
             playableUrl,
@@ -302,16 +393,36 @@ class StreamingCoordinator {
 
       // Initial quality selection
       final initialRendition = _pickInitialRendition(candidateRenditions);
+      final isAutoSelected =
+          _preferredQuality == PreferredStreamQuality.auto ||
+          initialRendition == null ||
+          initialRendition.isAuto;
+      final effectiveSelectedRendition = isAutoSelected
+          ? StreamRendition.auto
+          : initialRendition;
 
+      if (!isAutoSelected &&
+          _activeManifest == null &&
+          initialRendition.url != null &&
+          initialRendition.url!.isNotEmpty) {
+        playableUrl = initialRendition.url!;
+        audioUrl = initialRendition.audioUrl ?? audioUrl;
+      }
+
+      final normalizedTitle = title?.trim();
       _emit(
         _currentState.copyWith(
           streamUrl: playableUrl,
           audioUrl: audioUrl,
+          resolvedTitle: normalizedTitle != null && normalizedTitle.isNotEmpty
+              ? normalizedTitle
+              : null,
           stage: StreamStage.connecting,
           stageMessage: 'Connecting',
           availableRenditions: renditionsWithAuto,
-          selectedRendition: StreamRendition.auto,
+          selectedRendition: effectiveSelectedRendition,
           activeRendition: initialRendition,
+          isAutoQuality: isAutoSelected,
           isLive: isLive,
         ),
       );
@@ -324,6 +435,7 @@ class StreamingCoordinator {
         title: title,
         renditions: renditionsWithAuto,
         selectedRendition: initialRendition,
+        isAutoQuality: isAutoSelected,
         isLive: isLive,
         isExpiring: isExpiring,
         expiresAt: expiresAt,
@@ -342,7 +454,12 @@ class StreamingCoordinator {
     }
   }
 
-  /// Picks a conservative initial rendition near 720p within 2 Mbps total bitrate budget.
+  /// Picks an initial rendition based on [preferredQuality].
+  ///
+  /// For [PreferredStreamQuality.auto], selects a conservative rendition near
+  /// 720p within the 2 Mbps budget. For explicit presets (`best`, `p1080`, `p720`,
+  /// `p480`), picks the highest quality matching the constraint (falling back to
+  /// the lowest available video rendition when all exceed a capped preset).
   StreamRendition? _pickInitialRendition(List<StreamRendition> renditions) {
     if (renditions.isEmpty) return null;
 
@@ -350,20 +467,39 @@ class StreamingCoordinator {
     final videoRenditions = renditions.where((r) => r.hasVideo).toList();
     if (videoRenditions.isEmpty) return renditions.first;
 
-    // Sort by height ascending
-    videoRenditions.sort((a, b) => (a.height ?? 0).compareTo(b.height ?? 0));
+    // Sort by height ascending, then bitrate ascending
+    videoRenditions.sort((a, b) {
+      final heightCmp = (a.height ?? 0).compareTo(b.height ?? 0);
+      if (heightCmp != 0) return heightCmp;
+      return (a.bitrate ?? 0).compareTo(b.bitrate ?? 0);
+    });
 
-    // Find best match <= 720p with bitrate <= 2 Mbps
-    StreamRendition? bestFit;
-    for (final r in videoRenditions) {
-      final h = r.height ?? 0;
-      final br = r.bitrate ?? 0;
-      if (h <= 720 && (br == 0 || br <= _initialBitrateBudget)) {
-        bestFit = r;
-      }
+    switch (_preferredQuality) {
+      case PreferredStreamQuality.auto:
+        StreamRendition? bestFit;
+        for (final r in videoRenditions) {
+          final h = r.height ?? 0;
+          final br = r.bitrate ?? 0;
+          if (h <= 720 && (br == 0 || br <= _initialBitrateBudget)) {
+            bestFit = r;
+          }
+        }
+        return bestFit ?? videoRenditions.first;
+      case PreferredStreamQuality.best:
+        return videoRenditions.last;
+      case PreferredStreamQuality.p1080:
+      case PreferredStreamQuality.p720:
+      case PreferredStreamQuality.p480:
+        final cap = _preferredQuality.maxHeight!;
+        StreamRendition? bestCapped;
+        for (final r in videoRenditions) {
+          final h = r.height ?? 0;
+          if (h <= cap) {
+            bestCapped = r;
+          }
+        }
+        return bestCapped ?? videoRenditions.first;
     }
-
-    return bestFit ?? videoRenditions.first;
   }
 
   /// Applies streaming options to [NativePlayer] per Phase 2 requirements.
@@ -431,6 +567,7 @@ class StreamingCoordinator {
   void handleNativeLifecycleEvent(
     NativeMediaEvent event, {
     required int attemptId,
+    int? httpStatusCode,
   }) {
     if (attemptId != _currentState.attemptId) return;
 
@@ -471,7 +608,7 @@ class StreamingCoordinator {
 
       case NativeMediaEventKind.ended:
         if (event.endReason == NativeEndReason.error && event.errorCode != 0) {
-          _handlePlaybackError(event.errorCode);
+          _handlePlaybackError(event.errorCode, httpStatusCode: httpStatusCode);
         }
         break;
 
@@ -488,7 +625,7 @@ class StreamingCoordinator {
 
   /// Updates live demuxer cache and throughput statistics.
   void updateDemuxerStats({
-    required Duration bufferedDuration,
+    Duration? bufferedDuration,
     int? rawInputRate, // bytes per second
     int? width,
     int? height,
@@ -499,6 +636,8 @@ class StreamingCoordinator {
       return;
     }
 
+    final effectiveBuffered =
+        bufferedDuration ?? _currentState.bufferedDuration;
     final bitrateBps = rawInputRate != null && rawInputRate > 0
         ? rawInputRate * 8
         : null;
@@ -516,29 +655,48 @@ class StreamingCoordinator {
         _consecutiveUnderruns = 1;
       }
       _healthyBufferStart = null;
-    } else if (bufferedDuration > const Duration(seconds: 8)) {
-      _healthyBufferStart ??= now;
-    } else {
-      _healthyBufferStart = null;
+    } else if (bufferedDuration != null) {
+      if (bufferedDuration > const Duration(seconds: 8)) {
+        _healthyBufferStart ??= now;
+      } else {
+        _healthyBufferStart = null;
+      }
     }
 
+    final nextWidth = width ?? _currentState.decodedWidth;
+    final nextHeight = height ?? _currentState.decodedHeight;
     final isResolutionDelivered =
         _currentState.stage == StreamStage.switchingQuality &&
-        (width != null && height != null);
-    final nextStage = isResolutionDelivered
+        (width != null || height != null) &&
+        nextWidth != null &&
+        nextHeight != null;
+    var nextStage = isResolutionDelivered
         ? StreamStage.ready
         : _currentState.stage;
+    var nextMessage = _currentState.stageMessage;
+    var clearMessage = isResolutionDelivered;
 
-    _emit(
-      _currentState.copyWith(
-        stage: nextStage,
-        clearStageMessage: isResolutionDelivered,
-        bufferedDuration: bufferedDuration,
-        inputBitrate: bitrateBps ?? _currentState.inputBitrate,
-        decodedWidth: width ?? _currentState.decodedWidth,
-        decodedHeight: height ?? _currentState.decodedHeight,
-      ),
+    if (pausedForCache == true && nextStage == StreamStage.ready) {
+      nextStage = StreamStage.buffering;
+      nextMessage = 'Buffering';
+      clearMessage = false;
+    } else if (pausedForCache == false && nextStage == StreamStage.buffering) {
+      nextStage = StreamStage.ready;
+      clearMessage = true;
+    }
+
+    final nextState = _currentState.copyWith(
+      stage: nextStage,
+      stageMessage: clearMessage ? null : nextMessage,
+      clearStageMessage: clearMessage,
+      bufferedDuration: effectiveBuffered,
+      inputBitrate: bitrateBps ?? _currentState.inputBitrate,
+      decodedWidth: nextWidth,
+      decodedHeight: nextHeight,
     );
+    if (nextState != _currentState) {
+      _emit(nextState);
+    }
 
     // Auto-quality adaptation checks
     if (_currentState.isAutoQuality) {
@@ -644,26 +802,40 @@ class StreamingCoordinator {
   }
 
   /// Handles playback error with bounded transient retries.
-  void _handlePlaybackError(int errorCode) {
-    // 1. Check for terminal error codes
+  void _handlePlaybackError(int errorCode, {int? httpStatusCode}) {
+    final isHttpNotFound = httpStatusCode == 404 || httpStatusCode == 410;
+    final isHttpForbidden = httpStatusCode == 401 || httpStatusCode == 403;
+
+    // 1. Check for terminal error codes or terminal HTTP statuses
     final isTerminal =
-        errorCode == -4 || // MPV_ERROR_FILE_NOT_FOUND (includes HTTP 404)
-        errorCode == -3 || // MPV_ERROR_UNKNOWN_FORMAT
-        errorCode == -2; // MPV_ERROR_NOT_IMPLEMENTED
+        isHttpNotFound ||
+        isHttpForbidden ||
+        errorCode == -4 || // Legacy sentinel / MPV_ERROR_INVALID_PARAMETER
+        errorCode == -16 || // MPV_ERROR_NOTHING_TO_PLAY
+        errorCode == -17 || // MPV_ERROR_UNKNOWN_FORMAT
+        errorCode == -18 || // MPV_ERROR_UNSUPPORTED
+        errorCode == -19 || // MPV_ERROR_NOT_IMPLEMENTED
+        errorCode == -3 || // MPV_ERROR_UNINITIALIZED
+        errorCode == -2; // MPV_ERROR_NOMEM
 
     if (isTerminal) {
+      final errorMessage = (isHttpNotFound || errorCode == -4)
+          ? 'Stream not found (404). Check the URL.'
+          : isHttpForbidden
+          ? 'Access denied (HTTP $httpStatusCode). The link may require authentication or have expired.'
+          : 'Stream failed to load (error $errorCode).';
       diagnostics?.record(
         'stream.error.terminal',
         sourceId: MediaSource.redact(_currentState.originalUrl),
-        error: 'Terminal playback error: $errorCode',
+        error:
+            'Terminal playback error: $errorCode'
+            '${httpStatusCode != null ? ' (HTTP $httpStatusCode)' : ''}',
       );
       _emit(
         _currentState.copyWith(
           stage: StreamStage.failed,
           clearStageMessage: true,
-          error: errorCode == -4
-              ? 'Stream not found (404). Check the URL.'
-              : 'Stream failed to load (error $errorCode).',
+          error: errorMessage,
         ),
       );
       return;
@@ -710,6 +882,24 @@ class StreamingCoordinator {
         ),
       );
     }
+  }
+
+  static String _ytDlpUserErrorMessage(YtDlpErrorType errorType) {
+    return switch (errorType) {
+      YtDlpErrorType.loginRequired =>
+        'This video requires sign-in or age confirmation.',
+      YtDlpErrorType.videoUnavailable =>
+        'This video is unavailable or has been removed.',
+      YtDlpErrorType.geoRestricted =>
+        'This video is not available in your region.',
+      YtDlpErrorType.drmProtected => 'DRM-protected streams are not supported.',
+      YtDlpErrorType.rateLimited =>
+        'The video host rate-limited requests. Try again shortly.',
+      YtDlpErrorType.networkError =>
+        'Could not reach the video host. Check your connection.',
+      YtDlpErrorType.unsupportedUrl || YtDlpErrorType.unknown =>
+        'Could not resolve video stream from this page.',
+    };
   }
 
   void dispose() {

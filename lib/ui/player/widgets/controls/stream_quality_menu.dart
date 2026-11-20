@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../../../domain/models/stream_rendition.dart';
+import '../../../../ui/core/app_theme.dart';
 import '../../player_controller.dart';
 import '../player_control_style.dart';
 
@@ -12,10 +13,12 @@ class StreamQualityMenu extends StatelessWidget {
     super.key,
     required this.controller,
     required this.onMenuVisibilityChanged,
+    this.foregroundColor,
   });
 
   final PlayerController controller;
   final ValueChanged<bool>? onMenuVisibilityChanged;
+  final Color? foregroundColor;
 
   @override
   Widget build(BuildContext context) {
@@ -32,11 +35,14 @@ class StreamQualityMenu extends StatelessWidget {
             ? (active != null ? 'Auto (${active.qualityLabel})' : 'Auto')
             : (selected.qualityLabel);
 
+        final sizing = PlayerControlStyle.of(context);
         return Semantics(
           label: 'Stream quality, selected $currentLabel',
           button: true,
           child: PopupMenuButton<StreamRendition>(
             tooltip: 'Stream quality',
+            borderRadius: BorderRadius.circular(AppRadii.control),
+            position: PopupMenuPosition.over,
             initialValue: selected ?? StreamRendition.auto,
             onOpened: () => onMenuVisibilityChanged?.call(true),
             onCanceled: () => onMenuVisibilityChanged?.call(false),
@@ -125,25 +131,31 @@ class StreamQualityMenu extends StatelessWidget {
               return items;
             },
             child: SizedBox(
-              height: PlayerControlStyle.of(context).buttonExtent,
+              height: sizing.buttonExtent,
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 6),
+                padding: const EdgeInsets.symmetric(horizontal: 10),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(
+                    Icon(
                       Icons.high_quality_rounded,
-                      size: 18,
-                      color: Colors.white70,
+                      size: sizing.iconSize - 2,
+                      color: isAuto
+                          ? (foregroundColor ??
+                                Colors.white.withValues(alpha: 0.90))
+                          : Theme.of(context).colorScheme.primary,
                     ),
-                    const SizedBox(width: 4),
+                    const SizedBox(width: 5),
                     Text(
                       isAuto
                           ? (active != null ? active.qualityLabel : 'Auto')
                           : selected.qualityLabel,
                       style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                        color: Colors.white.withValues(alpha: 0.88),
+                        color:
+                            foregroundColor ??
+                            Colors.white.withValues(alpha: 0.90),
                         fontWeight: FontWeight.w600,
+                        fontFeatures: const [FontFeature.tabularFigures()],
                       ),
                     ),
                   ],

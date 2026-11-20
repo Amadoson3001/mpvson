@@ -61,12 +61,20 @@ class PlayerChromeController extends ChangeNotifier {
   String? _focusedQueueEntryId;
   bool _videoSettingsOpen = false;
   bool _videoSettingsMounted = false;
+  bool _holdSpeedActive = false;
 
   bool get queueOpen => _queueOpen;
   bool get queueMounted => _queueMounted;
   String? get focusedQueueEntryId => _focusedQueueEntryId;
   bool get videoSettingsOpen => _videoSettingsOpen;
   bool get videoSettingsMounted => _videoSettingsMounted;
+  bool get holdSpeedActive => _holdSpeedActive;
+
+  void setHoldSpeedActive(bool active) {
+    if (_holdSpeedActive == active) return;
+    _holdSpeedActive = active;
+    notifyListeners();
+  }
 
   void setFocusedQueueEntry(String? entryId) => _focusedQueueEntryId = entryId;
 

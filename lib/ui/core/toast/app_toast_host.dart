@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
@@ -61,11 +62,30 @@ class _AppToastHostState extends State<AppToastHost> {
                         safe: media.viewPadding,
                         regions: _layout.rects,
                       );
+                      final rawPinnedOffset = _layout.pinnedHeight > 0
+                          ? _layout.pinnedHeight + AppSpace.xs
+                          : 0.0;
+                      final maxExtraOffset = math.max(
+                        0.0,
+                        media.size.height - geometry.insets.vertical - 80,
+                      );
+                      final pinnedOffset = math.min(
+                        rawPinnedOffset,
+                        maxExtraOffset,
+                      );
+                      final insets = geometry.insets.copyWith(
+                        bottom: geometry.alignment.y > 0
+                            ? geometry.insets.bottom + pinnedOffset
+                            : geometry.insets.bottom,
+                        top: geometry.alignment.y <= 0
+                            ? geometry.insets.top + pinnedOffset
+                            : geometry.insets.top,
+                      );
                       return Positioned(
-                        left: geometry.insets.left,
-                        top: geometry.insets.top,
-                        right: geometry.insets.right,
-                        bottom: geometry.insets.bottom,
+                        left: insets.left,
+                        top: insets.top,
+                        right: insets.right,
+                        bottom: insets.bottom,
                         child: Align(
                           alignment: geometry.alignment,
                           child: _ToastStack(
@@ -249,8 +269,18 @@ class _ToastCardState extends State<_ToastCard> with TickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     final request = widget.entry.request;
+    final palette = context.palette;
     final accent = _accentFor(request.tone);
     final reduced = AppMotion.lowPower(context);
+    final borderColor = switch (request.tone) {
+      AppToastTone.danger || AppToastTone.warning => Color.lerp(
+        palette.borderStrong,
+        accent,
+        palette.isDark ? 0.28 : 0.34,
+      )!,
+      AppToastTone.neutral ||
+      AppToastTone.success => palette.borderStrong.withValues(alpha: 0.72),
+    };
 
     final card = MouseRegion(
       onEnter: (_) => _setHovered(true),
@@ -263,32 +293,39 @@ class _ToastCardState extends State<_ToastCard> with TickerProviderStateMixin {
           type: MaterialType.transparency,
           child: Container(
             decoration: BoxDecoration(
-              color: context.palette.card.withValues(alpha: 0.98),
-              borderRadius: BorderRadius.circular(AppRadii.artwork + 2),
-              border: Border.all(
-                color: context.palette.borderStrong.withValues(alpha: 0.75),
-              ),
+              color: palette.card.withValues(alpha: 0.96),
+              borderRadius: BorderRadius.circular(AppRadii.artwork),
+              border: Border.all(color: borderColor),
+              boxShadow: reduced
+                  ? null
+                  : [
+                      BoxShadow(
+                        color: Colors.black.withValues(
+                          alpha: palette.isDark ? 0.36 : 0.10,
+                        ),
+                        blurRadius: 16,
+                        offset: const Offset(0, 6),
+                      ),
+                    ],
             ),
             clipBehavior: Clip.antiAlias,
             child: Stack(
               children: [
                 Padding(
                   padding: const EdgeInsets.fromLTRB(
-                    3,
                     AppSpace.sm,
+                    10,
                     AppSpace.xs,
-                    AppSpace.sm,
+                    10,
                   ),
                   child: Row(
                     children: [
-                      _ToneRail(color: accent),
-                      const SizedBox(width: AppSpace.sm),
-                      Icon(_iconFor(request.tone), size: 17, color: accent),
-                      const SizedBox(width: AppSpace.sm),
+                      Icon(_iconFor(request.tone), size: 16, color: accent),
+                      const SizedBox(width: 10),
                       Flexible(
                         child: Text(
                           request.message,
-                          style: context.palette.rowPrimary.copyWith(
+                          style: palette.rowPrimary.copyWith(
                             fontSize: AppType.small,
                             height: 1.35,
                           ),
@@ -309,6 +346,7 @@ class _ToastCardState extends State<_ToastCard> with TickerProviderStateMixin {
                           },
                         ),
                       ],
+                      const SizedBox(width: AppSpace.xxs),
                       _ToastClose(visible: _hovered, onPressed: _leave),
                     ],
                   ),
@@ -320,13 +358,13 @@ class _ToastCardState extends State<_ToastCard> with TickerProviderStateMixin {
                     right: 0,
                     bottom: 0,
                     child: SizedBox(
-                      height: 2,
+                      height: 1.5,
                       child: Align(
                         alignment: Alignment.centerLeft,
                         child: FractionallySizedBox(
                           widthFactor: (1 - value).clamp(0.0, 1.0),
                           child: Container(
-                            color: accent.withValues(alpha: 0.55),
+                            color: accent.withValues(alpha: 0.45),
                           ),
                         ),
                       ),
@@ -375,22 +413,6 @@ class _ToastCardState extends State<_ToastCard> with TickerProviderStateMixin {
   };
 }
 
-class _ToneRail extends StatelessWidget {
-  const _ToneRail({required this.color});
-
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) => Container(
-    width: 3,
-    height: 30,
-    decoration: BoxDecoration(
-      color: color.withValues(alpha: 0.9),
-      borderRadius: BorderRadius.circular(2),
-    ),
-  );
-}
-
 class _ToastAction extends StatelessWidget {
   const _ToastAction({
     required this.label,
@@ -434,21 +456,27 @@ class _ToastClose extends StatelessWidget {
   final VoidCallback onPressed;
 
   @override
-  Widget build(BuildContext context) => IconButton(
-    onPressed: onPressed,
-    tooltip: 'Dismiss',
-    style: IconButton.styleFrom(
-      minimumSize: const Size.square(44),
-      maximumSize: const Size.square(44),
-      padding: EdgeInsets.zero,
-      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-      hoverColor: Colors.transparent,
-      highlightColor: Colors.transparent,
-    ),
-    icon: Icon(
-      Icons.close_rounded,
-      size: 15,
-      color: visible ? context.palette.text : context.palette.faint,
-    ),
-  );
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    return IconButton(
+      onPressed: onPressed,
+      tooltip: 'Dismiss',
+      style: IconButton.styleFrom(
+        minimumSize: const Size.square(28),
+        maximumSize: const Size.square(28),
+        padding: EdgeInsets.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        foregroundColor: visible
+            ? palette.text
+            : palette.secondaryText.withValues(alpha: 0.72),
+        hoverColor: palette.hover,
+        focusColor: palette.hover,
+        highlightColor: palette.hover,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadii.control),
+        ),
+      ),
+      icon: const Icon(Icons.close_rounded, size: 15),
+    );
+  }
 }

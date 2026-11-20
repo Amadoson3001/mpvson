@@ -118,7 +118,8 @@ class SharedSeekBarState extends State<SharedSeekBar> {
       );
       if (hoverPosition != null &&
           !widget.controller.isAudio &&
-          widget.controller.hasMedia) {
+          widget.controller.hasMedia &&
+          !widget.controller.transportState.streamPlaybackState.isLive) {
         widget.controller.seekPreview.onPointerMove(
           Duration(milliseconds: hoverPosition.round()),
         );
@@ -181,7 +182,9 @@ class SharedSeekBarState extends State<SharedSeekBar> {
       _hoverPositionMs = hoverMs;
     });
 
-    if (!widget.controller.isAudio && widget.controller.hasMedia) {
+    if (!widget.controller.isAudio &&
+        widget.controller.hasMedia &&
+        !widget.controller.transportState.streamPlaybackState.isLive) {
       widget.controller.seekPreview.onPointerMove(hoverTime);
     }
   }
@@ -231,7 +234,9 @@ class SharedSeekBarState extends State<SharedSeekBar> {
       _hoverPositionMs = value;
       _hoverTrackX = _trackXForValue(value, width, durationMs);
     });
-    if (!widget.controller.isAudio && widget.controller.hasMedia) {
+    if (!widget.controller.isAudio &&
+        widget.controller.hasMedia &&
+        !widget.controller.transportState.streamPlaybackState.isLive) {
       widget.controller.seekPreview.onPointerMove(scrubTime);
     }
   }
@@ -245,7 +250,9 @@ class SharedSeekBarState extends State<SharedSeekBar> {
       _hoverPositionMs = value;
       _hoverTrackX = _trackXForValue(value, width, durationMs);
     });
-    if (!widget.controller.isAudio && widget.controller.hasMedia) {
+    if (!widget.controller.isAudio &&
+        widget.controller.hasMedia &&
+        !widget.controller.transportState.streamPlaybackState.isLive) {
       widget.controller.seekPreview.onPointerMove(scrubTime);
     }
     if (_dragging) return;
@@ -302,13 +309,23 @@ class SharedSeekBarState extends State<SharedSeekBar> {
   Widget build(BuildContext context) {
     _updateThumbnail();
     final controller = widget.controller;
+    final isLive = controller.transportState.streamPlaybackState.isLive;
     final durationMs = controller.duration.inMilliseconds;
-    final canSeek = durationMs > 0 && controller.isSeekable;
-    final hasTimeline = durationMs > 0;
+    final canSeek = !isLive && durationMs > 0 && controller.isSeekable;
+    final hasTimeline = !isLive && durationMs > 0;
     final positionMs =
         (_scrubPositionMs ?? controller.displayPosition.inMilliseconds)
             .clamp(0, canSeek ? durationMs : 0)
             .toDouble();
+    final streamState = controller.transportState.streamPlaybackState;
+    final double? secondaryTrackValue =
+        canSeek &&
+            streamState.isStreaming &&
+            streamState.bufferedDuration > Duration.zero
+        ? (positionMs + streamState.bufferedDuration.inMilliseconds)
+              .clamp(positionMs, durationMs.toDouble())
+              .toDouble()
+        : null;
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -416,6 +433,7 @@ class SharedSeekBarState extends State<SharedSeekBar> {
                           key: const ValueKey('seek-slider'),
                           focusNode: _focusNode,
                           value: positionMs,
+                          secondaryTrackValue: secondaryTrackValue,
                           min: 0,
                           max: canSeek ? durationMs.toDouble() : 1,
                           onChangeStart: canSeek

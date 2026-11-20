@@ -21,12 +21,14 @@ import 'player_error_banner.dart';
 import 'player_hotkey_handler.dart';
 import 'player_layout_manager.dart';
 import 'player_library_navigation.dart';
+import 'player_loading_overlay.dart';
 import 'player_media_coordinator.dart';
 
 export 'player_drag_drop.dart';
 export 'player_error_banner.dart';
 export 'player_hotkey_handler.dart';
 export 'player_layout_manager.dart';
+export 'player_loading_overlay.dart';
 export 'player_queue_layout.dart';
 export 'player_stage.dart';
 export 'player_top_bar.dart';
@@ -201,6 +203,15 @@ class _PlayerScreenState extends State<PlayerScreen>
       onAdjustDelay: _adjustPlaybackDelay,
       onShowPlaybackInfo: () => unawaited(_media.showPlaybackInfo()),
       onShowControls: _chrome.showControls,
+      onHoldSpeedChanged: _chrome.setHoldSpeedActive,
+      onPreviousTrack: () => unawaited(widget.controller.previous()),
+      onNextTrack: () => unawaited(widget.controller.next()),
+      onCycleSubtitle: () => unawaited(_cycleSubtitleTrack()),
+      onCycleAudio: () => unawaited(_cycleAudioTrack()),
+      onAdjustSpeed: (delta) => unawaited(_adjustPlaybackRate(delta)),
+      onResetSpeed: () => unawaited(_resetPlaybackRate()),
+      onFrameStep: (forward) => unawaited(_frameStep(forward: forward)),
+      onScreenshot: () => unawaited(_media.saveScreenshot()),
     );
 
     if (widget.controller.isVideo) {
@@ -427,6 +438,44 @@ class _PlayerScreenState extends State<PlayerScreen>
     showFeedback: _chrome.showFeedback,
   );
 
+  Future<void> _cycleSubtitleTrack() async {
+    final label = await widget.controller.cycleSubtitleTrack();
+    if (!mounted || label == null) return;
+    _chrome.showFeedback(Icons.subtitles_rounded, label);
+  }
+
+  Future<void> _cycleAudioTrack() async {
+    final label = await widget.controller.cycleAudioTrack();
+    if (!mounted || label == null) return;
+    _chrome.showFeedback(Icons.audiotrack_rounded, label);
+  }
+
+  Future<void> _adjustPlaybackRate(double delta) async {
+    final next = await widget.controller.adjustPlaybackRate(delta: delta);
+    if (!mounted || next == null) return;
+    final formatted = next == next.roundToDouble()
+        ? '${next.toInt()}×'
+        : '${next.toStringAsFixed(2).replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '')}×';
+    _chrome.showFeedback(Icons.speed_rounded, 'Speed $formatted');
+  }
+
+  Future<void> _resetPlaybackRate() async {
+    await widget.controller.resetPlaybackRate();
+    if (!mounted) return;
+    _chrome.showFeedback(Icons.speed_rounded, 'Speed 1×');
+  }
+
+  Future<void> _frameStep({required bool forward}) async {
+    await widget.controller.frameStep(forward: forward);
+    if (!mounted || !widget.controller.hasMedia || widget.controller.isAudio) {
+      return;
+    }
+    _chrome.showFeedback(
+      forward ? Icons.skip_next_rounded : Icons.skip_previous_rounded,
+      forward ? 'Next frame' : 'Previous frame',
+    );
+  }
+
   void _toggleVideoPlayback() {
     if (_chrome.dismissedContextMenuOnPointerDown || _contextMenu.isOpen) {
       _chrome.clearDismissedContextMenu();
@@ -475,55 +524,59 @@ class _PlayerScreenState extends State<PlayerScreen>
               onExit: _chrome.pointerLeft,
               child: AnimatedBuilder(
                 animation: widget.controller.structureListenable,
-                builder: (context, _) => Column(
+                builder: (context, _) => Stack(
+                  fit: StackFit.expand,
                   children: [
-                    Expanded(
-                      child: PlayerContent(
-                        controller: widget.controller,
-                        chrome: _chrome,
-                        media: _media,
-                        layoutManager: _layoutManager,
-                        libraryRepository: widget.libraryRepository,
-                        updates: widget.updates,
-                        engineUpdates: widget.engineUpdates,
-                        appPreferences: widget.appPreferences,
-                        desktopIntegration: widget.desktopIntegration,
-                        videoBuilder: widget.videoBuilder,
-                        contextMenu: _contextMenu,
-                        videoSurfaceKey: _videoSurfaceKey,
-                        queuePanelKey: _queuePanelKey,
-                        queueFocusScope: _chrome.queueFocusScope,
-                        desktopWindow: widget.desktopWindow,
-                        nativeWindow: _nativeWindow,
-                        enableNativeDrop: widget.enableNativeDrop,
-                        isShowingLibrary: _navigation.isShowingLibrary,
-                        settingsOpen: _navigation.settingsOpen,
-                        homeNavigationRequest:
-                            _navigation.homeNavigationRequest,
-                        draggingFiles: _draggingFiles,
-                        onVideoTap: _toggleVideoPlayback,
-                        onVideoDoubleTap: () {
-                          if (_layoutManager.isMiniPlayer) {
-                            unawaited(_layoutManager.exitMiniPlayer());
-                          } else {
-                            unawaited(_layoutManager.toggleFullscreen());
-                          }
-                        },
-                        onBackToHome: _backToHome,
-                        onOpenLibrary: _navigation.openLibrary,
-                        onReturnToPlayer: _returnToPlayer,
-                        onSettingsOpened: _navigation.openSettings,
-                        onSettingsClosed: () =>
-                            _navigation.setSettingsOpen(false),
-                        onDragStateChanged: (dragging) =>
-                            setState(() => _draggingFiles = dragging),
-                      ),
+                    PlayerContent(
+                      controller: widget.controller,
+                      chrome: _chrome,
+                      media: _media,
+                      layoutManager: _layoutManager,
+                      libraryRepository: widget.libraryRepository,
+                      updates: widget.updates,
+                      engineUpdates: widget.engineUpdates,
+                      appPreferences: widget.appPreferences,
+                      desktopIntegration: widget.desktopIntegration,
+                      videoBuilder: widget.videoBuilder,
+                      contextMenu: _contextMenu,
+                      videoSurfaceKey: _videoSurfaceKey,
+                      queuePanelKey: _queuePanelKey,
+                      queueFocusScope: _chrome.queueFocusScope,
+                      desktopWindow: widget.desktopWindow,
+                      nativeWindow: _nativeWindow,
+                      enableNativeDrop: widget.enableNativeDrop,
+                      isShowingLibrary: _navigation.isShowingLibrary,
+                      settingsOpen: _navigation.settingsOpen,
+                      homeNavigationRequest: _navigation.homeNavigationRequest,
+                      draggingFiles: _draggingFiles,
+                      onVideoTap: _toggleVideoPlayback,
+                      onVideoDoubleTap: () {
+                        if (_layoutManager.isMiniPlayer) {
+                          unawaited(_layoutManager.exitMiniPlayer());
+                        } else {
+                          unawaited(_layoutManager.toggleFullscreen());
+                        }
+                      },
+                      onBackToHome: _backToHome,
+                      onOpenLibrary: _navigation.openLibrary,
+                      onReturnToPlayer: _returnToPlayer,
+                      onSettingsOpened: _navigation.openSettings,
+                      onSettingsClosed: () =>
+                          _navigation.setSettingsOpen(false),
+                      onDragStateChanged: (dragging) =>
+                          setState(() => _draggingFiles = dragging),
                     ),
-                    if (widget.controller.error case final error?)
-                      PlayerErrorBanner(
-                        message: error,
-                        onRetry: () => widget.controller.retryCurrentStream(),
-                      ),
+                    PlayerLoadingOverlay(
+                      controller: widget.controller,
+                      visible: _navigation.isShowingLibrary,
+                    ),
+                    PlayerErrorOverlay(
+                      message: widget.controller.error,
+                      onRetry: widget.controller.current != null
+                          ? () => widget.controller.retryCurrentStream()
+                          : null,
+                      onDismiss: widget.controller.clearError,
+                    ),
                   ],
                 ),
               ),

@@ -394,6 +394,7 @@ class SettingsContentPane extends StatelessWidget {
                   controller: controller,
                   pickSubtitle: pickSubtitle,
                   embedded: embedded,
+                  appPreferences: preferences,
                 ),
                 SettingsSection.videoAudio => VideoAudioSettingsSection(
                   controller: controller,

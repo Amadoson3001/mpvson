@@ -30,6 +30,25 @@ enum AnimationSpeed {
   final double scale;
 }
 
+/// User preference for initial stream quality when opening network links.
+enum PreferredStreamQuality {
+  auto('Auto', maxHeight: null, isAuto: true),
+  best('Best available', maxHeight: null, isAuto: false),
+  p1080('1080p', maxHeight: 1080, isAuto: false),
+  p720('720p', maxHeight: 720, isAuto: false),
+  p480('480p', maxHeight: 480, isAuto: false);
+
+  const PreferredStreamQuality(
+    this.label, {
+    required this.maxHeight,
+    required this.isAuto,
+  });
+
+  final String label;
+  final int? maxHeight;
+  final bool isAuto;
+}
+
 /// Persistent user settings for desktop integration and opening behavior.
 @immutable
 class DesktopPreferences {
@@ -47,6 +66,8 @@ class DesktopPreferences {
     this.oledBlack = false,
     this.graphics = const GraphicsSettings(),
     this.playerControls = const PlayerControlsPreferences(),
+    this.ytDlpPath,
+    this.preferredStreamQuality = PreferredStreamQuality.auto,
   });
 
   static const List<int> seekStepOptions = <int>[1, 2, 5, 10, 15, 30];
@@ -88,6 +109,12 @@ class DesktopPreferences {
   /// Custom styling, seekbar thickness, and layout for the player controls.
   final PlayerControlsPreferences playerControls;
 
+  /// Optional user-selected path to `yt-dlp` executable.
+  final String? ytDlpPath;
+
+  /// Preferred initial stream quality when opening network links.
+  final PreferredStreamQuality preferredStreamQuality;
+
   DesktopPreferences copyWith({
     OpenBehaviorPreference? openBehavior,
     bool clearOpenBehavior = false,
@@ -103,6 +130,9 @@ class DesktopPreferences {
     bool? oledBlack,
     GraphicsSettings? graphics,
     PlayerControlsPreferences? playerControls,
+    String? ytDlpPath,
+    bool clearYtDlpPath = false,
+    PreferredStreamQuality? preferredStreamQuality,
   }) {
     return DesktopPreferences(
       openBehavior: clearOpenBehavior
@@ -121,6 +151,9 @@ class DesktopPreferences {
       oledBlack: oledBlack ?? this.oledBlack,
       graphics: graphics ?? this.graphics,
       playerControls: playerControls ?? this.playerControls,
+      ytDlpPath: clearYtDlpPath ? null : (ytDlpPath ?? this.ytDlpPath),
+      preferredStreamQuality:
+          preferredStreamQuality ?? this.preferredStreamQuality,
     );
   }
 
@@ -155,6 +188,17 @@ class DesktopPreferences {
         }
       }
     }
+    PreferredStreamQuality streamQuality = PreferredStreamQuality.auto;
+    final rawQuality = json['preferredStreamQuality'] as String?;
+    if (rawQuality != null) {
+      for (final value in PreferredStreamQuality.values) {
+        if (value.name == rawQuality) {
+          streamQuality = value;
+          break;
+        }
+      }
+    }
+    final rawYtDlpPath = (json['ytDlpPath'] as String?)?.trim();
     return DesktopPreferences(
       openBehavior: behavior,
       keepAwakeDuringPlayback: json['keepAwakeDuringPlayback'] as bool? ?? true,
@@ -175,6 +219,10 @@ class DesktopPreferences {
               json['playerControls'] as Map<String, Object?>?,
             )
           : const PlayerControlsPreferences(),
+      ytDlpPath: rawYtDlpPath != null && rawYtDlpPath.isNotEmpty
+          ? rawYtDlpPath
+          : null,
+      preferredStreamQuality: streamQuality,
     );
   }
 
@@ -192,6 +240,8 @@ class DesktopPreferences {
     'oledBlack': oledBlack,
     'graphics': graphics.toJson(),
     'playerControls': playerControls.toJson(),
+    if (ytDlpPath != null && ytDlpPath!.isNotEmpty) 'ytDlpPath': ytDlpPath,
+    'preferredStreamQuality': preferredStreamQuality.name,
   };
 
   static int _readChoice(Object? value, List<int> options, int fallback) {
@@ -383,6 +433,17 @@ class AppPreferencesRepository extends ChangeNotifier {
 
   Future<void> updatePlayerControls(PlayerControlsPreferences playerControls) =>
       _patch((p) => p.copyWith(playerControls: playerControls));
+
+  Future<void> setYtDlpPath(String? path) {
+    final trimmed = path?.trim();
+    if (trimmed == null || trimmed.isEmpty) {
+      return _patch((p) => p.copyWith(clearYtDlpPath: true));
+    }
+    return _patch((p) => p.copyWith(ytDlpPath: trimmed));
+  }
+
+  Future<void> setPreferredStreamQuality(PreferredStreamQuality quality) =>
+      _patch((p) => p.copyWith(preferredStreamQuality: quality));
 
   Future<void> resetHotkeys() =>
       _patch((p) => p.copyWith(hotkeyOverrides: PlayerHotkeys.defaults));

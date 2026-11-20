@@ -11,14 +11,18 @@ import '../../../ui/core/app_theme.dart';
 import '../../../utils/format.dart';
 import '../player_controller.dart';
 import 'player_control_style.dart';
+import 'controls/chapters_menu.dart';
 import 'controls/playback_rate_menu.dart';
 import 'controls/seek_bar_section.dart';
 import 'controls/stream_quality_menu.dart';
+import 'controls/tracks_menu.dart';
 import 'controls/transport_buttons.dart';
 import 'controls/volume_section.dart';
 
+export 'controls/chapters_menu.dart';
 export 'controls/seek_bar_section.dart';
 export 'controls/seek_preview.dart';
+export 'controls/tracks_menu.dart';
 export 'controls/transport_buttons.dart';
 export 'controls/volume_section.dart';
 
@@ -28,11 +32,13 @@ class TimeReadout extends StatefulWidget {
     required this.position,
     required this.duration,
     this.initialShowRemaining = false,
+    this.isLive = false,
   });
 
   final Duration position;
   final Duration duration;
   final bool initialShowRemaining;
+  final bool isLive;
 
   @override
   State<TimeReadout> createState() => _TimeReadoutState();
@@ -57,6 +63,45 @@ class _TimeReadoutState extends State<TimeReadout> {
   Widget build(BuildContext context) {
     final position = widget.position;
     final duration = widget.duration;
+    if (widget.isLive) {
+      return Tooltip(
+        message: 'Live stream',
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(
+                width: 7,
+                height: 7,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: Color(0xFFEF4444),
+                    shape: BoxShape.circle,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                position > Duration.zero
+                    ? 'Live  ${formatTime(position)}'
+                    : 'Live',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: Colors.white.withValues(alpha: 0.92),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.2,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     final elapsed = formatTime(position);
     final String label;
 
@@ -108,6 +153,7 @@ class PlayerControls extends StatefulWidget {
     this.onMenuVisibilityChanged,
     this.onInteractionChanged,
     this.onVolumeChanged,
+    this.onLoadSubtitle,
     this.actions,
     this.showPlaybackControls = true,
     this.timelineActive = true,
@@ -118,6 +164,7 @@ class PlayerControls extends StatefulWidget {
   final ValueChanged<bool>? onMenuVisibilityChanged;
   final ValueChanged<bool>? onInteractionChanged;
   final ValueChanged<double>? onVolumeChanged;
+  final VoidCallback? onLoadSubtitle;
   final Widget? actions;
   final bool showPlaybackControls;
   final bool timelineActive;
@@ -152,6 +199,7 @@ class _PlayerControlsState extends State<PlayerControls> {
     _timeline = Listenable.merge(<Listenable>[
       controller.displayPositionListenable,
       controller.durationListenable,
+      controller.transportListenable,
     ]);
     return _timeline!;
   }
@@ -258,6 +306,10 @@ class _PlayerControlsState extends State<PlayerControls> {
                         position: _scrubPosition ?? controller.displayPosition,
                         duration: controller.duration,
                         initialShowRemaining: prefs.showRemainingTime,
+                        isLive: controller
+                            .transportState
+                            .streamPlaybackState
+                            .isLive,
                       ),
                     ),
                     const Spacer(),
@@ -274,6 +326,15 @@ class _PlayerControlsState extends State<PlayerControls> {
                         onInteractionChanged: widget.onInteractionChanged,
                         onVolumeChanged: widget.onVolumeChanged,
                       ),
+                    ChaptersMenu(
+                      controller: controller,
+                      onMenuVisibilityChanged: widget.onMenuVisibilityChanged,
+                    ),
+                    TracksMenu(
+                      controller: controller,
+                      onMenuVisibilityChanged: widget.onMenuVisibilityChanged,
+                      onLoadSubtitle: widget.onLoadSubtitle,
+                    ),
                     if (prefs.showSpeedButton)
                       PlaybackRateMenu(
                         controller: controller,

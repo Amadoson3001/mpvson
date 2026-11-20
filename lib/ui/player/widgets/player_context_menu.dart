@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 
+import '../../../domain/models/media_source.dart';
 import '../../../domain/models/player_hotkeys.dart';
 import '../../../domain/models/stream_rendition.dart';
 import '../../core/app_motion.dart';
@@ -29,6 +30,9 @@ class PlayerContextMenu extends StatelessWidget {
     required this.onMenuVisibilityChanged,
     this.onFullscreen,
     this.onToggleMiniPlayer,
+    this.onSaveScreenshot,
+    this.onCopyUrl,
+    this.onShowInFolder,
     this.isFullscreen = false,
     this.isMiniPlayer = false,
     this.queueOpen = false,
@@ -50,6 +54,9 @@ class PlayerContextMenu extends StatelessWidget {
   final ValueChanged<bool> onMenuVisibilityChanged;
   final VoidCallback? onFullscreen;
   final VoidCallback? onToggleMiniPlayer;
+  final VoidCallback? onSaveScreenshot;
+  final VoidCallback? onCopyUrl;
+  final VoidCallback? onShowInFolder;
   final bool isFullscreen;
   final bool isMiniPlayer;
   final bool queueOpen;
@@ -225,6 +232,34 @@ class PlayerContextMenu extends StatelessWidget {
         trailing: shortcutLabel?.call(PlayerAction.queue) ?? 'P',
         onPressed: onToggleQueue,
       ),
+      if (hasMedia && playerController.isVideo && onSaveScreenshot != null)
+        _menuAction(
+          context,
+          icon: Icons.camera_alt_outlined,
+          label: 'Save screenshot',
+          trailing: shortcutLabel?.call(PlayerAction.screenshot) ?? 'S',
+          onPressed: onSaveScreenshot,
+        ),
+      if (hasMedia &&
+          playerController.current != null &&
+          MediaSource.isNetworkUrl(playerController.current!.path) &&
+          onCopyUrl != null)
+        _menuAction(
+          context,
+          icon: Icons.content_copy_rounded,
+          label: 'Copy stream URL',
+          onPressed: onCopyUrl,
+        ),
+      if (hasMedia &&
+          playerController.current != null &&
+          !MediaSource.isNetworkUrl(playerController.current!.path) &&
+          onShowInFolder != null)
+        _menuAction(
+          context,
+          icon: Icons.drive_file_move_outlined,
+          label: 'Show in folder',
+          onPressed: onShowInFolder,
+        ),
       if (onFullscreen != null)
         _menuAction(
           context,

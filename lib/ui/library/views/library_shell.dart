@@ -26,6 +26,27 @@ import 'videos_view.dart';
 
 export 'library_section.dart';
 
+/// Exposes [LibraryShell]'s shared search controller and focus node to section
+/// stages such as [HomeView] so `Ctrl+F` / `Ctrl+K` / `/` work everywhere.
+class LibrarySearchScope extends InheritedWidget {
+  const LibrarySearchScope({
+    super.key,
+    required this.controller,
+    required this.focusNode,
+    required super.child,
+  });
+
+  final TextEditingController controller;
+  final FocusNode focusNode;
+
+  static LibrarySearchScope? maybeOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<LibrarySearchScope>();
+
+  @override
+  bool updateShouldNotify(LibrarySearchScope oldWidget) =>
+      controller != oldWidget.controller || focusNode != oldWidget.focusNode;
+}
+
 /// Top-level shell integrating navigation, search, content stage, and responsive layout.
 class LibraryShell extends StatefulWidget {
   const LibraryShell({
@@ -37,6 +58,7 @@ class LibraryShell extends StatefulWidget {
     this.onOpenFiles,
     this.onOpenUrl,
     this.onAddQueueFiles,
+    this.onAddQueueUrl,
     this.onAddFolders,
     this.onShowInFolder,
     this.onBackToPlayer,
@@ -57,6 +79,7 @@ class LibraryShell extends StatefulWidget {
   final VoidCallback? onOpenFiles;
   final VoidCallback? onOpenUrl;
   final VoidCallback? onAddQueueFiles;
+  final VoidCallback? onAddQueueUrl;
   final VoidCallback? onAddFolders;
   final ValueChanged<String>? onShowInFolder;
   final VoidCallback? onBackToPlayer;
@@ -463,6 +486,7 @@ class _LibraryShellState extends State<LibraryShell>
             },
             child: FocusScope(
               node: _shellFocusScope,
+              autofocus: true,
               child: PlaybackPulseScope(
                 controller: widget.controller,
                 child: Scaffold(
@@ -610,7 +634,13 @@ class _LibraryShellState extends State<LibraryShell>
                   onOpenUrl: widget.onOpenUrl,
                 ),
               // Main Stage View
-              Expanded(child: _buildContentStage()),
+              Expanded(
+                child: LibrarySearchScope(
+                  controller: _searchController,
+                  focusNode: _searchFocus,
+                  child: _buildContentStage(),
+                ),
+              ),
             ],
           ),
         ),
@@ -634,6 +664,7 @@ class _LibraryShellState extends State<LibraryShell>
                             controller: widget.controller,
                             onQueueFocus: (_) {},
                             onAddFiles: widget.onAddQueueFiles ?? () {},
+                            onAddUrl: widget.onAddQueueUrl,
                             onClose: () => _setQueueOpen(false),
                           ),
                         ),
@@ -712,6 +743,7 @@ class _LibraryShellState extends State<LibraryShell>
         onBack: _closeNowPlaying,
         onOpenQueue: _showCompactQueue,
         onAddQueueFiles: widget.onAddQueueFiles,
+        onAddQueueUrl: widget.onAddQueueUrl,
       ),
       builder: (context, child) {
         final progress = _nowPlayingMorphCurve.value;
@@ -752,6 +784,7 @@ class _LibraryShellState extends State<LibraryShell>
           onClose: () => Navigator.of(sheetContext).pop(),
           onQueueFocus: (_) {},
           onAddFiles: widget.onAddQueueFiles ?? () {},
+          onAddUrl: widget.onAddQueueUrl,
         ),
       ),
     );

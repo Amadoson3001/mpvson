@@ -7,6 +7,8 @@ import 'package:flutter/foundation.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
+import '../../data/repositories/app_preferences_repository.dart'
+    show PreferredStreamQuality;
 import '../../data/repositories/session_repository.dart';
 import '../../data/services/diagnostic_log.dart';
 import '../../data/services/playback_service.dart';
@@ -24,6 +26,7 @@ import '../../domain/models/playback_chapter.dart';
 import '../../domain/models/playback_session.dart';
 import '../../domain/models/playback_settings.dart';
 import '../../domain/models/session_progress.dart';
+import '../../domain/models/stream_playback_state.dart';
 import '../../domain/models/stream_rendition.dart';
 import '../../domain/models/video_output_policy.dart';
 import '../../utils/memory_trimmer.dart';
@@ -283,6 +286,10 @@ class PlayerController extends ChangeNotifier {
 
   String? _error;
 
+  String? _dismissedEngineError;
+
+  int? _dismissedEngineErrorSourceStart;
+
   MediaKind _mediaKind = MediaKind.unknown;
 
   MediaMetadata _metadata = MediaMetadata.empty;
@@ -436,20 +443,38 @@ class PlayerController extends ChangeNotifier {
 
 class _QueueUndo {
   const _QueueUndo({
-    required this.entry,
+    required this.entries,
     required this.index,
     required this.previousCurrentId,
     required this.wasPlaying,
     required this.displacedActiveSource,
     required this.displacedCurrent,
+    this.isClearAll = false,
   });
 
-  final MediaEntry entry;
+  factory _QueueUndo.single({
+    required MediaEntry entry,
+    required int index,
+    required String? previousCurrentId,
+    required bool wasPlaying,
+    required bool displacedActiveSource,
+    required bool displacedCurrent,
+  }) => _QueueUndo(
+    entries: <MediaEntry>[entry],
+    index: index,
+    previousCurrentId: previousCurrentId,
+    wasPlaying: wasPlaying,
+    displacedActiveSource: displacedActiveSource,
+    displacedCurrent: displacedCurrent,
+  );
+
+  final List<MediaEntry> entries;
   final int index;
   final String? previousCurrentId;
   final bool wasPlaying;
   final bool displacedActiveSource;
   final bool displacedCurrent;
+  final bool isClearAll;
 }
 
 /// A load attempt whose source identity is tracked by the entry's stable id.

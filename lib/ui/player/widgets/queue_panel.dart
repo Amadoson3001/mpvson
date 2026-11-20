@@ -25,6 +25,7 @@ class QueuePanel extends StatefulWidget {
     required this.onClose,
     required this.onQueueFocus,
     required this.onAddFiles,
+    this.onAddUrl,
     this.enableNativeDrop = false,
     this.onFilesDropped,
   });
@@ -33,6 +34,7 @@ class QueuePanel extends StatefulWidget {
   final VoidCallback onClose;
   final ValueChanged<String?> onQueueFocus;
   final VoidCallback onAddFiles;
+  final VoidCallback? onAddUrl;
   final bool enableNativeDrop;
   final ValueChanged<List<String>>? onFilesDropped;
 
@@ -222,6 +224,7 @@ class _QueuePanelState extends State<QueuePanel> {
                         canUndo: widget.controller.canUndo,
                         hasItems: queue.isNotEmpty,
                         onAddFiles: widget.onAddFiles,
+                        onAddUrl: widget.onAddUrl,
                         onUndo: () => unawaited(widget.controller.undoRemove()),
                         onClear: () => _confirmClear(context),
                       ),
@@ -452,6 +455,13 @@ class _QueuePanelState extends State<QueuePanel> {
     if (!context.mounted || confirmed != true) return;
     try {
       await widget.controller.clearQueue();
+      if (!context.mounted) return;
+      AppToast.show(
+        context,
+        'Queue cleared',
+        actionLabel: 'Undo',
+        onAction: () => unawaited(widget.controller.undoRemove()),
+      );
     } catch (_) {
       if (context.mounted) {
         AppToast.show(
@@ -1283,6 +1293,7 @@ class _QueueFooter extends StatelessWidget {
     required this.canUndo,
     required this.hasItems,
     required this.onAddFiles,
+    this.onAddUrl,
     required this.onUndo,
     required this.onClear,
   });
@@ -1290,6 +1301,7 @@ class _QueueFooter extends StatelessWidget {
   final bool canUndo;
   final bool hasItems;
   final VoidCallback onAddFiles;
+  final VoidCallback? onAddUrl;
   final VoidCallback onUndo;
   final VoidCallback onClear;
 
@@ -1321,6 +1333,22 @@ class _QueueFooter extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 10),
           ),
         ),
+        if (onAddUrl != null)
+          TextButton.icon(
+            key: const ValueKey('queue-add-url'),
+            onPressed: onAddUrl,
+            icon: const Icon(Icons.link_rounded, size: 17),
+            label: const Text(
+              'Add URL',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            style: TextButton.styleFrom(
+              foregroundColor: context.palette.secondaryText,
+              minimumSize: const Size(44, 44),
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+            ),
+          ),
         if (canUndo)
           TextButton.icon(
             onPressed: onUndo,

@@ -1217,6 +1217,62 @@ class NativePlayer extends PlatformPlayer {
     calloc.free(data);
   }
 
+  /// Sets a string-list property (such as `audio-files`) for the internal
+  /// libmpv instance of this [Player] using `MPV_FORMAT_NODE_ARRAY`.
+  Future<void> setPropertyList(
+    String property,
+    List<String> values, {
+    bool waitForInitialization = true,
+  }) async {
+    if (disposed) {
+      throw AssertionError('[Player] has been disposed');
+    }
+
+    if (waitForInitialization) {
+      await waitForPlayerInitialization;
+      await waitForVideoControllerInitializationIfAttached;
+    }
+
+    final name = property.toNativeUtf8();
+    final node = calloc<generated.mpv_node>();
+    final list = calloc<generated.mpv_node_list>();
+    Pointer<generated.mpv_node> items = nullptr;
+    final allocatedStrings = <Pointer<Utf8>>[];
+    try {
+      node.ref.format = generated.mpv_format.MPV_FORMAT_NODE_ARRAY;
+      node.ref.u.list = list;
+      list.ref.num = values.length;
+      if (values.isEmpty) {
+        list.ref.values = nullptr;
+      } else {
+        items = calloc<generated.mpv_node>(values.length);
+        list.ref.values = items;
+        for (int i = 0; i < values.length; i++) {
+          final itemString = values[i].toNativeUtf8();
+          allocatedStrings.add(itemString);
+          items[i].format = generated.mpv_format.MPV_FORMAT_STRING;
+          items[i].u.string = itemString.cast();
+        }
+      }
+      mpv.mpv_set_property(
+        ctx,
+        name.cast(),
+        generated.mpv_format.MPV_FORMAT_NODE,
+        node.cast(),
+      );
+    } finally {
+      for (final ptr in allocatedStrings) {
+        calloc.free(ptr);
+      }
+      if (items != nullptr) {
+        calloc.free(items);
+      }
+      calloc.free(list);
+      calloc.free(node);
+      calloc.free(name);
+    }
+  }
+
   /// Retrieves the value of a property from the internal libmpv instance of this [Player].
   /// Please use this method only if you know what you are doing, existing methods in [Player] implementation are suited for the most use cases.
   ///
@@ -2087,53 +2143,8 @@ class NativePlayer extends PlatformPlayer {
           }
         }
         // --------------------------------------------------
-        // Handle HTTP headers specified in the [Media].
-        try {
-          final name = 'path'.toNativeUtf8();
-          final uri = mpv.mpv_get_property_string(ctx, name.cast());
-          // Get the headers for current [Media] by looking up [uri] in the [HashMap].
-          final headers = Media(uri.cast<Utf8>().toDartString()).httpHeaders;
-          if (headers != null) {
-            final property = 'http-header-fields'.toNativeUtf8();
-            // Allocate & fill the [mpv_node] with the headers.
-            final value = calloc<generated.mpv_node>();
-            value.ref.format = generated.mpv_format.MPV_FORMAT_NODE_ARRAY;
-            value.ref.u.list = calloc<generated.mpv_node_list>();
-            value.ref.u.list.ref.num = headers.length;
-            value.ref.u.list.ref.values = calloc<generated.mpv_node>(
-              headers.length,
-            );
-            final entries = headers.entries.toList();
-            for (int i = 0; i < entries.length; i++) {
-              final k = entries[i].key;
-              final v = entries[i].value;
-              final data = '$k: $v'.toNativeUtf8();
-              value.ref.u.list.ref.values[i].format =
-                  generated.mpv_format.MPV_FORMAT_STRING;
-              value.ref.u.list.ref.values[i].u.string = data.cast();
-            }
-            mpv.mpv_set_property(
-              ctx,
-              property.cast(),
-              generated.mpv_format.MPV_FORMAT_NODE,
-              value.cast(),
-            );
-            // Free the allocated memory.
-            calloc.free(property);
-            for (int i = 0; i < value.ref.u.list.ref.num; i++) {
-              calloc.free(value.ref.u.list.ref.values[i].u.string);
-            }
-            calloc.free(value.ref.u.list.ref.values);
-            calloc.free(value.ref.u.list);
-            calloc.free(value);
-          }
-          mpv.mpv_free(uri.cast());
-          calloc.free(name);
-        } catch (exception, stacktrace) {
-          print(exception);
-          print(stacktrace);
-        }
-        // Handle start & end position specified in the [Media].
+        // Read current playlist position so per-entry headers & start/end are resolved.
+        int index = -1;
         try {
           final name = 'playlist-pos'.toNativeUtf8();
           final value = calloc<Int64>();
@@ -2146,12 +2157,71 @@ class NativePlayer extends PlatformPlayer {
             value.cast(),
           );
 
-          final index = value.value;
+          index = value.value;
 
           calloc.free(name.cast());
           calloc.free(value.cast());
+        } catch (_) {}
+        // Handle HTTP headers specified in the [Media] (always reset so prior
+        // stream headers never leak across loads).
+        try {
+          Map<String, String>? headers;
+          if (index >= 0 && index < current.length) {
+            headers = current[index].httpHeaders;
+          } else {
+            final name = 'path'.toNativeUtf8();
+            final uri = mpv.mpv_get_property_string(ctx, name.cast());
+            if (uri != nullptr) {
+              headers = Media(uri.cast<Utf8>().toDartString()).httpHeaders;
+              mpv.mpv_free(uri.cast());
+            }
+            calloc.free(name);
+          }
 
-          if (index >= 0) {
+          final property = 'http-header-fields'.toNativeUtf8();
+          final value = calloc<generated.mpv_node>();
+          value.ref.format = generated.mpv_format.MPV_FORMAT_NODE_ARRAY;
+          value.ref.u.list = calloc<generated.mpv_node_list>();
+          if (headers != null && headers.isNotEmpty) {
+            final entries = headers.entries.toList();
+            value.ref.u.list.ref.num = entries.length;
+            value.ref.u.list.ref.values = calloc<generated.mpv_node>(
+              entries.length,
+            );
+            for (int i = 0; i < entries.length; i++) {
+              final k = entries[i].key;
+              final v = entries[i].value;
+              final data = '$k: $v'.toNativeUtf8();
+              value.ref.u.list.ref.values[i].format =
+                  generated.mpv_format.MPV_FORMAT_STRING;
+              value.ref.u.list.ref.values[i].u.string = data.cast();
+            }
+          } else {
+            value.ref.u.list.ref.num = 0;
+            value.ref.u.list.ref.values = nullptr;
+          }
+          mpv.mpv_set_property(
+            ctx,
+            property.cast(),
+            generated.mpv_format.MPV_FORMAT_NODE,
+            value.cast(),
+          );
+          calloc.free(property);
+          if (value.ref.u.list.ref.values != nullptr) {
+            for (int i = 0; i < value.ref.u.list.ref.num; i++) {
+              calloc.free(value.ref.u.list.ref.values[i].u.string);
+            }
+            calloc.free(value.ref.u.list.ref.values);
+          }
+          calloc.free(value.ref.u.list);
+          calloc.free(value);
+        } catch (exception, stacktrace) {
+          print(exception);
+          print(stacktrace);
+        }
+        // Handle start & end position specified in the [Media].
+        try {
+          if (index >= 0 && index < current.length) {
             final start = current[index].start;
             final end = current[index].end;
 

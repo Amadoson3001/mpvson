@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../../core/app_theme.dart';
 import '../../player_controller.dart';
 import '../player_control_style.dart';
 
@@ -25,6 +26,7 @@ class PlaybackRateMenu extends StatelessWidget {
       button: true,
       child: PopupMenuButton<double>(
         tooltip: 'Playback speed',
+        borderRadius: BorderRadius.circular(AppRadii.control),
         initialValue: _nearestRate(controller.rate),
         onOpened: () => onMenuVisibilityChanged?.call(true),
         onCanceled: () => onMenuVisibilityChanged?.call(false),

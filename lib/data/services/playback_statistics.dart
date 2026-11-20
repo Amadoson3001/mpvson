@@ -2,6 +2,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
 import '../../domain/models/gpu_adapter.dart';
+import '../../domain/models/media_source.dart';
 import '../../domain/models/stream_playback_state.dart';
 import 'gpu_info_service.dart';
 
@@ -98,6 +99,10 @@ class PlaybackStatistics {
       if (streamState.stageMessage != null) {
         merged['Stream status'] = streamState.stageMessage!;
       }
+      if (streamState.originalUrl.isNotEmpty) {
+        merged['Stream source'] = MediaSource.redact(streamState.originalUrl);
+      }
+      merged['Live stream'] = streamState.isLive ? 'Yes' : 'No';
       if (streamState.attemptId > 0) {
         merged['Attempt ID'] = '${streamState.attemptId}';
       }

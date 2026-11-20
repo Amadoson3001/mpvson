@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
@@ -44,6 +45,9 @@ PlaybackSnapshot applyNativeEvent(
     case NativeMediaEventKind.loaded:
       return state.copyWith(isBuffering: false);
     case NativeMediaEventKind.ended:
+      if (event.endReason == NativeEndReason.redirect) {
+        return state;
+      }
       final isError =
           event.endReason == NativeEndReason.error || (event.errorCode != 0);
       final isStop =
@@ -248,6 +252,11 @@ abstract interface class VideoMemoryCapability {
   Future<void> trimVideoMemory();
 }
 
+/// Optional frame-stepping capability supported by native mpv playback.
+abstract interface class FrameStepCapability {
+  Future<void> frameStep({required bool forward});
+}
+
 /// Reports which requested mpv properties matched after the write completed.
 class PlaybackSettingsApplyResult {
   const PlaybackSettingsApplyResult({
@@ -273,7 +282,8 @@ class MediaKitPlaybackService
         PlaybackService,
         PlaybackSettingsCapability,
         GraphicsSettingsCapability,
-        VideoMemoryCapability {
+        VideoMemoryCapability,
+        FrameStepCapability {
   MediaKitPlaybackService({
     Player? player,
     VideoController? videoController,
@@ -322,9 +332,7 @@ class MediaKitPlaybackService
 
       final platform = _player.platform;
       if (platform is NativePlayer) {
-        if (audioUrl != null) {
-          await platform.setProperty('audio-files', audioUrl);
-        }
+        await _setExternalAudioFile(platform, audioUrl);
         await _streamingCoordinator.applyStreamingSettings(
           platform,
           isNetwork: true,
@@ -332,31 +340,38 @@ class MediaKitPlaybackService
           isLowSpec: _appliedPlaybackSettings.isLowSpecOrRamPreserved,
           limitDemuxerCache: _limitDemuxerCache,
         );
-        await _player.open(Media(targetUrl, httpHeaders: headers), play: true);
-        if (resumePos > Duration.zero) {
-          await seek(resumePos);
-        }
+        final boundary = _identity.attached.boundary > 0
+            ? _identity.attached.boundary
+            : _identity.boundaryCounter;
+        _identity.registerResolvedSource(boundary, targetUrl);
+        await _player.open(
+          Media(
+            targetUrl,
+            httpHeaders: headers,
+            start: resumePos > Duration.zero ? resumePos : null,
+          ),
+          play: true,
+        );
       }
     };
     _streamingCoordinator.onAutoQualitySwitch = (StreamRendition target) async {
-      final platform = _player.platform;
-      if (platform is! NativePlayer) return;
-      final format = _streamingCoordinator.activeFormat;
-      if (format == StreamFormat.hls) {
-        if (target.bitrate != null && target.bitrate! > 0) {
-          await platform.setProperty('hls-bitrate', '${target.bitrate}');
-        }
-        final editionIdx = int.tryParse(target.id);
-        if (editionIdx != null) {
-          await platform.setProperty('edition', '$editionIdx');
-        }
-      } else if (format == StreamFormat.dash) {
-        await platform.setProperty('vid', target.id);
-      }
+      await _applyRenditionSwitch(target);
     };
     _subscriptions.add(
       _streamingCoordinator.streamState.listen((streamState) {
-        _emit(_state.copyWith(streamPlaybackState: streamState));
+        if (streamState.stage == StreamStage.failed &&
+            streamState.error != null &&
+            streamState.error!.isNotEmpty) {
+          _emit(
+            _stampedFailure(streamState.error!).copyWith(
+              streamPlaybackState: streamState,
+              isPlaying: false,
+              isBuffering: false,
+            ),
+          );
+        } else if (streamState != _state.streamPlaybackState) {
+          _emit(_state.copyWith(streamPlaybackState: streamState));
+        }
       }),
     );
     _state = _snapshotFrom(
@@ -432,8 +447,22 @@ class MediaKitPlaybackService
         (message) => _emit(_stampedFailure(message)),
         onError: (Object error) => _emit(_stampedFailure(error.toString())),
       ),
+      _player.stream.log.listen((log) {
+        final match = _httpErrorStatusPattern.firstMatch(log.text);
+        if (match != null) {
+          final status = int.tryParse(match.group(1)!);
+          if (status != null) {
+            _lastHttpErrorStatus = status;
+          }
+        }
+      }),
     ]);
   }
+
+  static final RegExp _httpErrorStatusPattern = RegExp(
+    r'\bHTTP error (\d{3})\b',
+    caseSensitive: false,
+  );
 
   final Player _player;
   final NativeMediaEvents? _nativeEvents;
@@ -445,6 +474,29 @@ class MediaKitPlaybackService
 
   int _activeEngineAttemptId = 0;
   final Map<int, int> _playlistEntryToAttemptId = <int, int>{};
+  int? _lastHttpErrorStatus;
+  String? _selectedDashVideoTrackId;
+  bool _hasExternalAudioFile = false;
+
+  Future<void> _setExternalAudioFile(
+    NativePlayer platform,
+    String? audioUrl,
+  ) async {
+    final trimmed = audioUrl?.trim();
+    if (trimmed != null && trimmed.isNotEmpty) {
+      await platform.setPropertyList('audio-files', <String>[
+        trimmed,
+      ], waitForInitialization: false);
+      _hasExternalAudioFile = true;
+    } else if (_hasExternalAudioFile) {
+      await platform.setPropertyList(
+        'audio-files',
+        const <String>[],
+        waitForInitialization: false,
+      );
+      _hasExternalAudioFile = false;
+    }
+  }
 
   @override
   StreamingCoordinator get streamingCoordinator => _streamingCoordinator;
@@ -452,46 +504,203 @@ class MediaKitPlaybackService
   @override
   Future<void> selectQuality(StreamRendition rendition) async {
     _streamingCoordinator.selectRendition(rendition);
+    await _applyRenditionSwitch(rendition);
+  }
+
+  Future<void> _applyRenditionSwitch(StreamRendition rendition) async {
     final platform = _player.platform;
     if (platform is! NativePlayer) return;
 
     final format = _streamingCoordinator.activeFormat;
     if (format == StreamFormat.hls) {
       if (rendition.isAuto) {
-        await platform.setProperty('hls-bitrate', '0');
+        await platform.setProperty('hls-bitrate', 'max');
         await platform.setProperty('edition', 'auto');
-      } else {
-        if (rendition.bitrate != null && rendition.bitrate! > 0) {
-          await platform.setProperty('hls-bitrate', '${rendition.bitrate}');
-        }
-        final editionIdx = int.tryParse(rendition.id);
-        if (editionIdx != null) {
-          await platform.setProperty('edition', '$editionIdx');
-        }
+        return;
+      }
+      if (rendition.bitrate != null && rendition.bitrate! > 0) {
+        await platform.setProperty('hls-bitrate', '${rendition.bitrate}');
+      }
+      final editionIdx = await _resolveHlsEditionIndex(platform, rendition);
+      if (editionIdx != null) {
+        await platform.setProperty('edition', '$editionIdx');
+        return;
+      }
+      if (rendition.isMuxed && rendition.url != null) {
+        final pos = _state.position;
+        final play = _state.isPlaying;
+        final boundary = _identity.attached.boundary > 0
+            ? _identity.attached.boundary
+            : _identity.boundaryCounter;
+        _identity.registerResolvedSource(boundary, rendition.url!);
+        final headers =
+            rendition.httpHeaders ??
+            _streamingCoordinator.activeResolvedPage?.httpHeaders;
+        await _player.open(
+          Media(
+            rendition.url!,
+            httpHeaders: headers,
+            start: pos > Duration.zero ? pos : null,
+          ),
+          play: play,
+        );
       }
     } else if (format == StreamFormat.dash) {
       if (rendition.isAuto) {
+        _selectedDashVideoTrackId = null;
         await platform.setProperty('vid', 'auto');
       } else {
-        await platform.setProperty('vid', rendition.id);
+        final trackId = await _resolveDashVideoTrackId(platform, rendition);
+        if (trackId != null) {
+          _selectedDashVideoTrackId = trackId;
+          await platform.setProperty('vid', trackId);
+        }
       }
     } else {
-      // Direct progressive or yt-dlp formats: switch engine input while keeping logical queue source
+      // Direct progressive or yt-dlp formats: switch engine input while keeping logical queue source.
       if (rendition.url != null) {
         final pos = _state.position;
         final play = _state.isPlaying;
-        if (rendition.audioUrl != null) {
-          await platform.setProperty('audio-files', rendition.audioUrl!);
-        }
+        await _setExternalAudioFile(platform, rendition.audioUrl);
+        final boundary = _identity.attached.boundary > 0
+            ? _identity.attached.boundary
+            : _identity.boundaryCounter;
+        _identity.registerResolvedSource(boundary, rendition.url!);
+        final headers =
+            rendition.httpHeaders ??
+            _streamingCoordinator.activeResolvedPage?.httpHeaders;
         await _player.open(
-          Media(rendition.url!, httpHeaders: rendition.httpHeaders),
+          Media(
+            rendition.url!,
+            httpHeaders: headers,
+            start: pos > Duration.zero ? pos : null,
+          ),
           play: play,
         );
-        if (pos > Duration.zero) {
-          await seek(pos);
-        }
       }
     }
+  }
+
+  Future<int?> _resolveHlsEditionIndex(
+    NativePlayer platform,
+    StreamRendition rendition,
+  ) async {
+    try {
+      final raw = await platform
+          .getProperty('edition-list')
+          .timeout(const Duration(seconds: 1));
+      final decoded = jsonDecode(raw);
+      if (decoded is List && decoded.isNotEmpty) {
+        int? closestBitrateEdition;
+        int? smallestBitrateDiff;
+        for (var i = 0; i < decoded.length; i++) {
+          final entry = decoded[i];
+          if (entry is! Map) continue;
+          final rawId = entry['id'];
+          final editionId = rawId is int
+              ? rawId
+              : int.tryParse(rawId?.toString() ?? '') ?? i;
+          final title = entry['title']?.toString().toLowerCase() ?? '';
+          if (title.isNotEmpty) {
+            if (rendition.height != null &&
+                title.contains('${rendition.height}p')) {
+              return editionId;
+            }
+            if (rendition.width != null &&
+                rendition.height != null &&
+                title.contains('${rendition.width}x${rendition.height}')) {
+              return editionId;
+            }
+            if (title == rendition.label.toLowerCase() ||
+                title == rendition.id.toLowerCase()) {
+              return editionId;
+            }
+          }
+          final rawBitrate =
+              (entry['bitrate'] ??
+                      entry['hls-bitrate'] ??
+                      entry['demux-bitrate'])
+                  as num?;
+          if (rawBitrate != null && rendition.bitrate != null) {
+            final diff = (rawBitrate.toInt() - rendition.bitrate!).abs();
+            if (smallestBitrateDiff == null || diff < smallestBitrateDiff) {
+              smallestBitrateDiff = diff;
+              closestBitrateEdition = editionId;
+            }
+          }
+        }
+        if (closestBitrateEdition != null) {
+          return closestBitrateEdition;
+        }
+        final directIdx = int.tryParse(rendition.id);
+        if (directIdx != null && directIdx >= 0 && directIdx < decoded.length) {
+          return directIdx;
+        }
+        return null;
+      }
+    } on Object {
+      // Fallback to numeric ID parsing if edition-list cannot be queried.
+    }
+    return int.tryParse(rendition.id);
+  }
+
+  Future<String?> _resolveDashVideoTrackId(
+    NativePlayer platform,
+    StreamRendition rendition,
+  ) async {
+    try {
+      final raw = await platform
+          .getProperty('track-list')
+          .timeout(const Duration(seconds: 1));
+      final decoded = jsonDecode(raw);
+      if (decoded is List) {
+        final videoTracks = <Map<dynamic, dynamic>>[];
+        for (final item in decoded) {
+          if (item is Map && item['type']?.toString() == 'video') {
+            videoTracks.add(item);
+          }
+        }
+        if (videoTracks.isNotEmpty) {
+          for (final track in videoTracks) {
+            final trackId = track['id']?.toString();
+            if (trackId == null) continue;
+            if (trackId == rendition.id ||
+                track['demux-id']?.toString() == rendition.id) {
+              return trackId;
+            }
+          }
+          for (final track in videoTracks) {
+            final trackId = track['id']?.toString();
+            if (trackId == null) continue;
+            final h = (track['demux-h'] as num?)?.toInt();
+            final w = (track['demux-w'] as num?)?.toInt();
+            if (rendition.height != null && h == rendition.height) {
+              if (rendition.width == null || w == rendition.width) {
+                return trackId;
+              }
+            }
+          }
+          if (rendition.bitrate != null) {
+            String? closestTrackId;
+            int? smallestDiff;
+            for (final track in videoTracks) {
+              final trackId = track['id']?.toString();
+              final br = (track['demux-bitrate'] as num?)?.toInt();
+              if (trackId == null || br == null) continue;
+              final diff = (br - rendition.bitrate!).abs();
+              if (smallestDiff == null || diff < smallestDiff) {
+                smallestDiff = diff;
+                closestTrackId = trackId;
+              }
+            }
+            if (closestTrackId != null) return closestTrackId;
+          }
+        }
+      }
+    } on Object {
+      // Fallback to numeric representation ID parsing if track-list fails.
+    }
+    return int.tryParse(rendition.id)?.toString();
   }
 
   /// Runtime mpv property bridge.
@@ -779,7 +988,10 @@ class MediaKitPlaybackService
           : '${enabled ? 'resumed' : 'suspended'} ($note)',
     );
     try {
-      await _propertyWriter('vid', enabled ? 'auto' : 'no');
+      await _propertyWriter(
+        'vid',
+        enabled ? (_selectedDashVideoTrackId ?? 'auto') : 'no',
+      );
     } on Object catch (error) {
       _diagnostics?.record('playback.video_track', error: error);
     }
@@ -863,6 +1075,8 @@ class MediaKitPlaybackService
     // Registering the request with the identity tracker must stay synchronous:
     // it assigns the boundary later opens use to detect they were superseded.
     final boundary = _identity.beginOpen(path);
+    _lastHttpErrorStatus = null;
+    _selectedDashVideoTrackId = null;
     _streamingCoordinator.cancelActiveAttempt(
       reason: 'superseded by open boundary $boundary',
     );
@@ -884,6 +1098,7 @@ class MediaKitPlaybackService
         clearError: true,
         clearNativeSource: true,
         sourceLoaded: false,
+        streamPlaybackState: const StreamPlaybackState(),
       ),
     );
     _lastAppliedWidth = null;
@@ -939,27 +1154,43 @@ class MediaKitPlaybackService
             _disposed) {
           return;
         }
-        if (prepared != null) {
-          attemptId = prepared.attemptId;
-          targetUrl = prepared.playableUrl;
-          headers = prepared.httpHeaders;
-          isLive = prepared.isLive;
-          if (prepared.audioUrl != null && _player.platform is NativePlayer) {
-            await (_player.platform as NativePlayer).setProperty(
-              'audio-files',
-              prepared.audioUrl!,
-              waitForInitialization: false,
-            );
+        if (prepared == null) {
+          return;
+        }
+        attemptId = prepared.attemptId;
+        targetUrl = prepared.playableUrl;
+        headers = prepared.httpHeaders;
+        isLive = prepared.isLive;
+        if (targetUrl != path) {
+          _identity.registerResolvedSource(boundary, targetUrl);
+        }
+        if (_player.platform is NativePlayer) {
+          final platform = _player.platform as NativePlayer;
+          await _setExternalAudioFile(platform, prepared.audioUrl);
+          if (!prepared.isAutoQuality &&
+              _streamingCoordinator.activeFormat == StreamFormat.hls &&
+              prepared.selectedRendition?.bitrate != null &&
+              prepared.selectedRendition!.bitrate! > 0) {
+            await platform
+                .setProperty(
+                  'hls-bitrate',
+                  '${prepared.selectedRendition!.bitrate}',
+                  waitForInitialization: false,
+                )
+                .timeout(const Duration(seconds: 1))
+                .catchError((Object _) {});
+          } else if (prepared.isAutoQuality &&
+              _streamingCoordinator.activeFormat == StreamFormat.hls) {
+            await platform
+                .setProperty('hls-bitrate', 'max', waitForInitialization: false)
+                .timeout(const Duration(seconds: 1))
+                .catchError((Object _) {});
           }
         }
       } else {
-        _streamingCoordinator.cancelActiveAttempt(reason: 'local open');
+        _streamingCoordinator.stop();
         if (_player.platform is NativePlayer) {
-          await (_player.platform as NativePlayer).setProperty(
-            'audio-files',
-            '',
-            waitForInitialization: false,
-          );
+          await _setExternalAudioFile(_player.platform as NativePlayer, null);
         }
       }
 
@@ -1166,7 +1397,12 @@ class MediaKitPlaybackService
     _diagnostics?.record('playback.stop', message: 'boundary $boundary');
     _streamingCoordinator.stop();
     _activeEngineAttemptId = 0;
+    _lastHttpErrorStatus = null;
+    _selectedDashVideoTrackId = null;
     _playlistEntryToAttemptId.clear();
+    if (_player.platform is NativePlayer) {
+      await _setExternalAudioFile(_player.platform as NativePlayer, null);
+    }
     _emit(
       _state.copyWith(
         sourceStart: boundary,
@@ -1176,6 +1412,7 @@ class MediaKitPlaybackService
         position: Duration.zero,
         duration: Duration.zero,
         chapters: const <PlaybackChapter>[],
+        clearError: true,
         clearNativeSource: true,
         sourceLoaded: false,
         streamPlaybackState: const StreamPlaybackState(),
@@ -1223,6 +1460,13 @@ class MediaKitPlaybackService
   @override
   Future<void> setSubtitleTrack(SubtitleTrack track) =>
       _player.setSubtitleTrack(track);
+
+  @override
+  Future<void> frameStep({required bool forward}) async {
+    final platform = _player.platform;
+    if (platform is! NativePlayer) return;
+    await platform.command([forward ? 'frame-step' : 'frame-back-step']);
+  }
 
   @override
   Future<void> loadSubtitle(String path) async {
@@ -1609,19 +1853,28 @@ class MediaKitPlaybackService
     _streamingCoordinator.handleNativeLifecycleEvent(
       event,
       attemptId: eventAttemptId,
+      httpStatusCode: event.kind == NativeMediaEventKind.ended
+          ? _lastHttpErrorStatus
+          : null,
     );
 
     if (event.kind == NativeMediaEventKind.demuxerStatsChanged) {
       if (event.timePos != null) {
         _streamingCoordinator.updatePosition(event.timePos!);
       }
-      _streamingCoordinator.updateDemuxerStats(
-        bufferedDuration: event.demuxerCacheDuration ?? Duration.zero,
-        rawInputRate: event.rawInputRate,
-        pausedForCache: event.pausedForCache,
-        width: event.dwidth,
-        height: event.dheight,
-      );
+      if (event.demuxerCacheDuration != null ||
+          event.rawInputRate != null ||
+          event.pausedForCache != null ||
+          event.dwidth != null ||
+          event.dheight != null) {
+        _streamingCoordinator.updateDemuxerStats(
+          bufferedDuration: event.demuxerCacheDuration,
+          rawInputRate: event.rawInputRate,
+          pausedForCache: event.pausedForCache,
+          width: event.dwidth,
+          height: event.dheight,
+        );
+      }
       return;
     }
 
@@ -1637,6 +1890,7 @@ class MediaKitPlaybackService
     );
     switch (event.kind) {
       case NativeMediaEventKind.started:
+        if (event.source.trim().isEmpty) return;
         final attachment = _identity.attachStarted(event.source);
         if (!attachment.hasSource) return;
         _lastAppliedWidth = null;

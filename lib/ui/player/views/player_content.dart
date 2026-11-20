@@ -9,7 +9,6 @@ import '../../../data/services/desktop_integration_service.dart';
 import '../../../data/services/engine_update_service.dart';
 import '../../../data/services/update_service.dart';
 import '../../../domain/models/media_entry.dart';
-import '../../../domain/models/open_request.dart';
 import '../../../domain/models/player_hotkeys.dart';
 import '../../core/app_motion.dart';
 import '../../core/toast/toast_layout.dart';
@@ -317,14 +316,10 @@ class _PlayerContentState extends State<PlayerContent>
           onClose: widget.chrome.toggleQueue,
           onQueueFocus: widget.chrome.setFocusedQueueEntry,
           onAddFiles: widget.media.addQueueFiles,
+          onAddUrl: widget.media.addQueueUrl,
           enableNativeDrop: widget.enableNativeDrop,
-          onFilesDropped: (paths) => unawaited(
-            widget.media.openPaths(
-              paths,
-              append: true,
-              origin: OpenOrigin.dragAndDrop,
-            ),
-          ),
+          onFilesDropped: (paths) =>
+              unawaited(widget.media.handleDroppedPaths(paths, append: true)),
         ),
       ),
     );
@@ -419,11 +414,15 @@ class _PlayerContentState extends State<PlayerContent>
       onUpdateViewportDimensions: layout.updateViewportDimensions,
       videoSettingsOpen: chrome.videoSettingsOpen,
       videoSettingsMounted: chrome.videoSettingsMounted,
+      holdSpeedActive: chrome.holdSpeedActive,
       onCloseVideoSettings: chrome.closeVideoSettings,
       onVideoSettingsExitEnd: chrome.handleVideoSettingsExitEnd,
       onOpenFullSettings: widget.onSettingsOpened,
       appPreferences: widget.appPreferences,
       onPickSubtitle: widget.media.pickSubtitle,
+      onSaveScreenshot: () => unawaited(widget.media.saveScreenshot()),
+      onCopyUrl: () => unawaited(widget.media.copyCurrentUrl()),
+      onShowInFolder: () => unawaited(widget.media.showCurrentInFolder()),
     );
   }
 
@@ -487,9 +486,8 @@ class _PlayerContentState extends State<PlayerContent>
       playerArea: PlayerDragDrop(
         enabled: widget.enableNativeDrop,
         onDragStateChanged: widget.onDragStateChanged,
-        onFilesDropped: (paths) => unawaited(
-          widget.media.openPaths(paths, origin: OpenOrigin.dragAndDrop),
-        ),
+        onFilesDropped: (paths) =>
+            unawaited(widget.media.handleDroppedPaths(paths)),
         // Accent theming is applied once at the app root. A second scope
         // here rebuilt the whole stage on artwork extraction.
         child: LayoutBuilder(

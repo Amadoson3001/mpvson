@@ -45,6 +45,7 @@ class ToastGeometry {
 /// occupy, and a toast moves aside as they slide in and out.
 class ToastLayoutState extends ChangeNotifier {
   final Map<Object, Rect> _regions = <Object, Rect>{};
+  final Map<Object, double> _pinnedHeights = <Object, double>{};
   bool _flushScheduled = false;
   bool _disposed = false;
 
@@ -52,6 +53,35 @@ class ToastLayoutState extends ChangeNotifier {
   List<Rect> get rects {
     if (_regions.isEmpty) return const <Rect>[];
     return _regions.values.toList(growable: false);
+  }
+
+  /// Total vertical height reserved by pinned persistent overlays (such as a
+  /// dismissible playback error card) so transient toasts stack above them.
+  double get pinnedHeight {
+    if (_pinnedHeights.isEmpty) return 0;
+    var total = 0.0;
+    for (final height in _pinnedHeights.values) {
+      total += height;
+    }
+    return total;
+  }
+
+  void reportPinnedHeight(Object key, double height) {
+    if (_disposed) return;
+    if (height <= 0) {
+      releasePinnedHeight(key);
+      return;
+    }
+    final previous = _pinnedHeights[key];
+    if (previous != null && (previous - height).abs() < 0.5) return;
+    _pinnedHeights[key] = height;
+    _scheduleFlush();
+  }
+
+  void releasePinnedHeight(Object key) {
+    if (_disposed) return;
+    if (_pinnedHeights.remove(key) == null) return;
+    _scheduleFlush();
   }
 
   void report(Object key, Rect rect) {
@@ -98,6 +128,7 @@ class ToastLayoutState extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _regions.clear();
+    _pinnedHeights.clear();
     super.dispose();
   }
 }
@@ -115,6 +146,7 @@ ToastGeometry resolveToastGeometry({
   required Size screen,
   required EdgeInsets safe,
   required List<Rect> regions,
+  double maxWidth = _maxToastWidth,
 }) {
   final claimed = regions.where((rect) => !rect.isEmpty).toList();
 
@@ -140,20 +172,26 @@ ToastGeometry resolveToastGeometry({
 
   final horizontalClaim = settleRight ? rightClaim : leftClaim;
   final oppositeClaim = settleRight ? leftClaim : rightClaim;
-  final maxWidth =
+  final upperMaxWidth = math.max(0.0, maxWidth);
+  final lowerMinWidth = math.min(_minToastWidth, upperMaxWidth);
+  final clampedMaxWidth =
       (screen.width -
               safe.left -
               safe.right -
               horizontalClaim -
               oppositeClaim -
               _toastGap * 2)
-          .clamp(_minToastWidth, _maxToastWidth);
+          .clamp(lowerMinWidth, upperMaxWidth);
 
   // The column the toast will occupy, used to measure vertical crowding.
   final columnLeft = settleRight
-      ? screen.width - safe.right - horizontalClaim - _toastGap - maxWidth
+      ? screen.width -
+            safe.right -
+            horizontalClaim -
+            _toastGap -
+            clampedMaxWidth
       : safe.left + horizontalClaim + _toastGap;
-  final columnRight = columnLeft + maxWidth;
+  final columnRight = columnLeft + clampedMaxWidth;
 
   // Vertical edges: only chrome overlapping the toast's own column counts.
   var bottomClaim = safe.bottom;
@@ -192,7 +230,7 @@ ToastGeometry resolveToastGeometry({
       bottom: settleBottom ? verticalClaim + _toastGap : 0,
     ),
     alignment: Alignment(settleRight ? 1 : -1, settleBottom ? 1 : -1),
-    maxWidth: maxWidth,
+    maxWidth: clampedMaxWidth,
   );
 }
 

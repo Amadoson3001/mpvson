@@ -75,6 +75,7 @@ class PlaybackSourceIdentity {
   /// Canonical source -> load attempt that requested it, oldest first.
   final Map<String, int> _requests = <String, int>{};
   final Map<String, int> _rawRequests = <String, int>{};
+  final Map<int, String> _boundaryCanonicalSource = <int, String>{};
 
   int _boundary = 0;
   int? _pendingBoundary;
@@ -125,6 +126,7 @@ class PlaybackSourceIdentity {
     _boundary++;
     _remember(_requests, canonical, _boundary);
     _remember(_rawRequests, source, _boundary);
+    _rememberBoundary(_boundary, canonical);
     _pendingBoundary = _boundary;
     _request = SourceAttachment(
       boundary: _boundary,
@@ -135,6 +137,19 @@ class PlaybackSourceIdentity {
     // previous source, even when this request reopens the same path.
     _native = SourceAttachment(boundary: _boundary);
     return _boundary;
+  }
+
+  /// Associates an engine-facing [resolvedSource] (e.g. a yt-dlp CDN URL or
+  /// quality-switched rendition URL) with an existing load [boundary] so its
+  /// native `path` events resolve back to the logical queue entry source.
+  void registerResolvedSource(int boundary, String resolvedSource) {
+    if (boundary <= 0 ||
+        !_boundaryCanonicalSource.containsKey(boundary) ||
+        resolvedSource.trim().isEmpty) {
+      return;
+    }
+    _remember(_requests, _canonicalize(resolvedSource), boundary);
+    _remember(_rawRequests, resolvedSource, boundary);
   }
 
   /// Marks that the engine will not attach a new source (stop/clear queue).
@@ -148,6 +163,7 @@ class PlaybackSourceIdentity {
 
   /// The engine reported it started loading a source.
   SourceAttachment attachStarted(String rawSource) {
+    if (rawSource.trim().isEmpty) return _native;
     final canonical = _canonicalize(rawSource);
     var boundary = _requests[canonical] ?? _rawRequests[rawSource] ?? 0;
     if (boundary == 0 && _pendingBoundary != null) {
@@ -162,9 +178,10 @@ class PlaybackSourceIdentity {
       // the events as stale instead of attaching them to the current attempt.
       return _native;
     }
+    final logicalSource = _boundaryCanonicalSource[boundary] ?? canonical;
     _native = SourceAttachment(
       boundary: boundary,
-      source: canonical,
+      source: logicalSource,
       loaded: false,
       verified: true,
     );
@@ -191,6 +208,14 @@ class PlaybackSourceIdentity {
     target[key] = boundary;
     while (target.length > _rememberLimit) {
       target.remove(target.keys.first);
+    }
+  }
+
+  void _rememberBoundary(int boundary, String canonical) {
+    _boundaryCanonicalSource.remove(boundary);
+    _boundaryCanonicalSource[boundary] = canonical;
+    while (_boundaryCanonicalSource.length > _rememberLimit) {
+      _boundaryCanonicalSource.remove(_boundaryCanonicalSource.keys.first);
     }
   }
 }

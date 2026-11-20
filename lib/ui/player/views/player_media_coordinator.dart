@@ -1,7 +1,11 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 
 import '../../../data/repositories/app_preferences_repository.dart';
 import '../../../data/repositories/media_library_repository.dart';
@@ -13,7 +17,9 @@ import '../../../data/services/playback_statistics.dart';
 import '../../../data/services/update_service.dart';
 import '../../../domain/models/media_catalog.dart';
 import '../../../domain/models/media_entry.dart';
+import '../../../domain/models/media_source.dart';
 import '../../../domain/models/open_request.dart';
+import '../../../utils/file_utils.dart';
 import '../../core/components/app_dialog.dart';
 import '../../core/toast/app_toast.dart';
 import '../player_controller.dart';
@@ -24,6 +30,8 @@ import 'settings/settings_dialog.dart';
 typedef MediaFilePicker = Future<List<String>> Function();
 typedef SubtitleFilePicker = Future<String?> Function();
 typedef UrlPrompt = Future<String?> Function(BuildContext context);
+typedef ScreenshotWriter =
+    Future<String?> Function(Uint8List bytes, String suggestedName);
 
 class PlayerMediaCoordinator {
   PlayerMediaCoordinator({
@@ -35,6 +43,8 @@ class PlayerMediaCoordinator {
     this.mediaPicker,
     this.subtitlePicker,
     this.urlPrompt,
+    this.screenshotWriter,
+    this.revealInFolder,
     this.libraryRepository,
     this.appPreferences,
     this.desktopIntegration,
@@ -53,6 +63,8 @@ class PlayerMediaCoordinator {
   MediaFilePicker? mediaPicker;
   SubtitleFilePicker? subtitlePicker;
   UrlPrompt? urlPrompt;
+  ScreenshotWriter? screenshotWriter;
+  Future<bool> Function(String path)? revealInFolder;
   MediaLibraryRepository? libraryRepository;
   AppPreferencesRepository? appPreferences;
   DesktopIntegrationService? desktopIntegration;
@@ -177,18 +189,200 @@ class PlayerMediaCoordinator {
     }
   }
 
-  Future<void> openUrl() async {
+  Future<void> openUrl({bool defaultEnqueue = false}) async {
     onCloseContextMenu();
-    final url = await withControlsVisible(
-      () => urlPrompt == null
-          ? AppDialog.show<String>(
-              context: context,
-              builder: (_) => const OpenUrlDialog(),
-            )
-          : urlPrompt!(context),
+    if (urlPrompt != null) {
+      final url = await withControlsVisible(() => urlPrompt!(context));
+      if (url == null || url.trim().isEmpty) return;
+      await openPaths([url.trim()], append: defaultEnqueue);
+      return;
+    }
+    final recentUrls = controller.saveNetworkUrls
+        ? controller.recent
+              .where((entry) => MediaSource.isNetworkUrl(entry.path))
+              .take(4)
+              .toList(growable: false)
+        : const <MediaEntry>[];
+    final result = await withControlsVisible(
+      () => OpenUrlDialog.show(
+        context,
+        allowEnqueue: true,
+        recentUrls: recentUrls,
+      ),
     );
-    if (url == null || url.trim().isEmpty) return;
-    await openPaths([url.trim()]);
+    if (result == null || result.url.trim().isEmpty) return;
+    await openPaths([
+      result.url.trim(),
+    ], append: defaultEnqueue || result.enqueue);
+  }
+
+  Future<void> addQueueUrl() => openUrl(defaultEnqueue: true);
+
+  Future<void> handleDroppedPaths(
+    List<String> paths, {
+    bool append = false,
+  }) async {
+    if (paths.isEmpty) return;
+    final subtitlePaths = <String>[];
+    final mediaPaths = <String>[];
+    for (final path in paths) {
+      if (MediaCatalog.isSubtitleFile(path)) {
+        subtitlePaths.add(path);
+      } else {
+        mediaPaths.add(path);
+      }
+    }
+    if (mediaPaths.isNotEmpty) {
+      await openPaths(
+        mediaPaths,
+        append: append,
+        origin: OpenOrigin.dragAndDrop,
+      );
+    }
+    if (subtitlePaths.isEmpty) return;
+    final ctx = context;
+    if (!controller.hasMedia && mediaPaths.isEmpty) {
+      if (ctx.mounted) {
+        AppToast.show(ctx, 'Open a video first to load subtitles.');
+      }
+      return;
+    }
+    for (final subtitle in subtitlePaths) {
+      await controller.loadSubtitle(subtitle);
+    }
+    if (ctx.mounted && controller.error == null) {
+      AppToast.show(
+        ctx,
+        subtitlePaths.length == 1
+            ? 'Subtitle loaded'
+            : 'Loaded ${subtitlePaths.length} subtitles',
+      );
+    }
+  }
+
+  Future<void> saveScreenshot() async {
+    onCloseContextMenu();
+    final ctx = context;
+    if (!controller.hasMedia || controller.isAudio) {
+      if (ctx.mounted) {
+        AppToast.show(
+          ctx,
+          'Screenshots are only available while a video is open.',
+        );
+      }
+      return;
+    }
+    final bytes = await controller.captureFrame();
+    if (bytes == null || bytes.isEmpty) {
+      if (ctx.mounted) {
+        AppToast.show(
+          ctx,
+          'Could not capture the current frame.',
+          tone: AppToastTone.danger,
+        );
+      }
+      return;
+    }
+    final suggestedName = _screenshotFileName(controller.current?.title);
+    String? savedPath;
+    try {
+      if (screenshotWriter != null) {
+        savedPath = await screenshotWriter!(bytes, suggestedName);
+      } else {
+        savedPath = await _writeScreenshotFile(bytes, suggestedName);
+      }
+    } catch (_) {
+      if (ctx.mounted) {
+        AppToast.show(
+          ctx,
+          'Could not save the screenshot.',
+          tone: AppToastTone.danger,
+        );
+      }
+      return;
+    }
+    if (!ctx.mounted) return;
+    if (savedPath == null || savedPath.isEmpty) {
+      AppToast.show(
+        ctx,
+        'Could not save the screenshot.',
+        tone: AppToastTone.danger,
+      );
+      return;
+    }
+    final targetPath = savedPath;
+    AppToast.show(
+      ctx,
+      'Screenshot saved',
+      actionLabel: 'Show in folder',
+      onAction: () => unawaited(_revealPath(targetPath)),
+    );
+  }
+
+  Future<void> copyCurrentUrl() async {
+    onCloseContextMenu();
+    final current = controller.current;
+    if (current == null || !MediaSource.isNetworkUrl(current.path)) return;
+    await Clipboard.setData(ClipboardData(text: current.path));
+    final ctx = context;
+    if (ctx.mounted) {
+      AppToast.show(ctx, 'Stream URL copied');
+    }
+  }
+
+  Future<void> showCurrentInFolder() async {
+    onCloseContextMenu();
+    final current = controller.current;
+    if (current == null || MediaSource.isNetworkUrl(current.path)) return;
+    await _revealPath(current.path);
+  }
+
+  Future<void> _revealPath(String path) async {
+    final ctx = context;
+    final ok = await (revealInFolder ?? showInFolder)(path);
+    if (!ok && ctx.mounted) {
+      AppToast.show(
+        ctx,
+        'Could not open File Explorer.',
+        tone: AppToastTone.danger,
+      );
+    }
+  }
+
+  static String _screenshotFileName(String? rawTitle) {
+    final now = DateTime.now();
+    String two(int n) => n.toString().padLeft(2, '0');
+    final stamp =
+        '${now.year}${two(now.month)}${two(now.day)}_'
+        '${two(now.hour)}${two(now.minute)}${two(now.second)}';
+    final clean = (rawTitle ?? 'frame')
+        .replaceAll(RegExp(r'[^a-zA-Z0-9_\- ]'), '')
+        .trim()
+        .replaceAll(RegExp(r'\s+'), '_');
+    final prefix = clean.isEmpty
+        ? 'frame'
+        : (clean.length > 40 ? clean.substring(0, 40) : clean);
+    return 'mpvson_${prefix}_$stamp.jpg';
+  }
+
+  static Future<String> _writeScreenshotFile(
+    Uint8List bytes,
+    String fileName,
+  ) async {
+    Directory? baseDir;
+    final userProfile = Platform.environment['USERPROFILE'];
+    if (Platform.isWindows && userProfile != null && userProfile.isNotEmpty) {
+      final pictures = Directory(p.join(userProfile, 'Pictures'));
+      if (await pictures.exists()) {
+        baseDir = pictures;
+      }
+    }
+    baseDir ??= await getApplicationDocumentsDirectory();
+    final folder = Directory(p.join(baseDir.path, 'Mpvson Screenshots'));
+    await folder.create(recursive: true);
+    final outFile = File(p.join(folder.path, fileName));
+    await outFile.writeAsBytes(bytes, flush: true);
+    return outFile.path;
   }
 
   Future<void> playRecent(MediaEntry entry) =>
@@ -230,9 +424,9 @@ class PlayerMediaCoordinator {
 
   Future<String?> pickSubtitle() => withControlsVisible(() async {
     if (subtitlePicker != null) return subtitlePicker!();
-    const subtitleTypes = XTypeGroup(
+    final subtitleTypes = XTypeGroup(
       label: 'Subtitle files',
-      extensions: ['ass', 'idx', 'srt', 'ssa', 'sub', 'vtt'],
+      extensions: MediaCatalog.subtitleExtensions.toList()..sort(),
     );
     final file = await openFile(acceptedTypeGroups: [subtitleTypes]);
     return file?.path;

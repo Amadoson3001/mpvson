@@ -43,17 +43,24 @@ std::vector<std::wstring> SingleInstance::GetRawCommandLineArgs() {
 std::vector<std::string> SingleInstance::ResolvePaths(
     const std::vector<std::wstring>& raw_args) {
   std::vector<std::string> resolved;
+  bool end_of_options = false;
   for (const auto& arg : raw_args) {
     if (arg.empty()) {
       continue;
     }
-    if (arg == L"--enqueue") {
-      resolved.emplace_back("--enqueue");
-      continue;
-    }
-    // Skip other command line flags/options
-    if (arg[0] == L'-' || arg[0] == L'/') {
-      continue;
+    if (!end_of_options) {
+      if (arg == L"--") {
+        end_of_options = true;
+        continue;
+      }
+      if (arg == L"--enqueue" || arg == L"-e") {
+        resolved.emplace_back("--enqueue");
+        continue;
+      }
+      // Skip other command line flags/options
+      if (arg[0] == L'-' || arg == L"/?") {
+        continue;
+      }
     }
     // If it's a URL (http://, https://, rtsp://, file://, etc.), keep as-is
     if (arg.find(L"://") != std::wstring::npos) {
