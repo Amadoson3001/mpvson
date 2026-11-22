@@ -1,4 +1,4 @@
-Mpvson 0.1.1
+Mpvson 0.1.2
 
 Start mpvson.exe. Keep all DLLs and the data folder beside it.
 The Windows bundle includes its tested fallback playback engine.

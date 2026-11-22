@@ -173,17 +173,23 @@ class UpdateCenterDialog extends StatelessWidget {
     try {
       switch (updates.status) {
         case 'available':
-          return await updates.download();
+        case 'error'
+            when updates.failedDuringDownload && updates.release != null:
+          await updates.download();
+          if (updates.status == 'ready' &&
+              updates.supportsAutoInstall &&
+              await updates.prepareInstall()) {
+            await _armRestartAndClose();
+          }
+          return;
         case 'ready':
-          if (updates.canLaunchInstaller) {
-            final launched = await updates.launchInstaller();
-            if (launched) {
-              try {
-                await windowManager.close();
-              } on Object {
-                // Best-effort close; installer uses /CLOSEAPPLICATIONS.
-              }
+        case 'error'
+            when updates.failureKind == 'apply' && updates.downloadPath != null:
+          if (updates.canInstallDownloaded) {
+            if (!updates.installPrepared && !await updates.prepareInstall()) {
+              return;
             }
+            await _armRestartAndClose();
             return;
           }
           return await updates.openDownload();
@@ -192,6 +198,22 @@ class UpdateCenterDialog extends StatelessWidget {
       }
     } catch (_) {
       // UpdateService publishes user-readable failures through its error field.
+    }
+  }
+
+  /// Signals that this verified package should be applied on close.
+  ///
+  /// No installer or swapper is started here. Requesting the window close
+  /// hands the save decision to the desktop lifecycle, which launches the
+  /// prepared package only after the user agreed to close.
+  Future<void> _armRestartAndClose() async {
+    if (!updates.requestRestart()) return;
+    try {
+      await windowManager.close();
+    } on Object {
+      updates.cancelRestart(
+        error: 'Could not close Mpvson to install the update.',
+      );
     }
   }
 
@@ -246,18 +268,33 @@ class _ApplicationTrack extends StatelessWidget {
     final accent = theme.colorScheme.primary;
     final release = updates.release;
     final (status, statusColor) = appUpdateStatusPresentation(context, updates);
-    final canInstall = updates.canLaunchInstaller;
+    final canInstall = updates.canInstallDownloaded;
+    final canAutoInstall = updates.supportsAutoInstall;
+    final canRetryDownload = updates.failedDuringDownload && release != null;
+    final canRetryApply =
+        updates.failureKind == 'apply' && updates.downloadPath != null;
     final action = switch (updates.status) {
-      'available' => 'Download package',
-      'ready' => canInstall ? 'Install & close Mpvson' : 'Open package',
+      'available' => canAutoInstall ? 'Update & restart' : 'Download package',
+      'ready' when updates.restartRequested => 'Waiting to close…',
+      'ready' => canInstall ? 'Install & restart' : 'Open package',
       'checking' => 'Checking…',
       'downloading' => 'Downloading…',
+      'preparing' => 'Preparing…',
+      'installing' => 'Installing…',
+      'error' when canRetryDownload =>
+        canAutoInstall ? 'Retry update' : 'Retry download',
+      'error' when canRetryApply =>
+        canInstall ? 'Retry install' : 'Open package',
       _ => 'Check for updates',
     };
     final enabled =
         !busy &&
+        !updates.restartRequested &&
+        updates.status != 'installing' &&
+        updates.status != 'preparing' &&
         switch (updates.status) {
           'available' || 'ready' => true,
+          'error' when canRetryDownload || canRetryApply => true,
           _ => updates.configured,
         };
 
@@ -290,6 +327,14 @@ class _ApplicationTrack extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 _applicationStatusContent(context, updates, release, accent),
+                if (updates.lastApplyError case final message?) ...[
+                  const SizedBox(height: 8),
+                  _TrackNotice(
+                    icon: Icons.error_outline_rounded,
+                    color: context.palette.danger,
+                    text: message,
+                  ),
+                ],
                 if (updates.error != null && updates.status != 'error') ...[
                   const SizedBox(height: 8),
                   _TrackNotice(
@@ -329,7 +374,10 @@ class _ApplicationTrack extends StatelessWidget {
             spacing: 8,
             runSpacing: 8,
             children: [
-              if (updates.status == 'ready' && canInstall)
+              if (updates.downloadPath != null &&
+                  canInstall &&
+                  (updates.status == 'ready' ||
+                      (updates.status == 'error' && canRetryApply)))
                 OutlinedButton.icon(
                   onPressed: busy ? null : onShowInFolder,
                   icon: const Icon(Icons.folder_open_rounded, size: 16),
@@ -337,16 +385,29 @@ class _ApplicationTrack extends StatelessWidget {
                 ),
               FilledButton.icon(
                 onPressed: enabled ? onAction : null,
-                style: _busyButtonStyle(context, busy),
-                icon: busy
+                style: _busyButtonStyle(
+                  context,
+                  busy ||
+                      updates.status == 'installing' ||
+                      updates.status == 'preparing',
+                ),
+                icon:
+                    busy ||
+                        updates.status == 'installing' ||
+                        updates.status == 'preparing'
                     ? _ActionProgress(reducedMotion: AppMotion.reduce(context))
                     : Icon(
-                        updates.status == 'ready'
+                        updates.status == 'ready' ||
+                                (updates.status == 'error' && canRetryApply)
                             ? (canInstall
                                   ? Icons.system_update_alt_rounded
                                   : Icons.folder_open_rounded)
-                            : updates.status == 'available'
-                            ? Icons.download_rounded
+                            : updates.status == 'available' ||
+                                  (updates.status == 'error' &&
+                                      canRetryDownload)
+                            ? (canAutoInstall
+                                  ? Icons.system_update_alt_rounded
+                                  : Icons.download_rounded)
                             : Icons.refresh_rounded,
                         size: 16,
                       ),
@@ -390,7 +451,21 @@ class _ApplicationTrack extends StatelessWidget {
     'ready' => _TrackNotice(
       icon: Icons.verified_outlined,
       color: context.palette.success,
-      text: 'Verified package downloaded. Close Mpvson before installing.',
+      text: updates.canInstallDownloaded
+          ? 'Verified package ready. It will be applied after you confirm closing Mpvson.'
+          : 'Verified package downloaded. Close Mpvson before replacing files.',
+    ),
+    'preparing' => _TrackNotice(
+      icon: Icons.inventory_2_outlined,
+      color: accent,
+      text: 'Verifying and preparing the update package…',
+    ),
+    'installing' => _TrackNotice(
+      icon: Icons.sync_rounded,
+      color: accent,
+      text:
+          'Installing Mpvson${release != null ? ' v${release.version}' : ''}. '
+          'Mpvson will close and reopen automatically.',
     ),
     'error' when updates.error != null => _TrackNotice(
       icon: Icons.error_outline_rounded,
@@ -937,7 +1012,7 @@ class _AppReleaseDetails extends StatelessWidget {
         _TrackNotice(
           icon: Icons.shield_outlined,
           color: context.palette.secondaryText,
-          text: 'SHA-256 verification required before installation.',
+          text: 'SHA-256 verified automatically before installation.',
         ),
       ],
     );

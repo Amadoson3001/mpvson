@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mpvson/data/services/seek_preview_service.dart';
 
@@ -72,6 +74,52 @@ class _FakeSeekPreviewBackend implements SeekPreviewBackend {
   Future<void> dispose() async {
     onBeforeDispose?.call();
     disposed = true;
+    disposeCount++;
+  }
+}
+
+class _DelayedOpenBackend implements SeekPreviewBackend {
+  final releasedOpen = Completer<void>();
+  int openCount = 0;
+  int disposeCount = 0;
+
+  @override
+  int? get liveTextureId => disposeCount == 0 ? 42 : null;
+
+  @override
+  bool get supportsLiveTexture => disposeCount == 0;
+
+  @override
+  Future<void> open(
+    String source, {
+    Duration start = Duration.zero,
+    Duration timeout = const Duration(seconds: 5),
+  }) {
+    openCount++;
+    return releasedOpen.future;
+  }
+
+  @override
+  Future<void> seekLive(Duration target, {required bool exact}) async {}
+
+  @override
+  Future<SeekPreviewFrame?> extractFrame(
+    Duration target, {
+    required bool exact,
+    Duration timeout = const Duration(seconds: 3),
+  }) async => null;
+
+  @override
+  void cancelExtraction() {}
+
+  @override
+  Future<void> pause() async {}
+
+  @override
+  Future<void> stop() async {}
+
+  @override
+  Future<void> dispose() async {
     disposeCount++;
   }
 }
@@ -224,5 +272,260 @@ void main() {
         expect(service.state.currentFrame, isNotNull);
       },
     );
+  });
+
+  group('SeekPreviewService interaction teardown', () {
+    test('detaching before any hover schedules no timer or worker', () {
+      fakeAsync((async) {
+        final created = <_FakeSeekPreviewBackend>[];
+        final service = SeekPreviewService(
+          backendFactory: () {
+            final backend = _FakeSeekPreviewBackend();
+            created.add(backend);
+            return backend;
+          },
+        );
+
+        service.detachInteraction(Object());
+
+        expect(async.nonPeriodicTimerCount, 0);
+        expect(created, isEmpty);
+        async.run((_) => service.dispose());
+        async.flushMicrotasks();
+      });
+    });
+
+    test(
+      'detaching during prewarm cancels the prewarm and leaves no timer',
+      () {
+        fakeAsync((async) {
+          final created = <_FakeSeekPreviewBackend>[];
+          final service = SeekPreviewService(
+            backendFactory: () {
+              final backend = _FakeSeekPreviewBackend();
+              created.add(backend);
+              return backend;
+            },
+            localPrewarmDelay: const Duration(milliseconds: 20),
+          );
+
+          async.run((_) {
+            unawaited(service.setSource('C:/videos/movie.mkv'));
+          });
+          async.flushMicrotasks();
+          expect(async.nonPeriodicTimerCount, 1); // prewarm timer only
+
+          service.detachInteraction(Object());
+
+          expect(async.nonPeriodicTimerCount, 0);
+          async.elapse(const Duration(seconds: 2));
+          async.flushMicrotasks();
+          expect(created, isEmpty);
+          async.run((_) => service.dispose());
+          async.flushMicrotasks();
+        });
+      },
+    );
+
+    test(
+      'detaching during extraction cancels timers and releases the worker',
+      () {
+        fakeAsync((async) {
+          final backend = _FakeSeekPreviewBackend();
+          final service = SeekPreviewService(backendFactory: () => backend);
+          final owner = Object();
+
+          async.run((_) {
+            unawaited(service.setSource('https://example.com/live.m3u8'));
+            service.onPointerMove(const Duration(seconds: 12), owner: owner);
+          });
+          async.flushMicrotasks();
+          expect(backend.extractedFrames, isNotEmpty);
+          expect(async.nonPeriodicTimerCount, greaterThan(0));
+
+          service.detachInteraction(owner);
+
+          expect(async.nonPeriodicTimerCount, 0);
+          async.flushMicrotasks();
+          expect(backend.disposeCount, 1);
+          async.run((_) => service.dispose());
+          async.flushMicrotasks();
+        });
+      },
+    );
+
+    test('detaching after a source change leaves no timer or live worker', () {
+      fakeAsync((async) {
+        final created = <_FakeSeekPreviewBackend>[];
+        final service = SeekPreviewService(
+          backendFactory: () {
+            final backend = _FakeSeekPreviewBackend();
+            created.add(backend);
+            return backend;
+          },
+          localPrewarmDelay: const Duration(milliseconds: 10),
+        );
+
+        async.run((_) {
+          unawaited(service.setSource('C:/videos/one.mp4'));
+        });
+        async.elapse(const Duration(milliseconds: 20));
+        async.flushMicrotasks();
+        expect(created, hasLength(1));
+
+        async.run((_) {
+          unawaited(service.setSource('C:/videos/two.mp4'));
+        });
+        async.flushMicrotasks();
+
+        service.detachInteraction(Object());
+
+        expect(async.nonPeriodicTimerCount, 0);
+        async.flushMicrotasks();
+        expect(created.single.disposeCount, 1);
+        async.run((_) => service.dispose());
+        async.flushMicrotasks();
+      });
+    });
+
+    test('an outgoing seek-bar surface cannot detach another surface', () {
+      fakeAsync((async) {
+        final backend = _FakeSeekPreviewBackend();
+        final service = SeekPreviewService(backendFactory: () => backend);
+        final outgoing = Object();
+        final incoming = Object();
+
+        async.run((_) {
+          unawaited(service.setSource('https://example.com/live.m3u8'));
+          service.onPointerMove(const Duration(seconds: 5), owner: outgoing);
+        });
+        async.flushMicrotasks();
+
+        service.onPointerMove(const Duration(seconds: 9), owner: incoming);
+        async.flushMicrotasks();
+
+        // A late teardown from the outgoing surface is ignored.
+        service.detachInteraction(outgoing);
+        async.flushMicrotasks();
+        expect(backend.disposeCount, 0);
+        expect(service.state.targetTime, const Duration(seconds: 9));
+
+        // The incoming surface still owns a live interaction.
+        service.onPointerMove(const Duration(seconds: 11), owner: incoming);
+        async.flushMicrotasks();
+        expect(service.state.targetTime, const Duration(seconds: 11));
+
+        service.detachInteraction(incoming);
+        async.flushMicrotasks();
+        expect(backend.disposeCount, 1);
+        async.run((_) => service.dispose());
+        async.flushMicrotasks();
+      });
+    });
+
+    test('a queued detach is stale once a second seek bar takes over', () {
+      fakeAsync((async) {
+        final workers = <_DelayedOpenBackend>[];
+        final service = SeekPreviewService(
+          backendFactory: () {
+            final worker = _DelayedOpenBackend();
+            workers.add(worker);
+            return worker;
+          },
+          localPrewarmDelay: const Duration(milliseconds: 10),
+        );
+        final outgoing = Object();
+        final incoming = Object();
+
+        unawaited(service.setSource('C:/test/video.mkv'));
+        async.elapse(const Duration(milliseconds: 20));
+        async.flushMicrotasks();
+        expect(workers, hasLength(1));
+        final firstWorker = workers.single;
+        expect(firstWorker.openCount, 1);
+
+        service.onPointerMove(const Duration(seconds: 3), owner: outgoing);
+        service.detachInteraction(outgoing);
+        service.onPointerMove(const Duration(seconds: 8), owner: incoming);
+        expect(firstWorker.disposeCount, 0);
+
+        firstWorker.releasedOpen.complete();
+        async.flushMicrotasks();
+        expect(
+          firstWorker.disposeCount,
+          0,
+          reason: 'The queued detach must not retire the incoming worker.',
+        );
+
+        service.detachInteraction(incoming);
+        async.flushMicrotasks();
+        expect(firstWorker.disposeCount, 1);
+        async.run((_) => service.dispose());
+        async.flushMicrotasks();
+      });
+    });
+
+    test('an idle release cannot retire a worker after re-entry', () {
+      fakeAsync((async) {
+        final worker = _DelayedOpenBackend();
+        final service = SeekPreviewService(
+          backendFactory: () => worker,
+          localPrewarmDelay: const Duration(milliseconds: 10),
+          localIdleWorkerTimeout: const Duration(milliseconds: 50),
+        );
+        final outgoing = Object();
+        final incoming = Object();
+
+        unawaited(service.setSource('C:/test/video.mkv'));
+        async.elapse(const Duration(milliseconds: 20));
+        async.flushMicrotasks();
+        service.onPointerMove(const Duration(seconds: 3), owner: outgoing);
+        async.elapse(const Duration(milliseconds: 60));
+        async.flushMicrotasks();
+        // The idle timer fired while pre-warm's open was still blocked.
+        service.onPointerMove(const Duration(seconds: 8), owner: incoming);
+
+        worker.releasedOpen.complete();
+        async.flushMicrotasks();
+        expect(worker.disposeCount, 0);
+
+        service.detachInteraction(incoming);
+        async.flushMicrotasks();
+        expect(worker.disposeCount, 1);
+        async.run((_) => service.dispose());
+        async.flushMicrotasks();
+      });
+    });
+
+    test('a source change during prewarm keeps the adopted worker', () {
+      fakeAsync((async) {
+        final workers = <_DelayedOpenBackend>[];
+        final service = SeekPreviewService(
+          backendFactory: () {
+            final worker = _DelayedOpenBackend();
+            workers.add(worker);
+            return worker;
+          },
+          localPrewarmDelay: const Duration(milliseconds: 10),
+        );
+
+        unawaited(service.setSource('C:/test/one.mkv'));
+        async.elapse(const Duration(milliseconds: 20));
+        async.flushMicrotasks();
+        final firstWorker = workers.single;
+        service.detachInteraction(Object());
+        unawaited(service.setSource('C:/test/two.mkv'));
+        async.elapse(const Duration(milliseconds: 20));
+        async.flushMicrotasks();
+
+        firstWorker.releasedOpen.complete();
+        async.flushMicrotasks();
+        // The stale release must not dispose the worker reused for the new
+        // source; only the explicit dispose below may retire it.
+        expect(firstWorker.disposeCount, 0);
+        async.run((_) => service.dispose());
+        async.flushMicrotasks();
+      });
+    });
   });
 }

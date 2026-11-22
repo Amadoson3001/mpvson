@@ -42,12 +42,12 @@ Future<String> canonicalResolvedPath(File file) async {
   return p.canonicalize(file.absolute.path);
 }
 
-/// Verifies that [outputFile] does not collide with either [windowsFile] or [linuxFile],
-/// resolving symbolic links and canonical paths.
+/// Verifies that [outputFile] does not collide with a release artifact.
 Future<void> validateManifestOutput({
   required File outputFile,
   required File windowsFile,
   required File linuxFile,
+  File? windowsPortableFile,
 }) async {
   final outputCanonical = await canonicalResolvedPath(outputFile);
   final windowsCanonical = await canonicalResolvedPath(windowsFile);
@@ -61,6 +61,13 @@ Future<void> validateManifestOutput({
   if (outputCanonical == linuxCanonical) {
     throw FileSystemException(
       'Manifest output path collides with the Linux release artifact',
+      outputFile.path,
+    );
+  }
+  if (windowsPortableFile != null &&
+      outputCanonical == await canonicalResolvedPath(windowsPortableFile)) {
+    throw FileSystemException(
+      'Manifest output path collides with the Windows portable artifact',
       outputFile.path,
     );
   }
@@ -103,23 +110,30 @@ Future<Map<String, Object?>> createReleaseManifest({
   required Uri windowsUri,
   required File linuxFile,
   required Uri linuxUri,
+  File? windowsPortableFile,
+  Uri? windowsPortableUri,
   File? outputFile,
   bool verifyBundle = false,
 }) async {
+  if ((windowsPortableFile == null) != (windowsPortableUri == null)) {
+    throw ArgumentError(
+      'windowsPortableFile and windowsPortableUri must be provided together.',
+    );
+  }
   if (outputFile != null) {
     await validateManifestOutput(
       outputFile: outputFile,
       windowsFile: windowsFile,
       linuxFile: linuxFile,
+      windowsPortableFile: windowsPortableFile,
     );
   }
   SemanticVersion.parse(version);
   SemanticVersion.parse(engineVersion);
 
-  if (verifyBundle &&
-      windowsFile.existsSync() &&
-      windowsFile.path.endsWith('.zip')) {
-    final verification = verifyWindowsReleaseArchive(windowsFile);
+  final windowsZip = windowsPortableFile ?? windowsFile;
+  if (verifyBundle && windowsZip.path.toLowerCase().endsWith('.zip')) {
+    final verification = verifyWindowsReleaseArchive(windowsZip);
     final problems = verification['problems'] as List<String>? ?? <String>[];
     if (problems.isNotEmpty) {
       throw FormatException(
@@ -130,6 +144,9 @@ Future<Map<String, Object?>> createReleaseManifest({
 
   final windowsHash = await _sha256(windowsFile);
   final linuxHash = await _sha256(linuxFile);
+  final windowsPortableHash = windowsPortableFile == null
+      ? null
+      : await _sha256(windowsPortableFile);
 
   final manifest = <String, Object?>{
     'schemaVersion': UpdateManifest.schemaVersion,
@@ -142,6 +159,11 @@ Future<Map<String, Object?>> createReleaseManifest({
         'url': windowsUri.toString(),
         'sha256': windowsHash,
       },
+      if (windowsPortableUri != null && windowsPortableHash != null)
+        'windowsPortable': <String, Object?>{
+          'url': windowsPortableUri.toString(),
+          'sha256': windowsPortableHash,
+        },
       'linux': <String, Object?>{
         'url': linuxUri.toString(),
         'sha256': linuxHash,
@@ -152,6 +174,11 @@ Future<Map<String, Object?>> createReleaseManifest({
   // Validate the generated output with the same strict parser used by the app.
   final encoded = jsonEncode(manifest);
   UpdateManifest.parse(encoded, platform: UpdatePlatform.windows);
+  UpdateManifest.parse(
+    encoded,
+    platform: UpdatePlatform.windows,
+    preferInstaller: false,
+  );
   UpdateManifest.parse(encoded, platform: UpdatePlatform.linux);
   return manifest;
 }
@@ -175,13 +202,23 @@ Future<void> main(List<String> arguments) async {
     final outputPath = options['output'] ?? 'release-manifest.json';
     final output = File(outputPath);
 
-    await validateManifestOutput(
-      outputFile: output,
-      windowsFile: windowsFile,
-      linuxFile: linuxFile,
-    );
-
     final bool verifyBundle = options.containsKey('verify-bundle');
+    final hasPortableFile = options.containsKey('windows-portable-file');
+    final hasPortableUrl = options.containsKey('windows-portable-url');
+    if (hasPortableFile != hasPortableUrl) {
+      throw const FormatException(
+        'Provide both --windows-portable-file and --windows-portable-url together.',
+      );
+    }
+    final windowsPortableFile = hasPortableFile
+        ? File(_required(options, 'windows-portable-file'))
+        : null;
+    final windowsPortableUri = hasPortableUrl
+        ? _httpsUri(
+            _required(options, 'windows-portable-url'),
+            'Windows portable URL',
+          )
+        : null;
 
     final manifest = await createReleaseManifest(
       version: _required(options, 'version'),
@@ -192,6 +229,8 @@ Future<void> main(List<String> arguments) async {
       windowsUri: _httpsUri(_required(options, 'windows-url'), 'Windows URL'),
       linuxFile: linuxFile,
       linuxUri: _httpsUri(_required(options, 'linux-url'), 'Linux URL'),
+      windowsPortableFile: windowsPortableFile,
+      windowsPortableUri: windowsPortableUri,
       outputFile: output,
       verifyBundle: verifyBundle,
     );
@@ -213,9 +252,11 @@ Future<void> main(List<String> arguments) async {
 
 const String _usage = '''Usage:
   dart run tool/create_release_manifest.dart --version 0.2.0 --engine-version 0.40.0
-    --windows-file dist/mpvson-windows.zip --windows-url https://example.org/mpvson-windows.zip
+    --windows-file dist/MpvsonSetup.exe --windows-url https://example.org/MpvsonSetup.exe
     --linux-file dist/mpvson-linux.tar.gz --linux-url https://example.org/mpvson-linux.tar.gz
     --release-url https://example.org/releases/0.2.0
+    [--windows-portable-file dist/mpvson-windows.zip --windows-portable-url https://example.org/mpvson-windows.zip]
+    [--verify-bundle]
     [--notes "Release notes"] [--notes-file release-notes.txt] [--output dist/update-manifest.json]
 
 Provide at most one of --notes and --notes-file. Artifact URLs must be HTTPS.''';
@@ -226,6 +267,8 @@ Map<String, String> _parseArguments(List<String> arguments) {
     'engine-version',
     'windows-file',
     'windows-url',
+    'windows-portable-file',
+    'windows-portable-url',
     'linux-file',
     'linux-url',
     'release-url',

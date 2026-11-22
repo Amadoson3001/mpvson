@@ -122,7 +122,7 @@ class SharedSeekBarState extends State<SharedSeekBar>
         _handlePreviewStateChanged,
       );
       final hoverPosition = _pointerInside ? _hoverPositionMs : null;
-      oldWidget.controller.seekPreview.onPointerExit();
+      oldWidget.controller.seekPreview.detachInteraction(this);
       widget.controller.seekPreview.stateListenable.addListener(
         _handlePreviewStateChanged,
       );
@@ -135,6 +135,7 @@ class SharedSeekBarState extends State<SharedSeekBar>
           !widget.controller.transportState.streamPlaybackState.isLive) {
         widget.controller.seekPreview.onPointerMove(
           Duration(milliseconds: hoverPosition.round()),
+          owner: this,
         );
       }
     }
@@ -186,7 +187,7 @@ class SharedSeekBarState extends State<SharedSeekBar>
     widget.controller.chaptersListenable.removeListener(
       _handlePreviewStateChanged,
     );
-    widget.controller.seekPreview.onPointerExit();
+    widget.controller.seekPreview.detachInteraction(this);
     if (_interactionActive) {
       _notifyInteractionOnDispose(widget.onInteractionChanged);
     }
@@ -229,12 +230,12 @@ class SharedSeekBarState extends State<SharedSeekBar>
     if (!widget.controller.isAudio &&
         widget.controller.hasMedia &&
         !widget.controller.transportState.streamPlaybackState.isLive) {
-      widget.controller.seekPreview.onPointerMove(hoverTime);
+      widget.controller.seekPreview.onPointerMove(hoverTime, owner: this);
     }
   }
 
   void _onPointerExit() {
-    widget.controller.seekPreview.onPointerExit();
+    widget.controller.seekPreview.onPointerExit(owner: this);
     setState(() {
       _pointerInside = false;
       _hoverPositionMs = null;
@@ -283,7 +284,7 @@ class SharedSeekBarState extends State<SharedSeekBar>
     if (!widget.controller.isAudio &&
         widget.controller.hasMedia &&
         !widget.controller.transportState.streamPlaybackState.isLive) {
-      widget.controller.seekPreview.onPointerMove(scrubTime);
+      widget.controller.seekPreview.onPointerMove(scrubTime, owner: this);
     }
   }
 
@@ -300,7 +301,7 @@ class SharedSeekBarState extends State<SharedSeekBar>
     if (!widget.controller.isAudio &&
         widget.controller.hasMedia &&
         !widget.controller.transportState.streamPlaybackState.isLive) {
-      widget.controller.seekPreview.onPointerMove(scrubTime);
+      widget.controller.seekPreview.onPointerMove(scrubTime, owner: this);
     }
     if (_dragging) return;
 
@@ -315,7 +316,7 @@ class SharedSeekBarState extends State<SharedSeekBar>
     _dragging = false;
     _syncHoverEngagement();
     _setInteracting(false);
-    widget.controller.seekPreview.onPointerExit();
+    widget.controller.seekPreview.onPointerExit(owner: this);
     unawaited(_commitSeek(value));
   }
 
@@ -330,7 +331,7 @@ class SharedSeekBarState extends State<SharedSeekBar>
     _dragging = false;
     _syncHoverEngagement();
     _setInteracting(false);
-    widget.controller.seekPreview.onPointerExit();
+    widget.controller.seekPreview.onPointerExit(owner: this);
     widget.onPreviewChanged(null);
     if (mounted) setState(() => _scrubPositionMs = null);
   }
@@ -338,7 +339,7 @@ class SharedSeekBarState extends State<SharedSeekBar>
   Future<void> _commitSeek(double value) async {
     _keyboardSeekTimer?.cancel();
     _keyboardSeekTimer = null;
-    widget.controller.seekPreview.onPointerExit();
+    widget.controller.seekPreview.onPointerExit(owner: this);
     if (!mounted) return;
     setState(() {
       _dragging = false;

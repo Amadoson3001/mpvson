@@ -11,6 +11,8 @@ final class GitHubAppReleaseOutcome {
   const GitHubAppReleaseOutcome.manifest({
     required this.version,
     required this.manifestUri,
+    this.notes = '',
+    this.fallbackOutcome,
   }) : release = null,
        checksumsUri = null,
        selectedAssetName = null;
@@ -20,10 +22,14 @@ final class GitHubAppReleaseOutcome {
     required this.release,
     this.checksumsUri,
     this.selectedAssetName,
-  }) : manifestUri = null;
+  }) : manifestUri = null,
+       notes = '',
+       fallbackOutcome = null;
 
   final String version;
   final Uri? manifestUri;
+  final String notes;
+  final GitHubAppReleaseOutcome? fallbackOutcome;
   final ReleaseInfo? release;
 
   /// Populated when the release asset omitted a native `digest` field and
@@ -41,6 +47,9 @@ final class GitHubAppRelease {
 
   static final Uri latestApiUri = Uri.parse(
     'https://api.github.com/repos/$repositorySlug/releases/latest',
+  );
+  static final Uri latestManifestUri = Uri.parse(
+    'https://github.com/$repositorySlug/releases/latest/download/update-manifest.json',
   );
   static const String _releasePagePrefix =
       'https://github.com/$repositorySlug/releases/tag/';
@@ -144,16 +153,6 @@ final class GitHubAppRelease {
       );
     }
 
-    if (manifestUri != null &&
-        (platform != UpdatePlatform.windows ||
-            preferInstaller ||
-            !parsedAssets.any((a) => a.name == 'mpvson-windows-x64.zip'))) {
-      return GitHubAppReleaseOutcome.manifest(
-        version: version,
-        manifestUri: manifestUri,
-      );
-    }
-
     final preferredNames = switch (platform) {
       UpdatePlatform.windows =>
         preferInstaller
@@ -173,6 +172,35 @@ final class GitHubAppRelease {
       if (selected != null) break;
     }
 
+    GitHubAppReleaseOutcome? assetFallback;
+    if (selected != null && (selected.sha256 != null || checksumsUri != null)) {
+      assetFallback = GitHubAppReleaseOutcome.asset(
+        version: version,
+        selectedAssetName: selected.name,
+        checksumsUri: selected.sha256 == null ? checksumsUri : null,
+        release: ReleaseInfo(
+          version: version,
+          notes: notes,
+          engineVersion: bundledEngineVersion,
+          downloadUri: selected.downloadUri,
+          sha256: selected.sha256 ?? ('0' * 64),
+          releaseUri: htmlUrl,
+        ),
+      );
+    }
+
+    if (manifestUri != null &&
+        (platform != UpdatePlatform.windows ||
+            preferInstaller ||
+            !parsedAssets.any((a) => a.name == 'mpvson-windows-x64.zip'))) {
+      return GitHubAppReleaseOutcome.manifest(
+        version: version,
+        manifestUri: manifestUri,
+        notes: notes,
+        fallbackOutcome: assetFallback,
+      );
+    }
+
     if (selected == null) {
       throw FormatException(
         'No ${platform.manifestKey} release package was found for v$version.',
@@ -185,19 +213,7 @@ final class GitHubAppRelease {
       );
     }
 
-    return GitHubAppReleaseOutcome.asset(
-      version: version,
-      selectedAssetName: selected.name,
-      checksumsUri: selected.sha256 == null ? checksumsUri : null,
-      release: ReleaseInfo(
-        version: version,
-        notes: notes,
-        engineVersion: bundledEngineVersion,
-        downloadUri: selected.downloadUri,
-        sha256: selected.sha256 ?? ('0' * 64),
-        releaseUri: htmlUrl,
-      ),
-    );
+    return assetFallback!;
   }
 
   /// Extracts the lowercase SHA-256 digest for [assetName] from `SHA256SUMS`.

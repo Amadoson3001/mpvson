@@ -8,11 +8,14 @@
 /// Releases may override [current] at build time via
 /// `--dart-define=MPVSON_APP_VERSION=<version>`.
 abstract final class AppVersion {
-  static const String pubspecVersion = '0.1.1+2';
-  static const String defaultSemantic = '0.1.1';
-  static const int buildNumber = 2;
+  static const String pubspecVersion = '0.1.2+3';
+  static const String defaultSemantic = '0.1.2';
+  static const int buildNumber = 3;
 
   static const String _override = String.fromEnvironment('MPVSON_APP_VERSION');
+
+  /// Whether a build-time `--dart-define=MPVSON_APP_VERSION` override is set.
+  static bool get hasOverride => _override.isNotEmpty;
 
   /// Active semantic application version used as the runtime/service default.
   static const String current = _override != '' ? _override : defaultSemantic;

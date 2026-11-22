@@ -3,7 +3,7 @@
 
 #define MyAppName "Mpvson"
 #ifndef MyAppVersion
-#define MyAppVersion "0.1.1"
+#define MyAppVersion "0.1.2"
 #endif
 #define MyAppPublisher "Mpvson"
 #define MyAppURL "https://github.com/Amadoson3001/mpvson"
@@ -49,6 +49,7 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 
 [Run]
 Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Filename: "{app}\{#MyAppExeName}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExeName}"; Parameters: "--post-update"; Flags: nowait; Check: ShouldAutoRelaunch
 
 [Registry]
 ; -----------------------------------------------------------------------------
@@ -351,3 +352,48 @@ Root: HKCU; Subkey: "Software\Classes\.3gp\OpenWithProgids"; Flags: uninsdeletek
 Root: HKCU; Subkey: "Software\Classes\.3gp\OpenWithList\{#MyAppExeName}"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\.3gp\OpenWithList"; Flags: uninsdeletekeyifempty
 Root: HKCU; Subkey: "Software\Classes\.3gp"; Flags: uninsdeletekeyifempty
+
+[Code]
+const
+  SYNCHRONIZE = $00100000;
+
+function OpenMutex(dwDesiredAccess: LongWord; bInheritHandle: Boolean; lpName: string): THandle;
+  external 'OpenMutexW@kernel32.dll stdcall';
+
+function CloseHandle(hObject: THandle): Boolean;
+  external 'CloseHandle@kernel32.dll stdcall';
+
+function ShouldAutoRelaunch: Boolean;
+begin
+  Result := ExpandConstant('{param:AUTOUPDATE|0}') = '1';
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): string;
+var
+  ElapsedMs: Integer;
+  MutexHandle: THandle;
+  StillRunning: Boolean;
+begin
+  Result := '';
+  if not ShouldAutoRelaunch then
+    Exit;
+
+  { The automatic path no longer force-closes the player. If the guarded
+    shutdown was cancelled or stalled, refuse to install over a running app. }
+  StillRunning := True;
+  ElapsedMs := 0;
+  while ElapsedMs < 8000 do
+  begin
+    MutexHandle := OpenMutex(SYNCHRONIZE, False, 'Local\Mpvson_SingleInstance_Mutex');
+    if MutexHandle = 0 then
+    begin
+      StillRunning := False;
+      Break;
+    end;
+    CloseHandle(MutexHandle);
+    Sleep(150);
+    ElapsedMs := ElapsedMs + 150;
+  end;
+  if StillRunning then
+    Result := 'Mpvson is still running. Close it before installing the update.';
+end;

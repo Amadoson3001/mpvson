@@ -9,7 +9,7 @@ on:
       tag:
         description: Release tag to publish (for manual runs, e.g. v0.1.0)
         type: string
-        required: false
+        required: true
 
 permissions:
   contents: write
@@ -24,6 +24,8 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
       - uses: subosito/flutter-action@44ac965b96f18d999802d4b807e3256d5a3f9fa1 # v2.18.0
         with:
           flutter-version: '3.50.0'
@@ -43,13 +45,13 @@ jobs:
       - run: flutter test --no-pub test/
 
       - name: Verify tag matches pubspec version
-        if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          TAG_VER="${GITHUB_REF_NAME#v}"
           PUB_VER=$(awk '/^version:/{print $2}' pubspec.yaml | cut -d+ -f1)
-          if [ "$TAG_VER" != "$PUB_VER" ]; then
-            echo "Tag version $TAG_VER does not match pubspec.yaml version $PUB_VER"
+          if [ "$TAG" != "v$PUB_VER" ]; then
+            echo "Tag $TAG does not match pubspec.yaml version $PUB_VER"
             exit 1
           fi
 
@@ -62,7 +64,7 @@ jobs:
           $rel = 'build/windows/x64/runner/Release'
           if (Test-Path "$rel/zlib.dll") { Remove-Item "$rel/zlib.dll" -Force }
           if (Test-Path "$rel/vk_swiftshader.dll") { Remove-Item "$rel/vk_swiftshader.dll" -Force }
-          $signedDlls = @('flutter_windows.dll', 'd3dcompiler_47.dll', 'vulkan-1.dll', 'libEGL.dll', 'libGLESv2.dll')
+          $signedDlls = @('flutter_windows.dll', 'd3dcompiler_47.dll', 'vulkan-1.dll', 'libEGL.dll', 'libGLESv2.dll', 'libmpv-2.dll')
           $stripDlls = Get-ChildItem "$rel/*.dll" -ErrorAction SilentlyContinue |
             Where-Object {
               $signedDlls -notcontains $_.Name -and $_.Name -notmatch '^(msvcp|vcruntime|concrt|vccorlib).*\.dll$'
@@ -105,6 +107,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
       - uses: subosito/flutter-action@44ac965b96f18d999802d4b807e3256d5a3f9fa1 # v2.18.0
         with:
           flutter-version: '3.50.0'
@@ -132,9 +136,12 @@ jobs:
             --release-url "$REPO_URL/releases/tag/$TAG" \
             --windows-file release-assets/MpvsonSetup.exe \
             --windows-url "$REPO_URL/releases/download/$TAG/MpvsonSetup.exe" \
+            --windows-portable-file release-assets/mpvson-windows-x64.zip \
+            --windows-portable-url "$REPO_URL/releases/download/$TAG/mpvson-windows-x64.zip" \
             --linux-file release-assets/mpvson-linux-x64.tar.gz \
             --linux-url "$REPO_URL/releases/download/$TAG/mpvson-linux-x64.tar.gz" \
             --notes "Mpvson $APP_VER" \
+            --verify-bundle \
             --output release-assets/update-manifest.json
       - name: Publish GitHub Release
         env:
@@ -144,4 +151,4 @@ jobs:
           gh release create "$TAG" release-assets/* \
             --title "Mpvson $TAG" \
             --generate-notes \
-            --verify-tag || gh release upload "$TAG" release-assets/* --clobber
+            --verify-tag

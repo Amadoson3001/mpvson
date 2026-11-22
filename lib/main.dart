@@ -35,6 +35,7 @@ import 'domain/models/open_request.dart';
 import 'domain/updates/app_version.dart';
 import 'domain/updates/bundled_engine.dart';
 import 'domain/updates/engine_selection.dart';
+import 'domain/updates/semantic_version.dart';
 import 'ui/core/app_theme.dart';
 import 'ui/core/components/app_dialog.dart';
 import 'ui/core/tokens/motion.dart';
@@ -206,9 +207,15 @@ Future<void> main(List<String> arguments) async {
       initialProfile.recommendedImageCacheCount;
 
   final versionFuture = () async {
+    if (AppVersion.hasOverride) {
+      return AppVersion.current;
+    }
     try {
       final version = (await PackageInfo.fromPlatform()).version.trim();
-      if (version.isNotEmpty) return version;
+      if (version.isNotEmpty) {
+        SemanticVersion.parse(version);
+        return version;
+      }
     } on Object {
       // Fall back to the synchronized build-time version constant.
     }
@@ -523,17 +530,26 @@ Future<void> main(List<String> arguments) async {
     }
     unawaited(engineUpdates.initialize());
     unawaited(
-      Future<void>.delayed(
-        const Duration(seconds: 3),
-        () => readyUpdates.check(silent: true),
-      ),
+      Future<void>.delayed(const Duration(seconds: 3), () async {
+        await readyUpdates.loadLastApplyError();
+        await readyUpdates.check(silent: true);
+      }),
     );
-    unawaited(readyPlayback.prepare());
+    final playbackReady = readyPlayback.prepare();
+    unawaited(playbackReady);
 
     unawaited(
-      waitUntilReady().catchError((Object error, StackTrace stack) {
-        stderr.writeln('Could not restore the playback session: $error');
-      }),
+      waitUntilReady()
+          .then((_) async {
+            if (!readyUpdates.awaitingBundleStartup) return;
+            await playbackReady;
+            final platform = readyPlayback.player.platform;
+            if (platform is NativePlayer) await platform.future;
+            await readyUpdates.confirmBundleStartup();
+          })
+          .catchError((Object error, StackTrace stack) {
+            stderr.writeln('Could not restore the playback session: $error');
+          }),
     );
 
     final parsedCli = parseCliArguments(arguments);

@@ -108,8 +108,13 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   // If secondary instance, resolve relative paths against current working directory,
   // send paths to named pipe, bring main window to foreground, and exit with 0.
   auto single_instance = std::make_unique<SingleInstance>();
-  if (!single_instance->AcquireOwnershipOrForward()) {
-    return EXIT_SUCCESS;
+  switch (single_instance->AcquireOwnershipOrForward()) {
+    case SingleInstance::Ownership::kPrimary:
+      break;
+    case SingleInstance::Ownership::kForwarded:
+      return EXIT_SUCCESS;
+    case SingleInstance::Ownership::kFailed:
+      return EXIT_FAILURE;
   }
 
   // Initialize COM, so that it is available for use in the library and/or

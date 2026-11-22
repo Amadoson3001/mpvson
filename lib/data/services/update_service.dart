@@ -24,6 +24,7 @@ import 'download_manager.dart';
 import 'http_response_length.dart';
 import 'process_runner.dart';
 import 'redirecting_get.dart';
+import 'update_applier.dart';
 
 /// Checks for complete desktop application bundles and verifies them before
 /// exposing the downloaded archive to the user.
@@ -37,6 +38,11 @@ class UpdateService extends ChangeNotifier {
     bool? preferInstaller,
     bool Function()? isWindowsProvider,
     Future<void> Function(String installerPath)? installerLauncher,
+    AppInstallMode? installMode,
+    String Function()? executablePathProvider,
+    ProcessRunner? processRunner,
+    Future<void> Function(String archivePath, Directory targetDir)?
+    portableApplier,
     this.currentVersion = AppVersion.current,
   }) : _manifestUri = manifestUri ?? _manifestUriFromEnvironment(),
        _usesOfficialGitHubSource =
@@ -52,6 +58,11 @@ class UpdateService extends ChangeNotifier {
        _preferInstaller = preferInstaller,
        _isWindowsProvider = isWindowsProvider ?? (() => Platform.isWindows),
        _installerLauncher = installerLauncher,
+       _explicitInstallMode = installMode,
+       _executablePathProvider =
+           executablePathProvider ?? (() => Platform.resolvedExecutable),
+       _processRunner = processRunner ?? ProcessRunner.standard,
+       _portableApplier = portableApplier,
        _client = client ?? http.Client(),
        _ownsClient = client == null,
        _supportDirectoryProvider =
@@ -67,7 +78,7 @@ class UpdateService extends ChangeNotifier {
   static const String _configuredManifest = String.fromEnvironment(
     'MPVSON_UPDATE_MANIFEST',
   );
-  static const int _maxRedirects = 4;
+  static const int _maxRedirects = 6;
   static const Duration _requestTimeout = Duration(seconds: 20);
   static const Duration _maxDownloadDuration = Duration(minutes: 30);
   static const int _maxManifestBytes = 256 * 1024;
@@ -79,6 +90,12 @@ class UpdateService extends ChangeNotifier {
   final bool? _preferInstaller;
   final bool Function() _isWindowsProvider;
   final Future<void> Function(String installerPath)? _installerLauncher;
+  final AppInstallMode? _explicitInstallMode;
+  final String Function() _executablePathProvider;
+  final ProcessRunner _processRunner;
+  final Future<void> Function(String archivePath, Directory targetDir)?
+  _portableApplier;
+  AppInstallMode? _cachedInstallMode;
   final http.Client _client;
   final bool _ownsClient;
   final Future<Directory> Function() _supportDirectoryProvider;
@@ -102,6 +119,15 @@ class UpdateService extends ChangeNotifier {
   String? _failureKind;
   String _failurePhase = 'check';
 
+  /// Set by the UI when the user asks to restart into an update. The desktop
+  /// lifecycle consumes it only after the save decision has been resolved.
+  bool _restartRequested = false;
+
+  /// Set once [prepareInstall] has verified and staged the package.
+  bool _installPrepared = false;
+  Directory? _preparedStagingDir;
+  String? _lastApplyError;
+
   bool get configured => _configured;
   bool get busy => _busy;
   bool get usesOfficialGitHubSource => _usesOfficialGitHubSource;
@@ -109,17 +135,53 @@ class UpdateService extends ChangeNotifier {
       ? GitHubAppRelease.sourceLabel
       : 'Custom update feed';
 
+  AppInstallMode get installMode {
+    final cached = _cachedInstallMode;
+    if (cached != null) return cached;
+    final AppInstallMode resolved;
+    if (_explicitInstallMode != null) {
+      resolved = _explicitInstallMode;
+    } else if (_preferInstaller != null && _isWindowsProvider()) {
+      resolved = _preferInstaller
+          ? AppInstallMode.windowsInstaller
+          : AppInstallMode.windowsPortable;
+    } else {
+      resolved = detectInstallMode(
+        executablePath: _executablePathProvider(),
+        isWindows: _isWindowsProvider(),
+        isLinux: !_isWindowsProvider() && Platform.isLinux,
+      );
+    }
+    _cachedInstallMode = resolved;
+    return resolved;
+  }
+
+  bool get supportsAutoInstall => switch (_release?.artifact) {
+    AppUpdateArtifact.windowsInstaller =>
+      installMode == AppInstallMode.windowsInstaller,
+    AppUpdateArtifact.windowsPortable =>
+      installMode == AppInstallMode.windowsPortable,
+    AppUpdateArtifact.linuxBundle => installMode == AppInstallMode.linuxBundle,
+    _ => false,
+  };
+
   bool get canLaunchInstaller =>
-      _isWindowsProvider() &&
-      _status == 'ready' &&
-      _downloadPath != null &&
-      _downloadPath!.toLowerCase().endsWith('.exe');
+      _release?.artifact == AppUpdateArtifact.windowsInstaller &&
+      canInstallDownloaded;
+
+  bool get canInstallDownloaded {
+    if (_downloadPath == null || !supportsAutoInstall) return false;
+    final validStatus =
+        _status == 'ready' || (_status == 'error' && _failureKind == 'apply');
+    return validStatus;
+  }
 
   String get status => _status;
   double get progress => _progress;
   String? get error => _error;
   ReleaseInfo? get release => _release;
   String? get downloadPath => _downloadPath;
+  String? get lastApplyError => _lastApplyError;
 
   /// What the app was doing when the current 'error' state was recorded:
   /// 'check', 'download', or 'apply' (opening the verified archive).
@@ -128,6 +190,16 @@ class UpdateService extends ChangeNotifier {
   /// True when the current 'error' state came from a failed download rather
   /// than a failed update check or a failed apply step.
   bool get failedDuringDownload => _failureKind == 'download';
+
+  /// Whether the user asked for a verified update to be applied on close.
+  ///
+  /// The UI sets this only after the package has been verified and staged; the
+  /// desktop lifecycle clears it when a close is cancelled or hands the staged
+  /// package to [launchPreparedInstall] once closing has been approved.
+  bool get restartRequested => _restartRequested;
+
+  /// Whether [prepareInstall] has already verified and staged this package.
+  bool get installPrepared => _installPrepared;
 
   static Uri? _manifestUriFromEnvironment() {
     final value = _configuredManifest.trim();
@@ -140,7 +212,10 @@ class UpdateService extends ChangeNotifier {
   /// When [silent] is true (e.g. a startup background check), transient offline
   /// or HTTP failures keep the service in `'idle'` instead of surfacing an error.
   Future<void> check({bool silent = false}) async {
-    if (_disposed || _busy) return;
+    if (_disposed || _busy || _restartRequested || _status == 'installing') {
+      return;
+    }
+    if (silent && _status != 'idle') return;
     if (!configured) {
       _setState(status: 'unconfigured', progress: 0, error: null);
       return;
@@ -149,6 +224,7 @@ class UpdateService extends ChangeNotifier {
     _busy = true;
     _downloadable = false;
     _failurePhase = 'check';
+    _clearPreparedInstall();
     _setState(
       status: 'checking',
       progress: 0,
@@ -173,7 +249,15 @@ class UpdateService extends ChangeNotifier {
             'Configured update manifest URL is invalid.',
           );
         }
-        release = await _fetchManifest(manifestUri, platform, abortCompleter);
+        final preferInstaller =
+            _preferInstaller ??
+            (installMode == AppInstallMode.windowsInstaller);
+        release = await _fetchManifest(
+          manifestUri,
+          platform,
+          abortCompleter,
+          preferInstaller: preferInstaller,
+        );
       }
       if (_disposed) return;
 
@@ -206,8 +290,9 @@ class UpdateService extends ChangeNotifier {
   Future<ReleaseInfo> _fetchManifest(
     Uri manifestUri,
     UpdatePlatform platform,
-    Completer<void> abortCompleter,
-  ) async {
+    Completer<void> abortCompleter, {
+    bool preferInstaller = true,
+  }) async {
     _requireHttps(manifestUri, 'Manifest URL');
     final response = await _sendGet(manifestUri, abortCompleter);
     if (response.statusCode != HttpStatus.ok) {
@@ -222,49 +307,124 @@ class UpdateService extends ChangeNotifier {
       _maxManifestBytes,
       abortCompleter,
     );
-    return UpdateManifest.parse(body, platform: platform).release;
+    return UpdateManifest.parse(
+      body,
+      platform: platform,
+      preferInstaller: preferInstaller,
+    ).release;
   }
 
   Future<ReleaseInfo> _fetchGitHubRelease(
     UpdatePlatform platform,
     Completer<void> abortCompleter,
   ) async {
-    final response = await _sendGet(
-      GitHubAppRelease.latestApiUri,
-      abortCompleter,
-      headers: <String, String>{
-        'Accept': 'application/vnd.github+json',
-        'User-Agent':
-            'Mpvson/${currentVersion.replaceAll(RegExp(r'[\r\n]'), '')}',
-        'X-GitHub-Api-Version': '2022-11-28',
-      },
-    );
-    if (response.statusCode == HttpStatus.notFound) {
-      await _cancelBody(response);
-      throw const _UpdateException('No published release was found yet.');
-    }
-    if (response.statusCode != HttpStatus.ok) {
-      await _cancelBody(response);
-      throw _UpdateException(
-        'GitHub release check failed (HTTP ${response.statusCode}).',
+    final preferInstaller =
+        _preferInstaller ?? (installMode == AppInstallMode.windowsInstaller);
+    String? discoveredVersion;
+    try {
+      final response = await _sendGet(
+        GitHubAppRelease.latestApiUri,
+        abortCompleter,
+        headers: <String, String>{
+          'Accept': 'application/vnd.github+json',
+          'User-Agent':
+              'Mpvson/${currentVersion.replaceAll(RegExp(r'[\r\n]'), '')}',
+          'X-GitHub-Api-Version': '2022-11-28',
+        },
       );
+      if (response.statusCode == HttpStatus.notFound) {
+        await _cancelBody(response);
+        throw const _UpdateException('No published release was found yet.');
+      }
+      if (response.statusCode != HttpStatus.ok) {
+        await _cancelBody(response);
+        throw _UpdateException(
+          'GitHub release check failed (HTTP ${response.statusCode}).',
+        );
+      }
+
+      final body = await _readTextBody(
+        response,
+        _maxManifestBytes,
+        abortCompleter,
+      );
+      final outcome = GitHubAppRelease.parseLatest(
+        body,
+        platform: platform,
+        preferInstaller: preferInstaller,
+      );
+      discoveredVersion = outcome.version;
+
+      if (outcome.manifestUri != null) {
+        try {
+          final manifestRelease = await _fetchManifest(
+            outcome.manifestUri!,
+            platform,
+            abortCompleter,
+            preferInstaller: preferInstaller,
+          );
+          if (manifestRelease.version != outcome.version) {
+            throw const _UpdateException(
+              'The update manifest version does not match its GitHub release.',
+            );
+          }
+          final manifestNotes = manifestRelease.notes.trim();
+          final apiNotes = outcome.notes.trim();
+          if (apiNotes.isNotEmpty &&
+              (manifestNotes.isEmpty ||
+                  manifestNotes == 'Mpvson ${manifestRelease.version}')) {
+            return ReleaseInfo(
+              version: manifestRelease.version,
+              notes: outcome.notes,
+              engineVersion: manifestRelease.engineVersion,
+              downloadUri: manifestRelease.downloadUri,
+              sha256: manifestRelease.sha256,
+              releaseUri: manifestRelease.releaseUri,
+            );
+          }
+          return manifestRelease;
+        } on Object catch (error) {
+          if (error is _DisposedException) rethrow;
+          if (outcome.fallbackOutcome != null) {
+            return await _resolveGitHubAssetOutcome(
+              outcome.fallbackOutcome!,
+              abortCompleter,
+            );
+          }
+          rethrow;
+        }
+      }
+
+      return await _resolveGitHubAssetOutcome(outcome, abortCompleter);
+    } on Object catch (error) {
+      if (error is _DisposedException || _disposed) rethrow;
+      // Fallback to GitHub's direct latest-release manifest URL when
+      // api.github.com is rate-limited (403/429) or temporarily unavailable.
+      try {
+        final fallback = await _fetchManifest(
+          GitHubAppRelease.latestManifestUri,
+          platform,
+          abortCompleter,
+          preferInstaller: preferInstaller,
+        );
+        if (discoveredVersion != null &&
+            fallback.version != discoveredVersion) {
+          throw const _UpdateException(
+            'The latest release manifest is out of date.',
+          );
+        }
+        return fallback;
+      } on Object catch (fallbackError) {
+        if (fallbackError is _DisposedException) rethrow;
+        throw error;
+      }
     }
+  }
 
-    final body = await _readTextBody(
-      response,
-      _maxManifestBytes,
-      abortCompleter,
-    );
-    final outcome = GitHubAppRelease.parseLatest(
-      body,
-      platform: platform,
-      preferInstaller: _preferInstaller ?? _detectInstalledWindows(),
-    );
-
-    if (outcome.manifestUri != null) {
-      return _fetchManifest(outcome.manifestUri!, platform, abortCompleter);
-    }
-
+  Future<ReleaseInfo> _resolveGitHubAssetOutcome(
+    GitHubAppReleaseOutcome outcome,
+    Completer<void> abortCompleter,
+  ) async {
     final release = outcome.release!;
     final checksumsUri = outcome.checksumsUri;
     if (checksumsUri == null) return release;
@@ -295,16 +455,6 @@ class UpdateService extends ChangeNotifier {
     );
   }
 
-  static bool _detectInstalledWindows() {
-    if (!Platform.isWindows) return false;
-    try {
-      final exeDir = File(Platform.resolvedExecutable).parent;
-      return File(p.join(exeDir.path, 'unins000.exe')).existsSync();
-    } on Object {
-      return false;
-    }
-  }
-
   /// Downloads the selected bundle to app support storage and checks its
   /// SHA-256 digest before marking it ready.
   Future<void> download() async {
@@ -314,12 +464,14 @@ class UpdateService extends ChangeNotifier {
       _setState(error: 'There is no newer release available to download.');
       return;
     }
-    if (_status != 'available' && _status != 'error') {
+    if (_status != 'available' &&
+        !(_status == 'error' && failedDuringDownload)) {
       return;
     }
 
     _busy = true;
     _failurePhase = 'download';
+    _clearPreparedInstall();
     _setState(status: 'downloading', progress: 0, error: null);
     File? temporaryFile;
     File? verifiedArchive;
@@ -334,6 +486,7 @@ class UpdateService extends ChangeNotifier {
         p.join((await _supportDirectoryProvider()).path, 'updates'),
       );
       await directory.create(recursive: true);
+      unawaited(cleanupStaleArtifacts(directory));
       final store = UpdateOwnershipStore(directory);
 
       // Reuse matching cached bundle if verified and recorded.
@@ -509,46 +662,101 @@ class UpdateService extends ChangeNotifier {
   }
 
   /// Re-verifies the downloaded Windows installer's SHA-256 digest and launches
-  /// it detached so the user can close Mpvson and complete the upgrade.
+  /// it detached so the app can close and complete the upgrade.
   Future<bool> launchInstaller() async {
+    if (!canLaunchInstaller) {
+      if (!_disposed && !_busy) {
+        _failurePhase = 'apply';
+        _fail(
+          const _UpdateException('There is no verified installer to launch.'),
+        );
+      }
+      return false;
+    }
+    return installUpdate();
+  }
+
+  /// Records the user's intent to apply this verified update when Mpvson
+  /// closes.
+  ///
+  /// This deliberately does not launch an installer or bundle swapper. The
+  /// desktop lifecycle owns the save decision and calls
+  /// [launchPreparedInstall] only after the user has agreed to close.
+  bool requestRestart() {
+    if (_disposed || _busy || !_installPrepared || !canInstallDownloaded) {
+      return false;
+    }
+    _restartRequested = true;
+    notifyListeners();
+    return true;
+  }
+
+  /// Drops a pending restart intent, for example when the user cancels a save
+  /// failure prompt. The verified package stays available for retry.
+  void cancelRestart({String? error}) {
+    if (_disposed || !_restartRequested) return;
+    _restartRequested = false;
+    if (error != null) {
+      _failurePhase = 'apply';
+      _fail(_UpdateException(error));
+      return;
+    }
+    notifyListeners();
+  }
+
+  /// Re-verifies the downloaded package and stages it for a later handoff.
+  ///
+  /// No helper process is started here: the desktop lifecycle decides when a
+  /// close has been approved and calls [launchPreparedInstall] at that point.
+  Future<bool> prepareInstall() async {
     if (_disposed || _busy) return false;
+    if (_installPrepared) return true;
     _failurePhase = 'apply';
     final path = _downloadPath;
     final release = _release;
-    if (!canLaunchInstaller || path == null || release == null) {
+    if (!canInstallDownloaded || path == null || release == null) {
       _fail(
-        const _UpdateException('There is no verified installer to launch.'),
+        const _UpdateException(
+          'There is no verified update package to install.',
+        ),
       );
       return false;
     }
 
     _busy = true;
-    notifyListeners();
+    _setState(status: 'preparing', progress: 1, error: null);
     try {
-      final file = File(path);
-      if (!await file.exists()) {
-        throw const _UpdateException(
-          'The verified installer file is no longer available.',
-        );
-      }
-      final digest = (await sha256.bind(file.openRead()).first).toString();
-      if (digest != release.sha256.toLowerCase()) {
-        throw const _UpdateException(
-          'The installer failed its SHA-256 verification before launch.',
-        );
-      }
+      final file = await _verifiedPackage(path, release);
       if (_disposed) return false;
-      final launcher = _installerLauncher;
-      if (launcher != null) {
-        await launcher(path);
-      } else {
-        await ProcessRunner.standard.start(
-          path,
-          const <String>['/CLOSEAPPLICATIONS', '/RESTARTAPPLICATIONS'],
-          workingDirectory: file.parent.path,
-          mode: ProcessStartMode.detached,
+
+      final artifact = release.artifact;
+      if (artifact != AppUpdateArtifact.windowsInstaller &&
+          _portableApplier == null) {
+        final updatesDir = Directory(
+          p.join((await _supportDirectoryProvider()).path, 'updates'),
         );
+        await updatesDir.create(recursive: true);
+        final randomSuffix = _random.nextInt(1 << 32).toRadixString(16);
+        final stagingDir = Directory(
+          p.join(
+            updatesDir.path,
+            'staged-${release.version.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_')}-$randomSuffix',
+          ),
+        );
+        if (artifact == AppUpdateArtifact.windowsPortable) {
+          await stageZipArchive(archiveFile: file, stagingDir: stagingDir);
+        } else if (artifact == AppUpdateArtifact.linuxBundle) {
+          await stageTarGzArchive(archiveFile: file, stagingDir: stagingDir);
+        } else {
+          throw const _UpdateException(
+            'Unsupported update package format for automatic installation.',
+          );
+        }
+        if (_disposed) return false;
+        _preparedStagingDir = stagingDir;
       }
+
+      _installPrepared = true;
       _setState(status: 'ready', error: null);
       return true;
     } on Object catch (error) {
@@ -557,6 +765,229 @@ class UpdateService extends ChangeNotifier {
     } finally {
       _finishOperation();
     }
+  }
+
+  /// Launches the prepared installer or swapper.
+  ///
+  /// Callers must have already obtained the user's agreement to close. The
+  /// prepared package and its staging directory are kept on failure so the
+  /// update can be retried without downloading again.
+  Future<bool> launchPreparedInstall() async {
+    if (_disposed || _busy || !_restartRequested || !_installPrepared) {
+      return false;
+    }
+    final path = _downloadPath;
+    final release = _release;
+    if (path == null || release == null) {
+      _failurePhase = 'apply';
+      _fail(
+        const _UpdateException(
+          'There is no verified update package to install.',
+        ),
+      );
+      return false;
+    }
+
+    _failurePhase = 'apply';
+    _busy = true;
+    _setState(status: 'installing', progress: 1, error: null);
+    try {
+      await _clearApplyError();
+      final artifact = release.artifact;
+      if (artifact == AppUpdateArtifact.windowsInstaller) {
+        await _verifiedPackage(path, release);
+        final launcher = _installerLauncher;
+        if (launcher != null) {
+          await launcher(path);
+        } else {
+          await launchWindowsInstaller(
+            installerPath: path,
+            processRunner: _processRunner,
+          );
+        }
+      } else {
+        final resolvedExePath = _resolvedExecutablePath();
+        final targetDir = File(resolvedExePath).parent;
+        final applier = _portableApplier;
+        if (applier != null) {
+          await applier(path, targetDir);
+        } else {
+          final stagingDir = _preparedStagingDir;
+          if (stagingDir == null) {
+            throw const _UpdateException(
+              'The update package has not been staged yet.',
+            );
+          }
+          final updatesDir = stagingDir.parent;
+          if (artifact == AppUpdateArtifact.windowsPortable) {
+            await launchWindowsPortableSwapper(
+              updatesDir: updatesDir,
+              stagingDir: stagingDir,
+              targetDir: targetDir,
+              appExecutablePath: resolvedExePath,
+              currentPid: pid,
+              expectedVersion: release.version,
+              processRunner: _processRunner,
+            );
+          } else if (artifact == AppUpdateArtifact.linuxBundle) {
+            await launchLinuxBundleSwapper(
+              updatesDir: updatesDir,
+              stagingDir: stagingDir,
+              targetDir: targetDir,
+              appExecutablePath: resolvedExePath,
+              currentPid: pid,
+              expectedVersion: release.version,
+              processRunner: _processRunner,
+            );
+          } else {
+            throw const _UpdateException(
+              'Unsupported update package format for automatic installation.',
+            );
+          }
+        }
+      }
+
+      _restartRequested = false;
+      _installPrepared = false;
+      _preparedStagingDir = null;
+      // Keep status at 'installing' so the UI cannot trigger a duplicate
+      // installer/swapper launch while Mpvson closes.
+      if (!_disposed) notifyListeners();
+      return true;
+    } on Object catch (error) {
+      _fail(error);
+      await _recordApplyError(_messageFor(error));
+      return false;
+    } finally {
+      _finishOperation();
+    }
+  }
+
+  /// Re-verifies and stages the package, then launches the helper.
+  ///
+  /// Kept for callers that intentionally bypass the UI close flow (tests and
+  /// manual tooling); the application UI uses [prepareInstall] followed by a
+  /// lifecycle-owned [launchPreparedInstall].
+  Future<bool> installUpdate() async {
+    if (_disposed || _busy) return false;
+    if (!_installPrepared && !await prepareInstall()) return false;
+    if (!requestRestart()) return false;
+    return launchPreparedInstall();
+  }
+
+  Future<File> _verifiedPackage(String path, ReleaseInfo release) async {
+    final file = File(path);
+    if (!await file.exists()) {
+      throw const _UpdateException(
+        'The verified update file is no longer available.',
+      );
+    }
+    final digest = (await sha256.bind(file.openRead()).first).toString();
+    if (digest != release.sha256.toLowerCase()) {
+      throw const _UpdateException(
+        'The update package failed its SHA-256 verification before install.',
+      );
+    }
+    return file;
+  }
+
+  Future<File> _applyErrorFile() async => File(
+    p.join(
+      (await _supportDirectoryProvider()).path,
+      'updates',
+      appUpdateErrorFileName,
+    ),
+  );
+
+  bool get awaitingBundleStartup =>
+      Platform.environment['MPVSON_UPDATE_EXPECTED_VERSION'] ==
+          currentVersion &&
+      Platform.environment.containsKey('MPVSON_UPDATE_READY_FILE');
+
+  Future<void> confirmBundleStartup() async {
+    if (!awaitingBundleStartup) return;
+    final path = Platform.environment['MPVSON_UPDATE_READY_FILE']!;
+    final updatesDirectory = (await _applyErrorFile()).parent;
+    if (!p.equals(p.dirname(path), updatesDirectory.path) ||
+        !RegExp(r'^update-ready-[a-zA-Z0-9_.-]+$').hasMatch(p.basename(path))) {
+      return;
+    }
+    await File(path).create(exclusive: true);
+  }
+
+  Future<void> loadLastApplyError() async {
+    try {
+      final file = await _applyErrorFile();
+      if (!await file.exists()) return;
+      final log = await file.open();
+      final String message;
+      try {
+        message = utf8
+            .decode(await log.read(4096), allowMalformed: true)
+            .trim();
+      } finally {
+        await log.close();
+      }
+      if (_disposed || message.isEmpty) return;
+      _lastApplyError = message;
+      notifyListeners();
+    } on Object {
+      // Update checking still works when the diagnostic directory is unavailable.
+    }
+  }
+
+  Future<void> _clearApplyError() async {
+    _lastApplyError = null;
+    try {
+      final file = await _applyErrorFile();
+      if (await file.exists()) await file.delete();
+    } on Object {
+      // A diagnostic failure should not block a verified update.
+    }
+  }
+
+  Future<void> _recordApplyError(String reason) async {
+    try {
+      final file = await _applyErrorFile();
+      await file.parent.create(recursive: true);
+      await file.writeAsString(reason, flush: true);
+    } on Object {
+      // The current service already reports the error.
+    }
+  }
+
+  /// Downloads (or reuses cached) update package and installs it in one step.
+  Future<bool> downloadAndInstall() async {
+    if (_disposed || _busy) return false;
+    if (_status == 'available' ||
+        (_status == 'error' && failedDuringDownload)) {
+      await download();
+    }
+    if (!_disposed && _status == 'ready' && canInstallDownloaded) {
+      return installUpdate();
+    }
+    return false;
+  }
+
+  String _resolvedExecutablePath() {
+    final rawPath = _executablePathProvider();
+    if (!_isWindowsProvider() && Platform.isLinux) {
+      try {
+        return File(rawPath).resolveSymbolicLinksSync();
+      } on Object {
+        return rawPath;
+      }
+    }
+    return rawPath;
+  }
+
+  /// Drops staging state for a package that is no longer the selected release.
+  /// The staging directory itself is left for the stale-artifact cleanup so a
+  /// failed apply can still be inspected or retried.
+  void _clearPreparedInstall() {
+    _restartRequested = false;
+    _installPrepared = false;
+    _preparedStagingDir = null;
   }
 
   void _finishOperation() {

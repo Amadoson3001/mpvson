@@ -20,6 +20,7 @@ bool engineSystemManaged(EngineUpdateService updates) =>
   'available' => ('Update available', Theme.of(context).colorScheme.primary),
   'downloading' => ('Downloading', context.palette.warning),
   'ready' => ('Downloaded', context.palette.success),
+  'installing' => ('Installing', context.palette.warning),
   'upToDate' => ('Up to date', context.palette.success),
   // The failure kind separates a check the app could not verify from a
   // download that broke mid-flight and an apply step that could not run.

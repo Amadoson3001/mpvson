@@ -20,6 +20,7 @@ constexpr int kMaxSingleInstanceRetries = 300;  // 30 seconds max wait for Dart 
 
 class SingleInstance {
  public:
+  enum class Ownership { kPrimary, kForwarded, kFailed };
   SingleInstance();
   ~SingleInstance();
 
@@ -33,10 +34,7 @@ class SingleInstance {
   SingleInstance& operator=(SingleInstance&&) = delete;
 
   // Tries to acquire primary instance ownership or forwards arguments to the primary instance.
-  // Returns true if this is the primary instance and execution should proceed.
-  // Returns false if this is a secondary instance and has forwarded paths and brought the primary
-  // window to the foreground (caller should exit with 0).
-  bool AcquireOwnershipOrForward();
+  Ownership AcquireOwnershipOrForward();
 
   // Initializes the named pipe server and MethodChannel on the primary instance.
   void Initialize(HWND window_handle, flutter::BinaryMessenger* messenger);

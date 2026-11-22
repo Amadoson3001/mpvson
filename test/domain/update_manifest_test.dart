@@ -14,6 +14,8 @@ void main() {
     String engineVersion = '0.42.0',
     String windowsUrl = 'https://example.org/mpvson-windows-x64.zip',
     String windowsHash = validHash,
+    String? windowsPortableUrl,
+    String? windowsPortableHash,
     String linuxUrl = 'https://example.org/mpvson-linux-x64.tar.gz',
     String linuxHash = validHash,
     String? releaseUrl = 'https://example.org/releases/0.2.0',
@@ -26,6 +28,11 @@ void main() {
       'releaseUrl': ?releaseUrl,
       'artifacts': <String, Object?>{
         'windows': <String, Object?>{'url': windowsUrl, 'sha256': windowsHash},
+        if (windowsPortableUrl != null && windowsPortableHash != null)
+          'windowsPortable': <String, Object?>{
+            'url': windowsPortableUrl,
+            'sha256': windowsPortableHash,
+          },
         'linux': <String, Object?>{'url': linuxUrl, 'sha256': linuxHash},
       },
     });
@@ -97,5 +104,55 @@ void main() {
         throwsFormatException,
       );
     });
+
+    test(
+      'selects windowsPortable when preferInstaller is false and falls back when absent',
+      () {
+        const portableHash =
+            'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+        final withPortable = encodeManifest(
+          windowsUrl: 'https://example.org/MpvsonSetup.exe',
+          windowsHash: validHash,
+          windowsPortableUrl: 'https://example.org/mpvson-windows-x64.zip',
+          windowsPortableHash: portableHash,
+        );
+
+        final installer = UpdateManifest.parse(
+          withPortable,
+          platform: UpdatePlatform.windows,
+          preferInstaller: true,
+        );
+        expect(
+          installer.release.downloadUri.toString(),
+          'https://example.org/MpvsonSetup.exe',
+        );
+        expect(installer.release.sha256, validHash);
+
+        final portable = UpdateManifest.parse(
+          withPortable,
+          platform: UpdatePlatform.windows,
+          preferInstaller: false,
+        );
+        expect(
+          portable.release.downloadUri.toString(),
+          'https://example.org/mpvson-windows-x64.zip',
+        );
+        expect(portable.release.sha256, portableHash);
+
+        final withoutPortable = encodeManifest(
+          windowsUrl: 'https://example.org/MpvsonSetup.exe',
+          windowsHash: validHash,
+        );
+        final fallback = UpdateManifest.parse(
+          withoutPortable,
+          platform: UpdatePlatform.windows,
+          preferInstaller: false,
+        );
+        expect(
+          fallback.release.downloadUri.toString(),
+          'https://example.org/MpvsonSetup.exe',
+        );
+      },
+    );
   });
 }

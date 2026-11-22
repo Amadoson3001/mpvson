@@ -1230,6 +1230,14 @@ class SeekPreviewService {
   bool _isSuspended = false;
   bool _isPlaybackBuffering = false;
   bool _interactionActive = false;
+
+  /// Identifies the seek-bar surface that owns the current interaction.
+  ///
+  /// A player can expose more than one seek bar for the same controller (for
+  /// example the shell strip and the player controls). Teardown of one surface
+  /// must not tear down an interaction that another surface still owns.
+  Object? _interactionOwner;
+
   bool _hasFailed = false;
   bool _isExtracting = false;
   bool _activeRequestCancelled = false;
@@ -1408,6 +1416,7 @@ class SeekPreviewService {
     _cancelActiveRequest();
     _hasFailed = false;
     _interactionActive = false;
+    _interactionOwner = null;
     _latestTarget = null;
     _lastLiveSeekTarget = null;
     _lastLiveSeekExact = false;
@@ -1581,13 +1590,18 @@ class SeekPreviewService {
   /// For local files, seeks the live GPU preview texture directly at up to
   /// ~30 fps without loading spinners or JPEG capture overhead. For remote
   /// streams, throttles extraction to <= 1 per 100 ms with LRU caching.
-  void onPointerMove(Duration target) {
+  void onPointerMove(Duration target, {Object? owner}) {
     if (_disposed) return;
+    if (owner != null && !identical(owner, _interactionOwner)) {
+      // A different seek-bar surface took over the timeline. Invalidate work
+      // issued for the outgoing surface before adopting the new owner.
+      if (_interactionOwner != null) _interactionGeneration++;
+      _interactionOwner = owner;
+    }
     _prewarmTimer?.cancel();
     _prewarmTimer = null;
     _idleWorkerReleaseTimer?.cancel();
     _pointerExitGraceTimer?.cancel();
-    _scheduleIdleWorkerRelease();
 
     if (!_interactionActive) {
       _interactionActive = true;
@@ -1596,6 +1610,7 @@ class SeekPreviewService {
     }
     _latestTarget = target;
     final revision = ++_intentRevision;
+    _scheduleIdleWorkerRelease();
 
     if (_isAudio ||
         !_isSeekable ||
@@ -2159,9 +2174,18 @@ class SeekPreviewService {
   }
 
   /// Pauses on pointer exit, retains remote media for a short reentry grace,
-  /// then releases the paused worker after 15s of inactivity.
-  void onPointerExit() {
+  /// then releases the paused worker after the idle timeout.
+  ///
+  /// Passing [owner] from a seek-bar surface prevents a stale surface from
+  /// ending an interaction that another surface now owns.
+  void onPointerExit({Object? owner}) {
     if (_disposed) return;
+    if (owner != null &&
+        _interactionOwner != null &&
+        !identical(owner, _interactionOwner)) {
+      return;
+    }
+    _interactionOwner = null;
     _interactionActive = false;
     _interactionGeneration++;
     _cancelActiveRequest();
@@ -2195,13 +2219,76 @@ class SeekPreviewService {
     _scheduleIdleWorkerRelease();
   }
 
+  /// Detaches a seek-bar surface during widget teardown.
+  ///
+  /// Unlike [onPointerExit], teardown does not open a re-entry grace window and
+  /// does not arm an idle-release timer. The interaction's timers are cancelled
+  /// and any worker that exists or is being created is released promptly.
+  /// Passing [owner] keeps an outgoing widget from cancelling an interaction
+  /// that a different seek-bar surface now owns.
+  void detachInteraction([Object? owner]) {
+    if (_disposed) return;
+    if (owner != null &&
+        _interactionOwner != null &&
+        !identical(owner, _interactionOwner)) {
+      return;
+    }
+    _interactionOwner = null;
+    _interactionActive = false;
+    _interactionGeneration++;
+    _cancelActiveRequest();
+    _intentRevision++;
+    _latestTarget = null;
+    _pendingTarget = null;
+    _pendingExact = false;
+    _refineTimer?.cancel();
+    _refineTimer = null;
+    _throttleTimer?.cancel();
+    _throttleTimer = null;
+    _pointerExitGraceTimer?.cancel();
+    _pointerExitGraceTimer = null;
+    _prewarmTimer?.cancel();
+    _prewarmTimer = null;
+    _idleWorkerReleaseTimer?.cancel();
+    _idleWorkerReleaseTimer = null;
+    // Capture the generation established by this detach. If another seek bar
+    // takes over before the queued release runs, that release must not dispose
+    // the worker the incoming surface is now using.
+    final detachInteractionGeneration = _interactionGeneration;
+    final detachSourceGeneration = _sourceGeneration;
+    // Teardown has no re-entry grace period: release the worker now instead of
+    // leaving a long-lived idle timer behind for a widget that no longer exists.
+    unawaited(
+      _releaseWorker(
+        force: true,
+        expectedInteractionGeneration: detachInteractionGeneration,
+        expectedSourceGeneration: detachSourceGeneration,
+      ),
+    );
+  }
+
   void _scheduleIdleWorkerRelease() {
     _idleWorkerReleaseTimer?.cancel();
+    // Hovering without a worker (for example before pre-warm creates one) must
+    // not leave a timer pending. Pre-warm arms its own release once it adopts
+    // a worker, so there is always cleanup for a worker that exists.
+    if (_disposed || _backend == null) return;
     final timeout = _isCurrentSourceRemote
         ? _idleWorkerTimeout
         : _localIdleWorkerTimeout;
+    final releaseInteractionGeneration = _interactionGeneration;
+    final releaseSourceGeneration = _sourceGeneration;
+    final releaseIntentRevision = _intentRevision;
     _idleWorkerReleaseTimer = Timer(timeout, () {
-      _releaseWorker(force: true);
+      _idleWorkerReleaseTimer = null;
+      unawaited(
+        _releaseWorker(
+          force: true,
+          expectedInteractionGeneration: releaseInteractionGeneration,
+          expectedSourceGeneration: releaseSourceGeneration,
+          expectedIntentRevision: releaseIntentRevision,
+        ),
+      );
     });
   }
 
@@ -2239,13 +2326,37 @@ class SeekPreviewService {
     );
   }
 
-  Future<void> _releaseWorker({bool force = false}) async {
+  Future<void> _releaseWorker({
+    bool force = false,
+    int? expectedInteractionGeneration,
+    int? expectedSourceGeneration,
+    int? expectedIntentRevision,
+  }) async {
     if (_disposed) return;
-    if (_backend == null) return;
+    // Check inside the queue: a pre-warm operation that has not created its
+    // backend yet may still be ahead of us, and a detach must also release a
+    // worker that is created after the detach request was issued. The optional
+    // generation guards retire only the worker belonging to the interaction
+    // that requested this release; a later seek bar that took over keeps its
+    // worker. Explicit suspend/dispose callers omit the guards.
     await _enqueueBackendOperation(() async {
+      if (_disposed) return;
+      if (expectedInteractionGeneration != null &&
+          expectedInteractionGeneration != _interactionGeneration) {
+        return;
+      }
+      if (expectedSourceGeneration != null &&
+          expectedSourceGeneration != _sourceGeneration) {
+        return;
+      }
+      if (expectedIntentRevision != null &&
+          expectedIntentRevision != _intentRevision) {
+        return;
+      }
+      final backend = _backend;
+      if (backend == null) return;
       if (_interactionActive && !force) return;
       if (force) _interactionActive = false;
-      final backend = _backend;
       _backend = null;
       _backendSource = null;
       _lastLiveSeekTarget = null;
@@ -2255,16 +2366,14 @@ class SeekPreviewService {
           clearLiveTexture: true,
         );
       }
-      if (backend != null) {
-        try {
-          await backend.dispose();
-        } on Object catch (error) {
-          _record(
-            'preview.dispose',
-            message: 'Idle worker disposal failed',
-            error: error,
-          );
-        }
+      try {
+        await backend.dispose();
+      } on Object catch (error) {
+        _record(
+          'preview.dispose',
+          message: 'Idle worker disposal failed',
+          error: error,
+        );
       }
     });
   }
@@ -2394,6 +2503,7 @@ class SeekPreviewService {
     _sourceGeneration++;
     _intentRevision++;
     _interactionActive = false;
+    _interactionOwner = null;
     _latestTarget = null;
     _pendingTarget = null;
     _pendingExact = false;

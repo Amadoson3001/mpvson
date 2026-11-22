@@ -225,12 +225,12 @@ void main() {
   _DockHostState hostState(WidgetTester tester) =>
       tester.state<_DockHostState>(find.byType(_DockHost));
 
-  /// Unmounts the tree, then lets the seek-preview service's idle-release
-  /// timer run so the test does not end with a pending timer, which the
-  /// binding treats as a failure.
+  /// Unmounts the tree. The seek-bar detaches its interaction on teardown, so
+  /// no idle-release timer is left pending for the binding to report as a
+  /// failure; there is no 45-second grace period to drain here.
   Future<void> teardownTree(WidgetTester tester) async {
     await tester.pumpWidget(const SizedBox());
-    await tester.pump(const Duration(seconds: 46));
+    await tester.pump(const Duration(seconds: 6));
   }
 
   testWidgets('a structure update mid-undock still returns to the player', (

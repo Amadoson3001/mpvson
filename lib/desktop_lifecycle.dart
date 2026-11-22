@@ -45,12 +45,14 @@ class _DesktopLifecycle extends WindowListener {
         case _ClosePromptAction.cancel:
         case null:
           // Keep the player open: the shutdown is cancelled from every phase.
+          // A pending update stays verified but nothing is installed.
           controller.cancelClose();
+          updates.cancelRestart();
           _closing = false;
           return;
       }
     }
-    await _releaseServices(discard: true);
+    await _releaseServices(discard: true, applyUpdate: true);
     await _finishWindowClose();
   }
 
@@ -72,7 +74,13 @@ class _DesktopLifecycle extends WindowListener {
       return null;
     } on SessionSaveException catch (error) {
       return error;
-    } on Object {
+    } on Object catch (error) {
+      if (updates.restartRequested) {
+        return SessionSaveException(
+          'Could not prepare Mpvson to restart.',
+          error,
+        );
+      }
       // Continue disposing other services if an unexpected error occurs.
       return null;
     }
@@ -95,7 +103,10 @@ class _DesktopLifecycle extends WindowListener {
     );
   }
 
-  Future<void> _releaseServices({bool discard = false}) async {
+  Future<void> _releaseServices({
+    bool discard = false,
+    bool applyUpdate = false,
+  }) async {
     if (_servicesReleased) return;
     _servicesReleased = true;
     windowManager.removeListener(this);
@@ -134,14 +145,20 @@ class _DesktopLifecycle extends WindowListener {
       // Preserve the window-close path even if a platform teardown fails.
     }
     try {
-      updates.dispose();
-    } on Object {
-      // Best-effort updates release.
-    }
-    try {
       engineUpdates.dispose();
     } on Object {
       // Best-effort engine updates release.
+    }
+    try {
+      if (applyUpdate && updates.restartRequested) {
+        await updates.launchPreparedInstall();
+      }
+    } finally {
+      try {
+        updates.dispose();
+      } on Object {
+        // The window still needs to close.
+      }
     }
   }
 

@@ -33,6 +33,7 @@ final class UpdateManifest {
   factory UpdateManifest.parse(
     String source, {
     required UpdatePlatform platform,
+    bool preferInstaller = true,
   }) {
     final Object? decoded;
     try {
@@ -66,9 +67,16 @@ final class UpdateManifest {
         : _httpsUri(releaseUriValue, 'releaseUrl');
 
     final artifacts = _stringMap(root['artifacts'], 'artifacts');
+    final usePortableWindows =
+        platform == UpdatePlatform.windows &&
+        !preferInstaller &&
+        artifacts['windowsPortable'] != null;
+    final artifactKey = usePortableWindows
+        ? 'windowsPortable'
+        : platform.manifestKey;
     final targetArtifact = _stringMap(
-      artifacts[platform.manifestKey],
-      '${platform.manifestKey} artifact',
+      artifacts[artifactKey],
+      '$artifactKey artifact',
     );
     final downloadValue = _requiredString(
       targetArtifact,

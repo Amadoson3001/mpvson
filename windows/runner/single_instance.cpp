@@ -152,55 +152,48 @@ void SingleInstance::ForwardToPrimary(const std::vector<std::wstring>& raw_args)
   }
 }
 
-bool SingleInstance::AcquireOwnershipOrForward() {
+SingleInstance::Ownership SingleInstance::AcquireOwnershipOrForward() {
   std::vector<std::wstring> raw_args = GetRawCommandLineArgs();
 
-  // Handover for engine recovery:
-  // If command line contains '--engine-recovery', allow acquiring instance ownership.
-  bool is_recovery = false;
+  // Handover for engine recovery or post-update relaunch:
+  // If command line contains '--engine-recovery' or '--post-update', wait for
+  // the exiting primary instance to release the mutex and acquire ownership.
+  bool wait_for_handover = false;
   for (const auto& arg : raw_args) {
-    if (arg.rfind(L"--engine-recovery", 0) == 0) {
-      is_recovery = true;
+    if (arg == L"--") break;
+    if (arg.rfind(L"--engine-recovery=", 0) == 0 ||
+        arg == L"--post-update") {
+      wait_for_handover = true;
       break;
     }
   }
-  if (!is_recovery) {
-    const wchar_t* cmd_line = ::GetCommandLineW();
-    if (cmd_line != nullptr && wcsstr(cmd_line, L"--engine-recovery") != nullptr) {
-      is_recovery = true;
-    }
-  }
-
-  if (is_recovery) {
-    // In recovery mode, wait for the exiting instance to release the mutex
+  if (wait_for_handover) {
+    // Wait for the exiting instance to release the mutex
     mutex_ = ::CreateMutexW(nullptr, FALSE, kMutexName);
     if (mutex_ != nullptr) {
       DWORD wait_result = ::WaitForSingleObject(mutex_, 10000);
       if (wait_result == WAIT_OBJECT_0 || wait_result == WAIT_ABANDONED) {
         // Ownership acquired; proceed as the primary instance.
-        return true;
+        return Ownership::kPrimary;
       }
-      // The wait timed out or failed, so this process does NOT own the mutex.
-      // Drop the handle instead of leaving one that looks owned (CleanUp would
-      // otherwise release/close a mutex held by a stale instance). Recovery
-      // was explicitly requested, so proceed as primary regardless.
       ::CloseHandle(mutex_);
       mutex_ = nullptr;
     }
-    return true;
+    return Ownership::kFailed;
   }
 
   mutex_ = ::CreateMutexW(nullptr, TRUE, kMutexName);
+  if (mutex_ == nullptr) return Ownership::kFailed;
   if (::GetLastError() == ERROR_ALREADY_EXISTS) {
     ForwardToPrimary(raw_args);
     if (mutex_ != nullptr) {
       ::CloseHandle(mutex_);
       mutex_ = nullptr;
     }
-    return false;
+    return Ownership::kForwarded;
   }
 
-  return true;
+  return Ownership::kPrimary;
 }
 
 void SingleInstance::Initialize(HWND window_handle,

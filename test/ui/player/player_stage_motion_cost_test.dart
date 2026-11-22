@@ -414,10 +414,10 @@ void main() {
   });
 }
 
-/// Unmounts the tree, then lets the seek-preview service's idle-release timer
-/// run so the test does not end with a pending timer, which the binding treats
-/// as a failure.
+/// Unmounts the tree. The seek-bar teardown must not leave an idle-release
+/// timer pending: the binding treats any pending timer as a test failure, so
+/// there is no need to pump out a 45-second grace period here.
 Future<void> teardownTree(WidgetTester tester) async {
   await tester.pumpWidget(const SizedBox());
-  await tester.pump(const Duration(seconds: 46));
+  await tester.pump(const Duration(seconds: 6));
 }
