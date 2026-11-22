@@ -179,14 +179,16 @@ class _LibraryArtworkState extends State<LibraryArtwork> {
         if (path == null) return fallback();
         return LayoutBuilder(
           builder: (context, constraints) {
-            // Decode at the size the artwork is displayed at instead of the
-            // source resolution; album covers can otherwise cost megabytes
-            // each in the image cache.
+            // Decode at a bucketed size near the display resolution instead of
+            // the source resolution or exact per-pixel width; album covers can
+            // otherwise cost megabytes each or trigger re-decodes on small
+            // width changes.
             final width = constraints.maxWidth;
             final cacheWidth = width.isFinite && width > 0
-                ? (width * MediaQuery.devicePixelRatioOf(context))
-                      .round()
-                      .clamp(1, 512)
+                ? (((width * MediaQuery.devicePixelRatioOf(context)) / 64)
+                              .ceil() *
+                          64)
+                      .clamp(64, 512)
                       .toInt()
                 : 256;
             return Image.file(

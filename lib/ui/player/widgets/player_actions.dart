@@ -56,23 +56,29 @@ class PlayerActions extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         if (showQueue)
-          Semantics(
-            label:
-                'Queue, ${controller.queue.length} ${controller.queue.length == 1 ? 'video' : 'videos'}',
-            button: true,
-            child: IconButton(
-              tooltip: 'Queue (${controller.queue.length})',
-              isSelected: queueOpen,
-              style: PlayerControlStyle.of(context).buttonStyle.copyWith(
-                animationDuration: AppMotion.duration(context, AppMotion.quick),
-              ),
-              onPressed: onToggleQueue,
-              icon: Badge(
-                isLabelVisible: controller.queue.isNotEmpty,
-                label: Text('${controller.queue.length}'),
-                child: Icon(
-                  Icons.playlist_play_rounded,
-                  size: PlayerControlStyle.of(context).iconSize,
+          ValueListenableBuilder<QueueSnapshot>(
+            valueListenable: controller.queueListenable,
+            builder: (context, queueSnapshot, _) => Semantics(
+              label:
+                  'Queue, ${queueSnapshot.length} ${queueSnapshot.length == 1 ? 'video' : 'videos'}',
+              button: true,
+              child: IconButton(
+                tooltip: 'Queue (${queueSnapshot.length})',
+                isSelected: queueOpen,
+                style: PlayerControlStyle.of(context).buttonStyle.copyWith(
+                  animationDuration: AppMotion.duration(
+                    context,
+                    AppMotion.quick,
+                  ),
+                ),
+                onPressed: onToggleQueue,
+                icon: Badge(
+                  isLabelVisible: queueSnapshot.isNotEmpty,
+                  label: Text('${queueSnapshot.length}'),
+                  child: Icon(
+                    Icons.playlist_play_rounded,
+                    size: PlayerControlStyle.of(context).iconSize,
+                  ),
                 ),
               ),
             ),

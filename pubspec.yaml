@@ -4,8 +4,7 @@ description: A modern desktop video player for Windows and Linux, powered by mpv
 # Private package; never published.
 publish_to: 'none'
 
-version: 0.1.0+1
-
+version: 0.1.1+2
 environment:
   sdk: ^3.12.0
 

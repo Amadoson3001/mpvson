@@ -23,6 +23,18 @@ void main() {
       },
     );
 
+    test('late start cannot replace current native attachment', () {
+      final identity = PlaybackSourceIdentity()
+        ..activateObservation(supported: true);
+      final first = identity.beginOpen('first.mp4');
+      identity.attachStarted('first.mp4');
+      final second = identity.beginOpen('second.mp4');
+      identity.attachStarted('second.mp4');
+      expect(identity.attachStarted('first.mp4').boundary, first);
+      expect(identity.attached.boundary, second);
+      expect(identity.attachLoaded().boundary, second);
+    });
+
     test(
       'attachStarted ignores empty source strings and preserves pending boundary',
       () {

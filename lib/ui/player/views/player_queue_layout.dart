@@ -23,6 +23,7 @@ class PlayerQueueLayout extends StatefulWidget {
     required this.onToggleQueue,
     required this.onCloseQueue,
     required this.onQueueExitEnd,
+    this.onMotionActiveChanged,
   });
 
   final Widget playerArea;
@@ -32,6 +33,7 @@ class PlayerQueueLayout extends StatefulWidget {
   final VoidCallback onToggleQueue;
   final VoidCallback onCloseQueue;
   final VoidCallback onQueueExitEnd;
+  final ValueChanged<bool>? onMotionActiveChanged;
 
   @override
   State<PlayerQueueLayout> createState() => _PlayerQueueLayoutState();
@@ -50,6 +52,8 @@ class _PlayerQueueLayoutState extends State<PlayerQueueLayout>
       onDismissed: () {
         if (mounted) widget.onQueueExitEnd();
       },
+      onAnimatingChanged: (active) =>
+          widget.onMotionActiveChanged?.call(active),
     );
   }
 
@@ -131,35 +135,37 @@ class _PlayerQueueLayoutState extends State<PlayerQueueLayout>
         width: drawerWidth,
         child: AnimatedBuilder(
           animation: _slide.progress,
-          child: IgnorePointer(
-            ignoring: !open,
-            child: ExcludeSemantics(
-              excluding: !open,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  boxShadow: AppMotion.lowPower(context)
-                      ? null
-                      : [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.35),
-                            blurRadius: 18,
-                            offset: const Offset(-6, 0),
-                          ),
-                        ],
-                ),
-                child: CallbackShortcuts(
-                  bindings: {
-                    const SingleActivator(LogicalKeyboardKey.escape):
-                        widget.onCloseQueue,
-                  },
-                  child: widget.queuePanel,
+          child: RepaintBoundary(
+            child: IgnorePointer(
+              ignoring: !open,
+              child: ExcludeSemantics(
+                excluding: !open,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    boxShadow: AppMotion.lowPower(context)
+                        ? null
+                        : [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.35),
+                              blurRadius: 18,
+                              offset: const Offset(-6, 0),
+                            ),
+                          ],
+                  ),
+                  child: CallbackShortcuts(
+                    bindings: {
+                      const SingleActivator(LogicalKeyboardKey.escape):
+                          widget.onCloseQueue,
+                    },
+                    child: widget.queuePanel,
+                  ),
                 ),
               ),
             ),
           ),
           builder: (context, child) => Transform.translate(
             offset: Offset((1 - _slide.progress.value) * drawerWidth, 0),
-            child: RepaintBoundary(child: child),
+            child: child,
           ),
         ),
       ),
@@ -192,10 +198,12 @@ class QueueSlideSlot extends StatelessWidget {
     animation: progress,
     child: child,
     builder: (context, child) {
-      final visibleWidth = panelWidth * progress.value;
+      final value = progress.value.clamp(0.0, 1.0);
+      final visibleWidth = panelWidth * value;
       return SizedBox(
         width: visibleWidth,
         child: ClipRect(
+          clipBehavior: value < 0.999 ? Clip.hardEdge : Clip.none,
           child: OverflowBox(
             maxWidth: panelWidth,
             alignment: Alignment.centerLeft,

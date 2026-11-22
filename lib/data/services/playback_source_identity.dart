@@ -179,12 +179,14 @@ class PlaybackSourceIdentity {
       return _native;
     }
     final logicalSource = _boundaryCanonicalSource[boundary] ?? canonical;
-    _native = SourceAttachment(
+    final attachment = SourceAttachment(
       boundary: boundary,
       source: logicalSource,
       loaded: false,
       verified: true,
     );
+    if (boundary != _boundary) return attachment;
+    _native = attachment;
     if (boundary == _pendingBoundary) {
       _pendingBoundary = null;
     }

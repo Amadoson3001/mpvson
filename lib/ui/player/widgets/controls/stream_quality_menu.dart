@@ -33,7 +33,7 @@ class StreamQualityMenu extends StatelessWidget {
 
         final currentLabel = isAuto
             ? (active != null ? 'Auto (${active.qualityLabel})' : 'Auto')
-            : (selected.qualityLabel);
+            : (active?.qualityLabel ?? 'Quality');
 
         final sizing = PlayerControlStyle.of(context);
         return Semantics(

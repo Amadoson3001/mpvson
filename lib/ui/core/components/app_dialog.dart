@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../app_motion.dart';
 import '../app_theme.dart';
 
 /// Standard modal dialog shell providing consistent background, border radius,
@@ -113,13 +114,27 @@ class AppDialog extends StatelessWidget {
     bool useSafeArea = true,
     RouteSettings? routeSettings,
   }) {
-    return showDialog<T>(
+    final barrierLabel =
+        Localizations.of<MaterialLocalizations>(
+          context,
+          MaterialLocalizations,
+        )?.modalBarrierDismissLabel ??
+        'Close dialog';
+    return showGeneralDialog<T>(
       context: context,
       barrierDismissible: barrierDismissible,
-      barrierColor: barrierColor,
-      useSafeArea: useSafeArea,
+      barrierColor: barrierColor ?? Colors.black54,
+      barrierLabel: barrierLabel,
       routeSettings: routeSettings,
-      builder: builder,
+      transitionDuration: AppMotion.scaled(context, AppMotion.effectsDefault),
+      pageBuilder: (dialogContext, animation, secondaryAnimation) {
+        final page = builder(dialogContext);
+        return useSafeArea ? SafeArea(child: page) : page;
+      },
+      transitionBuilder: (dialogContext, animation, secondaryAnimation, child) {
+        if (AppMotion.lowPower(dialogContext)) return child;
+        return _AppDialogTransition(animation: animation, child: child);
+      },
     );
   }
 
@@ -249,6 +264,53 @@ class AppDialog extends StatelessWidget {
                 ],
               ],
             ),
+    );
+  }
+}
+
+class _AppDialogTransition extends StatefulWidget {
+  const _AppDialogTransition({required this.animation, required this.child});
+
+  final Animation<double> animation;
+  final Widget child;
+
+  @override
+  State<_AppDialogTransition> createState() => _AppDialogTransitionState();
+}
+
+class _AppDialogTransitionState extends State<_AppDialogTransition> {
+  late final CurvedAnimation _curved = CurvedAnimation(
+    parent: widget.animation,
+    curve: AppMotion.enter,
+    reverseCurve: AppMotion.exit,
+  );
+  late final Animation<double> _scale = Tween<double>(
+    begin: 0.95,
+    end: 1.0,
+  ).animate(_curved);
+  late final Animation<Offset> _slide = Tween<Offset>(
+    begin: const Offset(0, 0.015),
+    end: Offset.zero,
+  ).animate(_curved);
+
+  @override
+  void dispose() {
+    _curved.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _curved,
+      alwaysIncludeSemantics: true,
+      child: SlideTransition(
+        position: _slide,
+        child: ScaleTransition(
+          scale: _scale,
+          child: RepaintBoundary(child: widget.child),
+        ),
+      ),
     );
   }
 }

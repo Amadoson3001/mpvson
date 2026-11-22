@@ -65,8 +65,8 @@ const double _expandedHeaderTitleWidth =
     (_expandedButtonRight + _toggleButtonSize + AppSpace.xs);
 
 double _labelReveal(double progress) {
-  final normalized = ((progress - 0.16) / 0.64).clamp(0.0, 1.0);
-  return Curves.easeOutCubic.transform(normalized);
+  final normalized = ((progress - 0.25) / 0.60).clamp(0.0, 1.0);
+  return Curves.easeInOutCubic.transform(normalized);
 }
 
 /// Sidebar content: the full 208px list or the 64px icon rail.
@@ -122,6 +122,7 @@ class _ShellSideNavState extends State<ShellSideNav>
   SpringDescription _indicatorSpring = AppMotion.indicatorSpring;
   bool _reducedMotion = false;
   double? _targetPillTop;
+  double? _lastMaxHeight;
   int _pillGeneration = 0;
   bool _disposed = false;
 
@@ -339,10 +340,14 @@ class _ShellSideNavState extends State<ShellSideNav>
             // Keep Settings pill aligned if the window height changed while idle.
             if (_hasSelection &&
                 widget.section == LibrarySection.settings &&
-                !_pillTopController.isAnimating) {
+                !_pillTopController.isAnimating &&
+                _lastMaxHeight != constraints.maxHeight) {
+              _lastMaxHeight = constraints.maxHeight;
               WidgetsBinding.instance.addPostFrameCallback((_) {
                 _syncToMeasured(animate: false);
               });
+            } else {
+              _lastMaxHeight = constraints.maxHeight;
             }
             return AnimatedBuilder(
               animation: _effectiveProgress,
@@ -352,23 +357,27 @@ class _ShellSideNavState extends State<ShellSideNav>
                   key: _rootKey,
                   fit: StackFit.expand,
                   children: [
-                    // 1. Sliding indicator pill behind items
+                    // 1. Sliding indicator pill behind items (GPU-translated)
                     if (_hasSelection)
-                      AnimatedBuilder(
-                        animation: _pillTopController,
-                        builder: (context, _) {
-                          return Positioned(
-                            top: _pillTopController.value,
-                            left: AppSpace.xs,
-                            width: pillWidth,
-                            height: _navItemHeight,
+                      Positioned(
+                        top: 0,
+                        left: AppSpace.xs,
+                        width: pillWidth,
+                        height: _navItemHeight,
+                        child: AnimatedBuilder(
+                          animation: _pillTopController,
+                          child: RepaintBoundary(
                             child: IgnorePointer(
                               child: _SlidingNavIndicator(
                                 accent: palette.accent,
                               ),
                             ),
-                          );
-                        },
+                          ),
+                          builder: (context, child) => Transform.translate(
+                            offset: Offset(0, _pillTopController.value),
+                            child: child,
+                          ),
+                        ),
                       ),
 
                     // 2. Navigation items column
@@ -653,7 +662,7 @@ class _NavItemState extends State<_NavItem> {
                                 child: Opacity(
                                   opacity: reveal,
                                   child: Transform.translate(
-                                    offset: Offset(-8.0 * (1.0 - reveal), 0.0),
+                                    offset: Offset(-6.0 * (1.0 - reveal), 0.0),
                                     child: AnimatedDefaultTextStyle(
                                       duration: AppMotion.scaled(
                                         context,
@@ -773,7 +782,7 @@ class _SidebarCollapseHeader extends StatelessWidget {
                       child: Opacity(
                         opacity: reveal,
                         child: Transform.translate(
-                          offset: Offset(-8.0 * (1.0 - reveal), 0.0),
+                          offset: Offset(-6.0 * (1.0 - reveal), 0.0),
                           child: Text(
                             'Library',
                             maxLines: 1,

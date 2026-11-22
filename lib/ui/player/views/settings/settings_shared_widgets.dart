@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/app_motion.dart';
 import '../../../core/app_theme.dart';
 import '../../../core/components/app_toggle_switch.dart';
 import '../../../core/slider_overlay.dart';
@@ -11,18 +12,40 @@ class SettingsContentContainer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => SingleChildScrollView(
-    padding: const EdgeInsets.fromLTRB(28, 8, 28, 40),
+    padding: const EdgeInsets.fromLTRB(28, 12, 28, 40),
     child: Align(
-      alignment: Alignment.topCenter,
+      alignment: Alignment.topLeft,
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 640),
+        constraints: const BoxConstraints(maxWidth: 1200),
         child: child,
       ),
     ),
   );
 }
 
-class SettingsCardGroup extends StatelessWidget {
+/// Small tinted rounded square that leads a settings row.
+class SettingsIconChip extends StatelessWidget {
+  const SettingsIconChip({super.key, required this.icon, this.size = 34});
+
+  final IconData icon;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.palette;
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: palette.accent.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(AppRadii.control + 2),
+      ),
+      child: Icon(icon, size: 18, color: palette.accent),
+    );
+  }
+}
+
+class SettingsCardGroup extends StatefulWidget {
   const SettingsCardGroup({
     super.key,
     this.title,
@@ -37,60 +60,151 @@ class SettingsCardGroup extends StatelessWidget {
   final List<Widget> children;
 
   @override
+  State<SettingsCardGroup> createState() => _SettingsCardGroupState();
+}
+
+class _SettingsCardGroupState extends State<SettingsCardGroup>
+    with SingleTickerProviderStateMixin {
+  // Groups that mount together (one section opening) cascade in order.
+  static DateTime _epoch = DateTime.fromMillisecondsSinceEpoch(0);
+  static int _count = 0;
+
+  late final AnimationController _controller;
+  late final Animation<double> _curve;
+  bool _hovered = false;
+  bool _started = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final now = DateTime.now();
+    if (now.difference(_epoch) > const Duration(milliseconds: 400)) {
+      _epoch = now;
+      _count = 0;
+    }
+    final delayMs = (_count++).clamp(0, 5) * 55;
+    const bodyMs = 360;
+    _controller = AnimationController(
+      vsync: this,
+      duration: Duration(milliseconds: delayMs + bodyMs),
+    );
+    _curve = CurvedAnimation(
+      parent: _controller,
+      curve: Interval(delayMs / (delayMs + bodyMs), 1, curve: AppMotion.enter),
+    );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_started) return;
+    _started = true;
+    if (AppMotion.lowPower(context)) {
+      _controller.value = 1;
+    } else {
+      _controller.forward();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final palette = context.palette;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 28),
+    final title = widget.title;
+    final description = widget.description;
+    final children = widget.children;
+    final radius = BorderRadius.circular(AppRadii.card);
+
+    final content = Padding(
+      padding: const EdgeInsets.only(bottom: 32),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (title != null) ...[
-            Wrap(
-              alignment: WrapAlignment.spaceBetween,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              spacing: 12,
-              runSpacing: 8,
-              children: [
-                Text(
-                  title!,
-                  style: palette.sectionTitle.copyWith(
-                    fontSize: AppType.small,
-                    color: palette.muted,
-                    fontWeight: FontWeight.w600,
+            Padding(
+              padding: const EdgeInsets.only(left: 4),
+              child: Wrap(
+                alignment: WrapAlignment.spaceBetween,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 12,
+                runSpacing: 8,
+                children: [
+                  Text(
+                    title,
+                    style: palette.sectionTitle.copyWith(
+                      fontSize: AppType.body,
+                      color: palette.text,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
-                ),
-                ?trailing,
-              ],
+                  ?widget.trailing,
+                ],
+              ),
             ),
             if (description != null) ...[
               const SizedBox(height: 4),
-              Text(description!, style: palette.rowSecondary),
+              Padding(
+                padding: const EdgeInsets.only(left: 4),
+                child: Text(description, style: palette.rowSecondary),
+              ),
             ],
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
           ],
-          Material(
-            color: palette.card,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(AppRadii.artwork),
-              side: BorderSide(color: palette.border.withValues(alpha: 0.7)),
-            ),
-            clipBehavior: Clip.antiAlias,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                for (var i = 0; i < children.length; i++) ...[
-                  if (i > 0)
-                    Divider(
-                      height: 1,
-                      thickness: 1,
-                      color: palette.border.withValues(alpha: 0.55),
-                    ),
-                  children[i],
-                ],
-              ],
+          MouseRegion(
+            onEnter: (_) => setState(() => _hovered = true),
+            onExit: (_) => setState(() => _hovered = false),
+            child: AnimatedContainer(
+              duration: AppMotion.duration(context, AppMotion.standard),
+              curve: AppMotion.standardCurve,
+              decoration: BoxDecoration(
+                color: palette.card,
+                borderRadius: radius,
+                border: Border.all(
+                  color: _hovered
+                      ? palette.accent.withValues(alpha: 0.35)
+                      : palette.border.withValues(alpha: 0.5),
+                ),
+              ),
+              child: ClipRRect(
+                borderRadius: radius,
+                child: Material(
+                  color: Colors.transparent,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      for (var i = 0; i < children.length; i++) ...[
+                        if (i > 0)
+                          Divider(
+                            height: 1,
+                            thickness: 1,
+                            color: palette.border.withValues(alpha: 0.45),
+                          ),
+                        children[i],
+                      ],
+                    ],
+                  ),
+                ),
+              ),
             ),
           ),
         ],
+      ),
+    );
+
+    return AnimatedBuilder(
+      animation: _curve,
+      child: content,
+      builder: (context, child) => Opacity(
+        opacity: _curve.value.clamp(0.0, 1.0),
+        child: Transform.translate(
+          offset: Offset(0, 14 * (1 - _curve.value)),
+          child: child,
+        ),
       ),
     );
   }
@@ -119,12 +233,12 @@ class SettingsSwitchTile extends StatelessWidget {
       onTap: () => onChanged(!value),
       hoverColor: palette.hover.withValues(alpha: 0.45),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
         child: Row(
           children: [
             if (icon != null) ...[
-              Icon(icon, size: 18, color: palette.muted),
-              const SizedBox(width: 12),
+              SettingsIconChip(icon: icon!),
+              const SizedBox(width: 14),
             ],
             Expanded(
               child: Column(
@@ -176,12 +290,12 @@ class SettingsActionTile extends StatelessWidget {
       onTap: onTap,
       hoverColor: palette.hover.withValues(alpha: 0.45),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
         child: Row(
           children: [
             if (icon != null) ...[
-              Icon(icon, size: 18, color: palette.muted),
-              const SizedBox(width: 12),
+              SettingsIconChip(icon: icon!),
+              const SizedBox(width: 14),
             ],
             Expanded(
               child: Column(
@@ -243,7 +357,7 @@ class ModernSliderTile extends StatelessWidget {
     final display = formatValue(value);
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+      padding: const EdgeInsets.fromLTRB(18, 14, 18, 8),
       child: Column(
         children: [
           Row(
@@ -304,11 +418,11 @@ class DropdownSettingTile<T> extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.palette;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
       child: Row(
         children: [
-          Icon(icon, size: 18, color: palette.muted),
-          const SizedBox(width: 12),
+          SettingsIconChip(icon: icon),
+          const SizedBox(width: 14),
           Expanded(
             child: Text(
               label,
@@ -366,11 +480,11 @@ class TrackSettingTile<T> extends StatelessWidget {
     }
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
       child: Row(
         children: [
-          Icon(icon, size: 18, color: palette.muted),
-          const SizedBox(width: 12),
+          SettingsIconChip(icon: icon),
+          const SizedBox(width: 14),
           Expanded(
             child: Text(
               label,
@@ -431,7 +545,7 @@ String formatTrackLabel(String id, String? rawTitle, String? rawLanguage) {
   if (title.isEmpty && language.isEmpty) return 'Track $id';
   if (title.isEmpty) return language;
   if (language.isEmpty) return title;
-  return '$title · $language';
+  return '$title Â· $language';
 }
 
 double nearestPlaybackRate(double rate) => const [

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
@@ -171,31 +172,63 @@ class _ToastCardState extends State<_ToastCard> with TickerProviderStateMixin {
   late final AnimationController _enter = AnimationController(
     vsync: this,
     duration: AppMotion.toast,
+    reverseDuration: AppMotion.toastExit,
   );
+  late final CurvedAnimation _enterCurve = CurvedAnimation(
+    parent: _enter,
+    curve: AppMotion.enter,
+    reverseCurve: AppMotion.exit,
+  );
+  late final Animation<double> _scaleAnimation = Tween<double>(
+    begin: 0.97,
+    end: 1.0,
+  ).animate(_enterCurve);
+  late final Animation<Offset> _slideUpOffset = Tween<Offset>(
+    begin: const Offset(0, 0.22),
+    end: Offset.zero,
+  ).animate(_enterCurve);
+  late final Animation<Offset> _slideDownOffset = Tween<Offset>(
+    begin: const Offset(0, -0.22),
+    end: Offset.zero,
+  ).animate(_enterCurve);
   final ValueNotifier<double> _progress = ValueNotifier<double>(0);
   Timer? _countdown;
   late Duration _remaining = widget.entry.request.duration;
   bool _hovered = false;
   bool _leaving = false;
+  bool _enterLaunched = false;
 
-  static const Duration _tick = Duration(milliseconds: 40);
+  static const Duration _tick = Duration(milliseconds: 16);
 
   @override
   void initState() {
     super.initState();
     widget.entry.pulse.addListener(_restart);
-    if (!widget.entry.dismissing) {
-      _enter.forward();
-      _startCountdown();
-    }
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (AppMotion.reduce(context)) {
-      _enter.duration = Duration.zero;
-      if (_enter.value < 1) _enter.value = 1;
+    final reduced = AppMotion.reduce(context);
+    final lowPower = AppMotion.lowPower(context);
+    _enter.duration = reduced
+        ? Duration.zero
+        : AppMotion.scaled(context, AppMotion.toast);
+    _enter.reverseDuration = reduced
+        ? Duration.zero
+        : AppMotion.scaled(context, AppMotion.toastExit);
+    if (!_enterLaunched) {
+      _enterLaunched = true;
+      if (!widget.entry.dismissing) {
+        if (lowPower) {
+          _enter.value = 1;
+        } else {
+          _enter.forward();
+        }
+        _startCountdown();
+      }
+    } else if (lowPower && !_leaving && _enter.value < 1) {
+      _enter.value = 1;
     }
     if (widget.entry.dismissing) _leave();
   }
@@ -214,6 +247,7 @@ class _ToastCardState extends State<_ToastCard> with TickerProviderStateMixin {
   void dispose() {
     widget.entry.pulse.removeListener(_restart);
     _countdown?.cancel();
+    _enterCurve.dispose();
     _enter.dispose();
     _progress.dispose();
     super.dispose();
@@ -259,9 +293,12 @@ class _ToastCardState extends State<_ToastCard> with TickerProviderStateMixin {
     _leaving = true;
     _countdown?.cancel();
     widget.controller.requestDismiss(widget.entry.id);
-    final exit = AppMotion.duration(context, AppMotion.toast);
-    if (!AppMotion.reduce(context)) _enter.reverse();
-    Future<void>.delayed(exit).then((_) {
+    if (AppMotion.lowPower(context)) {
+      _enter.value = 0;
+      if (mounted) widget.controller.completeDismiss(widget.entry.id);
+      return;
+    }
+    _enter.reverse().then((_) {
       if (mounted) widget.controller.completeDismiss(widget.entry.id);
     });
   }
@@ -351,21 +388,17 @@ class _ToastCardState extends State<_ToastCard> with TickerProviderStateMixin {
                     ],
                   ),
                 ),
-                ValueListenableBuilder<double>(
-                  valueListenable: _progress,
-                  builder: (context, value, _) => Positioned(
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                    child: SizedBox(
-                      height: 1.5,
-                      child: Align(
-                        alignment: Alignment.centerLeft,
-                        child: FractionallySizedBox(
-                          widthFactor: (1 - value).clamp(0.0, 1.0),
-                          child: Container(
-                            color: accent.withValues(alpha: 0.45),
-                          ),
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: SizedBox(
+                    height: 1.5,
+                    child: RepaintBoundary(
+                      child: CustomPaint(
+                        painter: _ToastProgressPainter(
+                          progress: _progress,
+                          color: accent.withValues(alpha: 0.45),
                         ),
                       ),
                     ),
@@ -378,23 +411,17 @@ class _ToastCardState extends State<_ToastCard> with TickerProviderStateMixin {
       ),
     );
 
-    if (reduced) return card;
-    return AnimatedBuilder(
-      animation: _enter,
-      builder: (context, child) {
-        final progress = Curves.easeOutCubic
-            .transform(_enter.value.clamp(0.0, 1.0))
-            .clamp(0.0, 1.0);
-        final travel = widget.slideUp ? 12 : -12;
-        return Opacity(
-          opacity: progress,
-          child: Transform.translate(
-            offset: Offset(0, (1 - progress) * travel),
-            child: Transform.scale(scale: 0.98 + 0.02 * progress, child: child),
-          ),
-        );
-      },
-      child: card,
+    if (reduced) return RepaintBoundary(child: card);
+    return FadeTransition(
+      opacity: _enterCurve,
+      alwaysIncludeSemantics: true,
+      child: SlideTransition(
+        position: widget.slideUp ? _slideUpOffset : _slideDownOffset,
+        child: ScaleTransition(
+          scale: _scaleAnimation,
+          child: RepaintBoundary(child: card),
+        ),
+      ),
     );
   }
 
@@ -479,4 +506,26 @@ class _ToastClose extends StatelessWidget {
       icon: const Icon(Icons.close_rounded, size: 15),
     );
   }
+}
+
+class _ToastProgressPainter extends CustomPainter {
+  const _ToastProgressPainter({required this.progress, required this.color})
+    : super(repaint: progress);
+
+  final ValueListenable<double> progress;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final remaining = (1.0 - progress.value).clamp(0.0, 1.0);
+    if (remaining <= 0.0 || size.width <= 0 || size.height <= 0) return;
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, size.width * remaining, size.height),
+      Paint()..color = color,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _ToastProgressPainter oldDelegate) =>
+      oldDelegate.progress != progress || oldDelegate.color != color;
 }

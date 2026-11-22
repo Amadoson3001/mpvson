@@ -5,8 +5,8 @@ wake when it changes. Written from the checkout at the time of the paging,
 menu, and update consolidations; treat it as a map of the current code, not a
 target design.
 
-The controller is one `ChangeNotifier` split across six files
-(`player_controller.dart` plus the five `part` files). The parts share the
+The controller is one `ChangeNotifier` split across seven files
+(`player_controller.dart` plus six `part` files). The parts share the
 private fields declared in `player_controller.dart`, so "which file owns this"
 is a documentation question, not an enforced one. The `ValueNotifier`s at the
 bottom of `player_controller.dart` are the real boundaries: they are the only
@@ -56,7 +56,7 @@ from `_playbackState`) — and were removed.
 
 | Group | Fields | Written by | Notes |
 | --- | --- | --- | --- |
-| Queue contents | `_queue`, `_queueIdToIndex`, `_queueIdCounter`, `_currentIndex` | `player_controller_queue.dart`, `player_controller_engine.dart` | The index map is a cache of `_queue`; every mutation must call `_rebuildQueueIndex` or it silently goes stale. |
+| Queue contents | `_queue`, `_queueIdToIndex`, `_queueIdCounter`, `_currentIndex` | queue helpers, playback and session parts | Structural edits use queue helpers that update the ID index; selection and progress are still updated by playback and session paths. |
 | Queue undo | `_undo` | `removeAt`, `reorder`, `undoRemove`, `clearQueue`, import | Single-slot undo; a reorder discards it. |
 | Selection / navigation history | `_navigationHistory`, `_navigationCursor`, `_pendingNavigationCursor`, `_pendingNavigationEntryId` | `player_controller_queue.dart` (clear) and the navigation methods | Cursor and pending-cursor are two views of one position; they must be cleared together. |
 | Shuffle | `_shuffleEnabled`, `_shuffleRemaining`, `_shuffleVisited` | transport/queue parts | `_shuffleRemaining` is derived from `_queue`; `clearQueue` must clear both the pool and the visited set. |
@@ -67,24 +67,17 @@ from `_playbackState`) — and were removed.
 | Session save | `_saveTimer`, `_saveInFlight`, `_saveRequested`, `_saveDrain`, `_scrubBackupOnSave` | session part | Coalescing: a request during a save sets `_saveRequested` and the drain re-runs. |
 | Progress checkpoint | `_progressTimer`, `_checkpointInFlight`, `_checkpointRequested`, `_checkpointDrain` | session and engine parts | Same coalescing shape as the save. |
 | Closing | `_closingState`, `_closeFuture`, `_releaseFuture`, `_discardOnClose` | session part | `_closingState` gates every mutator through `_acceptsCommands`. |
-| Preference echoes | the `_confirmed*` / `_applied*Revision` / `*Drain` triples for volume, rate, shuffle, repeat, density, settings, network URLs, auto-play | session and transport parts | Each is a small state machine: desired value, revision counter, applied revision, in-flight drain. There are eight of them with the same shape and no shared owner. |
+| Preference echoes | the `_confirmed*` / `_applied*Revision` / `*Drain` triples for volume, rate, shuffle, repeat, density, settings, network URLs, auto-play | preferences, session and transport parts | Volume and rate writes live in the preferences part; queue and session preferences retain their own ordering and persistence paths. |
 
 ## Ownership questions this map leaves open
 
-1. **Queue mutations are spread over three files.** `removeAt`, `reorder`,
-   `undoRemove`, and `clearQueue` are in `player_controller_queue.dart`, but
-   `openPaths`/import in `player_controller_engine.dart` also clears and
-   rebuilds the queue, and `playIndex`/`_advance` in the transport part move
-   `_currentIndex`. The index-map invariant (`_queueIdToIndex` mirrors `_queue`)
-   is enforced by hand at each site.
-2. **The active-source reset sequence is repeated.** "The active source went
-   away" is spelled out four times — `removeAt` twice, `undoRemove`, and
-   `clearQueue` — as the same block of `_cancelPendingOpen`,
-   `_markSourceDisplaced`, `_clearResume`, `_engineHasMedia = false`,
-   `_engineEntryId = null`, metadata reset, `_playbackState.copyWith`, and
-   `_playback.stop`. The copies differ in the position and duration they
-   publish and in whether they await the stop, so extracting one helper needs
-   those as parameters.
+1. **Queue selection remains shared.** Structural edits use queue helpers that
+   update the ID index, while playback and navigation paths still change the
+   selected index. Progress updates replace entries without changing their IDs.
+2. **Source reset publication remains path-specific.** Queue removal and undo
+   share the active-source metadata reset. Cancellation, playback state,
+   notifications and engine stops remain in their original order at each call
+   site.
 3. **The preference echo machines are eight copies of one shape.** They differ
    only in what they write and whether a write should trigger a save. A single
    owner parameterized by "apply this value" and "does applying it dirty the

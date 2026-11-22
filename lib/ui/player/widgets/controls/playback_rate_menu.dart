@@ -19,49 +19,85 @@ class PlaybackRateMenu extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final speedText =
-        '${controller.rate.toStringAsFixed(controller.rate == controller.rate.roundToDouble() ? 0 : 2)}×';
-    return Semantics(
-      label: 'Playback speed, selected $speedText',
-      button: true,
-      child: PopupMenuButton<double>(
-        tooltip: 'Playback speed',
-        borderRadius: BorderRadius.circular(AppRadii.control),
-        initialValue: _nearestRate(controller.rate),
-        onOpened: () => onMenuVisibilityChanged?.call(true),
-        onCanceled: () => onMenuVisibilityChanged?.call(false),
-        onSelected: (rate) {
-          onMenuVisibilityChanged?.call(false);
-          unawaited(controller.setRate(rate));
-        },
-        itemBuilder: (context) =>
-            const <double>[0.5, 0.75, 1, 1.25, 1.5, 2].map((rate) {
-              final isSelected = (controller.rate - rate).abs() < 0.01;
-              final label = rate == 1 ? 'Normal speed' : '$rate×';
-              return PopupMenuItem<double>(
-                value: rate,
-                child: Semantics(
-                  selected: isSelected,
-                  label: isSelected ? '$label, selected' : label,
-                  child: Text(label),
+    return ValueListenableBuilder<double>(
+      valueListenable: controller.rateListenable,
+      builder: (context, currentRate, _) {
+        final speedText = _formatRate(currentRate);
+        final isModified = (currentRate - 1.0).abs() >= 0.01;
+        final accent = Theme.of(context).colorScheme.primary;
+        final sizing = PlayerControlStyle.of(context);
+        return Semantics(
+          label: 'Playback speed, selected $speedText',
+          button: true,
+          child: PopupMenuButton<double>(
+            key: const ValueKey('playback-rate-menu-button'),
+            tooltip: 'Playback speed',
+            position: PopupMenuPosition.over,
+            borderRadius: BorderRadius.circular(AppRadii.control),
+            initialValue: _nearestRate(currentRate),
+            onOpened: () => onMenuVisibilityChanged?.call(true),
+            onCanceled: () => onMenuVisibilityChanged?.call(false),
+            onSelected: (rate) {
+              onMenuVisibilityChanged?.call(false);
+              unawaited(controller.setRate(rate));
+            },
+            itemBuilder: (context) =>
+                const <double>[0.5, 0.75, 1, 1.25, 1.5, 2].map((rate) {
+                  final isSelected = (currentRate - rate).abs() < 0.01;
+                  final label = rate == 1 ? 'Normal speed' : _formatRate(rate);
+                  return PopupMenuItem<double>(
+                    value: rate,
+                    child: Semantics(
+                      selected: isSelected,
+                      label: isSelected ? '$label, selected' : label,
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              label,
+                              style: TextStyle(
+                                fontWeight: isSelected
+                                    ? FontWeight.w600
+                                    : FontWeight.normal,
+                              ),
+                            ),
+                          ),
+                          if (isSelected)
+                            Icon(Icons.check_rounded, size: 17, color: accent),
+                        ],
+                      ),
+                    ),
+                  );
+                }).toList(),
+            child: SizedBox(
+              width: sizing.compact ? 44 : 54,
+              height: sizing.buttonExtent,
+              child: Center(
+                child: Text(
+                  speedText,
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    color: isModified
+                        ? accent
+                        : Colors.white.withValues(alpha: 0.88),
+                    fontWeight: FontWeight.w600,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
                 ),
-              );
-            }).toList(),
-        child: SizedBox(
-          width: PlayerControlStyle.of(context).compact ? 40 : 52,
-          height: PlayerControlStyle.of(context).buttonExtent,
-          child: Center(
-            child: Text(
-              speedText,
-              style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                color: Colors.white.withValues(alpha: 0.88),
-                fontWeight: FontWeight.w600,
               ),
             ),
           ),
-        ),
-      ),
+        );
+      },
     );
+  }
+
+  static String _formatRate(double rate) {
+    if (rate == rate.roundToDouble()) return '${rate.toInt()}×';
+    final formatted = rate
+        .toStringAsFixed(2)
+        .replaceFirst(RegExp(r'0+$'), '')
+        .replaceFirst(RegExp(r'\.$'), '');
+    return '$formatted×';
   }
 
   static double _nearestRate(double rate) => const [

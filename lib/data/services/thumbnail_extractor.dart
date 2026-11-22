@@ -10,7 +10,7 @@ import '../../domain/models/media_kind.dart';
 import '../../domain/models/media_source.dart';
 import '../../domain/models/media_thumbnail.dart';
 import 'diagnostic_log.dart';
-import 'media_probe_service_impl.dart' show PureDartMediaParser;
+import 'pure_dart_media_parser.dart';
 import 'thumbnail_contract.dart';
 import 'thumbnail_image.dart';
 import 'thumbnail_image_poller.dart';

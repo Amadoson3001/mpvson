@@ -10,7 +10,7 @@ import 'package:mpvson/data/services/stream_manifest_service.dart';
 import 'package:mpvson/data/services/streaming_coordinator.dart';
 import 'package:mpvson/data/services/yt_dlp_resolver.dart';
 import 'package:mpvson/domain/models/stream_playback_state.dart';
-import 'package:mpvson/domain/models/stream_rendition.dart';
+import 'package:mpvson/domain/models/resolved_stream.dart';
 
 void main() {
   group('StreamingCoordinator lifecycle & attempt isolation', () {
@@ -47,6 +47,244 @@ void main() {
         coordinator.state.originalUrl,
         equals('https://example.com/video2.mp4'),
       );
+    });
+
+    test('new attempts clear manifest and resume position', () async {
+      final service = _FakeStreamManifestService(
+        const StreamManifestInfo(
+          masterUrl: 'https://example.com/live',
+          format: StreamFormat.hls,
+          isLive: true,
+        ),
+      );
+      final subject = StreamingCoordinator(manifestService: service);
+      addTearDown(subject.dispose);
+      await subject.prepareStream('https://example.com/live');
+      expect(subject.activeFormat, StreamFormat.hls);
+      subject.updatePosition(const Duration(minutes: 5));
+      await subject.prepareStream('https://example.com/next.mp4');
+      expect(subject.activeFormat, StreamFormat.progressive);
+      Duration? position;
+      subject.onReconnectRequired = (_, value) async => position = value;
+      subject.handleNativeLifecycleEvent(
+        const NativeMediaEvent.ended(
+          endReason: NativeEndReason.error,
+          errorCode: -8,
+        ),
+        attemptId: subject.currentAttemptId,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 350));
+      expect(position, Duration.zero);
+    });
+
+    test('stop cancels a scheduled reconnect', () async {
+      await coordinator.prepareStream('https://example.com/stream.mp4');
+      var called = false;
+      coordinator.onReconnectRequired = (_, _) async {
+        called = true;
+      };
+      coordinator.handleNativeLifecycleEvent(
+        const NativeMediaEvent.ended(
+          endReason: NativeEndReason.error,
+          errorCode: -8,
+        ),
+        attemptId: coordinator.currentAttemptId,
+      );
+      coordinator.stop();
+      await Future<void>.delayed(const Duration(milliseconds: 350));
+      expect(called, isFalse);
+    });
+
+    test('seeking back to zero resets reconnect position', () async {
+      await coordinator.prepareStream('https://example.com/video.mp4');
+      coordinator.updatePosition(const Duration(minutes: 5));
+      coordinator.updatePosition(Duration.zero);
+      Duration? resumed;
+      coordinator.onReconnectRequired = (_, position) async {
+        resumed = position;
+      };
+      coordinator.handleNativeLifecycleEvent(
+        const NativeMediaEvent.ended(
+          endReason: NativeEndReason.error,
+          errorCode: -8,
+        ),
+        attemptId: coordinator.currentAttemptId,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 350));
+      expect(resumed, Duration.zero);
+    });
+
+    test('late refresh cannot overwrite a replacement attempt', () async {
+      final resolver = _RefreshResolver();
+      final subject = StreamingCoordinator(ytDlpResolver: resolver);
+      addTearDown(subject.dispose);
+      await subject.prepareStream('https://example.com/page');
+      final refresh = subject.refreshExpiringStream();
+      await subject.prepareStream('https://example.com/replacement.mp4');
+      expect(resolver.refreshToken?.isCancelled, isTrue);
+      resolver.result.complete(
+        const ResolvedStream(
+          originalUrl: 'https://example.com/page',
+          streamUrl: 'https://example.com/late.mp4',
+        ),
+      );
+      expect(await refresh, isNull);
+      expect(subject.state.streamUrl, 'https://example.com/replacement.mp4');
+    });
+
+    test('403 on expiring source refreshes once then fails', () async {
+      final resolver = _RefreshResolver();
+      final subject = StreamingCoordinator(ytDlpResolver: resolver);
+      addTearDown(subject.dispose);
+      await subject.prepareStream('https://example.com/page');
+      var reconnects = 0;
+      subject.onReconnectRequired = (_, _) async {
+        reconnects++;
+      };
+      const error = NativeMediaEvent.ended(
+        endReason: NativeEndReason.error,
+        errorCode: -13,
+      );
+      subject.handleNativeLifecycleEvent(
+        error,
+        attemptId: subject.currentAttemptId,
+        httpStatusCode: 403,
+      );
+      expect(reconnects, 1);
+      subject.handleNativeLifecycleEvent(
+        error,
+        attemptId: subject.currentAttemptId,
+        httpStatusCode: 403,
+      );
+      expect(reconnects, 1);
+      expect(subject.state.stage, StreamStage.failed);
+    });
+
+    test(
+      'late old quality dimensions do not confirm a new selection',
+      () async {
+        const low = StreamRendition(
+          id: 'low',
+          label: '360p',
+          width: 640,
+          height: 360,
+        );
+        const high = StreamRendition(
+          id: 'high',
+          label: '720p',
+          width: 1280,
+          height: 720,
+        );
+        final subject = StreamingCoordinator(
+          manifestService: _FakeStreamManifestService(
+            const StreamManifestInfo(
+              masterUrl: 'https://example.com/master.m3u8',
+              format: StreamFormat.hls,
+              variants: [low, high],
+            ),
+          ),
+        );
+        addTearDown(subject.dispose);
+        await subject.prepareStream('https://example.com/master.m3u8');
+        subject.updateDemuxerStats(width: 640, height: 360);
+        subject.selectRendition(high);
+        subject.updateDemuxerStats(width: 640, height: 360);
+        expect(subject.state.activeRendition, low);
+        expect(subject.state.stage, StreamStage.switchingQuality);
+        subject.updateDemuxerStats(width: 1280, height: 720);
+        expect(subject.state.activeRendition, high);
+        expect(subject.state.stage, StreamStage.ready);
+      },
+    );
+
+    test('live reconnect uses the live edge', () async {
+      final subject = StreamingCoordinator(
+        manifestService: _FakeStreamManifestService(
+          const StreamManifestInfo(
+            masterUrl: 'https://example.com/live.m3u8',
+            format: StreamFormat.hls,
+            isLive: true,
+          ),
+        ),
+      );
+      addTearDown(subject.dispose);
+      await subject.prepareStream('https://example.com/live.m3u8');
+      subject.updatePosition(const Duration(minutes: 5));
+      Duration? resumed;
+      subject.onReconnectRequired = (_, position) async {
+        resumed = position;
+      };
+      subject.handleNativeLifecycleEvent(
+        const NativeMediaEvent.ended(
+          endReason: NativeEndReason.error,
+          errorCode: -8,
+        ),
+        attemptId: subject.currentAttemptId,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 350));
+      expect(resumed, Duration.zero);
+    });
+
+    test('stop cancels an in-flight refresh', () async {
+      final resolver = _RefreshResolver();
+      final subject = StreamingCoordinator(ytDlpResolver: resolver);
+      addTearDown(subject.dispose);
+      await subject.prepareStream('https://example.com/page');
+      final refresh = subject.refreshExpiringStream();
+      subject.stop();
+      expect(resolver.refreshToken?.isCancelled, isTrue);
+      resolver.result.complete(
+        const ResolvedStream(
+          originalUrl: 'https://example.com/page',
+          streamUrl: 'https://example.com/late.mp4',
+        ),
+      );
+      expect(await refresh, isNull);
+      expect(subject.state.stage, StreamStage.idle);
+    });
+
+    testWidgets('ambiguous dimensions time out without claiming a quality', (
+      tester,
+    ) async {
+      const low = StreamRendition(
+        id: 'low',
+        label: '360p',
+        width: 640,
+        height: 360,
+      );
+      const one = StreamRendition(
+        id: 'a',
+        label: '720p A',
+        width: 1280,
+        height: 720,
+      );
+      const two = StreamRendition(
+        id: 'b',
+        label: '720p B',
+        width: 1280,
+        height: 720,
+      );
+      final subject = StreamingCoordinator(
+        manifestService: _FakeStreamManifestService(
+          const StreamManifestInfo(
+            masterUrl: 'https://example.com/master.m3u8',
+            format: StreamFormat.hls,
+            variants: [low, one, two],
+          ),
+        ),
+      );
+      addTearDown(subject.dispose);
+      await subject.prepareStream('https://example.com/master.m3u8');
+      subject.updateDemuxerStats(width: 640, height: 360);
+      subject.selectRendition(one);
+      subject.selectRendition(two);
+      subject.updateDemuxerStats(width: 1280, height: 720);
+      expect(subject.state.activeRendition, low);
+      expect(subject.state.stage, StreamStage.switchingQuality);
+      await tester.pump(const Duration(seconds: 9));
+      expect(subject.state.activeRendition, low);
+      expect(subject.state.stage, StreamStage.ready);
+      expect(subject.state.isAutoQuality, isTrue);
     });
 
     test('ignores native events from stale or obsolete attempt IDs', () async {
@@ -247,6 +485,8 @@ void main() {
         );
         expect(autoCoordinator.state.stage, equals(StreamStage.ready));
 
+        autoCoordinator.updateDemuxerStats(width: 1280, height: 720);
+
         // Simulate underruns to trigger downshift
         autoCoordinator.updateDemuxerStats(
           bufferedDuration: const Duration(milliseconds: 500),
@@ -421,4 +661,30 @@ class _FakeStreamManifestService extends StreamManifestService {
     dynamic client,
     Duration? timeout,
   }) async => info;
+}
+
+class _RefreshResolver extends YtDlpResolver {
+  final result = Completer<ResolvedStream>();
+  CancellationToken? refreshToken;
+  @override
+  bool canResolve(String url) => url.endsWith('/page');
+  @override
+  Future<ResolvedStream> resolve(
+    String url, {
+    Duration timeout = const Duration(seconds: 35),
+    CancellationToken? cancelToken,
+  }) async => ResolvedStream(
+    originalUrl: url,
+    streamUrl: 'https://example.com/first.mp4',
+    isExpiring: true,
+  );
+  @override
+  Future<ResolvedStream> refresh(
+    ResolvedStream stream, {
+    Duration timeout = const Duration(seconds: 35),
+    CancellationToken? cancelToken,
+  }) {
+    refreshToken = cancelToken;
+    return result.future;
+  }
 }

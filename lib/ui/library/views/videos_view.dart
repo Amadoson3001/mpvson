@@ -12,6 +12,7 @@ import '../../../utils/format.dart';
 import '../../player/player_controller.dart';
 import '../../core/app_motion.dart';
 import '../../core/app_theme.dart';
+import '../../core/components/animated_grid_reflow.dart';
 import '../../core/components/app_dialog.dart';
 import '../../core/components/media_row.dart';
 import '../../core/components/empty_state.dart';
@@ -579,20 +580,35 @@ class _VideosViewState extends State<VideosView> {
               (entry.position.inMilliseconds / entry.duration.inMilliseconds)
                   .clamp(0.0, 1.0),
     };
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final gutter = PageHeader.gutterFor(constraints.maxWidth);
-        final available = (constraints.maxWidth - 2 * gutter).clamp(
+    final itemCount = videos.length + (_pager.isLoadingMore ? 1 : 0);
+    return StableGridReflowBox(
+      scrollController: _browseScrollController,
+      metricsBuilder: (width, columnBasisWidth) {
+        final gutter = PageHeader.gutterFor(width);
+        final available = (width - 2 * gutter).clamp(0.0, double.infinity);
+        final basisGutter = PageHeader.gutterFor(columnBasisWidth);
+        final basisAvailable = (columnBasisWidth - 2 * basisGutter).clamp(
           0.0,
           double.infinity,
         );
-        final columns = ((available + 20) / AppLayout.videoGridMinWidth)
+        final columns = ((basisAvailable + 20) / AppLayout.videoGridMinWidth)
             .ceil()
             .clamp(1, 12);
-        final width = (available - (columns - 1) * 20) / columns;
-        final itemCount = videos.length + (_pager.isLoadingMore ? 1 : 0);
+        final itemWidth = (available - (columns - 1) * 20) / columns;
+        return GridReflowMetrics(
+          columns: columns,
+          itemWidth: itemWidth,
+          itemHeight: itemWidth * 9 / 16 + 68,
+          crossAxisSpacing: 20,
+          mainAxisSpacing: 24,
+          horizontalPadding: gutter,
+        );
+      },
+      builder: (context, metrics, isReflowing) {
+        final gutter = metrics.horizontalPadding;
         return GridView.builder(
           controller: _browseScrollController,
+          clipBehavior: isReflowing ? Clip.none : Clip.hardEdge,
           addAutomaticKeepAlives: false,
           addRepaintBoundaries: true,
           padding: EdgeInsets.fromLTRB(
@@ -602,10 +618,10 @@ class _VideosViewState extends State<VideosView> {
             AppSpace.lg,
           ),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: columns,
-            mainAxisSpacing: 24,
-            crossAxisSpacing: 20,
-            mainAxisExtent: width * 9 / 16 + 68,
+            crossAxisCount: metrics.columns,
+            mainAxisSpacing: metrics.mainAxisSpacing,
+            crossAxisSpacing: metrics.crossAxisSpacing,
+            mainAxisExtent: metrics.itemHeight,
           ),
           itemCount: itemCount,
           itemBuilder: (context, index) {
@@ -624,23 +640,26 @@ class _VideosViewState extends State<VideosView> {
             }
             final video = videos[index];
             final isUnavailable = !video.isAvailable;
-            return _VideoGridCard(
+            return GridReflowItem(
               key: ValueKey(video.id),
-              video: video,
-              selectedVideoId: _selectedVideoId,
-              selectedVideoIds: _selectedVideoIds,
-              controller: widget.controller,
-              resumeProgress: recentProgressByPath[video.path],
-              onSelect: () {
-                if (_selectedVideoId.value != video.id) {
-                  _selectedVideoId.value = video.id;
-                }
-              },
-              onToggleMultiSelect: () => _toggleMultiSelect(video.id),
-              onPlay: isUnavailable ? null : () => _playVideo(video),
-              onContextMenu: (position) =>
-                  _showVideoContextMenu(video, position),
-              actionMenu: _buildVideoItemActionMenu(video),
+              index: index,
+              child: _VideoGridCard(
+                video: video,
+                selectedVideoId: _selectedVideoId,
+                selectedVideoIds: _selectedVideoIds,
+                controller: widget.controller,
+                resumeProgress: recentProgressByPath[video.path],
+                onSelect: () {
+                  if (_selectedVideoId.value != video.id) {
+                    _selectedVideoId.value = video.id;
+                  }
+                },
+                onToggleMultiSelect: () => _toggleMultiSelect(video.id),
+                onPlay: isUnavailable ? null : () => _playVideo(video),
+                onContextMenu: (position) =>
+                    _showVideoContextMenu(video, position),
+                actionMenu: _buildVideoItemActionMenu(video),
+              ),
             );
           },
         );
@@ -1081,7 +1100,6 @@ class _VideoPreviewState extends State<_VideoPreview> {
 
 class _VideoGridCard extends StatefulWidget {
   const _VideoGridCard({
-    super.key,
     required this.video,
     required this.selectedVideoId,
     required this.selectedVideoIds,
@@ -1231,22 +1249,22 @@ class _VideoGridCardState extends State<_VideoGridCard> {
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
                               // Video Thumbnail Stage
-                              RepaintBoundary(
-                                child: ValueListenableBuilder<bool>(
-                                  valueListenable: hovered,
-                                  child: staticStage,
-                                  builder: (context, isHovered, stageChild) {
-                                    final showPlayOverlay =
-                                        !isUnavailable &&
-                                        (isHovered ||
-                                            isSelected ||
-                                            rowFocus.hasFocus);
-                                    return AnimatedScale(
-                                      scale: (lowPower || !showPlayOverlay)
-                                          ? 1.0
-                                          : 1.02,
-                                      duration: hoverDuration,
-                                      curve: AppMotion.enter,
+                              ValueListenableBuilder<bool>(
+                                valueListenable: hovered,
+                                child: RepaintBoundary(child: staticStage),
+                                builder: (context, isHovered, stageChild) {
+                                  final showPlayOverlay =
+                                      !isUnavailable &&
+                                      (isHovered ||
+                                          isSelected ||
+                                          rowFocus.hasFocus);
+                                  return AnimatedScale(
+                                    scale: (lowPower || !showPlayOverlay)
+                                        ? 1.0
+                                        : 1.02,
+                                    duration: hoverDuration,
+                                    curve: AppMotion.enter,
+                                    child: RepaintBoundary(
                                       child: Container(
                                         foregroundDecoration: BoxDecoration(
                                           borderRadius: BorderRadius.circular(
@@ -1328,9 +1346,9 @@ class _VideoGridCardState extends State<_VideoGridCard> {
                                           ),
                                         ),
                                       ),
-                                    );
-                                  },
-                                ),
+                                    ),
+                                  );
+                                },
                               ),
                               // Card Bottom Details
                               Padding(

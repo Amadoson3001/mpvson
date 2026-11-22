@@ -18,6 +18,7 @@ import 'settings_empty_fallbacks.dart';
 import 'settings_library_section.dart';
 import 'settings_playback_section.dart';
 import 'settings_player_controls_section.dart';
+import 'settings_shared_widgets.dart' show SettingsIconChip;
 import 'settings_shortcuts_section.dart';
 import 'settings_update_section.dart';
 
@@ -112,56 +113,91 @@ class _SettingsDialogViewState extends State<SettingsDialogView> {
       ? SettingsSection.mediaLibrary
       : SettingsSection.appearance;
 
+  int _previousIndex = 0;
+
   void _selectSection(SettingsSection section) {
     if (_section == section) return;
-    setState(() => _section = section);
+    setState(() {
+      _previousIndex = _section.index;
+      _section = section;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.palette;
+    final title = Padding(
+      padding: EdgeInsets.fromLTRB(
+        widget.useRail ? 24 : 20,
+        widget.embedded ? 24 : 8,
+        20,
+        widget.useRail ? 8 : 4,
+      ),
+      child: widget.embedded
+          ? Semantics(
+              header: true,
+              child: Text('Settings', style: palette.pageTitle),
+            )
+          : const SizedBox.shrink(),
+    );
+    final pane = SettingsContentPane(
+      section: _section,
+      previousIndex: _previousIndex,
+      controller: widget.controller,
+      updates: widget.updates,
+      engineUpdates: widget.engineUpdates,
+      pickSubtitle: widget.pickSubtitle,
+      embedded: widget.embedded,
+      compactViewport: widget.compactViewport,
+      preferences: widget.preferences,
+      desktopIntegration: widget.desktopIntegration,
+      libraryRepository: widget.libraryRepository,
+      pickDirectory: widget.pickDirectory,
+    );
+
     if (widget.useRail) {
       return Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           SizedBox(
-            width: 200,
+            width: 248,
             child: DecoratedBox(
               decoration: BoxDecoration(
-                color: context.palette.background,
+                color: widget.embedded
+                    ? Colors.transparent
+                    : palette.background,
                 border: Border(
-                  right: BorderSide(color: context.palette.border, width: 1),
+                  right: BorderSide(
+                    color: palette.border.withValues(alpha: 0.5),
+                    width: 1,
+                  ),
                 ),
               ),
-              child: SettingsNavigation(
-                key: const ValueKey('settings-navigation-rail'),
-                section: _section,
-                wide: true,
-                showMediaLibrary: !widget.embedded,
-                onSelected: _selectSection,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  title,
+                  Expanded(
+                    child: SettingsNavigation(
+                      key: const ValueKey('settings-navigation-rail'),
+                      section: _section,
+                      wide: true,
+                      showMediaLibrary: !widget.embedded,
+                      onSelected: _selectSection,
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
-          Expanded(
-            child: SettingsContentPane(
-              section: _section,
-              controller: widget.controller,
-              updates: widget.updates,
-              engineUpdates: widget.engineUpdates,
-              pickSubtitle: widget.pickSubtitle,
-              embedded: widget.embedded,
-              compactViewport: widget.compactViewport,
-              preferences: widget.preferences,
-              desktopIntegration: widget.desktopIntegration,
-              libraryRepository: widget.libraryRepository,
-              pickDirectory: widget.pickDirectory,
-            ),
-          ),
+          Expanded(child: pane),
         ],
       );
     }
 
     return Column(
       children: [
+        if (widget.embedded) title,
         SettingsNavigation(
           key: const ValueKey('settings-top-navigation'),
           section: _section,
@@ -169,26 +205,44 @@ class _SettingsDialogViewState extends State<SettingsDialogView> {
           showMediaLibrary: !widget.embedded,
           onSelected: _selectSection,
         ),
-        Divider(height: 1, color: context.palette.border),
-        Expanded(
-          child: SettingsContentPane(
-            section: _section,
-            controller: widget.controller,
-            updates: widget.updates,
-            engineUpdates: widget.engineUpdates,
-            pickSubtitle: widget.pickSubtitle,
-            embedded: widget.embedded,
-            compactViewport: widget.compactViewport,
-            preferences: widget.preferences,
-            desktopIntegration: widget.desktopIntegration,
-            libraryRepository: widget.libraryRepository,
-            pickDirectory: widget.pickDirectory,
-          ),
-        ),
+        Divider(height: 1, color: palette.border),
+        Expanded(child: pane),
       ],
     );
   }
 }
+
+const List<(String, List<SettingsSection>)> _navGroups = [
+  (
+    'Personalize',
+    [
+      SettingsSection.appearance,
+      SettingsSection.animation,
+      SettingsSection.playerControls,
+    ],
+  ),
+  (
+    'Playback',
+    [
+      SettingsSection.playback,
+      SettingsSection.videoAudio,
+      SettingsSection.shortcuts,
+    ],
+  ),
+  (
+    'System',
+    [
+      SettingsSection.desktopIntegration,
+      SettingsSection.mediaLibrary,
+      SettingsSection.about,
+    ],
+  ),
+];
+
+const double _navItemHeight = 42;
+const double _navItemGap = 2;
+const double _navLabelHeight = 30;
+const double _navGroupGap = 12;
 
 class SettingsNavigation extends StatelessWidget {
   const SettingsNavigation({
@@ -204,40 +258,124 @@ class SettingsNavigation extends StatelessWidget {
   final bool showMediaLibrary;
   final ValueChanged<SettingsSection> onSelected;
 
+  bool _visible(SettingsSection item) =>
+      showMediaLibrary || item != SettingsSection.mediaLibrary;
+
   @override
   Widget build(BuildContext context) {
-    final items = SettingsSection.values
-        .where(
-          (item) => showMediaLibrary || item != SettingsSection.mediaLibrary,
-        )
-        .map(
-          (item) => SettingsNavigationItem(
-            section: item,
-            selected: item == section,
-            wide: wide,
-            onPressed: () => onSelected(item),
-          ),
-        )
-        .toList();
+    final palette = context.palette;
 
-    if (wide) {
-      return SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            for (final item in items) ...[item, const SizedBox(height: 2)],
-          ],
+    if (!wide) {
+      return ColoredBox(
+        color: palette.background,
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final item in SettingsSection.values.where(_visible))
+                SettingsNavigationItem(
+                  section: item,
+                  selected: item == section,
+                  wide: false,
+                  onPressed: () => onSelected(item),
+                ),
+            ],
+          ),
         ),
       );
     }
 
-    return ColoredBox(
-      color: context.palette.background,
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        child: Row(mainAxisSize: MainAxisSize.min, children: items),
+    var y = 0.0;
+    double? indicatorTop;
+    final children = <Widget>[];
+    var firstGroup = true;
+    for (final (label, sections) in _navGroups) {
+      final visible = sections.where(_visible).toList();
+      if (visible.isEmpty) continue;
+      if (!firstGroup) y += _navGroupGap;
+      firstGroup = false;
+      children.add(
+        Positioned(
+          top: y,
+          left: 12,
+          right: 12,
+          height: _navLabelHeight,
+          child: Align(
+            alignment: Alignment.bottomLeft,
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Text(
+                label,
+                style: palette.metadata.copyWith(
+                  color: palette.muted.withValues(alpha: 0.85),
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      y += _navLabelHeight;
+      for (final item in visible) {
+        if (item == section) indicatorTop = y;
+        children.add(
+          Positioned(
+            top: y,
+            left: 0,
+            right: 0,
+            height: _navItemHeight,
+            child: SettingsNavigationItem(
+              section: item,
+              selected: item == section,
+              wide: true,
+              onPressed: () => onSelected(item),
+            ),
+          ),
+        );
+        y += _navItemHeight + _navItemGap;
+      }
+    }
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 16),
+      child: SizedBox(
+        height: y,
+        child: Stack(
+          children: [
+            if (indicatorTop != null)
+              AnimatedPositioned(
+                duration: AppMotion.duration(context, AppMotion.spatialDefault),
+                curve: AppMotion.spatialProgressCurve,
+                top: indicatorTop,
+                left: 0,
+                right: 0,
+                height: _navItemHeight,
+                child: IgnorePointer(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: palette.accent.withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(AppRadii.artwork),
+                    ),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Container(
+                        width: 3,
+                        height: 18,
+                        margin: const EdgeInsets.only(left: 1),
+                        decoration: BoxDecoration(
+                          color: palette.accent,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ...children,
+          ],
+        ),
       ),
     );
   }
@@ -260,45 +398,62 @@ class SettingsNavigationItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
+    final radius = BorderRadius.circular(AppRadii.artwork);
+    final color = selected ? palette.text : palette.muted;
     final labelStyle = palette.rowPrimary.copyWith(
-      color: selected ? palette.text : palette.muted,
+      color: color,
       fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
     );
+    final duration = AppMotion.duration(context, AppMotion.standard);
 
     return Semantics(
       selected: selected,
+      button: true,
       child: Material(
         color: Colors.transparent,
         child: InkWell(
           onTap: onPressed,
-          borderRadius: BorderRadius.circular(AppRadii.control),
-          hoverColor: palette.hover.withValues(alpha: 0.55),
+          borderRadius: radius,
+          hoverColor: palette.hover.withValues(alpha: selected ? 0.0 : 0.5),
+          splashColor: palette.accent.withValues(alpha: 0.10),
+          highlightColor: Colors.transparent,
           child: AnimatedContainer(
-            duration: AppMotion.duration(context, AppMotion.quick),
-            padding: EdgeInsets.symmetric(
-              horizontal: wide ? 12 : 14,
-              vertical: wide ? 8 : 7,
+            duration: duration,
+            curve: AppMotion.standardCurve,
+            padding: EdgeInsets.only(
+              left: wide ? 14 : 14,
+              right: 12,
+              top: wide ? 0 : 8,
+              bottom: wide ? 0 : 8,
             ),
             decoration: BoxDecoration(
-              color: selected ? palette.hover : Colors.transparent,
-              borderRadius: BorderRadius.circular(AppRadii.control),
+              color: !wide && selected
+                  ? palette.accent.withValues(alpha: 0.14)
+                  : Colors.transparent,
+              borderRadius: radius,
             ),
             child: Row(
               mainAxisSize: wide ? MainAxisSize.max : MainAxisSize.min,
               children: [
-                Icon(
-                  section.icon,
-                  size: 18,
-                  color: selected ? palette.text : palette.muted,
+                TweenAnimationBuilder<Color?>(
+                  duration: duration,
+                  tween: ColorTween(
+                    end: selected ? palette.accent : palette.muted,
+                  ),
+                  builder: (context, c, _) =>
+                      Icon(section.icon, size: 19, color: c),
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: 12),
                 if (wide)
                   Expanded(
-                    child: Text(
-                      section.label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    child: AnimatedDefaultTextStyle(
+                      duration: duration,
                       style: labelStyle,
+                      child: Text(
+                        section.label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
                   )
                 else
@@ -321,6 +476,7 @@ class SettingsContentPane extends StatelessWidget {
   const SettingsContentPane({
     super.key,
     required this.section,
+    this.previousIndex = 0,
     required this.controller,
     required this.updates,
     required this.engineUpdates,
@@ -334,6 +490,7 @@ class SettingsContentPane extends StatelessWidget {
   });
 
   final SettingsSection section;
+  final int previousIndex;
   final PlayerController controller;
   final UpdateService updates;
   final EngineUpdateService engineUpdates;
@@ -353,29 +510,57 @@ class SettingsContentPane extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(28, 22, 28, 4),
-            child: Align(
-              alignment: Alignment.topCenter,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 640),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      section.label,
-                      style: palette.albumTitle.copyWith(fontSize: 20),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(section.description, style: palette.rowSecondary),
-                  ],
+          AnimatedSwitcher(
+            duration: AppMotion.duration(context, AppMotion.standard),
+            switchInCurve: AppMotion.enter,
+            layoutBuilder: (current, previous) => Stack(
+              alignment: Alignment.topLeft,
+              children: [...previous, ?current],
+            ),
+            child: Padding(
+              key: ValueKey<SettingsSection>(section),
+              padding: const EdgeInsets.fromLTRB(28, 24, 28, 12),
+              child: Align(
+                alignment: Alignment.topLeft,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 1200),
+                  child: Row(
+                    children: [
+                      SettingsIconChip(icon: section.icon, size: 44),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              section.label,
+                              style: palette.albumTitle.copyWith(
+                                fontSize: AppType.title,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              section.description,
+                              style: palette.rowSecondary,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
           ),
           Expanded(
-            child: KeyedSubtree(
+            child: AppSectionReveal(
               key: ValueKey<SettingsSection>(section),
+              duration: AppMotion.emphasized,
+              beginOffset: Offset(
+                0,
+                section.index >= previousIndex ? 0.03 : -0.03,
+              ),
               child: switch (section) {
                 SettingsSection.appearance => AppearanceSettingsSection(
                   controller: controller,

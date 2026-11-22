@@ -605,8 +605,14 @@ bool ANGLESurfaceManager::CreateAndBindEGLSurface(HANDLE internal_handle,
     if (result == EGL_FALSE || count == 0) {
       FAIL("eglChooseConfig");
     }
+    // Prefer OpenGL ES 3.0 so libmpv unlocks 16-bit float FBOs, high-precision
+    // scalers (lanczos/mitchell), dithering, debanding, and 10-bit textures.
     context_ = eglCreateContext(display_, config_, EGL_NO_CONTEXT,
-                                kEGLContextAttributes);
+                                kEGLContextAttributesES3);
+    if (context_ == EGL_NO_CONTEXT) {
+      context_ = eglCreateContext(display_, config_, EGL_NO_CONTEXT,
+                                  kEGLContextAttributesES2);
+    }
     if (context_ == EGL_NO_CONTEXT) {
       FAIL("eglCreateContext");
     }
@@ -635,8 +641,18 @@ bool ANGLESurfaceManager::CreateAndBindEGLSurface(HANDLE internal_handle,
     eglDestroySurface(display_, surface);
     FAIL("eglBindTexImage");
   }
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  static bool logged_gl_version = false;
+  if (!logged_gl_version) {
+    logged_gl_version = true;
+    const auto* gl_version =
+        reinterpret_cast<const char*>(glGetString(GL_VERSION));
+    if (gl_version != nullptr) {
+      std::cout << "media_kit: ANGLESurfaceManager: GL_VERSION: " << gl_version
+                << std::endl;
+    }
+  }
   eglMakeCurrent(display_, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
   *out_surface = surface;
   *out_tex_id = tex_id;

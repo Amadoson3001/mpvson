@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../../data/repositories/media_library_repository.dart';
@@ -7,6 +10,7 @@ import '../../player/player_controller.dart';
 import '../../core/app_motion.dart';
 import '../../core/app_theme.dart';
 import '../../core/toast/toast_layout.dart';
+import '../../core/components/animated_grid_reflow.dart';
 import '../../core/components/playback_pulse.dart';
 import '../../player/widgets/queue_panel.dart';
 import '../../player/views/player_queue_layout.dart';
@@ -119,43 +123,30 @@ class _LibraryShellState extends State<LibraryShell>
   /// that races a user click can never clobber the clicked section.
   int _sectionGeneration = 0;
 
-  late final AnimationController _nowPlayingMorphController =
-      AnimationController(
-        vsync: this,
-        duration: AppMotion.sheetEnter,
-        reverseDuration: AppMotion.sheetExit,
-        value:
-            widget.initialSection == LibrarySection.nowPlaying &&
-                !widget.showSettings
-            ? 1.0
-            : 0.0,
-      );
-
-  late final CurvedAnimation _nowPlayingMorphCurve = CurvedAnimation(
-    parent: _nowPlayingMorphController,
-    curve: AppMotion.sheetEnterCurve,
-    reverseCurve: AppMotion.sheetExitCurve,
+  late final SpringMotionController _nowPlayingMorph = SpringMotionController(
+    vsync: this,
+    initialForward:
+        widget.initialSection == LibrarySection.nowPlaying &&
+        !widget.showSettings,
+    forwardSpring: AppMotion.sheetSpring,
+    reverseSpring: AppMotion.sheetSpring,
+    tolerance: const Tolerance(distance: 0.002, velocity: 0.01),
   );
 
-  late final AnimationController _miniPlayerVisibilityController =
-      AnimationController(
+  late final SpringMotionController _miniPlayerVisibility =
+      SpringMotionController(
         vsync: this,
-        duration: AppMotion.spatialDefault,
-        reverseDuration: AppMotion.spatialFast,
-        value: (widget.controller.hasMedia && !widget.controller.isStopped)
-            ? 1.0
-            : 0.0,
+        initialForward:
+            widget.controller.hasMedia && !widget.controller.isStopped,
+        forwardSpring: AppMotion.panelSpring,
+        reverseSpring: AppMotion.panelSpring,
+        tolerance: const Tolerance(distance: 0.002, velocity: 0.01),
       );
-
-  late final CurvedAnimation _miniPlayerVisibilityCurve = CurvedAnimation(
-    parent: _miniPlayerVisibilityController,
-    curve: AppMotion.enter,
-    reverseCurve: AppMotion.exit,
-  );
 
   late final QueueSlideTransition _queueSlide;
   bool _queueMounted = false;
   late final SidebarTransition _sidebarSlide;
+  late final Listenable _shellWidthMotion;
   bool _sidebarLayoutSynced = false;
 
   MediaEntry? _lastDisplayEntry;
@@ -193,6 +184,10 @@ class _LibraryShellState extends State<LibraryShell>
       onDismissed: _handleQueueSlideDismissed,
     );
     _sidebarSlide = SidebarTransition(vsync: this, initialExpanded: true);
+    _shellWidthMotion = Listenable.merge(<Listenable>[
+      _sidebarSlide.progress,
+      _queueSlide.progress,
+    ]);
     _lastDisplayEntry = widget.controller.current;
     _searchController.addListener(_onSearchChanged);
     widget.controller.structureListenable.addListener(_onPlaybackChanged);
@@ -203,36 +198,8 @@ class _LibraryShellState extends State<LibraryShell>
     super.didChangeDependencies();
     _queueSlide.applyMotion(context);
     _sidebarSlide.applyMotion(context);
-    _applyMotionSettings(context);
-  }
-
-  /// Re-reads the animation-speed preference and reduced-motion setting for
-  /// every controller this shell owns, so the preference covers the Now
-  /// Playing morph and the transport bar's reveal as well as the queue.
-  void _applyMotionSettings(BuildContext context) {
-    if (AppMotion.reduce(context)) {
-      _nowPlayingMorphController.duration = Duration.zero;
-      _nowPlayingMorphController.reverseDuration = Duration.zero;
-      _miniPlayerVisibilityController.duration = Duration.zero;
-      _miniPlayerVisibilityController.reverseDuration = Duration.zero;
-      return;
-    }
-    _nowPlayingMorphController.duration = AppMotion.scaled(
-      context,
-      AppMotion.sheetEnter,
-    );
-    _nowPlayingMorphController.reverseDuration = AppMotion.scaled(
-      context,
-      AppMotion.sheetExit,
-    );
-    _miniPlayerVisibilityController.duration = AppMotion.scaled(
-      context,
-      AppMotion.spatialDefault,
-    );
-    _miniPlayerVisibilityController.reverseDuration = AppMotion.scaled(
-      context,
-      AppMotion.spatialFast,
-    );
+    _nowPlayingMorph.applyMotion(context);
+    _miniPlayerVisibility.applyMotion(context);
   }
 
   @override
@@ -257,10 +224,8 @@ class _LibraryShellState extends State<LibraryShell>
         // section behind Settings, so closing Settings cannot land on a
         // stale one and Esc never races the morph animation.
         if (_currentSection == LibrarySection.nowPlaying ||
-            _nowPlayingMorphController.value > 0) {
-          _nowPlayingMorphController
-            ..stop()
-            ..value = 0.0;
+            _nowPlayingMorph.value > 0) {
+          _nowPlayingMorph.snap(false);
           _currentSection = _previousSection;
         }
         _previousSection = _currentSection;
@@ -279,10 +244,8 @@ class _LibraryShellState extends State<LibraryShell>
       _currentSection = LibrarySection.home;
       _previousSection = LibrarySection.home;
       _isOnDemandQueueOpen = false;
-      if (_nowPlayingMorphController.value > 0) {
-        _nowPlayingMorphController
-          ..stop()
-          ..value = 0.0;
+      if (_nowPlayingMorph.value > 0) {
+        _nowPlayingMorph.snap(false);
       }
     }
   }
@@ -291,10 +254,8 @@ class _LibraryShellState extends State<LibraryShell>
   void dispose() {
     _queueSlide.dispose();
     _sidebarSlide.dispose();
-    _nowPlayingMorphCurve.dispose();
-    _miniPlayerVisibilityCurve.dispose();
-    _nowPlayingMorphController.dispose();
-    _miniPlayerVisibilityController.dispose();
+    _nowPlayingMorph.dispose();
+    _miniPlayerVisibility.dispose();
     widget.controller.structureListenable.removeListener(_onPlaybackChanged);
     _searchController.removeListener(_onSearchChanged);
     _searchDebounce.dispose();
@@ -317,22 +278,20 @@ class _LibraryShellState extends State<LibraryShell>
 
     if (current == null &&
         (_currentSection == LibrarySection.nowPlaying ||
-            _nowPlayingMorphController.value > 0)) {
+            _nowPlayingMorph.value > 0)) {
       _closeNowPlaying();
     }
 
     if (hasMedia && !widget.controller.isStopped) {
-      if (_miniPlayerVisibilityController.value < 1.0 &&
-          _miniPlayerVisibilityController.status != AnimationStatus.forward) {
-        if (AppMotion.reduce(context)) {
-          _miniPlayerVisibilityController.value = 1.0;
-        } else {
-          _miniPlayerVisibilityController.forward();
-        }
+      if (_miniPlayerVisibility.value < 1.0 &&
+          (!_miniPlayerVisibility.targetForward ||
+              !_miniPlayerVisibility.isAnimating)) {
+        unawaited(_miniPlayerVisibility.drive(true));
       }
     } else {
-      if (_miniPlayerVisibilityController.value > 0.0) {
-        _miniPlayerVisibilityController.value = 0.0;
+      if (_miniPlayerVisibility.value > 0.0 ||
+          _miniPlayerVisibility.isAnimating) {
+        _miniPlayerVisibility.snap(false);
       }
       if (_lastDisplayEntry != null) {
         _lastDisplayEntry = null;
@@ -360,7 +319,8 @@ class _LibraryShellState extends State<LibraryShell>
 
   void _openNowPlaying() {
     if (_currentSection == LibrarySection.nowPlaying &&
-        _nowPlayingMorphController.value > 0) {
+        _nowPlayingMorph.value > 0 &&
+        _nowPlayingMorph.targetForward) {
       return;
     }
     _sectionGeneration++;
@@ -372,17 +332,15 @@ class _LibraryShellState extends State<LibraryShell>
     }
     _previousSection = _currentSection;
     _currentSection = LibrarySection.nowPlaying;
-    if (AppMotion.reduce(context)) {
-      _nowPlayingMorphController.value = 1.0;
-      if (mounted) setState(() {});
-    } else {
-      _nowPlayingMorphController.forward();
-      if (mounted) setState(() {});
-    }
+    unawaited(_nowPlayingMorph.drive(true));
+    if (mounted) setState(() {});
   }
 
   void _closeNowPlaying() {
-    if (_nowPlayingMorphController.status == AnimationStatus.dismissed) {
+    if (!_nowPlayingMorph.isAnimating && _nowPlayingMorph.value <= 0.0) {
+      if (_currentSection == LibrarySection.nowPlaying) {
+        setState(() => _currentSection = _previousSection);
+      }
       return;
     }
     final token = _sectionGeneration;
@@ -397,10 +355,13 @@ class _LibraryShellState extends State<LibraryShell>
     }
 
     if (AppMotion.reduce(context)) {
-      _nowPlayingMorphController.value = 0.0;
+      _nowPlayingMorph.snap(false);
       restore();
     } else {
-      _nowPlayingMorphController.reverse().then((_) => restore());
+      _nowPlayingMorph.drive(false).then((_) {
+        if (_nowPlayingMorph.targetForward) return;
+        restore();
+      });
     }
   }
 
@@ -424,7 +385,7 @@ class _LibraryShellState extends State<LibraryShell>
       return;
     }
 
-    if (_nowPlayingMorphController.value > 0) {
+    if (_nowPlayingMorph.value > 0 || _nowPlayingMorph.targetForward) {
       _closeNowPlaying();
     }
 
@@ -479,7 +440,8 @@ class _LibraryShellState extends State<LibraryShell>
                   // Esc closes the embedded Settings first so it can never
                   // race the Now Playing morph for the same keypress.
                   widget.onCloseSettings?.call();
-                } else if (_nowPlayingMorphController.value > 0) {
+                } else if (_nowPlayingMorph.value > 0 ||
+                    _nowPlayingMorph.targetForward) {
                   _closeNowPlaying();
                 }
               },
@@ -506,35 +468,52 @@ class _LibraryShellState extends State<LibraryShell>
                     fit: StackFit.expand,
                     children: [
                       // While the Now Playing sheet is up the library behind it
-                      // is inert: nothing back there can take focus or be read
-                      // by assistive tech until the sheet has left.
-                      AnimatedBuilder(
-                        animation: _nowPlayingMorphCurve,
-                        child: Column(
-                          children: [
-                            Expanded(
-                              child: _buildBodyRow(
-                                isDesktopWide,
-                                isDesktopMedium,
-                                isCompact,
-                              ),
+                      // is inert and subtly recedes in scale on the GPU.
+                      KeyedSubtree(
+                        key: const ValueKey('library-shell-stage'),
+                        child: AnimatedBuilder(
+                          animation: _nowPlayingMorph.progress,
+                          child: RepaintBoundary(
+                            child: Column(
+                              children: [
+                                Expanded(
+                                  child: _buildBodyRow(
+                                    width,
+                                    isDesktopWide,
+                                    isDesktopMedium,
+                                    isCompact,
+                                  ),
+                                ),
+                                ToastRegion(
+                                  child: _buildBottomMiniPlayer(isCompact),
+                                ),
+                              ],
                             ),
-                            ToastRegion(
-                              child: _buildBottomMiniPlayer(isCompact),
-                            ),
-                          ],
-                        ),
-                        builder: (context, child) {
-                          final sheetUp = _nowPlayingMorphCurve.value > 0;
-                          return ExcludeFocus(
-                            excluding: sheetUp,
-                            child: ExcludeSemantics(
+                          ),
+                          builder: (context, child) {
+                            final progress = _nowPlayingMorph.value.clamp(
+                              0.0,
+                              1.0,
+                            );
+                            final sheetUp = progress > 0;
+                            final lowPower = AppMotion.lowPower(context);
+                            final scale = (!lowPower && progress > 0.001)
+                                ? (1.0 - 0.015 * progress)
+                                : 1.0;
+                            return ExcludeFocus(
                               excluding: sheetUp,
-                              child: child!,
-                            ),
-                          );
-                        },
+                              child: ExcludeSemantics(
+                                excluding: sheetUp,
+                                child: Transform.scale(
+                                  scale: scale,
+                                  child: child!,
+                                ),
+                              ),
+                            );
+                          },
+                        ),
                       ),
+                      _buildNowPlayingScrim(),
                       _buildNowPlayingMorphOverlay(),
                     ],
                   ),
@@ -549,6 +528,7 @@ class _LibraryShellState extends State<LibraryShell>
 
   /// Sidebar + top bar + stage + docked queue, all wired to their modules.
   Widget _buildBodyRow(
+    double shellWidth,
     bool isDesktopWide,
     bool isDesktopMedium,
     bool isCompact,
@@ -576,19 +556,21 @@ class _LibraryShellState extends State<LibraryShell>
           ToastRegion(
             child: AnimatedBuilder(
               animation: _sidebarSlide.progress,
-              child: ShellSideNav(
-                section: _currentSection,
-                onSelect: _selectSection,
-                collapsed: sidebarCollapsed,
-                expandProgress: _sidebarSlide.progress,
-                showSettings: widget.onSettings != null,
-                onToggleCollapse: () {
-                  final nextCollapsed = !sidebarCollapsed;
-                  setState(() {
-                    _sidebarCollapsedOverride = nextCollapsed;
-                  });
-                  _sidebarSlide.drive(!nextCollapsed);
-                },
+              child: RepaintBoundary(
+                child: ShellSideNav(
+                  section: _currentSection,
+                  onSelect: _selectSection,
+                  collapsed: sidebarCollapsed,
+                  expandProgress: _sidebarSlide.progress,
+                  showSettings: widget.onSettings != null,
+                  onToggleCollapse: () {
+                    final nextCollapsed = !sidebarCollapsed;
+                    setState(() {
+                      _sidebarCollapsedOverride = nextCollapsed;
+                    });
+                    _sidebarSlide.drive(!nextCollapsed);
+                  },
+                ),
               ),
               builder: (context, child) {
                 final t = _sidebarSlide.progress.value.clamp(0.0, 1.0);
@@ -605,43 +587,56 @@ class _LibraryShellState extends State<LibraryShell>
 
         // 2. Main Content Area: Top bar + Status Banner + Active Stage
         Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // System status stays anchored at the top of every section,
-              // above section chrome.
-              Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 960),
-                  child: LibraryStatusBanner(
-                    repository: widget.repository,
-                    onRescan: () => widget.repository.rescanAll(),
+          child: RepaintBoundary(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // System status stays anchored at the top of every section,
+                // above section chrome.
+                Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 960),
+                    child: LibraryStatusBanner(
+                      repository: widget.repository,
+                      onRescan: () => widget.repository.rescanAll(),
+                    ),
                   ),
                 ),
-              ),
-              if (effectiveSection != LibrarySection.home)
-                LibraryTopBar(
-                  section: _currentSection,
-                  compact: isCompact,
-                  canDockQueue: !isCompact,
-                  queueOpen: _isQueueOpen,
-                  searchController: _searchController,
-                  searchFocus: _searchFocus,
-                  onOpenNavigation: () =>
-                      _scaffoldKey.currentState?.openDrawer(),
-                  onToggleQueue: () => _setQueueOpen(!_isQueueOpen),
-                  onOpenFiles: widget.onOpenFiles,
-                  onOpenUrl: widget.onOpenUrl,
+                if (effectiveSection != LibrarySection.home)
+                  LibraryTopBar(
+                    section: _currentSection,
+                    compact: isCompact,
+                    canDockQueue: !isCompact,
+                    queueOpen: _isQueueOpen,
+                    searchController: _searchController,
+                    searchFocus: _searchFocus,
+                    onOpenNavigation: () =>
+                        _scaffoldKey.currentState?.openDrawer(),
+                    onToggleQueue: () => _setQueueOpen(!_isQueueOpen),
+                    onOpenFiles: widget.onOpenFiles,
+                    onOpenUrl: widget.onOpenUrl,
+                  ),
+                // Main Stage View
+                Expanded(
+                  child: ShellWidthMotionScope(
+                    listenable: _shellWidthMotion,
+                    pendingWidthDelta: () =>
+                        _pendingContentWidthDelta(isCompact),
+                    columnBasisWidth: isCompact
+                        ? shellWidth
+                        : math.max(
+                            0.0,
+                            shellWidth - AppLayout.sidebarExpanded - 1,
+                          ),
+                    child: LibrarySearchScope(
+                      controller: _searchController,
+                      focusNode: _searchFocus,
+                      child: _buildContentStage(),
+                    ),
+                  ),
                 ),
-              // Main Stage View
-              Expanded(
-                child: LibrarySearchScope(
-                  controller: _searchController,
-                  focusNode: _searchFocus,
-                  child: _buildContentStage(),
-                ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
 
@@ -677,6 +672,26 @@ class _LibraryShellState extends State<LibraryShell>
           ),
       ],
     );
+  }
+
+  /// Width the content stage gains (+) or loses (-) once the sidebar and docked
+  /// queue settle. 0 when both are at rest.
+  double _pendingContentWidthDelta(bool isCompact) {
+    if (isCompact) return 0;
+    var delta = 0.0;
+    const span = AppLayout.sidebarExpanded - AppLayout.sidebarCollapsed;
+    final t = _sidebarSlide.progress.value.clamp(0.0, 1.0);
+    final sidebarNow = AppLayout.sidebarCollapsed + span * t;
+    final sidebarTarget = _sidebarSlide.targetExpanded
+        ? AppLayout.sidebarExpanded
+        : AppLayout.sidebarCollapsed;
+    delta += sidebarNow - sidebarTarget;
+    if (_isQueueOpen || _queueMounted) {
+      const panel = AppLayout.queuePanelWidth + 1;
+      final q = _queueSlide.progress.value.clamp(0.0, 1.0);
+      delta += panel * q - (_isQueueOpen ? panel : 0.0);
+    }
+    return delta;
   }
 
   // --- Content Stage ---
@@ -720,55 +735,85 @@ class _LibraryShellState extends State<LibraryShell>
     }
 
     return RepaintBoundary(
-      child: KeyedSubtree(
+      child: AppSectionReveal(
         key: ValueKey<LibrarySection>(effectiveSection),
         child: stage,
       ),
     );
   }
 
+  Widget _buildNowPlayingScrim() {
+    return Positioned.fill(
+      key: const ValueKey('library-shell-scrim'),
+      child: IgnorePointer(
+        child: AnimatedBuilder(
+          animation: _nowPlayingMorph.progress,
+          builder: (context, _) {
+            if (AppMotion.lowPower(context)) return const SizedBox.shrink();
+            final progress = _nowPlayingMorph.value.clamp(0.0, 1.0);
+            if (progress <= 0.001) return const SizedBox.shrink();
+            return ColoredBox(
+              color: Colors.black.withValues(alpha: 0.32 * progress),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
   /// Morphing full Now Playing player sheet overlay.
   ///
-  /// Expands smoothly upwards from the bottom edge to cover the entire window,
-  /// achieving a seamless 60fps morph even on low-end hardware by utilizing
-  /// purely compositor-driven translation over an opaque background with elevation shadow.
+  /// Expands smoothly upwards from the bottom edge to cover the entire window
+  /// using spring physics and GPU-composited translation over the recessed stage.
   Widget _buildNowPlayingMorphOverlay() {
-    return AnimatedBuilder(
-      animation: _nowPlayingMorphCurve,
-      // Keep the sheet widget stable across animation ticks so metadata,
-      // artwork and controls are not rebuilt 60 times a second.
-      child: NowPlayingView(
-        controller: widget.controller,
-        repository: widget.repository,
-        onBack: _closeNowPlaying,
-        onOpenQueue: _showCompactQueue,
-        onAddQueueFiles: widget.onAddQueueFiles,
-        onAddQueueUrl: widget.onAddQueueUrl,
-      ),
-      builder: (context, child) {
-        final progress = _nowPlayingMorphCurve.value;
-        if (progress <= 0.0001) return const SizedBox.shrink();
-
-        final reduced = AppMotion.reduce(context);
-        final slideOffset = reduced ? Offset.zero : Offset(0.0, 1.0 - progress);
-
-        return Positioned.fill(
-          child: FractionalTranslation(
-            translation: slideOffset,
-            child: RepaintBoundary(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: context.palette.background,
-                  border: Border(
-                    top: BorderSide(color: context.palette.border),
-                  ),
-                ),
-                child: child,
-              ),
+    return Positioned.fill(
+      key: const ValueKey('library-shell-now-playing'),
+      child: AnimatedBuilder(
+        animation: _nowPlayingMorph.progress,
+        // Keep the sheet widget stable across animation ticks so metadata,
+        // artwork and controls are not rebuilt 60/120 times a second.
+        child: RepaintBoundary(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: context.palette.background,
+              border: Border(top: BorderSide(color: context.palette.border)),
+            ),
+            child: NowPlayingView(
+              controller: widget.controller,
+              repository: widget.repository,
+              onBack: _closeNowPlaying,
+              onOpenQueue: _showCompactQueue,
+              onAddQueueFiles: widget.onAddQueueFiles,
+              onAddQueueUrl: widget.onAddQueueUrl,
             ),
           ),
-        );
-      },
+        ),
+        builder: (context, child) {
+          final progress = _nowPlayingMorph.value.clamp(0.0, 1.0);
+          if (progress <= 0.0001) {
+            return const IgnorePointer(child: SizedBox.shrink());
+          }
+
+          final reduced = AppMotion.reduce(context);
+          final lowPower = AppMotion.lowPower(context);
+          final inFlight = !lowPower && progress < 0.999;
+          final slideOffset = reduced
+              ? Offset.zero
+              : Offset(0.0, 1.0 - progress);
+          final topRadius = inFlight ? 16.0 * (1.0 - progress) : 0.0;
+
+          return FractionalTranslation(
+            translation: slideOffset,
+            child: ClipRRect(
+              borderRadius: BorderRadius.vertical(
+                top: Radius.circular(topRadius),
+              ),
+              clipBehavior: inFlight ? Clip.antiAlias : Clip.none,
+              child: child,
+            ),
+          );
+        },
+      ),
     );
   }
 
@@ -828,12 +873,12 @@ class _LibraryShellState extends State<LibraryShell>
     // already-painted surface; playback ticks rebuild it via the shell's
     // track-change listener, not per position notify.
     return AnimatedBuilder(
-      animation: _miniPlayerVisibilityCurve,
+      animation: _miniPlayerVisibility.progress,
       child: RepaintBoundary(
         child: SizedBox(height: height, child: bar),
       ),
       builder: (context, child) {
-        final visibility = _miniPlayerVisibilityCurve.value;
+        final visibility = _miniPlayerVisibility.value.clamp(0.0, 1.0);
         if (visibility <= 0.001) {
           return const SizedBox.shrink();
         }

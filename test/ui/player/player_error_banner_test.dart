@@ -17,8 +17,6 @@ import 'package:mpvson/ui/core/toast/app_toast.dart';
 import 'package:mpvson/ui/core/toast/app_toast_host.dart';
 import 'package:mpvson/ui/player/player_controller.dart';
 import 'package:mpvson/ui/player/views/player_content.dart';
-import 'package:mpvson/ui/player/views/player_error_banner.dart';
-import 'package:mpvson/ui/player/views/player_hotkey_handler.dart';
 import 'package:mpvson/ui/player/views/player_screen.dart';
 import 'package:path/path.dart' as p;
 

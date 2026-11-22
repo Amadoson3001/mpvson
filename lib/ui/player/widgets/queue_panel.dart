@@ -15,9 +15,6 @@ import '../../core/components/playback_pulse.dart';
 import '../player_controller.dart';
 import '../views/player_drag_drop.dart';
 
-/// How long a row spends collapsing before the queue drops it.
-const Duration _queueRemovalDuration = Duration(milliseconds: 150);
-
 class QueuePanel extends StatefulWidget {
   const QueuePanel({
     super.key,
@@ -335,41 +332,43 @@ class _QueuePanelState extends State<QueuePanel> {
   }) {
     final (index, entry) = visible[visibleIndex];
     final isCurrent = index == snapshot.currentIndex;
-    return _QueueRemovalCollapse(
+    return RepaintBoundary(
       key: ValueKey('queue-${entry.id}'),
-      removing: _removingIds.contains(entry.id),
-      child: isCurrent
-          ? ValueListenableBuilder<TransportState>(
-              valueListenable: widget.controller.transportListenable,
-              builder: (context, transport, _) => _QueueEntry(
+      child: _QueueRemovalCollapse(
+        removing: _removingIds.contains(entry.id),
+        child: isCurrent
+            ? ValueListenableBuilder<TransportState>(
+                valueListenable: widget.controller.transportListenable,
+                builder: (context, transport, _) => _QueueEntry(
+                  controller: widget.controller,
+                  entry: entry,
+                  index: index,
+                  queueLength: snapshot.entries.length,
+                  thumbnailWidth: thumbnailWidth,
+                  isCurrent: true,
+                  isPlaying: transport.isPlaying,
+                  canReorder: canReorder,
+                  onFocusChanged: (focused) =>
+                      widget.onQueueFocus(focused ? entry.id : null),
+                  onPlay: () => unawaited(widget.controller.playIndex(index)),
+                  onRemove: () => unawaited(_remove(index)),
+                ),
+              )
+            : _QueueEntry(
                 controller: widget.controller,
                 entry: entry,
                 index: index,
                 queueLength: snapshot.entries.length,
                 thumbnailWidth: thumbnailWidth,
-                isCurrent: true,
-                isPlaying: transport.isPlaying,
+                isCurrent: false,
+                isPlaying: false,
                 canReorder: canReorder,
                 onFocusChanged: (focused) =>
                     widget.onQueueFocus(focused ? entry.id : null),
                 onPlay: () => unawaited(widget.controller.playIndex(index)),
                 onRemove: () => unawaited(_remove(index)),
               ),
-            )
-          : _QueueEntry(
-              controller: widget.controller,
-              entry: entry,
-              index: index,
-              queueLength: snapshot.entries.length,
-              thumbnailWidth: thumbnailWidth,
-              isCurrent: false,
-              isPlaying: false,
-              canReorder: canReorder,
-              onFocusChanged: (focused) =>
-                  widget.onQueueFocus(focused ? entry.id : null),
-              onPlay: () => unawaited(widget.controller.playIndex(index)),
-              onRemove: () => unawaited(_remove(index)),
-            ),
+      ),
     );
   }
 
@@ -401,7 +400,7 @@ class _QueuePanelState extends State<QueuePanel> {
 
     final collapse = AppMotion.reduce(context)
         ? Duration.zero
-        : _queueRemovalDuration;
+        : AppMotion.scaled(context, AppMotion.effectsDefault);
     await Future<void>.delayed(collapse);
     if (!mounted) return;
     setState(() => _removingIds.remove(id));
@@ -538,11 +537,7 @@ class _QueueScrollScope extends InheritedWidget {
 /// Collapses a row out of the list before the queue drops it, so the rows below
 /// travel up into place instead of teleporting.
 class _QueueRemovalCollapse extends StatefulWidget {
-  const _QueueRemovalCollapse({
-    super.key,
-    required this.removing,
-    required this.child,
-  });
+  const _QueueRemovalCollapse({required this.removing, required this.child});
 
   final bool removing;
   final Widget child;
@@ -554,13 +549,25 @@ class _QueueRemovalCollapse extends StatefulWidget {
 class _QueueRemovalCollapseState extends State<_QueueRemovalCollapse>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller = AnimationController(vsync: this);
+  late final CurvedAnimation _curved = CurvedAnimation(
+    parent: _controller,
+    curve: AppMotion.exit,
+    reverseCurve: AppMotion.enter,
+  );
+  late final Animation<double> _fade = Tween<double>(
+    begin: 1.0,
+    end: 0.0,
+  ).animate(_curved);
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _controller.duration = AppMotion.reduce(context)
+    final duration = AppMotion.reduce(context)
         ? Duration.zero
-        : _queueRemovalDuration;
+        : AppMotion.scaled(context, AppMotion.effectsDefault);
+    _controller
+      ..duration = duration
+      ..reverseDuration = duration;
     if (widget.removing && _controller.isDismissed) _controller.forward();
   }
 
@@ -578,6 +585,7 @@ class _QueueRemovalCollapseState extends State<_QueueRemovalCollapse>
 
   @override
   void dispose() {
+    _curved.dispose();
     _controller.dispose();
     super.dispose();
   }
@@ -586,28 +594,29 @@ class _QueueRemovalCollapseState extends State<_QueueRemovalCollapse>
   Widget build(BuildContext context) {
     if (!widget.removing && _controller.isDismissed) return widget.child;
 
-    return AnimatedBuilder(
-      animation: _controller,
-      child: widget.child,
-      builder: (context, child) {
-        final progress = AppMotion.exit.transform(_controller.value);
-        if (progress == 0) {
-          return IgnorePointer(ignoring: widget.removing, child: child);
-        }
-        return IgnorePointer(
-          ignoring: widget.removing,
-          child: Transform.translate(
-            offset: Offset(progress * 20, 0),
-            child: ClipRect(
-              child: Align(
-                alignment: Alignment.topCenter,
-                heightFactor: (1 - progress).clamp(0.0, 1.0),
-                child: child,
+    return IgnorePointer(
+      ignoring: widget.removing,
+      child: FadeTransition(
+        opacity: _fade,
+        child: AnimatedBuilder(
+          animation: _curved,
+          child: widget.child,
+          builder: (context, child) {
+            final progress = _curved.value;
+            if (progress == 0) return child!;
+            return Transform.translate(
+              offset: Offset(progress * 20, 0),
+              child: ClipRect(
+                child: Align(
+                  alignment: Alignment.topCenter,
+                  heightFactor: (1 - progress).clamp(0.0, 1.0),
+                  child: child,
+                ),
               ),
-            ),
-          ),
-        );
-      },
+            );
+          },
+        ),
+      ),
     );
   }
 }
@@ -870,18 +879,17 @@ class _QueueEntryState extends State<_QueueEntry> with WidgetsBindingObserver {
                       child: IgnorePointer(
                         child: Align(
                           alignment: Alignment.centerLeft,
-                          child: AnimatedOpacity(
-                            opacity: widget.isCurrent ? 1 : 0,
+                          child: AnimatedContainer(
                             duration: motion,
                             curve: AppMotion.standardCurve,
-                            child: Container(
-                              width: 3,
-                              height: thumbnailHeight,
-                              decoration: BoxDecoration(
-                                color: accent,
-                                borderRadius: BorderRadius.circular(
-                                  AppRadii.pill,
-                                ),
+                            width: 3,
+                            height: thumbnailHeight,
+                            decoration: BoxDecoration(
+                              color: accent.withValues(
+                                alpha: widget.isCurrent ? 1.0 : 0.0,
+                              ),
+                              borderRadius: BorderRadius.circular(
+                                AppRadii.pill,
                               ),
                             ),
                           ),
@@ -1019,17 +1027,12 @@ class _QueueEntryState extends State<_QueueEntry> with WidgetsBindingObserver {
             width: width,
             height: 40,
             child: Center(
-              child: AnimatedOpacity(
-                opacity: active ? 1.0 : 0.45,
-                duration: motion,
-                curve: AppMotion.standardCurve,
-                child: Icon(
-                  Icons.drag_indicator_rounded,
-                  size: 16,
-                  color: active
-                      ? context.palette.secondaryText
-                      : context.palette.muted,
-                ),
+              child: Icon(
+                Icons.drag_indicator_rounded,
+                size: 16,
+                color: active
+                    ? context.palette.secondaryText
+                    : context.palette.muted.withValues(alpha: 0.45),
               ),
             ),
           ),

@@ -8,10 +8,11 @@ import 'package:path/path.dart' as p;
 import '../../support/fake_playback_service.dart';
 
 void main() {
-  Future<(PlayerController, FakePlaybackService, Directory)>
-  createHarness() async {
+  Future<(PlayerController, FakePlaybackService, Directory)> createHarness({
+    FakePlaybackService? playbackService,
+  }) async {
     final dir = await Directory.systemTemp.createTemp('mpvson-ctrl-test-');
-    final playback = FakePlaybackService();
+    final playback = playbackService ?? FakePlaybackService();
     final sessions = SessionRepository(
       directory: dir,
       encoder: (session) => session.toJson().toString(),
@@ -65,6 +66,57 @@ void main() {
         'one',
       ]);
       expect(controller.canUndo, isFalse);
+    });
+
+    test('removing and undoing the active item restores playback', () async {
+      final playback = _TrackingPlaybackService();
+      final (controller, _, dir) = await createHarness(
+        playbackService: playback,
+      );
+      addTearDown(() async {
+        await controller.close(discard: true);
+        controller.dispose();
+        await playback.dispose();
+        if (await dir.exists()) await dir.delete(recursive: true);
+      });
+      final one = File(p.join(dir.path, 'one.mp4'))..createSync();
+      final two = File(p.join(dir.path, 'two.mp4'))..createSync();
+      await controller.openPaths([one.path, two.path]);
+      await controller.removeAt(0);
+      expect(controller.current?.path, two.path);
+      expect(playback.openedPaths, [one.path, two.path]);
+      expect(playback.state.isPlaying, isTrue);
+      await controller.undoRemove();
+      expect(controller.current?.path, one.path);
+      expect(playback.openedPaths, [one.path, two.path, one.path]);
+      expect(playback.state.isPlaying, isTrue);
+      expect(controller.canUndo, isFalse);
+    });
+
+    test('removing a paused active item stops the old source', () async {
+      final playback = _TrackingPlaybackService();
+      final (controller, _, dir) = await createHarness(
+        playbackService: playback,
+      );
+      addTearDown(() async {
+        await controller.close(discard: true);
+        controller.dispose();
+        await playback.dispose();
+        if (await dir.exists()) await dir.delete(recursive: true);
+      });
+      final one = File(p.join(dir.path, 'one.mp4'))..createSync();
+      final two = File(p.join(dir.path, 'two.mp4'))..createSync();
+      await controller.openPaths([one.path, two.path]);
+      await controller.togglePlayPause();
+      await controller.removeAt(0);
+      expect(controller.current?.path, two.path);
+      expect(playback.stopCalls, 1);
+      expect(playback.state.sourceLoaded, isFalse);
+      await controller.undoRemove();
+      expect(controller.current?.path, one.path);
+      expect(playback.stopCalls, 2);
+      expect(playback.openedPaths, [one.path]);
+      expect(playback.state.isPlaying, isFalse);
     });
 
     test('cycles repeat modes and toggles shuffle', () async {
@@ -152,4 +204,14 @@ void main() {
       },
     );
   });
+}
+
+class _TrackingPlaybackService extends FakePlaybackService {
+  int stopCalls = 0;
+
+  @override
+  Future<void> stop() async {
+    stopCalls++;
+    await super.stop();
+  }
 }

@@ -8,6 +8,7 @@ import '../../../utils/file_utils.dart';
 import '../../../utils/format.dart';
 import '../../player/player_controller.dart';
 import '../../core/app_theme.dart';
+import '../../core/components/animated_grid_reflow.dart';
 import '../../core/components/app_dialog.dart';
 import '../../core/components/media_tile.dart';
 import '../../core/components/media_row.dart';
@@ -1127,34 +1128,49 @@ class _MusicViewState extends State<MusicView> {
     final visibleCount = _albumGridVisible.clamp(0, albums.length);
     final visibleAlbums = albums.take(visibleCount).toList();
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final availableWidth = (constraints.maxWidth - 2 * AppSpace.lg).clamp(
-          0.0,
-          double.infinity,
-        );
-        final columns = ((availableWidth + 20) / 220).ceil().clamp(2, 12);
-        final tileWidth = (availableWidth - (columns - 1) * 20) / columns;
-        final textHeight = MediaQuery.textScalerOf(context).scale(13) * 3.8;
-
-        return NotificationListener<ScrollNotification>(
-          onNotification: _onGridScroll,
-          child: GridView.builder(
-            addAutomaticKeepAlives: false,
-            addRepaintBoundaries: true,
-            padding: const EdgeInsets.all(AppSpace.lg),
-            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: columns,
-              mainAxisSpacing: 24,
-              crossAxisSpacing: 20,
-              mainAxisExtent: tileWidth + textHeight + 14,
-            ),
-            itemCount: visibleAlbums.length,
-            itemBuilder: (context, index) {
-              final album = visibleAlbums[index];
-              final albumName = album.name;
-              return _AlbumGridTile(
-                key: ValueKey(albumName),
+    final textHeight = MediaQuery.textScalerOf(context).scale(13) * 3.8;
+    return NotificationListener<ScrollNotification>(
+      onNotification: _onGridScroll,
+      child: StableGridReflowBox(
+        metricsBuilder: (width, columnBasisWidth) {
+          final availableWidth = (width - 2 * AppSpace.lg).clamp(
+            0.0,
+            double.infinity,
+          );
+          final basisWidth = (columnBasisWidth - 2 * AppSpace.lg).clamp(
+            0.0,
+            double.infinity,
+          );
+          final columns = ((basisWidth + 20) / 220).ceil().clamp(2, 12);
+          final tileWidth = (availableWidth - (columns - 1) * 20) / columns;
+          return GridReflowMetrics(
+            columns: columns,
+            itemWidth: tileWidth,
+            itemHeight: tileWidth + textHeight + 14,
+            crossAxisSpacing: 20,
+            mainAxisSpacing: 24,
+            horizontalPadding: AppSpace.lg,
+          );
+        },
+        builder: (context, metrics, isReflowing) => GridView.builder(
+          clipBehavior: isReflowing ? Clip.none : Clip.hardEdge,
+          addAutomaticKeepAlives: false,
+          addRepaintBoundaries: true,
+          padding: const EdgeInsets.all(AppSpace.lg),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: metrics.columns,
+            mainAxisSpacing: metrics.mainAxisSpacing,
+            crossAxisSpacing: metrics.crossAxisSpacing,
+            mainAxisExtent: metrics.itemHeight,
+          ),
+          itemCount: visibleAlbums.length,
+          itemBuilder: (context, index) {
+            final album = visibleAlbums[index];
+            final albumName = album.name;
+            return GridReflowItem(
+              key: ValueKey(albumName),
+              index: index,
+              child: _AlbumGridTile(
                 albumName: albumName,
                 summary: album,
                 repository: widget.repository,
@@ -1176,11 +1192,11 @@ class _MusicViewState extends State<MusicView> {
                   if (!mounted) return;
                   await _playAlbum(tracks);
                 },
-              );
-            },
-          ),
-        );
-      },
+              ),
+            );
+          },
+        ),
+      ),
     );
   }
 
@@ -1374,34 +1390,49 @@ class _MusicViewState extends State<MusicView> {
     final visibleCount = _artistGridVisible.clamp(0, artists.length);
     final visibleArtists = artists.take(visibleCount).toList();
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final availableWidth = (constraints.maxWidth - 2 * AppSpace.lg).clamp(
-          0.0,
-          double.infinity,
-        );
-        final columns = ((availableWidth + 20) / 200).ceil().clamp(2, 12);
-        final tileWidth = (availableWidth - (columns - 1) * 20) / columns;
-        final textHeight = MediaQuery.textScalerOf(context).scale(13) * 3.8;
-
-        return NotificationListener<ScrollNotification>(
-          onNotification: _onGridScroll,
-          child: GridView.builder(
-            addAutomaticKeepAlives: false,
-            addRepaintBoundaries: true,
-            padding: const EdgeInsets.all(AppSpace.lg),
-            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: columns,
-              mainAxisSpacing: 20,
-              crossAxisSpacing: 20,
-              mainAxisExtent: tileWidth + textHeight + 14,
-            ),
-            itemCount: visibleArtists.length,
-            itemBuilder: (context, index) {
-              final artist = visibleArtists[index];
-              final artistName = artist.name;
-              return _ArtistGridTile(
-                key: ValueKey(artistName),
+    final textHeight = MediaQuery.textScalerOf(context).scale(13) * 3.8;
+    return NotificationListener<ScrollNotification>(
+      onNotification: _onGridScroll,
+      child: StableGridReflowBox(
+        metricsBuilder: (width, columnBasisWidth) {
+          final availableWidth = (width - 2 * AppSpace.lg).clamp(
+            0.0,
+            double.infinity,
+          );
+          final basisWidth = (columnBasisWidth - 2 * AppSpace.lg).clamp(
+            0.0,
+            double.infinity,
+          );
+          final columns = ((basisWidth + 20) / 200).ceil().clamp(2, 12);
+          final tileWidth = (availableWidth - (columns - 1) * 20) / columns;
+          return GridReflowMetrics(
+            columns: columns,
+            itemWidth: tileWidth,
+            itemHeight: tileWidth + textHeight + 14,
+            crossAxisSpacing: 20,
+            mainAxisSpacing: 20,
+            horizontalPadding: AppSpace.lg,
+          );
+        },
+        builder: (context, metrics, isReflowing) => GridView.builder(
+          clipBehavior: isReflowing ? Clip.none : Clip.hardEdge,
+          addAutomaticKeepAlives: false,
+          addRepaintBoundaries: true,
+          padding: const EdgeInsets.all(AppSpace.lg),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: metrics.columns,
+            mainAxisSpacing: metrics.mainAxisSpacing,
+            crossAxisSpacing: metrics.crossAxisSpacing,
+            mainAxisExtent: metrics.itemHeight,
+          ),
+          itemCount: visibleArtists.length,
+          itemBuilder: (context, index) {
+            final artist = visibleArtists[index];
+            final artistName = artist.name;
+            return GridReflowItem(
+              key: ValueKey(artistName),
+              index: index,
+              child: _ArtistGridTile(
                 artistName: artistName,
                 summary: artist,
                 repository: widget.repository,
@@ -1412,11 +1443,11 @@ class _MusicViewState extends State<MusicView> {
                   });
                   _reload();
                 },
-              );
-            },
-          ),
-        );
-      },
+              ),
+            );
+          },
+        ),
+      ),
     );
   }
 
@@ -1565,7 +1596,6 @@ String _formatArtistSubtitle(int trackCount, int albumCount) {
 
 class _AlbumGridTile extends StatefulWidget {
   const _AlbumGridTile({
-    super.key,
     required this.albumName,
     this.summary,
     required this.repository,
@@ -1654,7 +1684,6 @@ class _AlbumGridTileState extends State<_AlbumGridTile> {
 
 class _ArtistGridTile extends StatefulWidget {
   const _ArtistGridTile({
-    super.key,
     required this.artistName,
     this.summary,
     required this.repository,

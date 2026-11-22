@@ -151,6 +151,12 @@ class _MediaContextMenuOverlayState extends State<_MediaContextMenuOverlay>
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _animController.duration = AppMotion.duration(context, AppMotion.hover);
+  }
+
+  @override
   void dispose() {
     _submenuCloseTimer?.cancel();
     _fadeAnimation.dispose();
@@ -338,19 +344,23 @@ class _MediaContextMenuOverlayState extends State<_MediaContextMenuOverlay>
     final viewport = MediaQuery.sizeOf(context);
     final hasRemove = widget.onRemove != null;
     final menuHeight = _estimatedMenuHeight(hasRemove: hasRemove);
-    final menuLeft = widget.anchor.dx.clamp(
+    final rawLeft = widget.anchor.dx;
+    final rawTop = widget.anchor.dy;
+    final maxLeft = (viewport.width - _menuWidth - _viewportMargin).clamp(
       _viewportMargin,
-      (viewport.width - _menuWidth - _viewportMargin).clamp(
-        _viewportMargin,
-        double.infinity,
-      ),
+      double.infinity,
     );
-    final menuTop = widget.anchor.dy.clamp(
+    final maxTop = (viewport.height - menuHeight - _viewportMargin).clamp(
       _viewportMargin,
-      (viewport.height - menuHeight - _viewportMargin).clamp(
-        _viewportMargin,
-        double.infinity,
-      ),
+      double.infinity,
+    );
+    final menuLeft = rawLeft.clamp(_viewportMargin, maxLeft);
+    final menuTop = rawTop.clamp(_viewportMargin, maxTop);
+    final flippedX = rawLeft > maxLeft;
+    final flippedY = rawTop > maxTop;
+    final originAlignment = Alignment(
+      flippedX ? 1.0 : -1.0,
+      flippedY ? 1.0 : -1.0,
     );
     final menuRect = Rect.fromLTWH(menuLeft, menuTop, _menuWidth, menuHeight);
     final canPlay = widget.target.isAvailable;
@@ -386,110 +396,112 @@ class _MediaContextMenuOverlayState extends State<_MediaContextMenuOverlay>
               child: FadeTransition(
                 opacity: _fadeAnimation,
                 child: ScaleTransition(
-                  alignment: Alignment.topLeft,
+                  alignment: originAlignment,
                   scale: _scaleAnimation,
-                  child: _MenuSurface(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        _MenuRow(
-                          icon: Icons.play_arrow_outlined,
-                          label: 'Play',
-                          enabled: canPlay,
-                          onHoverChanged: (hovering) {
-                            if (hovering) _scheduleSubmenuClose();
-                          },
-                          onTap: _playNow,
-                        ),
-                        _MenuRow(
-                          icon: Icons.queue_play_next_rounded,
-                          label: 'Play next',
-                          enabled: canPlay,
-                          onHoverChanged: (hovering) {
-                            if (hovering) _scheduleSubmenuClose();
-                          },
-                          onTap: _playNext,
-                        ),
-                        _MenuRow(
-                          icon: Icons.playlist_add_rounded,
-                          label: 'Add to queue',
-                          enabled: canPlay,
-                          onHoverChanged: (hovering) {
-                            if (hovering) _scheduleSubmenuClose();
-                          },
-                          onTap: _addToQueue,
-                        ),
-                        const _MenuDivider(),
-                        _MenuRow(
-                          key: _playlistRowKey,
-                          icon: Icons.library_add_outlined,
-                          label: 'Add to playlist',
-                          trailing: Icon(
-                            Icons.chevron_right_rounded,
-                            size: 16,
-                            color: context.palette.mutedText,
-                          ),
-                          forceHighlighted: _playlistSubmenuOpen,
-                          onHoverChanged: (hovering) {
-                            _hoveringPlaylistRow = hovering;
-                            if (hovering) {
-                              _openSubmenuNow();
-                            } else {
-                              _scheduleSubmenuClose();
-                            }
-                          },
-                          onTap: _openSubmenuNow,
-                        ),
-                        if (hasRemove)
+                  child: RepaintBoundary(
+                    child: _MenuSurface(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
                           _MenuRow(
-                            icon: Icons.close_rounded,
-                            label: 'Remove',
+                            icon: Icons.play_arrow_outlined,
+                            label: 'Play',
+                            enabled: canPlay,
                             onHoverChanged: (hovering) {
                               if (hovering) _scheduleSubmenuClose();
                             },
-                            onTap: () => _runAndClose(widget.onRemove!),
+                            onTap: _playNow,
                           ),
-                        _MenuRow(
-                          icon: Icons.open_in_new_rounded,
-                          label: 'Open with',
-                          enabled: canOpenWith,
-                          onHoverChanged: (hovering) {
-                            if (hovering) _scheduleSubmenuClose();
-                          },
-                          onTap: _openWith,
-                        ),
-                        _MenuRow(
-                          icon: Icons.folder_outlined,
-                          label: 'Open in File Explorer',
-                          shortcut: 'F3',
-                          enabled: canOpenInExplorer,
-                          onHoverChanged: (hovering) {
-                            if (hovering) _scheduleSubmenuClose();
-                          },
-                          onTap: _openInExplorer,
-                        ),
-                        _MenuRow(
-                          icon: Icons.info_outline_rounded,
-                          label: 'Properties',
-                          onHoverChanged: (hovering) {
-                            if (hovering) _scheduleSubmenuClose();
-                          },
-                          onTap: _showProperties,
-                        ),
-                        const _MenuDivider(),
-                        _MenuRow(
-                          icon: Icons.checklist_rounded,
-                          label: widget.isSelected ? 'Deselect' : 'Select',
-                          enabled: widget.onSelect != null,
-                          onHoverChanged: (hovering) {
-                            if (hovering) _scheduleSubmenuClose();
-                          },
-                          onTap: widget.onSelect == null
-                              ? null
-                              : () => _runAndClose(widget.onSelect!),
-                        ),
-                      ],
+                          _MenuRow(
+                            icon: Icons.queue_play_next_rounded,
+                            label: 'Play next',
+                            enabled: canPlay,
+                            onHoverChanged: (hovering) {
+                              if (hovering) _scheduleSubmenuClose();
+                            },
+                            onTap: _playNext,
+                          ),
+                          _MenuRow(
+                            icon: Icons.playlist_add_rounded,
+                            label: 'Add to queue',
+                            enabled: canPlay,
+                            onHoverChanged: (hovering) {
+                              if (hovering) _scheduleSubmenuClose();
+                            },
+                            onTap: _addToQueue,
+                          ),
+                          const _MenuDivider(),
+                          _MenuRow(
+                            key: _playlistRowKey,
+                            icon: Icons.library_add_outlined,
+                            label: 'Add to playlist',
+                            trailing: Icon(
+                              Icons.chevron_right_rounded,
+                              size: 16,
+                              color: context.palette.mutedText,
+                            ),
+                            forceHighlighted: _playlistSubmenuOpen,
+                            onHoverChanged: (hovering) {
+                              _hoveringPlaylistRow = hovering;
+                              if (hovering) {
+                                _openSubmenuNow();
+                              } else {
+                                _scheduleSubmenuClose();
+                              }
+                            },
+                            onTap: _openSubmenuNow,
+                          ),
+                          if (hasRemove)
+                            _MenuRow(
+                              icon: Icons.close_rounded,
+                              label: 'Remove',
+                              onHoverChanged: (hovering) {
+                                if (hovering) _scheduleSubmenuClose();
+                              },
+                              onTap: () => _runAndClose(widget.onRemove!),
+                            ),
+                          _MenuRow(
+                            icon: Icons.open_in_new_rounded,
+                            label: 'Open with',
+                            enabled: canOpenWith,
+                            onHoverChanged: (hovering) {
+                              if (hovering) _scheduleSubmenuClose();
+                            },
+                            onTap: _openWith,
+                          ),
+                          _MenuRow(
+                            icon: Icons.folder_outlined,
+                            label: 'Open in File Explorer',
+                            shortcut: 'F3',
+                            enabled: canOpenInExplorer,
+                            onHoverChanged: (hovering) {
+                              if (hovering) _scheduleSubmenuClose();
+                            },
+                            onTap: _openInExplorer,
+                          ),
+                          _MenuRow(
+                            icon: Icons.info_outline_rounded,
+                            label: 'Properties',
+                            onHoverChanged: (hovering) {
+                              if (hovering) _scheduleSubmenuClose();
+                            },
+                            onTap: _showProperties,
+                          ),
+                          const _MenuDivider(),
+                          _MenuRow(
+                            icon: Icons.checklist_rounded,
+                            label: widget.isSelected ? 'Deselect' : 'Select',
+                            enabled: widget.onSelect != null,
+                            onHoverChanged: (hovering) {
+                              if (hovering) _scheduleSubmenuClose();
+                            },
+                            onTap: widget.onSelect == null
+                                ? null
+                                : () => _runAndClose(widget.onSelect!),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),

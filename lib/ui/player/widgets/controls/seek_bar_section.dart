@@ -1,10 +1,12 @@
 import 'dart:async';
+import 'dart:ui' show lerpDouble;
 
 import 'package:flutter/material.dart';
 
 import '../../../../domain/models/media_thumbnail.dart';
 import '../../../../domain/models/playback_chapter.dart';
 import '../../../../domain/models/player_controls_preferences.dart';
+import '../../../../ui/core/app_motion.dart';
 import '../../../../ui/core/app_theme.dart';
 import '../../../../ui/core/components/player_slider_theme.dart';
 import '../../../../ui/core/slider_overlay.dart';
@@ -38,10 +40,20 @@ class SharedSeekBar extends StatefulWidget {
   State<SharedSeekBar> createState() => SharedSeekBarState();
 }
 
-class SharedSeekBarState extends State<SharedSeekBar> {
+class SharedSeekBarState extends State<SharedSeekBar>
+    with SingleTickerProviderStateMixin {
   static const _keyboardSeekDelay = Duration(milliseconds: 140);
 
   final FocusNode _focusNode = FocusNode(debugLabel: 'Seek video');
+  late final AnimationController _hoverController = AnimationController(
+    vsync: this,
+    duration: AppMotion.hover,
+  );
+  late final CurvedAnimation _hoverCurve = CurvedAnimation(
+    parent: _hoverController,
+    curve: AppMotion.enter,
+    reverseCurve: AppMotion.exit,
+  );
   Timer? _keyboardSeekTimer;
   double? _scrubPositionMs;
   double? _hoverPositionMs;
@@ -52,6 +64,7 @@ class SharedSeekBarState extends State<SharedSeekBar> {
   bool _focused = false;
   bool _pointerIsDown = false;
   bool _interactionActive = false;
+  bool _hoverEngaged = false;
   double _lastBubbleLeft = 0;
   MediaThumbnail? _entryThumbnail;
   String? _thumbnailEntryId;
@@ -138,6 +151,33 @@ class SharedSeekBarState extends State<SharedSeekBar> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _hoverController.duration = AppMotion.duration(context, AppMotion.hover);
+    if (AppMotion.reduce(context)) {
+      _hoverController
+        ..stop()
+        ..value = _hoverEngaged ? 1.0 : 0.0;
+    }
+  }
+
+  void _syncHoverEngagement() {
+    final engaged = _pointerInside || _dragging || _focused;
+    if (_hoverEngaged == engaged) return;
+    _hoverEngaged = engaged;
+    if (!mounted) return;
+    if (AppMotion.reduce(context)) {
+      _hoverController
+        ..stop()
+        ..value = engaged ? 1.0 : 0.0;
+    } else if (engaged) {
+      unawaited(_hoverController.forward());
+    } else {
+      unawaited(_hoverController.reverse());
+    }
+  }
+
+  @override
   void dispose() {
     _keyboardSeekTimer?.cancel();
     widget.controller.seekPreview.stateListenable.removeListener(
@@ -150,6 +190,8 @@ class SharedSeekBarState extends State<SharedSeekBar> {
     if (_interactionActive) {
       _notifyInteractionOnDispose(widget.onInteractionChanged);
     }
+    _hoverCurve.dispose();
+    _hoverController.dispose();
     _focusNode
       ..removeListener(_handleFocusChanged)
       ..dispose();
@@ -160,6 +202,7 @@ class SharedSeekBarState extends State<SharedSeekBar> {
     final focused = _focusNode.hasFocus;
     if (!mounted) return;
     setState(() => _focused = focused);
+    _syncHoverEngagement();
     final position = _scrubPositionMs;
     if (!focused && _keyboardSeeking && !_dragging && position != null) {
       unawaited(_commitSeek(position));
@@ -181,6 +224,7 @@ class SharedSeekBarState extends State<SharedSeekBar> {
       _hoverTrackX = trackX;
       _hoverPositionMs = hoverMs;
     });
+    _syncHoverEngagement();
 
     if (!widget.controller.isAudio &&
         widget.controller.hasMedia &&
@@ -195,6 +239,7 @@ class SharedSeekBarState extends State<SharedSeekBar> {
       _pointerInside = false;
       _hoverPositionMs = null;
     });
+    _syncHoverEngagement();
   }
 
   static String? _chapterTitleAt(
@@ -234,6 +279,7 @@ class SharedSeekBarState extends State<SharedSeekBar> {
       _hoverPositionMs = value;
       _hoverTrackX = _trackXForValue(value, width, durationMs);
     });
+    _syncHoverEngagement();
     if (!widget.controller.isAudio &&
         widget.controller.hasMedia &&
         !widget.controller.transportState.streamPlaybackState.isLive) {
@@ -250,6 +296,7 @@ class SharedSeekBarState extends State<SharedSeekBar> {
       _hoverPositionMs = value;
       _hoverTrackX = _trackXForValue(value, width, durationMs);
     });
+    _syncHoverEngagement();
     if (!widget.controller.isAudio &&
         widget.controller.hasMedia &&
         !widget.controller.transportState.streamPlaybackState.isLive) {
@@ -266,6 +313,7 @@ class SharedSeekBarState extends State<SharedSeekBar> {
 
   void _onChangeEnd(double value) {
     _dragging = false;
+    _syncHoverEngagement();
     _setInteracting(false);
     widget.controller.seekPreview.onPointerExit();
     unawaited(_commitSeek(value));
@@ -280,6 +328,7 @@ class SharedSeekBarState extends State<SharedSeekBar> {
   void _cancelPointerDrag() {
     if (!_interactionActive) return;
     _dragging = false;
+    _syncHoverEngagement();
     _setInteracting(false);
     widget.controller.seekPreview.onPointerExit();
     widget.onPreviewChanged(null);
@@ -297,6 +346,7 @@ class SharedSeekBarState extends State<SharedSeekBar> {
       _scrubPositionMs = value;
       _hoverPositionMs = value;
     });
+    _syncHoverEngagement();
     try {
       await widget.controller.seek(Duration(milliseconds: value.round()));
     } finally {
@@ -332,8 +382,6 @@ class SharedSeekBarState extends State<SharedSeekBar> {
         final width = constraints.maxWidth;
         final showPreview =
             hasTimeline && (_pointerInside || _dragging || _keyboardSeeking);
-        final thumbVisible =
-            canSeek && (_pointerInside || _dragging || _focused);
         final chapters = controller.chaptersListenable.value;
         final chapterFractions = hasTimeline
             ? _chapterFractionsFor(chapters, durationMs)
@@ -397,37 +445,8 @@ class SharedSeekBarState extends State<SharedSeekBar> {
                 clipBehavior: Clip.none,
                 children: [
                   Positioned.fill(
-                    child: SliderTheme(
-                      data:
-                          PlayerSliderTheme.seek(
-                            context,
-                            trackHeight:
-                                (_pointerInside || _dragging || _focused)
-                                ? widget.thickness.hoverHeight
-                                : widget.thickness.restingHeight,
-                            trackShape: const UniformRoundedSliderTrackShape(),
-                            thumbShape: canSeek
-                                ? RoundSliderThumbShape(
-                                    enabledThumbRadius: thumbVisible
-                                        ? ((_pointerInside ||
-                                                  _dragging ||
-                                                  _focused)
-                                              ? widget
-                                                    .thickness
-                                                    .hoverThumbRadius
-                                              : widget
-                                                    .thickness
-                                                    .restingThumbRadius)
-                                        : 0,
-                                    disabledThumbRadius: 3,
-                                    elevation: 2,
-                                    pressedElevation: 4,
-                                  )
-                                : SliderComponentShape.noThumb,
-                          ).copyWith(
-                            disabledActiveTrackColor: context.palette.muted,
-                            disabledInactiveTrackColor: context.palette.border,
-                          ),
+                    child: AnimatedBuilder(
+                      animation: _hoverCurve,
                       child: SliderOverlay(
                         child: Slider(
                           key: const ValueKey('seek-slider'),
@@ -448,6 +467,43 @@ class SharedSeekBarState extends State<SharedSeekBar> {
                               'Seek to ${formatTime(Duration(milliseconds: value.round()))}',
                         ),
                       ),
+                      builder: (context, sliderChild) {
+                        final hoverT = _hoverCurve.value;
+                        final trackHeight = lerpDouble(
+                          widget.thickness.restingHeight,
+                          widget.thickness.hoverHeight,
+                          hoverT,
+                        )!;
+                        final thumbRadius = canSeek
+                            ? lerpDouble(
+                                0.0,
+                                widget.thickness.hoverThumbRadius,
+                                hoverT,
+                              )!
+                            : 0.0;
+                        return SliderTheme(
+                          data:
+                              PlayerSliderTheme.seek(
+                                context,
+                                trackHeight: trackHeight,
+                                trackShape:
+                                    const UniformRoundedSliderTrackShape(),
+                                thumbShape: canSeek
+                                    ? RoundSliderThumbShape(
+                                        enabledThumbRadius: thumbRadius,
+                                        disabledThumbRadius: 3,
+                                        elevation: 2,
+                                        pressedElevation: 4,
+                                      )
+                                    : SliderComponentShape.noThumb,
+                              ).copyWith(
+                                disabledActiveTrackColor: context.palette.muted,
+                                disabledInactiveTrackColor:
+                                    context.palette.border,
+                              ),
+                          child: sliderChild!,
+                        );
+                      },
                     ),
                   ),
                   if (chapterFractions.isNotEmpty)

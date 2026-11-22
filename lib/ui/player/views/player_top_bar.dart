@@ -28,81 +28,106 @@ class PlayerTopBar extends StatelessWidget {
   final ValueChanged<bool>? onFocusChange;
 
   @override
-  Widget build(BuildContext context) => MouseRegion(
-    onEnter: (_) => onPointerEnter(),
-    onExit: (_) => onPointerExit(),
-    child: AnimatedOpacity(
-      opacity: controlsVisible ? 1 : 0,
-      duration: AppMotion.duration(context, AppMotion.quick),
-      curve: AppMotion.standardCurve,
-      child: IgnorePointer(
-        ignoring: !controlsVisible,
-        child: ExcludeFocus(
-          excluding: !controlsVisible,
-          child: ExcludeSemantics(
-            excluding: !controlsVisible,
-            child: Row(
-              children: [
-                if (!isMiniPlayer && hasLibraryRepository) ...[
-                  Focus(
-                    onFocusChange: onFocusChange,
-                    child: Tooltip(
-                      message: 'Mini player',
-                      child: IconButton(
-                        key: const ValueKey('player-mini-button'),
-                        onPressed: onBackToHome,
-                        icon: const Icon(
-                          Icons.keyboard_arrow_down_rounded,
-                          size: 24,
+  Widget build(BuildContext context) {
+    final duration = controlsVisible
+        ? AppMotion.duration(context, AppMotion.chromeEnter)
+        : AppMotion.duration(context, AppMotion.chromeExit);
+    final curve = controlsVisible ? AppMotion.enter : AppMotion.exit;
+    final reduced = AppMotion.reduce(context);
+
+    return MouseRegion(
+      onEnter: (_) => onPointerEnter(),
+      onExit: (_) => onPointerExit(),
+      child: AnimatedOpacity(
+        opacity: controlsVisible ? 1 : 0,
+        duration: duration,
+        curve: curve,
+        child: AnimatedSlide(
+          offset: !reduced && !controlsVisible
+              ? const Offset(0, -0.18)
+              : Offset.zero,
+          duration: duration,
+          curve: curve,
+          child: RepaintBoundary(
+            child: IgnorePointer(
+              ignoring: !controlsVisible,
+              child: ExcludeFocus(
+                excluding: !controlsVisible,
+                child: ExcludeSemantics(
+                  excluding: !controlsVisible,
+                  child: Row(
+                    children: [
+                      if (!isMiniPlayer && hasLibraryRepository) ...[
+                        Focus(
+                          onFocusChange: onFocusChange,
+                          child: Tooltip(
+                            message: 'Mini player',
+                            child: IconButton(
+                              key: const ValueKey('player-mini-button'),
+                              onPressed: onBackToHome,
+                              icon: const Icon(
+                                Icons.keyboard_arrow_down_rounded,
+                                size: 24,
+                              ),
+                              style: IconButton.styleFrom(
+                                foregroundColor: AppTheme.onStage,
+                                backgroundColor: AppTheme.stage.withValues(
+                                  alpha: 0.65,
+                                ),
+                                side: BorderSide(
+                                  color: AppTheme.onStage.withValues(
+                                    alpha: 0.14,
+                                  ),
+                                ),
+                                minimumSize: const Size(38, 38),
+                                padding: EdgeInsets.zero,
+                              ),
+                            ),
+                          ),
                         ),
-                        style: IconButton.styleFrom(
-                          foregroundColor: AppTheme.onStage,
-                          backgroundColor: AppTheme.stage.withValues(
-                            alpha: 0.65,
-                          ),
-                          side: BorderSide(
-                            color: AppTheme.onStage.withValues(alpha: 0.14),
-                          ),
-                          minimumSize: const Size(38, 38),
-                          padding: EdgeInsets.zero,
+                        const SizedBox(width: 12),
+                      ],
+                      Expanded(
+                        child: Text(
+                          currentTitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(
+                                color: AppTheme.onStage,
+                                shadows: const [
+                                  Shadow(color: AppTheme.stage, blurRadius: 5),
+                                ],
+                              ),
                         ),
                       ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                ],
-                Expanded(
-                  child: Text(
-                    currentTitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      color: AppTheme.onStage,
-                      shadows: const [
-                        Shadow(color: AppTheme.stage, blurRadius: 5),
+                      if (isMiniPlayer) ...[
+                        const SizedBox(width: 12),
+                        TextButton.icon(
+                          key: const ValueKey('exit-mini-player'),
+                          onPressed: onExitMiniPlayer,
+                          icon: const Icon(
+                            Icons.open_in_full_rounded,
+                            size: 20,
+                          ),
+                          label: const Text('Exit mini player'),
+                          style: TextButton.styleFrom(
+                            foregroundColor: AppTheme.onStage,
+                            backgroundColor: AppTheme.stage.withValues(
+                              alpha: 0.65,
+                            ),
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                          ),
+                        ),
                       ],
-                    ),
+                    ],
                   ),
                 ),
-                if (isMiniPlayer) ...[
-                  const SizedBox(width: 12),
-                  TextButton.icon(
-                    key: const ValueKey('exit-mini-player'),
-                    onPressed: onExitMiniPlayer,
-                    icon: const Icon(Icons.open_in_full_rounded, size: 20),
-                    label: const Text('Exit mini player'),
-                    style: TextButton.styleFrom(
-                      foregroundColor: AppTheme.onStage,
-                      backgroundColor: AppTheme.stage.withValues(alpha: 0.65),
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                    ),
-                  ),
-                ],
-              ],
+              ),
             ),
           ),
         ),
       ),
-    ),
-  );
+    );
+  }
 }

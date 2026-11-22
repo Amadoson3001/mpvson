@@ -55,6 +55,7 @@ export 'player_state.dart';
 part 'player_controller_session.dart';
 part 'player_controller_queue.dart';
 part 'player_controller_transport.dart';
+part 'player_controller_preferences.dart';
 part 'player_controller_playback.dart';
 part 'player_controller_engine.dart';
 
@@ -86,6 +87,7 @@ class PlayerController extends ChangeNotifier {
     _confirmedVolume = _normalizeVolume(initial.volume);
     if (_confirmedVolume > 0) _lastAudibleVolume = _confirmedVolume;
     _confirmedRate = _normalizeRate(initial.rate);
+    _publishRate();
     _confirmedShuffle = initial.shuffle;
     _stateSubscription = _playback.states.listen(
       _handleSnapshot,
@@ -344,6 +346,9 @@ class PlayerController extends ChangeNotifier {
 
   /// Volume of the current source, independent of transport ticks.
   final ValueNotifier<double> volumeListenable = ValueNotifier<double>(100);
+
+  /// Playback rate of the current source, independent of transport ticks.
+  final ValueNotifier<double> rateListenable = ValueNotifier<double>(1.0);
 
   /// Shuffle and repeat, independent of transport ticks.
   final ValueNotifier<PlaybackMode> playbackModeListenable =

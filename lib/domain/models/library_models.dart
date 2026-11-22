@@ -21,6 +21,7 @@ class LibraryScanStatus {
     this.enrichedCount = 0,
     this.totalToEnrich = 0,
     this.errorMessage,
+    this.isPartial = false,
   });
 
   final ScanPhase phase;
@@ -29,6 +30,7 @@ class LibraryScanStatus {
   final int enrichedCount;
   final int totalToEnrich;
   final String? errorMessage;
+  final bool isPartial;
 
   bool get isScanning =>
       phase == ScanPhase.discovering ||
@@ -42,9 +44,11 @@ class LibraryScanStatus {
     int? enrichedCount,
     int? totalToEnrich,
     Object? errorMessage = _unchanged,
+    bool? isPartial,
   }) {
     return LibraryScanStatus(
       phase: phase ?? this.phase,
+      isPartial: isPartial ?? this.isPartial,
       currentFolder: identical(currentFolder, _unchanged)
           ? this.currentFolder
           : currentFolder as String?,

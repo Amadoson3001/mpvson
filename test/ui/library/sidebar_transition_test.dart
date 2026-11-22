@@ -1,11 +1,22 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mpvson/app.dart';
 import 'package:mpvson/data/repositories/app_preferences_repository.dart';
+import 'package:mpvson/data/repositories/session_repository.dart';
 import 'package:mpvson/ui/core/app_theme.dart';
+import 'package:mpvson/ui/core/components/media_accent_scope.dart';
+import 'package:mpvson/ui/core/toast/app_toast_host.dart';
 import 'package:mpvson/ui/library/views/library_navigation.dart';
-import 'package:mpvson/ui/library/views/library_section.dart';
+import 'package:mpvson/ui/library/views/library_shell.dart';
+import 'package:mpvson/ui/library/views/library_top_bar.dart';
 import 'package:mpvson/ui/library/views/sidebar_transition.dart';
+import 'package:mpvson/ui/library/views/videos_view.dart';
+import 'package:mpvson/ui/player/player_controller.dart';
+
+import '../../support/library_view_fixtures.dart';
 
 class _SidebarTestHost extends StatefulWidget {
   const _SidebarTestHost({this.animationSpeed = AnimationSpeed.normal});
@@ -355,4 +366,100 @@ void main() {
     // Fast closes much further than slow after the same 80ms elapsed.
     expect(fastWidth, lessThan(slowWidth - 15.0));
   });
+
+  testWidgets(
+    'LibraryShell Videos stage stays flush edge-to-edge on every frame of collapse and expand',
+    (tester) async {
+      tester.view.devicePixelRatio = 1.0;
+      tester.view.physicalSize = const Size(1280, 800);
+      addTearDown(tester.view.reset);
+
+      late Directory dir;
+      late FakePlaybackService playback;
+      late PlayerController controller;
+      await tester.runAsync(() async {
+        dir = await Directory.systemTemp.createTemp('mpvson_sidebar_test_');
+        playback = FakePlaybackService();
+        final sessions = SessionRepository(
+          directory: dir,
+          encoder: (session) => jsonEncode(session.toJson()),
+        );
+        controller = PlayerController(playback: playback, sessions: sessions);
+        await controller.initialize();
+      });
+      final repo = FakeMediaLibraryRepository();
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox());
+        await tester.pump(const Duration(seconds: 6));
+        await tester.runAsync(() async {
+          await repo.dispose();
+          await controller.close(discard: true);
+          controller.dispose();
+          await playback.dispose();
+          if (await dir.exists()) await dir.delete(recursive: true);
+        });
+      });
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.darkTheme(),
+          home: AppToastHost(
+            child: AppPreferencesScope(
+              preferences: const DesktopPreferences(),
+              child: MediaAccentScope(
+                controller: controller,
+                child: LibraryShell(
+                  repository: repo,
+                  controller: controller,
+                  initialSection: LibrarySection.videos,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      void assertStageFlush() {
+        final navRect = tester.getRect(find.byType(ShellSideNav));
+        final topBarRect = tester.getRect(find.byType(LibraryTopBar));
+        final videosRect = tester.getRect(find.byType(VideosView));
+
+        // Content starts right after the 1px divider and stretches cleanly to
+        // the right edge of the window with zero gap and zero clipping.
+        expect(topBarRect.left, closeTo(navRect.right + 1.0, 0.5));
+        expect(topBarRect.right, closeTo(1280.0, 0.5));
+        expect(videosRect.left, closeTo(navRect.right + 1.0, 0.5));
+        expect(videosRect.right, closeTo(1280.0, 0.5));
+      }
+
+      assertStageFlush();
+
+      // Collapse sidebar and verify every sampled frame stays flush.
+      await tester.tap(find.byIcon(Icons.menu_open_rounded));
+      await tester.pump();
+      assertStageFlush();
+
+      for (var i = 0; i < 16; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        assertStageFlush();
+      }
+      await tester.pumpAndSettle();
+      assertStageFlush();
+
+      // Expand sidebar and verify every sampled frame stays flush.
+      await tester.tap(find.byIcon(Icons.menu_open_rounded));
+      await tester.pump();
+      assertStageFlush();
+
+      for (var i = 0; i < 16; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        assertStageFlush();
+      }
+      await tester.pumpAndSettle();
+      assertStageFlush();
+
+      expect(tester.takeException(), isNull);
+    },
+  );
 }

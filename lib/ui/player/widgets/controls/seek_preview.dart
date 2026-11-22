@@ -44,10 +44,16 @@ class SeekPreview extends StatelessWidget {
     final curved = animation.drive(CurveTween(curve: AppMotion.enter));
     return FadeTransition(
       opacity: curved,
-      child: ScaleTransition(
-        scale: Tween<double>(begin: 0.94, end: 1).animate(curved),
-        alignment: Alignment.bottomCenter,
-        child: child,
+      child: SlideTransition(
+        position: Tween<Offset>(
+          begin: const Offset(0, 0.04),
+          end: Offset.zero,
+        ).animate(curved),
+        child: ScaleTransition(
+          scale: Tween<double>(begin: 0.94, end: 1).animate(curved),
+          alignment: Alignment.bottomCenter,
+          child: child,
+        ),
       ),
     );
   }
@@ -169,10 +175,14 @@ class _VideoPreview extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final frame = previewState?.currentFrame;
+    final liveTextureId = previewState?.liveTextureId;
+    final isRemote = previewState?.isRemote ?? false;
     final isFailed = previewState?.status == SeekPreviewStatus.failed;
     final isLoading = previewState?.status == SeekPreviewStatus.loading;
     final showSpinner =
-        previewState?.isUpdating == true || (isLoading && frame == null);
+        isRemote &&
+        (previewState?.isUpdating == true ||
+            (isLoading && frame == null && liveTextureId == null));
     final frameHeight = compact
         ? width * 9 / 16
         : (width * 9 / 16).clamp(88.0, 144.0);
@@ -180,7 +190,9 @@ class _VideoPreview extends StatelessWidget {
     final accent = Theme.of(context).colorScheme.primary;
 
     Widget image;
-    if (frame != null && frame.bytes.isNotEmpty) {
+    if (liveTextureId != null) {
+      image = _LivePreviewTexture(textureId: liveTextureId);
+    } else if (frame != null && frame.bytes.isNotEmpty) {
       image = _PreviewBitmap(bytes: frame.bytes);
     } else if (isFailed) {
       image = const _PreviewUnavailableFrame();
@@ -403,6 +415,24 @@ class _AudioPreview extends StatelessWidget {
       ),
     );
   }
+}
+
+class _LivePreviewTexture extends StatelessWidget {
+  const _LivePreviewTexture({required this.textureId});
+
+  final int textureId;
+
+  @override
+  Widget build(BuildContext context) => ClipRect(
+    child: FittedBox(
+      fit: BoxFit.cover,
+      child: SizedBox(
+        width: 320,
+        height: 180,
+        child: Texture(textureId: textureId, filterQuality: FilterQuality.low),
+      ),
+    ),
+  );
 }
 
 class _PreviewBitmap extends StatelessWidget {

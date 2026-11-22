@@ -393,28 +393,48 @@ class _PlayerControlsState extends State<PlayerControls> {
         !AppMotion.lowPower(context) &&
         !widget.controller.isPlaying;
 
-    Widget content = Padding(padding: padding, child: child);
-    if (isFloating && allowBlur) {
-      content = ClipRRect(
+    // Keep the control strip content in a fixed Stack slot so toggling
+    // BackdropFilter on Play/Pause never unmounts buttons, sliders, or focus.
+    final Widget blurBackdrop;
+    if (!allowBlur) {
+      blurBackdrop = const SizedBox.shrink();
+    } else if (isFloating) {
+      blurBackdrop = ClipRRect(
         borderRadius: radius,
         child: BackdropFilter(
           filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-          child: content,
+          child: const SizedBox.expand(),
         ),
       );
-    } else if (allowBlur && barStyle == PlayerControlBarStyle.frostedDocked) {
-      content = ClipRect(
+    } else if (barStyle == PlayerControlBarStyle.frostedDocked) {
+      blurBackdrop = ClipRect(
         child: BackdropFilter(
           filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-          child: content,
+          child: const SizedBox.expand(),
         ),
       );
+    } else {
+      blurBackdrop = const SizedBox.shrink();
     }
 
     final shell = DecoratedBox(
       key: const ValueKey('player-control-strip'),
       decoration: _buildDecoration(context, prefs),
-      child: content,
+      child: Stack(
+        fit: StackFit.passthrough,
+        clipBehavior: Clip.none,
+        children: [
+          Positioned.fill(
+            key: const ValueKey('player-control-blur-backdrop'),
+            child: IgnorePointer(child: blurBackdrop),
+          ),
+          Padding(
+            key: const ValueKey('player-control-content'),
+            padding: padding,
+            child: child,
+          ),
+        ],
+      ),
     );
 
     if (isFloating) {

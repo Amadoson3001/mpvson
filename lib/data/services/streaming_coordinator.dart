@@ -126,6 +126,10 @@ class StreamingCoordinator {
 
   // Auto-quality tracking
   DateTime? _lastQualitySwitchTime;
+  Timer? _qualitySwitchTimer;
+  StreamRendition? _pendingRendition;
+  StreamRendition? _previousSelection;
+  bool _previousAutoQuality = true;
   int _consecutiveUnderruns = 0;
   DateTime? _firstUnderrunWindowStart;
   DateTime? _healthyBufferStart;
@@ -139,19 +143,28 @@ class StreamingCoordinator {
 
   /// Last known playback position reported by demuxer / transport.
   Duration _lastKnownPosition = Duration.zero;
+  bool _accessRefreshAttempted = false;
+
+  bool ownsAttempt(int attemptId) =>
+      attemptId == _currentState.attemptId &&
+      _currentCancelToken != null &&
+      !_currentCancelToken!.isCancelled;
 
   void updatePosition(Duration position) {
-    if (position > Duration.zero) {
-      _lastKnownPosition = position;
-    }
+    if (position >= Duration.zero) _lastKnownPosition = position;
   }
 
   /// Refreshes signed stream tokens via yt-dlp if active page has expiring tokens.
   Future<ResolvedStream?> refreshExpiringStream() async {
     final page = _activeResolvedPage;
-    if (page == null) return null;
+    final attemptId = currentAttemptId;
+    if (page == null || !ownsAttempt(attemptId)) return null;
     try {
-      final refreshed = await ytDlpResolver.refresh(page);
+      final refreshed = await ytDlpResolver.refresh(
+        page,
+        cancelToken: _currentCancelToken,
+      );
+      if (!ownsAttempt(attemptId)) return null;
       _activeResolvedPage = refreshed;
       _emit(_currentState.copyWith(streamUrl: refreshed.streamUrl));
       diagnostics?.record(
@@ -167,6 +180,18 @@ class StreamingCoordinator {
       );
       return null;
     }
+  }
+
+  void failAccessRefresh(int attemptId) {
+    if (!ownsAttempt(attemptId)) return;
+    _emit(
+      _currentState.copyWith(
+        stage: StreamStage.failed,
+        clearStageMessage: true,
+        error:
+            'Access denied. The link may require authentication or have expired.',
+      ),
+    );
   }
 
   /// Completely stops streaming, cancels attempts, and clears state.
@@ -190,6 +215,8 @@ class StreamingCoordinator {
 
   /// Cancels any outstanding attempt and resets to idle.
   void cancelActiveAttempt({String? reason}) {
+    _qualitySwitchTimer?.cancel();
+    _pendingRendition = null;
     if (_currentCancelToken != null && !_currentCancelToken!.isCancelled) {
       _currentCancelToken!.cancel();
       _currentCancelToken = null;
@@ -217,6 +244,10 @@ class StreamingCoordinator {
   }) async {
     cancelActiveAttempt(reason: 'new stream requested');
 
+    _activeManifest = null;
+    _activeResolvedPage = null;
+    _lastKnownPosition = Duration.zero;
+    _accessRefreshAttempted = false;
     final attemptId = ++_attemptCounter;
     final cancelToken = CancellationToken();
     _currentCancelToken = cancelToken;
@@ -346,7 +377,11 @@ class StreamingCoordinator {
           lowerPlayable.contains('.mpd') ||
           lowerPlayable.contains('manifest');
 
-      if (isHlsOrDash && candidateRenditions.isEmpty) {
+      if (candidateRenditions.isEmpty &&
+          (isHlsOrDash ||
+              !RegExp(
+                r'\.(mp4|mkv|webm|mp3|m4a|aac|flac|wav|ogg)(?:[?#]|$)',
+              ).hasMatch(lowerPlayable))) {
         if (cancelToken.isCancelled || attemptId != _attemptCounter) {
           return null;
         }
@@ -365,7 +400,9 @@ class StreamingCoordinator {
             return null;
           }
 
-          _activeManifest = manifest;
+          if (manifest.format != StreamFormat.direct) {
+            _activeManifest = manifest;
+          }
           isLive = manifest.isLive;
           if (manifest.variants.isNotEmpty) {
             candidateRenditions = manifest.variants;
@@ -407,6 +444,7 @@ class StreamingCoordinator {
           initialRendition.url!.isNotEmpty) {
         playableUrl = initialRendition.url!;
         audioUrl = initialRendition.audioUrl ?? audioUrl;
+        httpHeaders = initialRendition.httpHeaders ?? httpHeaders;
       }
 
       final normalizedTitle = title?.trim();
@@ -421,7 +459,9 @@ class StreamingCoordinator {
           stageMessage: 'Connecting',
           availableRenditions: renditionsWithAuto,
           selectedRendition: effectiveSelectedRendition,
-          activeRendition: initialRendition,
+          activeRendition: isAutoSelected || _activeManifest != null
+              ? null
+              : initialRendition,
           isAutoQuality: isAutoSelected,
           isLive: isLive,
         ),
@@ -509,16 +549,20 @@ class StreamingCoordinator {
     bool isLive = false,
     bool isLowSpec = false,
     bool limitDemuxerCache = false,
+    bool Function()? shouldContinue,
   }) async {
     try {
       if (!isNetwork) {
         // Local playback: cache disabled, modest readahead
+        if (shouldContinue?.call() == false) return;
         await nativePlayer
             .setProperty('cache', 'no', waitForInitialization: false)
             .timeout(const Duration(seconds: 1));
+        if (shouldContinue?.call() == false) return;
         await nativePlayer
             .setProperty('cache-on-disk', 'no', waitForInitialization: false)
             .timeout(const Duration(seconds: 1));
+        if (shouldContinue?.call() == false) return;
         await nativePlayer
             .setProperty(
               'demuxer-readahead-secs',
@@ -528,15 +572,18 @@ class StreamingCoordinator {
             .timeout(const Duration(seconds: 1));
       } else {
         // Cloud streaming: memory-backed caching, bounded readahead
+        if (shouldContinue?.call() == false) return;
         await nativePlayer
             .setProperty('cache', 'yes', waitForInitialization: false)
             .timeout(const Duration(seconds: 1));
+        if (shouldContinue?.call() == false) return;
         await nativePlayer
             .setProperty('cache-on-disk', 'no', waitForInitialization: false)
             .timeout(const Duration(seconds: 1));
 
         // Readahead: ~12s progressive/VOD, ~6s live HLS (Phase 2 spec)
         final readaheadSecs = isLive ? '6' : '12';
+        if (shouldContinue?.call() == false) return;
         await nativePlayer
             .setProperty(
               'demuxer-readahead-secs',
@@ -544,6 +591,7 @@ class StreamingCoordinator {
               waitForInitialization: false,
             )
             .timeout(const Duration(seconds: 1));
+        if (shouldContinue?.call() == false) return;
         await nativePlayer
             .setProperty(
               'demuxer-max-bytes',
@@ -551,9 +599,11 @@ class StreamingCoordinator {
               waitForInitialization: false,
             )
             .timeout(const Duration(seconds: 1));
+        if (shouldContinue?.call() == false) return;
         await nativePlayer
             .setProperty('network-timeout', '15', waitForInitialization: false)
             .timeout(const Duration(seconds: 1));
+        if (shouldContinue?.call() == false) return;
         await nativePlayer
             .setProperty('tls-verify', 'yes', waitForInitialization: false)
             .timeout(const Duration(seconds: 1));
@@ -563,13 +613,25 @@ class StreamingCoordinator {
     }
   }
 
+  /// Records the actual engine inputs after a direct rendition is opened.
+  void recordStreamInput(String url, String? audioUrl) {
+    if (!ownsAttempt(currentAttemptId)) return;
+    _emit(
+      _currentState.copyWith(
+        streamUrl: url,
+        audioUrl: audioUrl,
+        clearAudioUrl: audioUrl == null,
+      ),
+    );
+  }
+
   /// Observes engine lifecycle events for the active attempt.
   void handleNativeLifecycleEvent(
     NativeMediaEvent event, {
     required int attemptId,
     int? httpStatusCode,
   }) {
-    if (attemptId != _currentState.attemptId) return;
+    if (!ownsAttempt(attemptId)) return;
 
     switch (event.kind) {
       case NativeMediaEventKind.started:
@@ -665,16 +727,33 @@ class StreamingCoordinator {
 
     final nextWidth = width ?? _currentState.decodedWidth;
     final nextHeight = height ?? _currentState.decodedHeight;
-    final isResolutionDelivered =
-        _currentState.stage == StreamStage.switchingQuality &&
-        (width != null || height != null) &&
-        nextWidth != null &&
-        nextHeight != null;
-    var nextStage = isResolutionDelivered
-        ? StreamStage.ready
-        : _currentState.stage;
+    StreamRendition? observedRendition;
+    if (nextHeight != null && (width != null || height != null)) {
+      final matches = _currentState.availableRenditions.where(
+        (r) =>
+            !r.isAuto &&
+            r.height == nextHeight &&
+            (r.width == null || nextWidth == null || r.width == nextWidth),
+      );
+      if (matches.length == 1) observedRendition = matches.single;
+      // A caller can request a rendition not present in the discovery list.
+      if (matches.isEmpty &&
+          _pendingRendition?.height == nextHeight &&
+          (_pendingRendition?.width == null ||
+              _pendingRendition?.width == nextWidth)) {
+        observedRendition = _pendingRendition;
+      }
+    }
+    final confirmed =
+        _pendingRendition != null &&
+        observedRendition?.id == _pendingRendition!.id;
+    if (confirmed) {
+      _qualitySwitchTimer?.cancel();
+      _pendingRendition = null;
+    }
+    var nextStage = confirmed ? StreamStage.ready : _currentState.stage;
     var nextMessage = _currentState.stageMessage;
-    var clearMessage = isResolutionDelivered;
+    var clearMessage = confirmed;
 
     if (pausedForCache == true && nextStage == StreamStage.ready) {
       nextStage = StreamStage.buffering;
@@ -686,6 +765,7 @@ class StreamingCoordinator {
     }
 
     final nextState = _currentState.copyWith(
+      activeRendition: _pendingRendition == null ? observedRendition : null,
       stage: nextStage,
       stageMessage: clearMessage ? null : nextMessage,
       clearStageMessage: clearMessage,
@@ -759,33 +839,50 @@ class StreamingCoordinator {
   }
 
   void _performAutoSwitch(StreamRendition target, DateTime now) {
+    _previousSelection = _currentState.selectedRendition;
+    _previousAutoQuality = _currentState.isAutoQuality;
     _lastQualitySwitchTime = now;
     _consecutiveUnderruns = 0;
     _healthyBufferStart = null;
     _emit(
       _currentState.copyWith(
-        activeRendition: target,
         stage: StreamStage.switchingQuality,
         stageMessage: 'Switching to ${target.label}',
       ),
     );
+    _beginQualityConfirmation(target);
     if (onAutoQualitySwitch != null) {
-      onAutoQualitySwitch!(target);
+      unawaited(
+        onAutoQualitySwitch!(target).catchError((Object _) {
+          failQualitySwitch(target);
+        }),
+      );
     }
   }
 
   /// Manually selects a rendition. Locks the selection for the current entry.
   void selectRendition(StreamRendition rendition) {
     if (rendition.isAuto) {
+      _qualitySwitchTimer?.cancel();
+      _pendingRendition = null;
       _emit(
         _currentState.copyWith(
           isAutoQuality: true,
           selectedRendition: StreamRendition.auto,
+          stage: _currentState.stage == StreamStage.switchingQuality
+              ? StreamStage.ready
+              : _currentState.stage,
+          clearStageMessage:
+              _currentState.stage == StreamStage.switchingQuality,
         ),
       );
       return;
     }
 
+    if (_pendingRendition == null) {
+      _previousSelection = _currentState.selectedRendition;
+      _previousAutoQuality = _currentState.isAutoQuality;
+    }
     _lastQualitySwitchTime = DateTime.now();
     _consecutiveUnderruns = 0;
     _healthyBufferStart = null;
@@ -794,9 +891,47 @@ class StreamingCoordinator {
       _currentState.copyWith(
         isAutoQuality: false,
         selectedRendition: rendition,
-        activeRendition: rendition,
         stage: StreamStage.switchingQuality,
         stageMessage: 'Switching to ${rendition.label}',
+      ),
+    );
+    _beginQualityConfirmation(rendition);
+  }
+
+  void _beginQualityConfirmation(StreamRendition target) {
+    _qualitySwitchTimer?.cancel();
+    _pendingRendition = target;
+    final attempt = currentAttemptId;
+    _qualitySwitchTimer = Timer(const Duration(seconds: 8), () {
+      if (!ownsAttempt(attempt)) return;
+      failQualitySwitch(target);
+    });
+  }
+
+  /// Confirms a switch after the engine reports the requested track or edition.
+  void confirmQualitySwitch(StreamRendition target) {
+    if (_pendingRendition != target) return;
+    _qualitySwitchTimer?.cancel();
+    _pendingRendition = null;
+    _emit(
+      _currentState.copyWith(
+        activeRendition: target,
+        stage: StreamStage.ready,
+        clearStageMessage: true,
+      ),
+    );
+  }
+
+  void failQualitySwitch(StreamRendition target) {
+    if (_pendingRendition != target) return;
+    _qualitySwitchTimer?.cancel();
+    _pendingRendition = null;
+    _emit(
+      _currentState.copyWith(
+        stage: StreamStage.ready,
+        clearStageMessage: true,
+        selectedRendition: _previousSelection,
+        isAutoQuality: _previousAutoQuality,
       ),
     );
   }
@@ -805,6 +940,27 @@ class StreamingCoordinator {
   void _handlePlaybackError(int errorCode, {int? httpStatusCode}) {
     final isHttpNotFound = httpStatusCode == 404 || httpStatusCode == 410;
     final isHttpForbidden = httpStatusCode == 401 || httpStatusCode == 403;
+
+    if (isHttpForbidden &&
+        _activeResolvedPage?.isExpiring == true &&
+        !_accessRefreshAttempted &&
+        onReconnectRequired != null) {
+      _accessRefreshAttempted = true;
+      final attempt = currentAttemptId;
+      _emit(
+        _currentState.copyWith(
+          stage: StreamStage.reconnecting,
+          stageMessage: 'Refreshing link...',
+        ),
+      );
+      unawaited(
+        onReconnectRequired!(
+          attempt,
+          _currentState.isLive ? Duration.zero : _lastKnownPosition,
+        ),
+      );
+      return;
+    }
 
     // 1. Check for terminal error codes or terminal HTTP statuses
     final isTerminal =
@@ -858,7 +1014,9 @@ class StreamingCoordinator {
       );
 
       final currentAttempt = _currentState.attemptId;
-      final currentPos = _lastKnownPosition;
+      final currentPos = _currentState.isLive
+          ? Duration.zero
+          : _lastKnownPosition;
       if (onReconnectRequired != null) {
         Future<void>.delayed(Duration(milliseconds: 300 * nextAttempts), () {
           if (currentAttempt == _currentState.attemptId &&

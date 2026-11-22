@@ -397,7 +397,21 @@ class _PlayerErrorOverlayState extends State<PlayerErrorOverlay>
   late final AnimationController _enter = AnimationController(
     vsync: this,
     duration: AppMotion.toast,
+    reverseDuration: AppMotion.toastExit,
   );
+  late final CurvedAnimation _enterCurve = CurvedAnimation(
+    parent: _enter,
+    curve: AppMotion.enter,
+    reverseCurve: AppMotion.exit,
+  );
+  late final Animation<Offset> _slideUp = Tween<Offset>(
+    begin: const Offset(0, 0.16),
+    end: Offset.zero,
+  ).animate(_enterCurve);
+  late final Animation<Offset> _slideDown = Tween<Offset>(
+    begin: const Offset(0, -0.16),
+    end: Offset.zero,
+  ).animate(_enterCurve);
   final GlobalKey _cardKey = GlobalKey();
   final Object _pinnedKey = Object();
 
@@ -426,9 +440,13 @@ class _PlayerErrorOverlayState extends State<PlayerErrorOverlay>
       _layout = nextLayout;
     }
     final skipMotion = AppMotion.lowPower(context);
-    _enter.duration = AppMotion.reduce(context)
+    final reduced = AppMotion.reduce(context);
+    _enter.duration = reduced
         ? Duration.zero
-        : AppMotion.toast;
+        : AppMotion.scaled(context, AppMotion.toast);
+    _enter.reverseDuration = reduced
+        ? Duration.zero
+        : AppMotion.scaled(context, AppMotion.toastExit);
     if (widget.message != null) {
       if (skipMotion) {
         _enter.value = 1;
@@ -468,6 +486,7 @@ class _PlayerErrorOverlayState extends State<PlayerErrorOverlay>
   void dispose() {
     _disposed = true;
     _enter.removeStatusListener(_handleAnimationStatus);
+    _enterCurve.dispose();
     _enter.dispose();
     _layout?.releasePinnedHeight(_pinnedKey);
     super.dispose();
@@ -549,23 +568,14 @@ class _PlayerErrorOverlayState extends State<PlayerErrorOverlay>
     );
 
     final animatedBanner = skipMotion
-        ? banner
-        : AnimatedBuilder(
-            animation: _enter,
-            builder: (context, child) {
-              final progress = Curves.easeOutCubic
-                  .transform(_enter.value.clamp(0.0, 1.0))
-                  .clamp(0.0, 1.0);
-              final travel = slideUp ? 8.0 : -8.0;
-              return Opacity(
-                opacity: progress,
-                child: Transform.translate(
-                  offset: Offset(0, (1 - progress) * travel),
-                  child: child,
-                ),
-              );
-            },
-            child: banner,
+        ? RepaintBoundary(child: banner)
+        : FadeTransition(
+            opacity: _enterCurve,
+            alwaysIncludeSemantics: true,
+            child: SlideTransition(
+              position: slideUp ? _slideUp : _slideDown,
+              child: RepaintBoundary(child: banner),
+            ),
           );
 
     return Positioned(

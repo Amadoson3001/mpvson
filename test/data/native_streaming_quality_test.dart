@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
-import 'package:media_kit_video/src/video_controller/platform_video_controller.dart';
 import 'package:path/path.dart' as p;
 import 'package:mpvson/data/repositories/session_repository.dart';
 import 'package:mpvson/data/services/native_media_events.dart';
@@ -84,8 +83,8 @@ void main() {
           4,
         ); // Auto, 360p, 720p, 1080p
 
-        // Initial conservative rung within 2 Mbps budget is 360p (800 kbps vs 720p at 2.5 Mbps)
-        expect(coordinator.state.activeRendition?.label, equals('360p'));
+        // The active rendition is unknown until the player reports dimensions.
+        expect(coordinator.state.activeRendition, isNull);
         expect(coordinator.state.isAutoQuality, isTrue);
 
         // Mark stream loaded at initial 360p resolution
@@ -102,6 +101,7 @@ void main() {
         expect(coordinator.state.stage, equals(StreamStage.ready));
         expect(coordinator.state.decodedWidth, equals(640));
         expect(coordinator.state.decodedHeight, equals(360));
+        expect(coordinator.state.activeRendition?.label, equals('360p'));
 
         // Switch quality to 720p
         final rendition720p = coordinator.state.availableRenditions.firstWhere(
@@ -159,7 +159,7 @@ void main() {
         ); // Auto, 360p, 720p
 
         // Initial conservative rung within budget is 360p
-        expect(coordinator.state.activeRendition?.label, equals('360p'));
+        expect(coordinator.state.activeRendition, isNull);
 
         coordinator.handleNativeLifecycleEvent(
           const NativeMediaEvent.loaded(),
@@ -308,6 +308,7 @@ void main() {
         final coordinator = StreamingCoordinator();
         addTearDown(coordinator.dispose);
 
+        await coordinator.prepareStream('https://example.com/missing.mp4');
         // Simulate terminal HTTP 404
         coordinator.handleNativeLifecycleEvent(
           const NativeMediaEvent.ended(

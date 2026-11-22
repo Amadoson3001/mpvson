@@ -3,7 +3,7 @@
 
 #define MyAppName "Mpvson"
 #ifndef MyAppVersion
-#define MyAppVersion "0.1.0"
+#define MyAppVersion "0.1.1"
 #endif
 #define MyAppPublisher "Mpvson"
 #define MyAppURL "https://github.com/Amadoson3001/mpvson"

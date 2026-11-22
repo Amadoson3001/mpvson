@@ -230,7 +230,7 @@ void main() {
   /// binding treats as a failure.
   Future<void> teardownTree(WidgetTester tester) async {
     await tester.pumpWidget(const SizedBox());
-    await tester.pump(const Duration(seconds: 6));
+    await tester.pump(const Duration(seconds: 46));
   }
 
   testWidgets('a structure update mid-undock still returns to the player', (

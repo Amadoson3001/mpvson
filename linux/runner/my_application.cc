@@ -207,14 +207,19 @@ static int my_application_command_line(GApplication* application,
   GPtrArray* paths = g_ptr_array_new_with_free_func(g_free);
   gboolean enqueue = g_variant_dict_contains(
       g_application_command_line_get_options_dict(cmdline), "enqueue");
+  gboolean options_ended = FALSE;
   for (gint i = 1; i < argc; i++) {
-    if (g_strcmp0(argv[i], "--enqueue") == 0) {
+    if (!options_ended && g_strcmp0(argv[i], "--") == 0) {
+      options_ended = TRUE;
+      continue;
+    }
+    if (!options_ended && (g_strcmp0(argv[i], "--enqueue") == 0 ||
+                           g_strcmp0(argv[i], "-e") == 0)) {
       enqueue = TRUE;
       continue;
     }
-    if (argv[i][0] == '-') {
-      continue;
-    }
+    // GApplication has already parsed options. Remaining arguments are
+    // positional, even if GLib consumed the -- separator.
     g_autoptr(GFile) file =
         g_application_command_line_create_file_for_arg(cmdline, argv[i]);
     gchar* path = g_file_get_path(file);
@@ -329,7 +334,7 @@ MyApplication* my_application_new() {
       "application-id", app_id,
       "flags", G_APPLICATION_HANDLES_OPEN | G_APPLICATION_HANDLES_COMMAND_LINE,
       nullptr));
-  g_application_add_main_option(G_APPLICATION(app), "enqueue", 0,
+  g_application_add_main_option(G_APPLICATION(app), "enqueue", 'e',
                                 G_OPTION_FLAG_NONE, G_OPTION_ARG_NONE,
                                 "Add media to the queue", nullptr);
   return app;

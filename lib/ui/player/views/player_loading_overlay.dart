@@ -168,10 +168,12 @@ class PlayerLoadingBanner extends StatelessWidget {
                     children: [
                       SizedBox.square(
                         dimension: 16,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          value: reduce ? 0.72 : null,
-                          color: palette.accent,
+                        child: RepaintBoundary(
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            value: reduce ? 0.72 : null,
+                            color: palette.accent,
+                          ),
                         ),
                       ),
                       const SizedBox(width: 10),
@@ -240,10 +242,12 @@ class PlayerLoadingBanner extends StatelessWidget {
                   bottom: 0,
                   child: SizedBox(
                     height: 1.5,
-                    child: LinearProgressIndicator(
-                      value: reduce ? 0.45 : null,
-                      backgroundColor: Colors.transparent,
-                      color: palette.accent.withValues(alpha: 0.7),
+                    child: RepaintBoundary(
+                      child: LinearProgressIndicator(
+                        value: reduce ? 0.45 : null,
+                        backgroundColor: Colors.transparent,
+                        color: palette.accent.withValues(alpha: 0.7),
+                      ),
                     ),
                   ),
                 ),
@@ -277,7 +281,21 @@ class _PlayerLoadingOverlayState extends State<PlayerLoadingOverlay>
   late final AnimationController _enter = AnimationController(
     vsync: this,
     duration: AppMotion.toast,
+    reverseDuration: AppMotion.toastExit,
   );
+  late final CurvedAnimation _enterCurve = CurvedAnimation(
+    parent: _enter,
+    curve: AppMotion.enter,
+    reverseCurve: AppMotion.exit,
+  );
+  late final Animation<Offset> _slideUp = Tween<Offset>(
+    begin: const Offset(0, 0.16),
+    end: Offset.zero,
+  ).animate(_enterCurve);
+  late final Animation<Offset> _slideDown = Tween<Offset>(
+    begin: const Offset(0, -0.16),
+    end: Offset.zero,
+  ).animate(_enterCurve);
   final GlobalKey _cardKey = GlobalKey();
   final Object _pinnedKey = Object();
 
@@ -306,9 +324,13 @@ class _PlayerLoadingOverlayState extends State<PlayerLoadingOverlay>
       _layout?.releasePinnedHeight(_pinnedKey);
       _layout = nextLayout;
     }
-    _enter.duration = AppMotion.reduce(context)
+    final reduced = AppMotion.reduce(context);
+    _enter.duration = reduced
         ? Duration.zero
-        : AppMotion.toast;
+        : AppMotion.scaled(context, AppMotion.toast);
+    _enter.reverseDuration = reduced
+        ? Duration.zero
+        : AppMotion.scaled(context, AppMotion.toastExit);
     if (_showing) {
       if (AppMotion.lowPower(context)) {
         _enter.value = 1;
@@ -339,6 +361,7 @@ class _PlayerLoadingOverlayState extends State<PlayerLoadingOverlay>
     _controllerEvents?.removeListener(_onControllerChanged);
     _controllerEvents = null;
     _enter.removeStatusListener(_handleAnimationStatus);
+    _enterCurve.dispose();
     _enter.dispose();
     _layout?.releasePinnedHeight(_pinnedKey);
     super.dispose();
@@ -539,23 +562,14 @@ class _PlayerLoadingOverlayState extends State<PlayerLoadingOverlay>
     );
 
     final animated = skipMotion
-        ? banner
-        : AnimatedBuilder(
-            animation: _enter,
-            builder: (context, child) {
-              final progress = Curves.easeOutCubic
-                  .transform(_enter.value.clamp(0.0, 1.0))
-                  .clamp(0.0, 1.0);
-              final travel = slideUp ? 8.0 : -8.0;
-              return Opacity(
-                opacity: progress,
-                child: Transform.translate(
-                  offset: Offset(0, (1 - progress) * travel),
-                  child: child,
-                ),
-              );
-            },
-            child: banner,
+        ? RepaintBoundary(child: banner)
+        : FadeTransition(
+            opacity: _enterCurve,
+            alwaysIncludeSemantics: true,
+            child: SlideTransition(
+              position: slideUp ? _slideUp : _slideDown,
+              child: RepaintBoundary(child: banner),
+            ),
           );
 
     return Positioned(
@@ -622,6 +636,12 @@ class _PlayerStageLoadingOverlayState extends State<PlayerStageLoadingOverlay>
   late final AnimationController _fade = AnimationController(
     vsync: this,
     duration: AppMotion.toast,
+    reverseDuration: AppMotion.toastExit,
+  );
+  late final CurvedAnimation _fadeCurve = CurvedAnimation(
+    parent: _fade,
+    curve: AppMotion.enter,
+    reverseCurve: AppMotion.exit,
   );
   Listenable? _controllerEvents;
   Timer? _delayTimer;
@@ -645,9 +665,13 @@ class _PlayerStageLoadingOverlayState extends State<PlayerStageLoadingOverlay>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _fade.duration = AppMotion.reduce(context)
+    final reduced = AppMotion.reduce(context);
+    _fade.duration = reduced
         ? Duration.zero
-        : AppMotion.toast;
+        : AppMotion.scaled(context, AppMotion.toast);
+    _fade.reverseDuration = reduced
+        ? Duration.zero
+        : AppMotion.scaled(context, AppMotion.toastExit);
     if (_activeMode != _StageOverlayMode.none) {
       if (AppMotion.lowPower(context)) {
         _fade.value = 1;
@@ -675,6 +699,7 @@ class _PlayerStageLoadingOverlayState extends State<PlayerStageLoadingOverlay>
     _controllerEvents?.removeListener(_onControllerChanged);
     _controllerEvents = null;
     _fade.removeStatusListener(_handleFadeStatus);
+    _fadeCurve.dispose();
     _fade.dispose();
     super.dispose();
   }
@@ -878,8 +903,11 @@ class _PlayerStageLoadingOverlayState extends State<PlayerStageLoadingOverlay>
     };
 
     final animated = skipMotion
-        ? content
-        : FadeTransition(opacity: _fade, child: content);
+        ? RepaintBoundary(child: content)
+        : FadeTransition(
+            opacity: _fadeCurve,
+            child: RepaintBoundary(child: content),
+          );
 
     if (!active) {
       return IgnorePointer(child: animated);
@@ -913,10 +941,12 @@ class _PlayerStageLoadingOverlayState extends State<PlayerStageLoadingOverlay>
                   children: [
                     SizedBox.square(
                       dimension: 28,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2.2,
-                        value: reduce ? 0.72 : null,
-                        color: accent,
+                      child: RepaintBoundary(
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.2,
+                          value: reduce ? 0.72 : null,
+                          color: accent,
+                        ),
                       ),
                     ),
                     const SizedBox(height: 14),
@@ -1004,10 +1034,12 @@ class _PlayerStageLoadingOverlayState extends State<PlayerStageLoadingOverlay>
             children: [
               SizedBox.square(
                 dimension: 14,
-                child: CircularProgressIndicator(
-                  strokeWidth: 1.8,
-                  value: reduce ? 0.72 : null,
-                  color: accent,
+                child: RepaintBoundary(
+                  child: CircularProgressIndicator(
+                    strokeWidth: 1.8,
+                    value: reduce ? 0.72 : null,
+                    color: accent,
+                  ),
                 ),
               ),
               const SizedBox(width: 8),

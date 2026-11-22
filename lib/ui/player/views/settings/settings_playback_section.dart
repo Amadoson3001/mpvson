@@ -222,11 +222,7 @@ class PlaybackSettingsSection extends StatelessWidget {
     );
   }
 
-  Future<void> _setRepeat(String target) async {
-    for (var i = 0; i < 3 && controller.repeatMode != target; i++) {
-      await controller.cycleRepeat();
-    }
-  }
+  Future<void> _setRepeat(String target) => controller.setRepeatMode(target);
 }
 
 class VideoAudioSettingsSection extends StatefulWidget {

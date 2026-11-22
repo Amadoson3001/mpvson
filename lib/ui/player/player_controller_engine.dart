@@ -51,6 +51,20 @@ extension PlayerControllerEngine on PlayerController {
 
   VideoController get videoController => _playback.videoController;
 
+  /// Aspect ratio reported by the native video controller, or `null` when
+  /// unavailable or not yet initialized.
+  double? get videoAspectRatio {
+    try {
+      final rect = _playback.videoController.rect.value;
+      if (rect != null && rect.width > 1 && rect.height > 1) {
+        return rect.width / rect.height;
+      }
+    } catch (_) {
+      // Fake/test playback services do not implement a native VideoController.
+    }
+    return null;
+  }
+
   VideoOutputPolicy get videoOutputPolicy => _playback.videoOutputPolicy;
 
   void applyVideoOutputPolicy(VideoOutputPolicy policy) {
@@ -328,13 +342,7 @@ extension PlayerControllerEngine on PlayerController {
       _pendingNavigationCursor = null;
       _shuffleRemaining.clear();
       _shuffleVisited.clear();
-      _queue
-        ..clear()
-        ..addAll(stagedEntries);
-      _queueIdToIndex.clear();
-      _rebuildQueueIndex(0);
-      _queueStructureRevision++;
-      _currentIndex = -1;
+      _replaceQueueEntries(stagedEntries, currentIndex: -1);
       _engineHasMedia = false;
       _engineEntryId = null;
       _clearResume();
@@ -354,17 +362,13 @@ extension PlayerControllerEngine on PlayerController {
         _currentIndex >= 0 &&
         _currentIndex < _queue.length) {
       final insertIndex = _currentIndex + 1;
-      _queue.insertAll(insertIndex, stagedEntries);
-      _rebuildQueueIndex(insertIndex);
-      _queueStructureRevision++;
+      _insertQueueEntries(insertIndex, stagedEntries);
       if (shuffle) {
         _prioritizeShuffleEntries(stagedEntries);
       }
     } else {
       final oldLength = _queue.length;
-      _queue.addAll(stagedEntries);
-      _rebuildQueueIndex(oldLength);
-      _queueStructureRevision++;
+      _insertQueueEntries(oldLength, stagedEntries);
       if (shuffle) _prepareShuffleRemaining();
     }
     if (firstRejected != null) {
@@ -666,7 +670,10 @@ extension PlayerControllerEngine on PlayerController {
     final shouldSurfaceError = _shouldSurfaceSnapshotError(snapshot);
     _applySnapshot(snapshot, notify: false);
     final titleChanged = _syncResolvedStreamTitle(snapshot);
-    _confirmedRate = PlayerController._normalizeRate(snapshot.rate);
+    if (_desiredRate == null) {
+      _confirmedRate = PlayerController._normalizeRate(snapshot.rate);
+      _publishRate();
+    }
     if (oldDuration != _playbackState.duration && _engineHasMedia) {
       // Duration is queue metadata and should refresh queue rows once when the
       // engine resolves it; ordinary position ticks stay on the timeline path.

@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../../../data/repositories/media_library_repository.dart';
-import '../../../domain/models/media_catalog.dart';
 import '../../core/app_theme.dart';
 import '../player_controller.dart';
 
@@ -67,6 +66,7 @@ class PlayerLayoutManager with WindowListener, ChangeNotifier {
   bool _fullscreenReadInFlight = false;
   bool _fullscreenReadRequested = false;
   Timer? _fullscreenResyncTimer;
+  final Set<Object> _activeLayoutTransitions = <Object>{};
   bool _isDisposed = false;
 
   bool get isFullscreen => _isFullscreen;
@@ -105,6 +105,7 @@ class PlayerLayoutManager with WindowListener, ChangeNotifier {
   void dispose() {
     _isDisposed = true;
     _fullscreenResyncTimer?.cancel();
+    _activeLayoutTransitions.clear();
     if (isNativeWindow) {
       windowManager.removeListener(this);
     }
@@ -121,9 +122,7 @@ class PlayerLayoutManager with WindowListener, ChangeNotifier {
 
   Future<void> enterMiniPlayer() async {
     if (_miniPlayer || _miniPlayerTransition || !isNativeWindow) return;
-    final current = controller.current;
-    final isVideoEntry =
-        current != null && MediaCatalog.kindFromExtension(current.path).isVideo;
+    final isVideoEntry = controller.current != null && controller.isVideo;
     if (!isVideoEntry || isShowingLibrary()) {
       showMessage('Mini player is available while a video is playing.');
       return;
@@ -241,16 +240,28 @@ class PlayerLayoutManager with WindowListener, ChangeNotifier {
     notifyListeners();
   }
 
+  /// Holds native video texture resizes while UI layout animations are active.
+  void setLayoutTransitionActive(Object token, bool active) {
+    if (_isDisposed) return;
+    final changed = active
+        ? _activeLayoutTransitions.add(token)
+        : _activeLayoutTransitions.remove(token);
+    if (!changed) return;
+    updateVideoOutputPolicy(deferResize: _activeLayoutTransitions.isNotEmpty);
+  }
+
   void updateVideoOutputPolicy({
     bool? visible,
     int? physicalWidth,
     int? physicalHeight,
+    bool? deferResize,
   }) {
     final current = controller.videoOutputPolicy;
     final next = current.copyWith(
       visible: visible ?? (_minimized ? false : current.visible),
       physicalWidth: physicalWidth ?? current.physicalWidth,
       physicalHeight: physicalHeight ?? current.physicalHeight,
+      deferResize: deferResize ?? current.deferResize,
     );
     if (next != current) {
       controller.applyVideoOutputPolicy(next);

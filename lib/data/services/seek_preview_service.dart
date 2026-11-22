@@ -54,31 +54,46 @@ class SeekPreviewState {
   const SeekPreviewState({
     this.status = SeekPreviewStatus.idle,
     this.currentFrame,
+    this.liveTextureId,
     this.targetTime = Duration.zero,
     this.isUpdating = false,
+    this.isRemote = false,
     this.errorMessage,
   });
 
   final SeekPreviewStatus status;
   final SeekPreviewFrame? currentFrame;
+  final int? liveTextureId;
   final Duration targetTime;
   final bool isUpdating;
+  final bool isRemote;
   final String? errorMessage;
+
+  bool get hasVisual =>
+      liveTextureId != null ||
+      (currentFrame != null && currentFrame!.bytes.isNotEmpty);
 
   SeekPreviewState copyWith({
     SeekPreviewStatus? status,
     SeekPreviewFrame? currentFrame,
+    int? liveTextureId,
     Duration? targetTime,
     bool? isUpdating,
+    bool? isRemote,
     String? errorMessage,
     bool clearError = false,
     bool clearFrame = false,
+    bool clearLiveTexture = false,
   }) {
     return SeekPreviewState(
       status: status ?? this.status,
       currentFrame: clearFrame ? null : (currentFrame ?? this.currentFrame),
+      liveTextureId: clearLiveTexture
+          ? null
+          : (liveTextureId ?? this.liveTextureId),
       targetTime: targetTime ?? this.targetTime,
       isUpdating: isUpdating ?? this.isUpdating,
+      isRemote: isRemote ?? this.isRemote,
       errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
     );
   }
@@ -193,12 +208,23 @@ class SeekPreviewLRUCache {
 /// Injected for testing to verify scheduler and lifecycle behavior without
 /// requiring a native engine texture or external network source.
 abstract interface class SeekPreviewBackend {
+  /// Optional live Flutter texture ID rendered directly by the preview worker.
+  int? get liveTextureId;
+
+  /// Whether this backend can update preview frames directly via [seekLive]
+  /// without taking screenshots or encoding JPEG frames.
+  bool get supportsLiveTexture;
+
   /// Opens [source] starting at [start] position with a bounded [timeout].
   Future<void> open(
     String source, {
     Duration start = Duration.zero,
     Duration timeout = const Duration(seconds: 5),
   });
+
+  /// Seeks the live preview texture directly to [target] without capturing a
+  /// screenshot.
+  Future<void> seekLive(Duration target, {required bool exact});
 
   /// Seeks to [target] and captures the resulting decoded video frame.
   ///
@@ -254,8 +280,18 @@ class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
   SeekPreviewFrame? _lastCapturedFrame;
   String? _resolvedSourceInput;
   String? _resolvedPlayerSource;
+  String? _verifiedOutputForSource;
   bool _seekObserversReady = false;
   String? _sourceId;
+
+  @override
+  int? get liveTextureId => _disposed ? null : _videoController?.id.value;
+
+  @override
+  bool get supportsLiveTexture =>
+      !_disposed &&
+      _videoController != null &&
+      _videoController!.id.value != null;
   int _mediaPathEvent = 0;
   int _trackListEvent = 0;
   int _durationEvent = 0;
@@ -357,12 +393,22 @@ class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
         'demuxer-max-bytes': '2097152',
         'demuxer-max-back-bytes': '1048576',
         'hls-bitrate': 'min',
-        'hwdec': 'auto-safe',
+        // Software decode with fast/skiploopfilter avoids GPU decoder
+        // contention and large VRAM pools on low-end hardware while keeping
+        // single-keyframe preview decode ~5-15ms.
+        'hwdec': 'no',
+        'vd-lavc-fast': 'yes',
+        'vd-lavc-skiploopfilter': 'all',
+        'vd-lavc-threads': '2',
         'sws-scaler': 'fast-bilinear',
+        'scale': 'bilinear',
+        'cscale': 'bilinear',
         'dscale': 'bilinear',
+        'tscale': 'linear',
         'correct-downscaling': 'no',
         'dither': 'no',
-        'vf': 'scale=w=320:h=320:force_original_aspect_ratio=decrease',
+        'hr-seek': 'no',
+        'video-sync': 'desync',
       };
       await applyNativePlayerProperties(
         native,
@@ -384,9 +430,9 @@ class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
             player,
             configuration: const VideoControllerConfiguration(
               width: 320,
-              height: 320,
+              height: 180,
               enableHardwareAcceleration: true,
-              hwdec: 'auto-safe',
+              hwdec: 'no',
             ),
           );
 
@@ -414,6 +460,13 @@ class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
     return player;
   }
 
+  bool _isRemoteSource(String source) {
+    final uri = Uri.tryParse(source);
+    if (uri == null) return false;
+    final scheme = uri.scheme.toLowerCase();
+    return scheme == 'http' || scheme == 'https';
+  }
+
   @override
   Future<void> open(
     String source, {
@@ -422,10 +475,15 @@ class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
   }) async {
     if (_disposed) return;
     _lastCapturedFrame = null;
+    _verifiedOutputForSource = null;
     _sourceId = source;
     final stopwatch = Stopwatch()..start();
+    final isRemote = _isRemoteSource(source);
     var playbackSource = source;
-    if (_resolvedSourceInput == source) {
+    if (!isRemote) {
+      _resolvedSourceInput = source;
+      _resolvedPlayerSource = source;
+    } else if (_resolvedSourceInput == source) {
       playbackSource = _resolvedPlayerSource ?? source;
     } else {
       _resolvedSourceInput = source;
@@ -459,18 +517,27 @@ class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
     final native = player.platform;
     if (native is NativePlayer) {
       await _ensureSeekObservers(native);
-      try {
-        await native.setProperty(
-          'demuxer-lavf-o',
-          _isHlsPlaylistSource(playbackSource) ? 'http_multiple=0' : '',
-        );
-      } on Object catch (error) {
-        _record(
-          'preview.configure',
-          message: 'Could not configure HLS segment concurrency',
-          error: error,
-        );
-      }
+      await applyNativePlayerProperties(
+        native,
+        <String, String>{
+          'demuxer-lavf-o': isRemote && _isHlsPlaylistSource(playbackSource)
+              ? 'http_multiple=0'
+              : '',
+          // Local files render directly into the 320x180 GPU texture without
+          // software scaling; remote streams keep vf scaling for bounded
+          // screenshot capture into the LRU cache.
+          'vf': isRemote
+              ? 'scale=w=320:h=320:force_original_aspect_ratio=decrease'
+              : '',
+        },
+        onError: (key, error) {
+          _record(
+            'preview.configure',
+            message: 'Could not configure $key for preview source',
+            error: error,
+          );
+        },
+      );
     }
     final pathEvent = _mediaPathEvent;
     final trackListEvent = _trackListEvent;
@@ -508,27 +575,42 @@ class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
     while (stopwatch.elapsed < timeout) {
       if (_disposed) throw StateError('Preview backend disposed while opening');
       final epoch = _observerEpoch;
-      final path = await _readProperty(native, 'path');
-      final trackList = await _readProperty(native, 'track-list');
-      final duration = await _readProperty(native, 'duration');
-      final seekable = await _readProperty(native, 'seekable');
-      final currentPath = path ?? _observedPath;
-      final currentTrackList = trackList ?? _observedTrackList;
-      final currentDuration = duration ?? _observedDuration;
-      final currentSeekable = seekable ?? _observedSeekable;
-      final pathMatches = _pathMatchesSource(currentPath, source);
-      final pathChanged = _mediaPathEvent > pathEvent;
-      final pathReady =
-          pathMatches || (pathChanged && _isNonEmpty(currentPath));
-      final tracksReady =
-          _hasMediaTracks(currentTrackList) &&
-          (_trackListEvent > trackListEvent || pathMatches);
-      final durationReady =
-          _hasPositiveDuration(currentDuration) &&
-          (_durationEvent > durationEvent || pathMatches);
-      if (pathReady &&
-          (tracksReady || durationReady) &&
-          _isYes(currentSeekable ?? '')) {
+
+      var currentPath = _observedPath;
+      var currentTrackList = _observedTrackList;
+      var currentDuration = _observedDuration;
+      var currentSeekable = _observedSeekable;
+
+      bool isReady() {
+        final pathMatches = _pathMatchesSource(currentPath, source);
+        final pathChanged = _mediaPathEvent > pathEvent;
+        final pathReady =
+            pathMatches || (pathChanged && _isNonEmpty(currentPath));
+        final tracksReady =
+            _hasMediaTracks(currentTrackList) &&
+            (_trackListEvent > trackListEvent || pathMatches);
+        final durationReady =
+            _hasPositiveDuration(currentDuration) &&
+            (_durationEvent > durationEvent || pathMatches);
+        return pathReady &&
+            (tracksReady || durationReady) &&
+            _isYes(currentSeekable ?? '');
+      }
+
+      if (!isReady()) {
+        final values = await Future.wait<String?>([
+          _readProperty(native, 'path'),
+          _readProperty(native, 'track-list'),
+          _readProperty(native, 'duration'),
+          _readProperty(native, 'seekable'),
+        ]);
+        currentPath = values[0] ?? currentPath;
+        currentTrackList = values[1] ?? currentTrackList;
+        currentDuration = values[2] ?? currentDuration;
+        currentSeekable = values[3] ?? currentSeekable;
+      }
+
+      if (isReady()) {
         _record(
           'preview.media_loaded',
           message:
@@ -541,9 +623,9 @@ class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
       }
       final remaining = timeout - stopwatch.elapsed;
       if (remaining <= Duration.zero) break;
-      final delay = remaining < const Duration(milliseconds: 25)
+      final delay = remaining < const Duration(milliseconds: 10)
           ? remaining
-          : const Duration(milliseconds: 25);
+          : const Duration(milliseconds: 10);
       await _waitForObserverOrTimeout(epoch, delay);
     }
     final snapshot = await _readReadinessSnapshot(native);
@@ -641,6 +723,20 @@ class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
       return 'video=$video,audio=$audio,subtitle=$subtitle,other=$other';
     } on FormatException {
       return 'invalid';
+    }
+  }
+
+  @override
+  Future<void> seekLive(Duration target, {required bool exact}) async {
+    if (_disposed || _player == null) return;
+    final player = _player!;
+    final native = player.platform;
+    if (native is NativePlayer) {
+      final targetSeconds = (target.inMilliseconds / 1000.0).toString();
+      final seekFlag = exact ? 'absolute+exact' : 'absolute+keyframes';
+      await native.command(['seek', targetSeconds, seekFlag]);
+    } else {
+      await player.seek(target);
     }
   }
 
@@ -865,7 +961,7 @@ class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
             '${target.inMilliseconds} ms target',
           );
         }
-        await Future<void>.delayed(const Duration(milliseconds: 24));
+        await Future<void>.delayed(const Duration(milliseconds: 8));
         if (_disposed || _extractGeneration != extractGen) {
           throw StateError('Preview seek cancelled');
         }
@@ -873,7 +969,7 @@ class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
         if (settledSeeking == null || _isYes(settledSeeking)) {
           await _waitForObserverOrTimeout(
             epoch,
-            const Duration(milliseconds: 25),
+            const Duration(milliseconds: 12),
           );
           continue;
         }
@@ -889,18 +985,15 @@ class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
         }
       }
 
-      // Some builds coalesce the short seeking=true/false pair. The fallback
-      // requires position evidence after the command, two stable native reads,
-      // and (for exact seeks) one-frame target accuracy. The extra frame delay
-      // above lets decode catch up before screenshot capture.
+      // Some builds coalesce the short seeking=true/false pair.
       final fallbackReady =
-          stableSamples >= 2 &&
+          (stableSamples >= 1 || positionChanged) &&
           seeking != null &&
           !_isYes(seeking) &&
           (positionChanged || withinTarget) &&
           (!exact || withinTarget);
       if (fallbackReady) {
-        await Future<void>.delayed(const Duration(milliseconds: 24));
+        await Future<void>.delayed(const Duration(milliseconds: 8));
         if (_disposed || _extractGeneration != extractGen) {
           throw StateError('Preview seek cancelled');
         }
@@ -919,9 +1012,9 @@ class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
       }
       final remaining = limit - stopwatch.elapsed;
       if (remaining <= Duration.zero) break;
-      final delay = remaining < const Duration(milliseconds: 25)
+      final delay = remaining < const Duration(milliseconds: 12)
           ? remaining
-          : const Duration(milliseconds: 25);
+          : const Duration(milliseconds: 12);
       await _waitForObserverOrTimeout(epoch, delay);
     }
     final snapshot = await _readReadinessSnapshot(native);
@@ -939,6 +1032,9 @@ class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
     NativePlayer native,
     Duration timeout,
   ) async {
+    if (_sourceId != null && _verifiedOutputForSource == _sourceId) {
+      return;
+    }
     final stopwatch = Stopwatch()..start();
     while (stopwatch.elapsed < timeout) {
       final raw = await _readProperty(native, 'video-out-params');
@@ -956,6 +1052,7 @@ class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
                 );
                 throw StateError('Preview output exceeds the 320px bound');
               }
+              _verifiedOutputForSource = _sourceId;
               return;
             }
           }
@@ -964,7 +1061,7 @@ class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
           // is settling. Continue polling within the request deadline.
         }
       }
-      await Future<void>.delayed(const Duration(milliseconds: 20));
+      await Future<void>.delayed(const Duration(milliseconds: 12));
     }
     _record(
       'preview.output_dimensions_timeout',
@@ -1036,6 +1133,7 @@ class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
   @override
   Future<void> stop() async {
     _lastCapturedFrame = null;
+    _verifiedOutputForSource = null;
     if (_disposed || _player == null) return;
     try {
       await _player?.stop();
@@ -1049,6 +1147,7 @@ class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
     _extractGeneration++;
     _notifyObserverPulse();
     _lastCapturedFrame = null;
+    _verifiedOutputForSource = null;
     _resolvedSourceInput = null;
     _resolvedPlayerSource = null;
     final player = _player;
@@ -1079,19 +1178,35 @@ class SeekPreviewService {
     SeekPreviewLRUCache? cache,
     this.diagnostics,
     Duration? idleWorkerTimeout,
+    Duration? localIdleWorkerTimeout,
+    Duration? localPrewarmDelay,
   }) : _backendFactory =
            backendFactory ??
            (() => MediaKitSeekPreviewBackend(diagnostics: diagnostics)),
        _cache = cache ?? SeekPreviewLRUCache(),
-       _idleWorkerTimeout = idleWorkerTimeout ?? defaultIdleWorkerTimeout {
+       _idleWorkerTimeout = idleWorkerTimeout ?? defaultIdleWorkerTimeout,
+       _localIdleWorkerTimeout =
+           localIdleWorkerTimeout ?? defaultLocalIdleWorkerTimeout,
+       _localPrewarmDelay = localPrewarmDelay ?? defaultLocalPrewarmDelay {
     _clock.start();
   }
 
-  static const Duration defaultIdleWorkerTimeout = Duration(seconds: 4);
+  static const Duration defaultIdleWorkerTimeout = Duration(seconds: 6);
+  static const Duration defaultLocalIdleWorkerTimeout = Duration(seconds: 45);
+  static const Duration defaultLocalPrewarmDelay = Duration(milliseconds: 350);
+  static const Duration _liveSeekThrottle = Duration(milliseconds: 33);
+  static const Duration _remoteSeekThrottle = Duration(milliseconds: 100);
+  static const Duration _liveSeekDedupTolerance = Duration(milliseconds: 100);
+
   final Duration _idleWorkerTimeout;
+  final Duration _localIdleWorkerTimeout;
+  final Duration _localPrewarmDelay;
 
   /// Whether a preview backend player is currently allocated in memory.
   bool get hasActiveWorker => _backend != null;
+
+  /// Whether the active source is a remote HTTP/HTTPS stream.
+  bool get isCurrentSourceRemote => _isCurrentSourceRemote;
 
   final SeekPreviewBackendFactory _backendFactory;
   final void Function(bool extracting)? onExtractionStateChange;
@@ -1128,12 +1243,15 @@ class SeekPreviewService {
   Duration? _pendingTarget;
   bool _pendingExact = false;
   Duration? _lastExtractionStartTime;
+  Duration? _lastLiveSeekTarget;
+  bool _lastLiveSeekExact = false;
   int _intentRevision = 0;
   int _requestCounter = 0;
   int? _activeRequestId;
 
   Timer? _idleWorkerReleaseTimer;
   Timer? _pointerExitGraceTimer;
+  Timer? _prewarmTimer;
   Timer? _refineTimer;
   Timer? _playbackHealthTimer;
   Timer? _throttleTimer;
@@ -1264,10 +1382,18 @@ class SeekPreviewService {
   /// Trims cached frames to relieve memory pressure.
   void trimMemory() => _cache.trimMemory();
 
+  bool get _hasReadyLocalLiveTexture =>
+      !_isCurrentSourceRemote &&
+      _backend != null &&
+      _backendSource == _currentSource &&
+      _backend!.supportsLiveTexture &&
+      _backend!.liveTextureId != null;
+
   /// Updates the current active media source.
   ///
   /// Increments source generation, cancels in-flight work, invalidates cached
-  /// frames immediately, and clears previous results.
+  /// frames immediately, and clears previous results. Local video files are
+  /// gently pre-warmed so the first hover renders immediately without loading.
   Future<void> setSource(
     String? source, {
     bool isAudio = false,
@@ -1275,6 +1401,7 @@ class SeekPreviewService {
   }) async {
     if (_disposed) return;
     _sourceGeneration++;
+    final sourceGen = _sourceGeneration;
     _currentSource = source;
     _isAudio = isAudio;
     _isSeekable = isSeekable;
@@ -1282,36 +1409,137 @@ class SeekPreviewService {
     _hasFailed = false;
     _interactionActive = false;
     _latestTarget = null;
+    _lastLiveSeekTarget = null;
+    _lastLiveSeekExact = false;
     _intentRevision++;
     _pendingTarget = null;
+    _pendingExact = false;
+    _prewarmTimer?.cancel();
+    _prewarmTimer = null;
     _refineTimer?.cancel();
     _throttleTimer?.cancel();
     _pointerExitGraceTimer?.cancel();
     _idleWorkerReleaseTimer?.cancel();
 
+    final isRemote = _isCurrentSourceRemote;
     _cache.clear();
-    _stateNotifier.value = const SeekPreviewState();
+    _stateNotifier.value = SeekPreviewState(isRemote: isRemote);
 
-    // Queue teardown behind any in-flight open/seek/capture. Returning before
-    // it drains lets the UI adopt the new source immediately.
-    unawaited(
-      _enqueueBackendOperation(() async {
-        final old = _backend;
-        _backend = null;
-        _backendSource = null;
-        if (old != null) {
+    final shouldKeepWorker =
+        source != null && source.isNotEmpty && !isAudio && isSeekable;
+
+    if (!shouldKeepWorker) {
+      // Queue teardown behind any in-flight open/seek/capture. Returning before
+      // it drains lets the UI adopt the new source immediately.
+      unawaited(
+        _enqueueBackendOperation(() async {
+          final old = _backend;
+          _backend = null;
+          _backendSource = null;
+          if (old != null) {
+            try {
+              await old.dispose();
+            } on Object catch (error) {
+              _record(
+                'preview.dispose',
+                message: 'Old preview player disposal failed',
+                error: error,
+              );
+            }
+          }
+        }),
+      );
+      return;
+    }
+
+    // Reuse the existing worker across video switches (stopping the old media
+    // first so OS file handles are released immediately) to avoid paying
+    // libmpv + GPU surface teardown/creation on every playlist item.
+    if (_backend != null) {
+      unawaited(
+        _enqueueBackendOperation(() async {
+          if (_sourceGeneration != sourceGen) return;
+          final existing = _backend;
+          if (existing == null) return;
+          _backendSource = null;
           try {
-            await old.dispose();
+            await existing.stop();
           } on Object catch (error) {
             _record(
-              'preview.dispose',
-              message: 'Old preview player disposal failed',
+              'preview.stop',
+              message: 'Could not stop previous preview source',
               error: error,
             );
           }
+        }),
+      );
+    }
+
+    if (!isRemote && !_isSuspended) {
+      _scheduleLocalPrewarm(source, sourceGen);
+    }
+  }
+
+  void _scheduleLocalPrewarm(String source, int sourceGen) {
+    _prewarmTimer?.cancel();
+    _prewarmTimer = Timer(_localPrewarmDelay, () {
+      _prewarmTimer = null;
+      unawaited(_runLocalPrewarm(source, sourceGen));
+    });
+  }
+
+  Future<void> _runLocalPrewarm(String source, int sourceGen) async {
+    if (_disposed ||
+        _sourceGeneration != sourceGen ||
+        _isSuspended ||
+        _isAudio ||
+        !_isSeekable ||
+        _currentSource != source ||
+        _isCurrentSourceRemote) {
+      return;
+    }
+    await _enqueueBackendOperation(() async {
+      if (_disposed ||
+          _sourceGeneration != sourceGen ||
+          _isSuspended ||
+          _isAudio ||
+          !_isSeekable ||
+          _currentSource != source ||
+          _isCurrentSourceRemote) {
+        return;
+      }
+      if (_backend != null && _backendSource == source) {
+        return;
+      }
+      var backend = _backend;
+      if (backend == null) {
+        backend = _backendFactory();
+        _backend = backend;
+      }
+      try {
+        await backend.open(
+          source,
+          start: Duration.zero,
+          timeout: const Duration(seconds: 5),
+        );
+        if (!_disposed &&
+            _sourceGeneration == sourceGen &&
+            _currentSource == source &&
+            identical(_backend, backend)) {
+          _backendSource = source;
+          _scheduleIdleWorkerRelease();
+          if (_interactionActive) {
+            _restoreLatestIntent();
+          }
         }
-      }),
-    );
+      } on Object catch (error) {
+        _record(
+          'preview.prewarm',
+          message: 'Local preview pre-warm skipped',
+          error: error,
+        );
+      }
+    });
   }
 
   /// Sets audio state for the current media.
@@ -1320,6 +1548,8 @@ class SeekPreviewService {
     _isAudio = isAudio;
     if (isAudio) {
       _cancelActiveRequest();
+      _prewarmTimer?.cancel();
+      _prewarmTimer = null;
       _pointerExitGraceTimer?.cancel();
       _intentRevision++;
       _pendingTarget = null;
@@ -1335,6 +1565,8 @@ class SeekPreviewService {
     _isSeekable = isSeekable;
     if (!isSeekable) {
       _cancelActiveRequest();
+      _prewarmTimer?.cancel();
+      _prewarmTimer = null;
       _pointerExitGraceTimer?.cancel();
       _intentRevision++;
       _pendingTarget = null;
@@ -1346,11 +1578,13 @@ class SeekPreviewService {
 
   /// Called when the pointer moves or scrubs along the seek bar.
   ///
-  /// Updates target timestamp immediately. Bounded scheduler throttles extraction
-  /// starts to <= 1 per 100 ms and deduplicates into 1-second buckets using keyframe
-  /// seeks. After 250 ms without movement, refines with an exact seek.
+  /// For local files, seeks the live GPU preview texture directly at up to
+  /// ~30 fps without loading spinners or JPEG capture overhead. For remote
+  /// streams, throttles extraction to <= 1 per 100 ms with LRU caching.
   void onPointerMove(Duration target) {
     if (_disposed) return;
+    _prewarmTimer?.cancel();
+    _prewarmTimer = null;
     _idleWorkerReleaseTimer?.cancel();
     _pointerExitGraceTimer?.cancel();
     _scheduleIdleWorkerRelease();
@@ -1378,7 +1612,65 @@ class SeekPreviewService {
       return;
     }
 
-    // Check LRU cache first.
+    // Fast path for local files: direct live texture seeking with zero loading
+    // spinner and fine-grained 30 fps scrubbing.
+    if (!_isCurrentSourceRemote) {
+      if (_hasReadyLocalLiveTexture) {
+        final textureId = _backend!.liveTextureId!;
+        final currentState = _stateNotifier.value;
+        if (currentState.liveTextureId != textureId ||
+            currentState.status != SeekPreviewStatus.ready ||
+            currentState.isUpdating ||
+            currentState.isRemote) {
+          _stateNotifier.value = currentState.copyWith(
+            status: SeekPreviewStatus.ready,
+            liveTextureId: textureId,
+            targetTime: target,
+            isUpdating: false,
+            isRemote: false,
+            clearError: true,
+          );
+        }
+
+        if (_lastLiveSeekTarget != null &&
+            (_lastLiveSeekTarget! - target).abs() < _liveSeekDedupTolerance &&
+            !_pendingExact) {
+          _scheduleIdleRefinement(target);
+          return;
+        }
+
+        _pendingTarget = target;
+        _pendingExact = false;
+        _scheduleIdleRefinement(target);
+        _pumpScheduler();
+        return;
+      }
+
+      // Check LRU cache (used if a backend does not expose a live texture).
+      if (_showCachedFrame(target, revision)) return;
+
+      // Local files never enter a visual loading/spinner state.
+      _pendingTarget = target;
+      _pendingExact = false;
+      final currentState = _stateNotifier.value;
+      if (currentState.isUpdating ||
+          currentState.status == SeekPreviewStatus.loading ||
+          currentState.isRemote) {
+        _stateNotifier.value = currentState.copyWith(
+          targetTime: target,
+          isUpdating: false,
+          isRemote: false,
+          status: currentState.hasVisual
+              ? SeekPreviewStatus.ready
+              : SeekPreviewStatus.idle,
+        );
+      }
+      _scheduleIdleRefinement(target);
+      _pumpScheduler();
+      return;
+    }
+
+    // Remote stream path: check LRU cache first.
     if (_showCachedFrame(target, revision)) return;
 
     // Deduplicate requests into 1-second buckets while moving
@@ -1395,6 +1687,7 @@ class SeekPreviewService {
       _stateNotifier.value = _stateNotifier.value.copyWith(
         targetTime: target,
         isUpdating: true,
+        isRemote: true,
       );
       _scheduleIdleRefinement(target);
       return;
@@ -1405,6 +1698,7 @@ class SeekPreviewService {
       _stateNotifier.value = _stateNotifier.value.copyWith(
         targetTime: target,
         isUpdating: true,
+        isRemote: true,
       );
       _scheduleIdleRefinement(target);
       return;
@@ -1423,6 +1717,7 @@ class SeekPreviewService {
     _stateNotifier.value = _stateNotifier.value.copyWith(
       targetTime: target,
       isUpdating: true,
+      isRemote: true,
       status: _stateNotifier.value.currentFrame != null
           ? SeekPreviewStatus.ready
           : SeekPreviewStatus.loading,
@@ -1542,12 +1837,12 @@ class SeekPreviewService {
     final now = _now();
     final lastStart = _lastExtractionStartTime;
     final elapsed = lastStart == null ? null : now - lastStart;
-    if (elapsed != null && elapsed < const Duration(milliseconds: 100)) {
+    final throttle = !_isCurrentSourceRemote
+        ? _liveSeekThrottle
+        : _remoteSeekThrottle;
+    if (elapsed != null && elapsed < throttle) {
       _throttleTimer?.cancel();
-      _throttleTimer = Timer(
-        const Duration(milliseconds: 100) - elapsed,
-        _pumpScheduler,
-      );
+      _throttleTimer = Timer(throttle - elapsed, _pumpScheduler);
       return;
     }
 
@@ -1613,6 +1908,7 @@ class SeekPreviewService {
       if (_activeRequestId == requestId) _activeRequestCancelled = true;
     }
 
+    var liveSeekHandled = false;
     final operation = _enqueueBackendOperation<SeekPreviewFrame?>(() async {
       if (!canRun()) {
         cancelRequest();
@@ -1622,18 +1918,16 @@ class SeekPreviewService {
       if (backend != null &&
           _backendSource != null &&
           _backendSource != _currentSource) {
-        _backend = null;
         _backendSource = null;
         try {
-          await backend.dispose();
+          await backend.stop();
         } on Object catch (error) {
           _record(
-            'preview.dispose',
-            message: 'Previous source disposal failed',
+            'preview.stop',
+            message: 'Previous source stop failed',
             error: error,
           );
         }
-        backend = null;
         if (!canRun()) {
           cancelRequest();
           return null;
@@ -1644,18 +1938,21 @@ class SeekPreviewService {
         backend = _backendFactory();
         _backend = backend;
       }
+      var openedAtTarget = false;
       if (_backendSource != _currentSource) {
         stage = 'open';
         final openingSource = _currentSource!;
+        final openStart = _latestTarget ?? target;
         await backend.open(
           openingSource,
-          start: target,
+          start: openStart,
           timeout: _remaining(started, deadline),
         );
         if (!_disposed &&
             _sourceGeneration == sourceGen &&
             _currentSource == openingSource) {
           _backendSource = openingSource;
+          openedAtTarget = true;
         }
         if (!canRun()) {
           cancelRequest();
@@ -1664,6 +1961,46 @@ class SeekPreviewService {
       }
       if (!canRun()) {
         cancelRequest();
+        return null;
+      }
+
+      // Local live-texture path: seek the GPU texture directly with zero
+      // screenshot/JPEG/isolate overhead.
+      if (!_isCurrentSourceRemote &&
+          backend.supportsLiveTexture &&
+          backend.liveTextureId != null) {
+        final effectiveTarget = exact ? target : (_latestTarget ?? target);
+        final alreadyAtTarget =
+            openedAtTarget &&
+            !exact &&
+            (effectiveTarget - target).abs() < _liveSeekDedupTolerance;
+        final alreadyExactAtTarget =
+            exact &&
+            _lastLiveSeekExact &&
+            _lastLiveSeekTarget == effectiveTarget;
+        if (!alreadyAtTarget && !alreadyExactAtTarget) {
+          stage = exact ? 'exact live seek' : 'keyframe live seek';
+          await backend.seekLive(effectiveTarget, exact: exact);
+        }
+        _lastLiveSeekTarget = effectiveTarget;
+        _lastLiveSeekExact = exact;
+        liveSeekHandled = true;
+        if (!_disposed &&
+            _sourceGeneration == sourceGen &&
+            _interactionGeneration == interactionGen &&
+            !_hasFailed) {
+          final textureId = backend.liveTextureId;
+          if (textureId != null) {
+            _stateNotifier.value = _stateNotifier.value.copyWith(
+              status: SeekPreviewStatus.ready,
+              liveTextureId: textureId,
+              targetTime: effectiveTarget,
+              isUpdating: false,
+              isRemote: false,
+              clearError: true,
+            );
+          }
+        }
         return null;
       }
 
@@ -1679,7 +2016,8 @@ class SeekPreviewService {
 
     try {
       final frame = await _withDeadline(operation, deadline);
-      if (requestCancelled ||
+      if (liveSeekHandled ||
+          requestCancelled ||
           (_activeRequestId == requestId && _activeRequestCancelled)) {
         return;
       }
@@ -1703,7 +2041,8 @@ class SeekPreviewService {
             status: SeekPreviewStatus.ready,
             currentFrame: frame,
             targetTime: currentTarget,
-            isUpdating: _pendingTarget != null,
+            isUpdating: _isCurrentSourceRemote && _pendingTarget != null,
+            isRemote: _isCurrentSourceRemote,
             clearError: true,
           );
         }
@@ -1858,7 +2197,10 @@ class SeekPreviewService {
 
   void _scheduleIdleWorkerRelease() {
     _idleWorkerReleaseTimer?.cancel();
-    _idleWorkerReleaseTimer = Timer(_idleWorkerTimeout, () {
+    final timeout = _isCurrentSourceRemote
+        ? _idleWorkerTimeout
+        : _localIdleWorkerTimeout;
+    _idleWorkerReleaseTimer = Timer(timeout, () {
       _releaseWorker(force: true);
     });
   }
@@ -1906,6 +2248,13 @@ class SeekPreviewService {
       final backend = _backend;
       _backend = null;
       _backendSource = null;
+      _lastLiveSeekTarget = null;
+      _lastLiveSeekExact = false;
+      if (!_disposed && _stateNotifier.value.liveTextureId != null) {
+        _stateNotifier.value = _stateNotifier.value.copyWith(
+          clearLiveTexture: true,
+        );
+      }
       if (backend != null) {
         try {
           await backend.dispose();
@@ -1924,6 +2273,8 @@ class SeekPreviewService {
   void suspend() {
     if (_disposed) return;
     _cancelActiveRequest();
+    _prewarmTimer?.cancel();
+    _prewarmTimer = null;
     _pointerExitGraceTimer?.cancel();
     _idleWorkerReleaseTimer?.cancel();
     _isSuspended = true;
@@ -1932,6 +2283,11 @@ class SeekPreviewService {
     }
     _refineTimer?.cancel();
     _throttleTimer?.cancel();
+    if (_stateNotifier.value.liveTextureId != null) {
+      _stateNotifier.value = _stateNotifier.value.copyWith(
+        clearLiveTexture: true,
+      );
+    }
     _pauseOrStopWorker(stopRemote: _isCurrentSourceRemote);
     unawaited(_releaseWorker(force: true));
   }
@@ -1940,7 +2296,16 @@ class SeekPreviewService {
   void resume() {
     if (_disposed) return;
     _isSuspended = false;
-    _restoreLatestIntent();
+    if (_interactionActive) {
+      _restoreLatestIntent();
+    } else if (!_isCurrentSourceRemote &&
+        !_isAudio &&
+        _isSeekable &&
+        _currentSource != null &&
+        _currentSource!.isNotEmpty &&
+        _backendSource != _currentSource) {
+      _scheduleLocalPrewarm(_currentSource!, _sourceGeneration);
+    }
   }
 
   /// Coordinates with main playback buffering.
@@ -2003,7 +2368,7 @@ class SeekPreviewService {
       _pendingExact = false;
       _stateNotifier.value = _stateNotifier.value.copyWith(
         targetTime: target,
-        isUpdating: true,
+        isUpdating: _isCurrentSourceRemote,
       );
       if (!_activeExtractionExact) _scheduleIdleRefinement(target);
       return;
@@ -2034,6 +2399,7 @@ class SeekPreviewService {
     _pendingExact = false;
     _idleWorkerReleaseTimer?.cancel();
     _pointerExitGraceTimer?.cancel();
+    _prewarmTimer?.cancel();
     _refineTimer?.cancel();
     _throttleTimer?.cancel();
     _playbackHealthTimer?.cancel();

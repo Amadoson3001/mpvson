@@ -47,13 +47,11 @@ extension PlayerControllerSession on PlayerController {
         final restoreQueue = sessionQueueUnchanged && _queue.isEmpty;
         restoredSessionQueue = restoreQueue;
         if (restoreQueue) {
-          _queue
-            ..clear()
-            ..addAll(scrubbed.queue);
-          _queueIdToIndex.clear();
-          _rebuildQueueIndex(0);
-          _currentIndex = scrubbed.currentIndex;
-          if (_queue.isNotEmpty) _queueStructureRevision++;
+          _replaceQueueEntries(
+            scrubbed.queue,
+            currentIndex: scrubbed.currentIndex,
+            countEmptyReplacement: false,
+          );
         }
         if (sessionQueueUnchanged) {
           _recent
@@ -551,6 +549,7 @@ extension PlayerControllerSession on PlayerController {
     queueListenable.dispose();
     transportListenable.dispose();
     volumeListenable.dispose();
+    rateListenable.dispose();
     playbackModeListenable.dispose();
     _structureNotifier.dispose();
   }

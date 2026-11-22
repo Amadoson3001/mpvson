@@ -8,9 +8,9 @@
 /// Releases may override [current] at build time via
 /// `--dart-define=MPVSON_APP_VERSION=<version>`.
 abstract final class AppVersion {
-  static const String pubspecVersion = '0.1.0+1';
-  static const String defaultSemantic = '0.1.0';
-  static const int buildNumber = 1;
+  static const String pubspecVersion = '0.1.1+2';
+  static const String defaultSemantic = '0.1.1';
+  static const int buildNumber = 2;
 
   static const String _override = String.fromEnvironment('MPVSON_APP_VERSION');
 

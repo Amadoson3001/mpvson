@@ -9,6 +9,49 @@ extension PlayerControllerQueue on PlayerController {
     }
   }
 
+  void _replaceQueueEntries(
+    List<MediaEntry> entries, {
+    required int currentIndex,
+    bool countEmptyReplacement = true,
+  }) {
+    _queue
+      ..clear()
+      ..addAll(entries);
+    _queueIdToIndex.clear();
+    _rebuildQueueIndex();
+    _currentIndex = currentIndex;
+    if (countEmptyReplacement || entries.isNotEmpty) _queueStructureRevision++;
+  }
+
+  void _insertQueueEntries(int index, List<MediaEntry> entries) {
+    _queue.insertAll(index, entries);
+    _rebuildQueueIndex(index);
+    _queueStructureRevision++;
+  }
+
+  void _removeQueueEntry(int index) {
+    final entry = _queue.removeAt(index);
+    _queueIdToIndex.remove(entry.id);
+    _rebuildQueueIndex(index);
+    _queueStructureRevision++;
+  }
+
+  MediaEntry _moveQueueEntry(int oldIndex, int newIndex) {
+    final entry = _queue.removeAt(oldIndex);
+    _queue.insert(newIndex, entry);
+    _rebuildQueueIndex(min(oldIndex, newIndex));
+    _queueStructureRevision++;
+    return entry;
+  }
+
+  void _clearActiveSourceMetadata() {
+    _clearResume();
+    _engineHasMedia = false;
+    _engineEntryId = null;
+    _mediaKind = MediaKind.unknown;
+    _metadata = MediaMetadata.empty;
+  }
+
   List<MediaEntry> get recent => _unmodifiableRecent;
 
   bool get canUndo => _undo != null;
@@ -33,21 +76,14 @@ extension PlayerControllerQueue on PlayerController {
       displacedActiveSource: displacedActiveSource,
       displacedCurrent: removedCurrent,
     );
-    _queueStructureRevision++;
-    _queue.removeAt(index);
-    _queueIdToIndex.remove(removedEntry.id);
-    _rebuildQueueIndex(index);
+    _removeQueueEntry(index);
     _removeNavigationEntry(removedEntry.id);
 
     if (_queue.isEmpty) {
       _cancelPendingOpen(reason: 'queue emptied');
       _markSourceDisplaced();
       _currentIndex = -1;
-      _clearResume();
-      _engineHasMedia = false;
-      _engineEntryId = null;
-      _mediaKind = MediaKind.unknown;
-      _metadata = MediaMetadata.empty;
+      _clearActiveSourceMetadata();
       _playbackState = _playbackState.copyWith(
         isPlaying: false,
         isBuffering: false,
@@ -70,11 +106,7 @@ extension PlayerControllerQueue on PlayerController {
       }
       _cancelPendingOpen(reason: 'current item removed');
       _markSourceDisplaced();
-      _clearResume();
-      _engineHasMedia = false;
-      _engineEntryId = null;
-      _mediaKind = MediaKind.unknown;
-      _metadata = MediaMetadata.empty;
+      _clearActiveSourceMetadata();
       _playbackState = _playbackState.copyWith(
         isPlaying: false,
         isBuffering: false,
@@ -114,10 +146,7 @@ extension PlayerControllerQueue on PlayerController {
     if (oldIndex == newIndex) return;
     _undo = null;
     final currentId = current?.id;
-    _queueStructureRevision++;
-    final entry = _queue.removeAt(oldIndex);
-    _queue.insert(newIndex, entry);
-    _rebuildQueueIndex(min(oldIndex, newIndex));
+    final entry = _moveQueueEntry(oldIndex, newIndex);
     _currentIndex = currentId == null ? -1 : (_queueIdToIndex[currentId] ?? -1);
     if (_navigationCursor >= 0 &&
         _navigationCursor < _navigationHistory.length - 1) {
@@ -140,10 +169,8 @@ extension PlayerControllerQueue on PlayerController {
   Future<void> undoRemove() async {
     final undo = _undo;
     if (!_acceptsCommands || undo == null || undo.entries.isEmpty) return;
-    _queueStructureRevision++;
     final insertIndex = undo.index.clamp(0, _queue.length);
-    _queue.insertAll(insertIndex, undo.entries);
-    _rebuildQueueIndex(insertIndex);
+    _insertQueueEntries(insertIndex, undo.entries);
     if (shuffle) _prepareShuffleRemaining();
     final restoredIndex = undo.previousCurrentId == null
         ? -1
@@ -164,11 +191,7 @@ extension PlayerControllerQueue on PlayerController {
 
     _cancelPendingOpen(reason: 'queue restored');
     _markSourceDisplaced();
-    _clearResume();
-    _engineHasMedia = false;
-    _engineEntryId = null;
-    _mediaKind = MediaKind.unknown;
-    _metadata = MediaMetadata.empty;
+    _clearActiveSourceMetadata();
     if (_currentIndex >= 0) {
       final entry = _queue[_currentIndex];
       _playbackState = _playbackState.copyWith(
@@ -206,19 +229,16 @@ extension PlayerControllerQueue on PlayerController {
     final displacedCurrent = _currentIndex >= 0;
 
     _operation++;
-    _queueStructureRevision++;
     _importOperation++;
     _cancelPendingOpen(reason: 'queue cleared');
     _markSourceDisplaced();
-    _queue.clear();
-    _queueIdToIndex.clear();
+    _replaceQueueEntries(const <MediaEntry>[], currentIndex: -1);
     _navigationHistory.clear();
     _navigationCursor = -1;
     _pendingNavigationEntryId = null;
     _pendingNavigationCursor = null;
     _shuffleRemaining.clear();
     _shuffleVisited.clear();
-    _currentIndex = -1;
     _undo = clearedEntries.isEmpty
         ? null
         : _QueueUndo(
@@ -230,11 +250,7 @@ extension PlayerControllerQueue on PlayerController {
             displacedCurrent: displacedCurrent,
             isClearAll: true,
           );
-    _clearResume();
-    _engineHasMedia = false;
-    _engineEntryId = null;
-    _mediaKind = MediaKind.unknown;
-    _metadata = MediaMetadata.empty;
+    _clearActiveSourceMetadata();
     _publishQueue();
     _playbackState = _playbackState.copyWith(
       isPlaying: false,

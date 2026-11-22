@@ -172,7 +172,12 @@ class ANGLESurfaceManager {
       EGL_ALPHA_SIZE, 8, EGL_DEPTH_SIZE, 0, EGL_STENCIL_SIZE, 0,
       EGL_NONE,
   };
-  static constexpr EGLint kEGLContextAttributes[] = {
+  static constexpr EGLint kEGLContextAttributesES3[] = {
+      EGL_CONTEXT_CLIENT_VERSION,
+      3,
+      EGL_NONE,
+  };
+  static constexpr EGLint kEGLContextAttributesES2[] = {
       EGL_CONTEXT_CLIENT_VERSION,
       2,
       EGL_NONE,

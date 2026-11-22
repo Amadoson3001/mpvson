@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -11,6 +12,7 @@ import '../../../data/services/update_service.dart';
 import '../../../domain/models/media_entry.dart';
 import '../../../domain/models/player_hotkeys.dart';
 import '../../core/app_motion.dart';
+import '../../core/app_theme.dart';
 import '../../core/toast/toast_layout.dart';
 import '../../library/views/mini_player_bar.dart';
 import '../player_controller.dart';
@@ -121,27 +123,25 @@ class PlayerContent extends StatefulWidget {
 
 class _PlayerContentState extends State<PlayerContent>
     with SingleTickerProviderStateMixin {
-  late final AnimationController _miniPlayerController = AnimationController(
-    vsync: this,
-    duration: AppMotion.spatialDefault,
-    reverseDuration: AppMotion.dockExpand,
-    value:
-        (widget.isShowingLibrary &&
-            widget.controller.hasMedia &&
-            widget.controller.isVideo)
-        ? 1.0
-        : 0.0,
-  );
+  final Object _dockTransitionToken = Object();
+  final Object _queueTransitionToken = Object();
 
-  late final CurvedAnimation _miniPlayerCurved = CurvedAnimation(
-    parent: _miniPlayerController,
-    curve: AppMotion.spatialProgressCurve,
-    reverseCurve: AppMotion.enter,
+  late final SpringMotionController _dockMotion = SpringMotionController(
+    vsync: this,
+    initialForward:
+        widget.isShowingLibrary &&
+        widget.controller.hasMedia &&
+        widget.controller.isVideo,
+    forwardSpring: AppMotion.dockSpring,
+    reverseSpring: AppMotion.dockExpandSpring,
+    tolerance: const Tolerance(distance: 0.0025, velocity: 0.015),
+    onAnimatingChanged: (active) => widget.layoutManager
+        .setLayoutTransitionActive(_dockTransitionToken, active),
   );
 
   bool _miniPlayerDismissed = false;
   late bool _libraryMounted =
-      widget.isShowingLibrary || _miniPlayerController.value > 0.001;
+      widget.isShowingLibrary || _dockMotion.value > 0.001;
   String? _lastVideoId;
 
   /// Destination the dock transition is committed to. See
@@ -170,22 +170,14 @@ class _PlayerContentState extends State<PlayerContent>
     // player is showing again. Re-docking here would cancel the reverse.
     if (_dockReturnInFlight) return;
     if (_canInAppDockVideo && widget.isShowingLibrary) {
-      if (_miniPlayerController.value < 1.0 &&
-          _miniPlayerController.status != AnimationStatus.forward) {
-        final dockDuration = AppMotion.scaled(
-          context,
-          AppMotion.spatialDefault,
-        );
-        if (dockDuration > Duration.zero) {
-          _miniPlayerController.forward();
-        } else {
-          _miniPlayerController.value = 1.0;
-        }
+      if (_dockMotion.value < 1.0 &&
+          (!_dockMotion.targetForward || !_dockMotion.isAnimating)) {
+        unawaited(_dockMotion.drive(true));
       }
       return;
     }
-    if (_miniPlayerController.value != 0.0) {
-      _miniPlayerController.value = 0.0;
+    if (_dockMotion.value != 0.0 || _dockMotion.isAnimating) {
+      _dockMotion.snap(false);
     }
   }
 
@@ -207,10 +199,10 @@ class _PlayerContentState extends State<PlayerContent>
       _miniPlayerDismissed = false;
       if (resetDismissed) setState(() {});
     }
-    final dockBefore = _miniPlayerController.value;
+    final dockBefore = _dockMotion.value;
     _syncInAppDockController();
     widget.layoutManager.syncVideoVisibilityForLibrary();
-    if (trackChanged || dockBefore != _miniPlayerController.value) {
+    if (trackChanged || dockBefore != _dockMotion.value) {
       setState(() {});
     }
   }
@@ -218,6 +210,7 @@ class _PlayerContentState extends State<PlayerContent>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _dockMotion.applyMotion(context);
     _syncInAppDockController();
   }
 
@@ -231,12 +224,23 @@ class _PlayerContentState extends State<PlayerContent>
       widget.controller.structureListenable.addListener(_handlePlaybackChanges);
       _miniPlayerDismissed = false;
     }
+    if (oldWidget.layoutManager != widget.layoutManager) {
+      oldWidget.layoutManager.setLayoutTransitionActive(
+        _dockTransitionToken,
+        false,
+      );
+      oldWidget.layoutManager.setLayoutTransitionActive(
+        _queueTransitionToken,
+        false,
+      );
+      if (_dockMotion.isAnimating) {
+        widget.layoutManager.setLayoutTransitionActive(
+          _dockTransitionToken,
+          true,
+        );
+      }
+    }
     widget.layoutManager.isInAppMiniPlayerActive = () => _canInAppDockVideo;
-
-    final dockDuration = AppMotion.scaled(context, AppMotion.spatialDefault);
-    final expandDuration = AppMotion.scaled(context, AppMotion.dockExpand);
-    _miniPlayerController.duration = dockDuration;
-    _miniPlayerController.reverseDuration = expandDuration;
 
     if (widget.isShowingLibrary != oldWidget.isShowingLibrary) {
       // The screen-level destination moved, so whatever transition was in
@@ -245,18 +249,22 @@ class _PlayerContentState extends State<PlayerContent>
       _dockDestination = InAppDockDestination.miniPlayer;
       if (widget.isShowingLibrary) {
         _syncInAppDockController();
-      } else if (_canInAppDockVideo && expandDuration > Duration.zero) {
-        _miniPlayerController.reverse();
+      } else if (_canInAppDockVideo) {
+        unawaited(_dockMotion.drive(false));
       } else {
-        _miniPlayerController.value = 0.0;
+        _dockMotion.snap(false);
       }
     }
   }
 
   @override
   void dispose() {
-    _miniPlayerCurved.dispose();
-    _miniPlayerController.dispose();
+    widget.layoutManager.setLayoutTransitionActive(_dockTransitionToken, false);
+    widget.layoutManager.setLayoutTransitionActive(
+      _queueTransitionToken,
+      false,
+    );
+    _dockMotion.dispose();
     widget.controller.structureListenable.removeListener(
       _handlePlaybackChanges,
     );
@@ -267,26 +275,20 @@ class _PlayerContentState extends State<PlayerContent>
   void _returnToPlayerAnimated() {
     _miniPlayerDismissed = false;
     widget.layoutManager.syncVideoVisibilityForLibrary();
-    final expandDuration = AppMotion.scaled(context, AppMotion.dockExpand);
-    _miniPlayerController.reverseDuration = expandDuration;
-    // Nothing has been painted in the mini slot yet (or motion is off), so
-    // there is no reverse to wait on: hand control back in the same frame
-    // instead of parking the caller on a TickerFuture that cannot run.
-    final atRest =
-        !_miniPlayerController.isAnimating &&
-        _miniPlayerController.value <= 0.0;
-    if (expandDuration == Duration.zero || atRest) {
+    final reduced = AppMotion.reduce(context);
+    final atRest = !_dockMotion.isAnimating && _dockMotion.value <= 0.0;
+    if (reduced || atRest) {
       _dockDestination = InAppDockDestination.miniPlayer;
-      _miniPlayerController.value = 0.0;
+      _dockMotion.snap(false);
       widget.onReturnToPlayer();
       return;
     }
     // Commit the destination before starting the reverse so a structure update
     // arriving mid-transition cannot re-dock the stage and cancel it.
     _dockDestination = InAppDockDestination.player;
-    if (_miniPlayerController.status == AnimationStatus.reverse) return;
-    _miniPlayerController.reverse().then((_) {
-      if (!mounted || !_dockReturnInFlight) return;
+    if (_dockMotion.isAnimating && !_dockMotion.targetForward) return;
+    _dockMotion.drive(false).then((_) {
+      if (!mounted || !_dockReturnInFlight || _dockMotion.targetForward) return;
       _dockDestination = InAppDockDestination.miniPlayer;
       widget.onReturnToPlayer();
     });
@@ -460,16 +462,53 @@ class _PlayerContentState extends State<PlayerContent>
     });
   }
 
+  Widget _buildLibraryDepthLayer({
+    required Widget library,
+    required double progress,
+    required bool inFlight,
+    required bool lowPower,
+  }) {
+    final depthScale = (inFlight && !lowPower)
+        ? (0.988 + 0.012 * progress)
+        : 1.0;
+    final scrimAlpha = (inFlight && !lowPower)
+        ? (0.22 * (1.0 - progress)).clamp(0.0, 0.22)
+        : 0.0;
+
+    return Transform.scale(
+      scale: depthScale,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          RepaintBoundary(
+            key: const ValueKey('dock-library-content'),
+            child: library,
+          ),
+          if (scrimAlpha > 0.001)
+            Positioned.fill(
+              key: const ValueKey('dock-library-scrim'),
+              child: IgnorePointer(
+                child: ColoredBox(
+                  color: Colors.black.withValues(alpha: scrimAlpha),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final repository = widget.libraryRepository;
     if (widget.isShowingLibrary ||
-        (_canInAppDockVideo && _miniPlayerCurved.value > 0.001)) {
+        (_canInAppDockVideo && _dockMotion.value > 0.001)) {
       _libraryMounted = true;
     }
     final library = _libraryMounted && repository != null
         ? _buildLibrary(repository)
         : null;
+    final lowPower = AppMotion.lowPower(context);
 
     // Built here, outside the queue slot's LayoutBuilder: the queue widens
     // its slot on every animation tick, which re-runs that builder with new
@@ -477,10 +516,11 @@ class _PlayerContentState extends State<PlayerContent>
     // surface, controls, top bar — on each of those ticks. Hoisting it leaves
     // the stage as a stable child that is only relaid out, not recomposed.
     final stage = _buildStage(
-      miniProgressAnimation: _canInAppDockVideo ? _miniPlayerCurved : null,
+      miniProgressAnimation: _canInAppDockVideo ? _dockMotion.progress : null,
       onExpandFromMini: _returnToPlayerAnimated,
       onDismissMini: _dismissMiniPlayer,
     );
+    final stageSurface = RepaintBoundary(child: stage);
 
     return PlayerQueueLayout(
       playerArea: PlayerDragDrop(
@@ -517,23 +557,17 @@ class _PlayerContentState extends State<PlayerContent>
 
             return AnimatedBuilder(
               animation: Listenable.merge(<Listenable>[
-                _miniPlayerCurved,
+                _dockMotion.progress,
                 widget.controller.structureListenable,
               ]),
-              child: stage,
-              builder: (context, stage) {
+              child: stageSurface,
+              builder: (context, cachedStage) {
                 final t = _canInAppDockVideo
-                    ? _miniPlayerCurved.value.clamp(0.0, 1.0)
+                    ? _dockMotion.value.clamp(0.0, 1.0)
                     : 0.0;
+                final inFlight = _canInAppDockVideo && t > 0.0005 && t < 0.9995;
+                final settledDocked = _canInAppDockVideo && t >= 0.9995;
                 final currentRect = Rect.lerp(fullRect, miniRect, t)!;
-
-                // The moving geometry is still a changing Positioned, so the
-                // stage is relaid out every dock frame. That is deliberate for
-                // now: holding the stage at its full size and transforming it
-                // into the mini slot would either squash the chrome
-                // (non-uniform scale) or crop the video instead of resizing
-                // it. A DevTools trace should confirm the relayout is the cost
-                // worth removing before trading either of those away.
 
                 final showLibraryUnderneath =
                     library != null &&
@@ -543,24 +577,107 @@ class _PlayerContentState extends State<PlayerContent>
                     ? (!_miniPlayerDismissed || t < 0.999)
                     : !widget.isShowingLibrary;
 
-                if (library == null) return stage!;
+                if (library == null) return cachedStage!;
+
+                // Keep the Positioned box at fullRect across the entire flight
+                // so the video stage and its children undergo zero layout passes
+                // per frame; only the GPU matrix & rounded clip animate until
+                // settling into miniRect once.
+                final boxRect = settledDocked ? miniRect : fullRect;
+                final double scale;
+                final Offset translation;
+                if (inFlight && totalWidth > 0 && totalHeight > 0) {
+                  final aspect =
+                      widget.controller.videoAspectRatio ?? (16.0 / 9.0);
+                  final fullVideoH = math.min(totalHeight, totalWidth / aspect);
+                  final curVideoH = math.min(
+                    currentRect.height,
+                    currentRect.width / aspect,
+                  );
+                  scale = fullVideoH > 0
+                      ? (curVideoH / fullVideoH).clamp(0.01, 1.0)
+                      : 1.0;
+                  translation = currentRect.center - fullRect.center;
+                } else {
+                  scale = 1.0;
+                  translation = Offset.zero;
+                }
+                final transform = inFlight
+                    ? (Matrix4.identity()
+                        ..setEntry(0, 0, scale)
+                        ..setEntry(1, 1, scale)
+                        ..setEntry(0, 3, translation.dx)
+                        ..setEntry(1, 3, translation.dy))
+                    : Matrix4.identity();
+                final flightRadius = inFlight
+                    ? math.sin(math.pi * t) * 10.0
+                    : 0.0;
+
                 return Stack(
                   fit: StackFit.expand,
                   children: [
-                    Offstage(
-                      offstage: !showLibraryUnderneath,
-                      child: TickerMode(
-                        enabled: showLibraryUnderneath,
-                        child: library,
+                    KeyedSubtree(
+                      key: const ValueKey('dock-library-layer'),
+                      child: Offstage(
+                        offstage: !showLibraryUnderneath,
+                        child: TickerMode(
+                          enabled: showLibraryUnderneath,
+                          child: _buildLibraryDepthLayer(
+                            library: library,
+                            progress: t,
+                            inFlight: inFlight,
+                            lowPower: lowPower,
+                          ),
+                        ),
                       ),
                     ),
+                    if (showVideoStage && inFlight && !lowPower)
+                      Positioned.fromRect(
+                        key: const ValueKey('dock-video-shadow'),
+                        rect: currentRect,
+                        child: IgnorePointer(
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(flightRadius),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withValues(
+                                    alpha: 0.42 * math.sin(math.pi * t),
+                                  ),
+                                  blurRadius: 24,
+                                  offset: const Offset(0, 8),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
                     if (showVideoStage)
                       Positioned(
-                        left: currentRect.left,
-                        top: currentRect.top,
-                        width: currentRect.width,
-                        height: currentRect.height,
-                        child: RepaintBoundary(child: stage),
+                        key: const ValueKey('dock-video-stage'),
+                        left: boxRect.left,
+                        top: boxRect.top,
+                        width: boxRect.width,
+                        height: boxRect.height,
+                        child: ClipRRect(
+                          clipper: inFlight
+                              ? _DockRRectClipper(
+                                  rect: currentRect,
+                                  radius: flightRadius,
+                                )
+                              : null,
+                          clipBehavior: inFlight ? Clip.antiAlias : Clip.none,
+                          child: ColoredBox(
+                            color: inFlight
+                                ? AppTheme.stage
+                                : Colors.transparent,
+                            child: Transform(
+                              alignment: Alignment.center,
+                              transform: transform,
+                              child: cachedStage,
+                            ),
+                          ),
+                        ),
                       ),
                   ],
                 );
@@ -575,6 +692,23 @@ class _PlayerContentState extends State<PlayerContent>
       onToggleQueue: widget.chrome.toggleQueue,
       onCloseQueue: widget.chrome.closeQueue,
       onQueueExitEnd: widget.chrome.handleQueueExitEnd,
+      onMotionActiveChanged: (active) => widget.layoutManager
+          .setLayoutTransitionActive(_queueTransitionToken, active),
     );
   }
+}
+
+class _DockRRectClipper extends CustomClipper<RRect> {
+  const _DockRRectClipper({required this.rect, required this.radius});
+
+  final Rect rect;
+  final double radius;
+
+  @override
+  RRect getClip(Size size) =>
+      RRect.fromRectAndRadius(rect, Radius.circular(radius));
+
+  @override
+  bool shouldReclip(covariant _DockRRectClipper oldClipper) =>
+      oldClipper.rect != rect || oldClipper.radius != radius;
 }

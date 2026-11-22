@@ -56,6 +56,9 @@ abstract final class AppMotion {
 
   /// Slide and fade used by toasts entering and leaving a corner.
   static const Duration toast = Duration(milliseconds: 180);
+  static const Duration toastExit = Duration(milliseconds: 140);
+  static const Duration chromeEnter = Duration(milliseconds: 180);
+  static const Duration chromeExit = Duration(milliseconds: 260);
   static const Duration press = Duration(milliseconds: 80);
   static const Duration hover = Duration(milliseconds: 120);
   static const Duration stage = Duration(milliseconds: 140);
@@ -74,8 +77,8 @@ abstract final class AppMotion {
   static const Duration dockExpand = spatialFast;
 
   /// Start scale for the dialog morph. The surface grows from the trigger
-  /// point without any cross-fade of its content.
-  static const double dialogMorphBeginScale = 0.86;
+  /// point with a leading opacity ramp.
+  static const double dialogMorphBeginScale = 0.92;
 
   /// Effects curves: decelerate in, accelerate out.
   static const Curve enter = Cubic(0.16, 1, 0.3, 1);
@@ -99,6 +102,46 @@ abstract final class AppMotion {
   /// avoids a collision between a [Duration] and a [Curve] in Dart.
   static const Curve standardCurve = Curves.easeOutCubic;
 
+  /// Critically damped spring for docking the video into the mini slot.
+  static final SpringDescription dockSpring =
+      SpringDescription.withDampingRatio(
+        mass: 1.0,
+        stiffness: 420.0,
+        ratio: 1.0,
+      );
+
+  /// Snappier critically damped spring for expanding the docked video back.
+  static final SpringDescription dockExpandSpring =
+      SpringDescription.withDampingRatio(
+        mass: 1.0,
+        stiffness: 500.0,
+        ratio: 1.0,
+      );
+
+  /// Critically damped spring for sliding side panels and drawers.
+  static final SpringDescription panelSpring =
+      SpringDescription.withDampingRatio(
+        mass: 1.0,
+        stiffness: 420.0,
+        ratio: 1.0,
+      );
+
+  /// Critically damped spring for bottom-to-full-screen sheets.
+  static final SpringDescription sheetSpring =
+      SpringDescription.withDampingRatio(
+        mass: 1.0,
+        stiffness: 370.0,
+        ratio: 1.0,
+      );
+
+  /// Snappy critically damped spring for small tactile controls (switches).
+  static final SpringDescription microSpring =
+      SpringDescription.withDampingRatio(
+        mass: 1.0,
+        stiffness: 680.0,
+        ratio: 1.0,
+      );
+
   /// Critically damped spring for the collapsible library sidebar (`64px <-> 208px`).
   ///
   /// Zero overshoot prevents the neighboring content stage and divider from
@@ -107,7 +150,7 @@ abstract final class AppMotion {
   static final SpringDescription sidebarSpring =
       SpringDescription.withDampingRatio(
         mass: 1.0,
-        stiffness: 420.0,
+        stiffness: 520.0,
         ratio: 1.0,
       );
 
@@ -115,7 +158,7 @@ abstract final class AppMotion {
   static final SpringDescription indicatorSpring =
       SpringDescription.withDampingRatio(
         mass: 1.0,
-        stiffness: 560.0,
+        stiffness: 580.0,
         ratio: 1.0,
       );
 
@@ -236,6 +279,10 @@ class _AppMotionRevealState extends State<AppMotionReveal>
     parent: _controller,
     curve: AppMotion.enter,
   );
+  late Animation<double> _scale = Tween<double>(
+    begin: widget.beginScale,
+    end: 1.0,
+  ).animate(_curved);
   bool _hasStarted = false;
   bool _skipMotion = false;
 
@@ -261,6 +308,12 @@ class _AppMotionRevealState extends State<AppMotionReveal>
     if (oldWidget.duration != widget.duration) {
       _controller.duration = AppMotion.duration(context, widget.duration);
     }
+    if (oldWidget.beginScale != widget.beginScale) {
+      _scale = Tween<double>(
+        begin: widget.beginScale,
+        end: 1.0,
+      ).animate(_curved);
+    }
   }
 
   @override
@@ -274,20 +327,101 @@ class _AppMotionRevealState extends State<AppMotionReveal>
   Widget build(BuildContext context) {
     if (_skipMotion) return widget.child;
 
-    return AnimatedBuilder(
-      animation: _curved,
-      child: widget.child,
-      builder: (context, child) {
-        final progress = _curved.value;
-        final scale = widget.beginScale + (1 - widget.beginScale) * progress;
+    return FadeTransition(
+      opacity: _curved,
+      // Keep controls usable during the brief opening fade.
+      alwaysIncludeSemantics: true,
+      child: ScaleTransition(
+        scale: _scale,
+        child: RepaintBoundary(child: widget.child),
+      ),
+    );
+  }
+}
 
-        return FadeTransition(
-          opacity: _curved,
-          // Keep controls usable during the brief opening fade.
-          alwaysIncludeSemantics: true,
-          child: Transform.scale(scale: scale, child: child),
-        );
-      },
+/// Incoming-only compositor reveal for switching library and settings sections
+/// without keeping heavy outgoing grids mounted side by side.
+class AppSectionReveal extends StatefulWidget {
+  const AppSectionReveal({
+    super.key,
+    required this.child,
+    this.duration = AppMotion.stage,
+    this.beginOffset = const Offset(0, 0.015),
+  });
+
+  final Widget child;
+  final Duration duration;
+  final Offset beginOffset;
+
+  @override
+  State<AppSectionReveal> createState() => _AppSectionRevealState();
+}
+
+class _AppSectionRevealState extends State<AppSectionReveal>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: widget.duration,
+  );
+  late final CurvedAnimation _curved = CurvedAnimation(
+    parent: _controller,
+    curve: AppMotion.enter,
+  );
+  late Animation<Offset> _slide = Tween<Offset>(
+    begin: widget.beginOffset,
+    end: Offset.zero,
+  ).animate(_curved);
+  bool _hasStarted = false;
+  bool _skipMotion = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _skipMotion = AppMotion.lowPower(context);
+    _controller.duration = AppMotion.duration(context, widget.duration);
+
+    if (_skipMotion) {
+      _controller.stop();
+      _controller.value = 1;
+      _hasStarted = true;
+    } else if (!_hasStarted) {
+      _hasStarted = true;
+      _controller.forward(from: 0);
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant AppSectionReveal oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.duration != widget.duration) {
+      _controller.duration = AppMotion.duration(context, widget.duration);
+    }
+    if (oldWidget.beginOffset != widget.beginOffset) {
+      _slide = Tween<Offset>(
+        begin: widget.beginOffset,
+        end: Offset.zero,
+      ).animate(_curved);
+    }
+  }
+
+  @override
+  void dispose() {
+    _curved.dispose();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_skipMotion) return widget.child;
+
+    return FadeTransition(
+      opacity: _curved,
+      alwaysIncludeSemantics: true,
+      child: SlideTransition(
+        position: _slide,
+        child: RepaintBoundary(child: widget.child),
+      ),
     );
   }
 }
@@ -295,9 +429,8 @@ class _AppMotionRevealState extends State<AppMotionReveal>
 /// Opens a modal dialog with the app's morph presentation.
 ///
 /// The surface grows out of [anchor] — the global-coordinates origin of the
-/// widget that triggered the dialog — with a pure scale transition. The dialog
-/// itself never cross-fades; only the scrim behind it fades. When [anchor] is
-/// omitted the surface scales up from its own center.
+/// widget that triggered the dialog — with a compositor-driven fade and scale.
+/// When [anchor] is omitted the surface scales up from its own center.
 Future<T?> showMorphDialog<T>({
   required BuildContext context,
   required WidgetBuilder builder,
@@ -315,7 +448,7 @@ Future<T?> showMorphDialog<T>({
           MaterialLocalizations,
         )?.modalBarrierDismissLabel ??
         'Close dialog',
-    transitionDuration: AppMotion.emphasized,
+    transitionDuration: AppMotion.scaled(context, AppMotion.spatialFast),
     pageBuilder: (context, animation, secondaryAnimation) => builder(context),
     transitionBuilder: (context, animation, secondaryAnimation, child) {
       if (AppMotion.lowPower(context)) return child;
@@ -349,29 +482,45 @@ class _MorphDialogTransitionState extends State<_MorphDialogTransition> {
     curve: AppMotion.enter,
     reverseCurve: AppMotion.exit,
   );
+  late final CurvedAnimation _fadeCurved = CurvedAnimation(
+    parent: widget.animation,
+    curve: const Interval(0.0, 0.45, curve: Curves.easeOut),
+    reverseCurve: const Interval(0.45, 1.0, curve: Curves.easeIn),
+  );
+  late final Animation<double> _scale = Tween<double>(
+    begin: AppMotion.dialogMorphBeginScale,
+    end: 1.0,
+  ).animate(_curved);
 
   @override
   void dispose() {
+    _fadeCurved.dispose();
     _curved.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _curved,
-      child: widget.child,
-      builder: (context, child) {
-        final begin = AppMotion.dialogMorphBeginScale;
-        return Transform.scale(
-          scale: begin + (1 - begin) * _curved.value,
-          // The transition fills the whole window, so a global anchor is
-          // already in this transform's local space.
-          origin: widget.anchor,
-          alignment: widget.anchor == null ? Alignment.center : null,
-          child: child,
+    var alignment = Alignment.center;
+    final anchor = widget.anchor;
+    if (anchor != null) {
+      final size = MediaQuery.sizeOf(context);
+      if (size.width > 0 && size.height > 0) {
+        alignment = Alignment(
+          ((anchor.dx / size.width) * 2.0 - 1.0).clamp(-1.0, 1.0),
+          ((anchor.dy / size.height) * 2.0 - 1.0).clamp(-1.0, 1.0),
         );
-      },
+      }
+    }
+
+    return FadeTransition(
+      opacity: _fadeCurved,
+      alwaysIncludeSemantics: true,
+      child: ScaleTransition(
+        scale: _scale,
+        alignment: alignment,
+        child: RepaintBoundary(child: widget.child),
+      ),
     );
   }
 }

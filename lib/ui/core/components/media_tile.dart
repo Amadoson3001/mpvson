@@ -63,6 +63,7 @@ class _MediaTileState extends State<MediaTile> {
     final artworkCard = widget.aspectRatio != null
         ? AspectRatio(aspectRatio: widget.aspectRatio!, child: artworkStack)
         : artworkStack;
+    final cachedArtworkCard = RepaintBoundary(child: artworkCard);
 
     return Semantics(
       button: true,
@@ -92,29 +93,27 @@ class _MediaTileState extends State<MediaTile> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
-              child: RepaintBoundary(
-                child: reduced
-                    ? artworkCard
-                    : ValueListenableBuilder<({bool hovered, bool pressed})>(
-                        valueListenable: _interaction,
-                        child: artworkCard,
-                        builder: (context, state, child) {
-                          final scale = state.pressed
-                              ? 0.98
-                              : (state.hovered ? 1.02 : 1.0);
-                          final duration = AppMotion.duration(
-                            context,
-                            state.pressed ? AppMotion.press : AppMotion.hover,
-                          );
-                          return AnimatedScale(
-                            scale: scale,
-                            duration: duration,
-                            curve: AppMotion.enter,
-                            child: child,
-                          );
-                        },
-                      ),
-              ),
+              child: reduced
+                  ? cachedArtworkCard
+                  : ValueListenableBuilder<({bool hovered, bool pressed})>(
+                      valueListenable: _interaction,
+                      child: cachedArtworkCard,
+                      builder: (context, state, child) {
+                        final scale = state.pressed
+                            ? 0.98
+                            : (state.hovered ? 1.02 : 1.0);
+                        final duration = AppMotion.duration(
+                          context,
+                          state.pressed ? AppMotion.press : AppMotion.hover,
+                        );
+                        return AnimatedScale(
+                          scale: scale,
+                          duration: duration,
+                          curve: AppMotion.enter,
+                          child: child,
+                        );
+                      },
+                    ),
             ),
             const SizedBox(height: AppSpace.xs),
             Row(

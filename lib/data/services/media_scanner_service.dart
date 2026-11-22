@@ -75,6 +75,7 @@ class MediaScannerService {
     int maxConcurrentProbes = 4,
     DirectoryWatcherFactory? watcherFactory,
     p.Context? pathContext,
+    Stream<FileSystemEntity> Function(Directory)? listDirectory,
   }) : _probeService = probeService,
        _database = database,
        _onDiscoveredFiles =
@@ -105,7 +106,10 @@ class MediaScannerService {
        _reconnectInterval = reconnectInterval,
        _maxConcurrentProbes = maxConcurrentProbes,
        _watcherFactory = watcherFactory ?? _defaultWatcherFactory,
-       _pathContext = pathContext ?? p.context;
+       _pathContext = pathContext ?? p.context,
+       _listDirectory =
+           listDirectory ??
+           ((dir) => dir.list(recursive: false, followLinks: false));
 
   final MediaProbeService _probeService;
   final LibraryDatabase? _database;
@@ -123,6 +127,7 @@ class MediaScannerService {
   final int _maxConcurrentProbes;
   final DirectoryWatcherFactory _watcherFactory;
   final p.Context _pathContext;
+  final Stream<FileSystemEntity> Function(Directory) _listDirectory;
 
   /// Optional underlying database reference if provided.
   LibraryDatabase? get database => _database;
@@ -377,6 +382,7 @@ class MediaScannerService {
           enrichedCount: 0,
           totalToEnrich: 0,
           errorMessage: null,
+          isPartial: false,
         ),
       );
 
@@ -554,11 +560,15 @@ class MediaScannerService {
               continue;
             }
           }
-          await _onFolderScanCompleted?.call(
-            root,
-            fileCount: folderFileCount,
-            lastScannedAt: DateTime.now(),
-          );
+          if (traversalComplete) {
+            await _onFolderScanCompleted?.call(
+              root,
+              fileCount: folderFileCount,
+              lastScannedAt: DateTime.now(),
+            );
+          } else {
+            _updateStatus(_status.copyWith(isPartial: true));
+          }
         }
 
         if (_isCancelled || _isDisposed) break;
@@ -614,7 +624,7 @@ class MediaScannerService {
       final dir = Directory(current);
       Stream<FileSystemEntity> entityStream;
       try {
-        entityStream = dir.list(recursive: false, followLinks: false);
+        entityStream = _listDirectory(dir);
       } catch (_) {
         // Unreadable directory or permission denied - do NOT fail scan!
         onError?.call();
@@ -1054,7 +1064,8 @@ class MediaScannerService {
     final onlyCountsChanged =
         previous.phase == newStatus.phase &&
         previous.currentFolder == newStatus.currentFolder &&
-        previous.errorMessage == newStatus.errorMessage;
+        previous.errorMessage == newStatus.errorMessage &&
+        previous.isPartial == newStatus.isPartial;
     if (!force &&
         onlyCountsChanged &&
         _lastStatusEmission != null &&

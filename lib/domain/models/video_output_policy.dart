@@ -9,6 +9,7 @@ class VideoOutputPolicy {
     this.visible = true,
     this.physicalWidth,
     this.physicalHeight,
+    this.deferResize = false,
   });
 
   /// Whether video frames should be presented.
@@ -24,9 +25,20 @@ class VideoOutputPolicy {
   /// Physical video viewport height in pixels.
   final int? physicalHeight;
 
+  /// Holds native surface reallocation while an active UI layout transition
+  /// (such as sliding the queue or docking the stage) is in flight.
+  final bool deferResize;
+
+  /// Maximum rendered texture edge when upscaling to fit the viewport.
+  static const int _maxUpscaledWidth = 3840;
+  static const int _maxUpscaledHeight = 2160;
+
   /// Fits mpv's display-corrected dimensions inside the physical viewport.
-  /// Never allocates an upscaled texture, and snaps each edge to an even
-  /// pixel count so D3D/YUV surfaces do not recreate on odd-pixel jitter.
+  ///
+  /// Allows mpv's GPU scalers (and libass subtitle rendering) to render at the
+  /// native physical viewport resolution up to 4K instead of locking to source
+  /// resolution, and snaps each edge to an even pixel count so D3D/YUV
+  /// surfaces do not recreate on odd-pixel jitter.
   ({int width, int height})? fitVideo({
     required int? width,
     required int? height,
@@ -43,10 +55,15 @@ class VideoOutputPolicy {
         viewportHeight <= 0) {
       return null;
     }
-    final scale = math.min(
-      1.0,
-      math.min(viewportWidth / width, viewportHeight / height),
+    final cappedWidth = math.min(
+      viewportWidth,
+      math.max(width, _maxUpscaledWidth),
     );
+    final cappedHeight = math.min(
+      viewportHeight,
+      math.max(height, _maxUpscaledHeight),
+    );
+    final scale = math.min(cappedWidth / width, cappedHeight / height);
     return (
       width: _evenPixelSize((width * scale).round()),
       height: _evenPixelSize((height * scale).round()),
@@ -55,14 +72,15 @@ class VideoOutputPolicy {
 
   /// True when the fitted size moved enough to recreate GPU surfaces.
   ///
-  /// One-pixel LayoutBuilder jitter and queue-slide animation frames stay on
-  /// the current texture; Flutter scales the few leftover pixels.
+  /// One-pixel LayoutBuilder jitter and even-pixel rounding stay on the
+  /// current texture; larger viewport changes reallocate so mpv renders at
+  /// native physical resolution.
   static bool significantSizeChange({
     required int? previousWidth,
     required int? previousHeight,
     required int width,
     required int height,
-    int slack = 8,
+    int slack = 2,
   }) {
     if (previousWidth == null || previousHeight == null) return true;
     return (width - previousWidth).abs() >= slack ||
@@ -73,11 +91,13 @@ class VideoOutputPolicy {
     bool? visible,
     int? physicalWidth,
     int? physicalHeight,
+    bool? deferResize,
   }) {
     return VideoOutputPolicy(
       visible: visible ?? this.visible,
       physicalWidth: physicalWidth ?? this.physicalWidth,
       physicalHeight: physicalHeight ?? this.physicalHeight,
+      deferResize: deferResize ?? this.deferResize,
     );
   }
 
@@ -88,14 +108,16 @@ class VideoOutputPolicy {
           runtimeType == other.runtimeType &&
           visible == other.visible &&
           physicalWidth == other.physicalWidth &&
-          physicalHeight == other.physicalHeight;
+          physicalHeight == other.physicalHeight &&
+          deferResize == other.deferResize;
 
   @override
-  int get hashCode => Object.hash(visible, physicalWidth, physicalHeight);
+  int get hashCode =>
+      Object.hash(visible, physicalWidth, physicalHeight, deferResize);
 
   @override
   String toString() =>
-      'VideoOutputPolicy(visible: $visible, physicalWidth: $physicalWidth, physicalHeight: $physicalHeight)';
+      'VideoOutputPolicy(visible: $visible, physicalWidth: $physicalWidth, physicalHeight: $physicalHeight, deferResize: $deferResize)';
 }
 
 int _evenPixelSize(int value) {

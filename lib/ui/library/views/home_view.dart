@@ -15,6 +15,7 @@ import '../../../domain/models/media_thumbnail.dart';
 import '../../../utils/format.dart';
 import '../../core/app_motion.dart';
 import '../../core/app_theme.dart';
+import '../../core/components/animated_grid_reflow.dart';
 import '../../core/components/page_header.dart';
 import '../../core/components/player_icon_button.dart';
 import '../../core/toast/app_toast.dart';
@@ -219,7 +220,15 @@ class _HomeViewState extends State<HomeView> {
             0.0,
             double.infinity,
           );
-          final columns = ((gridWidth + gap) / AppLayout.videoGridMinWidth)
+          final basisWidth =
+              ShellWidthMotionScope.maybeOf(context)?.columnBasisWidth ??
+              constraints.maxWidth;
+          final basisInset = PageHeader.gutterFor(basisWidth);
+          final basisGridWidth = (basisWidth - basisInset * 2).clamp(
+            0.0,
+            double.infinity,
+          );
+          final columns = ((basisGridWidth + gap) / AppLayout.videoGridMinWidth)
               .ceil()
               .clamp(1, 8);
           final tileWidth = (gridWidth - (columns - 1) * gap) / columns;
@@ -654,64 +663,67 @@ class _RecentSliverGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SliverPadding(
-      padding: EdgeInsets.fromLTRB(inset, 0, inset, AppSpace.xl),
-      sliver: ValueListenableBuilder<Set<String>>(
-        valueListenable: _homeSelectedRecentIds,
-        builder: (context, selectedIds, _) {
-          final selectionMode = selectedIds.isNotEmpty;
-          return SliverGrid(
-            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: columns,
-              crossAxisSpacing: gap,
-              mainAxisSpacing: 22,
-              mainAxisExtent: tileWidth * 9 / 16 + textHeight + 16,
-            ),
-            delegate: SliverChildBuilderDelegate(
-              (context, index) {
-                final entry = recent[index];
-                return _RecentTile(
-                  key: ValueKey(entry.id),
-                  entry: entry,
-                  controller: controller,
-                  repository: repository,
-                  isSelected: selectedIds.contains(entry.id),
-                  selectionMode: selectionMode,
-                  onToggleSelect: () => _toggleSelection(entry.id),
-                  onOpen: () => onOpenRecent(entry),
-                  onRemove: onRemoveRecent != null
-                      ? () {
-                          final next = Set<String>.from(
-                            _homeSelectedRecentIds.value,
-                          )..remove(entry.id);
-                          _homeSelectedRecentIds.value = next;
-                          onRemoveRecent!(entry);
-                        }
-                      : () {
-                          final next = Set<String>.from(
-                            _homeSelectedRecentIds.value,
-                          )..remove(entry.id);
-                          _homeSelectedRecentIds.value = next;
-                          final restored = controller.removeRecent(entry);
-                          if (restored != null && context.mounted) {
-                            AppToast.show(
-                              context,
-                              'Removed from recently played',
-                              actionLabel: 'Undo',
-                              onAction: () => controller.restoreRecent(
-                                restored.$1,
-                                restored.$2,
-                              ),
-                            );
+    return SliverGridSettle(
+      columns: columns,
+      sliver: SliverPadding(
+        padding: EdgeInsets.fromLTRB(inset, 0, inset, AppSpace.xl),
+        sliver: ValueListenableBuilder<Set<String>>(
+          valueListenable: _homeSelectedRecentIds,
+          builder: (context, selectedIds, _) {
+            final selectionMode = selectedIds.isNotEmpty;
+            return SliverGrid(
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: columns,
+                crossAxisSpacing: gap,
+                mainAxisSpacing: 22,
+                mainAxisExtent: tileWidth * 9 / 16 + textHeight + 16,
+              ),
+              delegate: SliverChildBuilderDelegate(
+                (context, index) {
+                  final entry = recent[index];
+                  return _RecentTile(
+                    key: ValueKey(entry.id),
+                    entry: entry,
+                    controller: controller,
+                    repository: repository,
+                    isSelected: selectedIds.contains(entry.id),
+                    selectionMode: selectionMode,
+                    onToggleSelect: () => _toggleSelection(entry.id),
+                    onOpen: () => onOpenRecent(entry),
+                    onRemove: onRemoveRecent != null
+                        ? () {
+                            final next = Set<String>.from(
+                              _homeSelectedRecentIds.value,
+                            )..remove(entry.id);
+                            _homeSelectedRecentIds.value = next;
+                            onRemoveRecent!(entry);
                           }
-                        },
-                );
-              },
-              addAutomaticKeepAlives: false,
-              childCount: recent.length,
-            ),
-          );
-        },
+                        : () {
+                            final next = Set<String>.from(
+                              _homeSelectedRecentIds.value,
+                            )..remove(entry.id);
+                            _homeSelectedRecentIds.value = next;
+                            final restored = controller.removeRecent(entry);
+                            if (restored != null && context.mounted) {
+                              AppToast.show(
+                                context,
+                                'Removed from recently played',
+                                actionLabel: 'Undo',
+                                onAction: () => controller.restoreRecent(
+                                  restored.$1,
+                                  restored.$2,
+                                ),
+                              );
+                            }
+                          },
+                  );
+                },
+                addAutomaticKeepAlives: false,
+                childCount: recent.length,
+              ),
+            );
+          },
+        ),
       ),
     );
   }

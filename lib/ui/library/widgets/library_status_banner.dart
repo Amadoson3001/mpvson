@@ -61,6 +61,17 @@ class LibraryStatusBanner extends StatelessWidget {
           );
         }
 
+        if (status.isPartial && !status.isScanning) {
+          banners.add(
+            _buildErrorBanner(
+              context,
+              'Some folders could not be read. Check access and rescan.',
+              'Rescan',
+              onRescan,
+            ),
+          );
+        }
+
         // 1. Scanning progress indicator
         if (status.isScanning) {
           banners.add(_buildScanningBanner(context, status));

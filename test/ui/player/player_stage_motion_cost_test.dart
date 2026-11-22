@@ -419,5 +419,5 @@ void main() {
 /// as a failure.
 Future<void> teardownTree(WidgetTester tester) async {
   await tester.pumpWidget(const SizedBox());
-  await tester.pump(const Duration(seconds: 6));
+  await tester.pump(const Duration(seconds: 46));
 }

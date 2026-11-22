@@ -56,18 +56,19 @@ class _FloatingVideoSettingsState extends State<FloatingVideoSettings>
   /// own commit is not mistaken for an external edit.
   PlaybackSettings? _lastSent;
 
-  late final AnimationController _motion = AnimationController(vsync: this);
-  late final CurvedAnimation _motionCurve = CurvedAnimation(
-    parent: _motion,
-    curve: AppMotion.sheetEnterCurve,
-    reverseCurve: AppMotion.sheetExitCurve,
+  late final SpringMotionController _motion = SpringMotionController(
+    vsync: this,
+    initialForward: false,
+    forwardSpring: AppMotion.panelSpring,
+    reverseSpring: AppMotion.panelSpring,
+    tolerance: const Tolerance(distance: 0.002, velocity: 0.01),
+    onDismissed: _notifyExitSettled,
   );
   bool _motionLaunched = false;
 
   @override
   void initState() {
     super.initState();
-    _motion.addStatusListener(_handleMotionStatus);
     widget.controller.addListener(_handleControllerChanged);
     _draft = widget.controller.playbackSettings;
   }
@@ -75,18 +76,14 @@ class _FloatingVideoSettingsState extends State<FloatingVideoSettings>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _syncMotionDurations();
+    _motion.applyMotion(context);
     if (_motionLaunched) return;
     _motionLaunched = true;
     if (!widget.open) {
-      _motion.value = 0;
+      _motion.snap(false);
       return;
     }
-    if (AppMotion.reduce(context)) {
-      _motion.value = 1;
-    } else {
-      _motion.forward();
-    }
+    unawaited(_motion.drive(true));
   }
 
   @override
@@ -98,51 +95,19 @@ class _FloatingVideoSettingsState extends State<FloatingVideoSettings>
       _adoptControllerSettings();
     }
     if (oldWidget.open != widget.open) {
-      _syncOpen(widget.open);
+      unawaited(_motion.drive(widget.open));
     }
   }
 
   @override
   void dispose() {
-    _motion.removeStatusListener(_handleMotionStatus);
-    _motionCurve.dispose();
     _motion.dispose();
     widget.controller.removeListener(_handleControllerChanged);
     super.dispose();
   }
 
-  void _syncMotionDurations() {
-    final reduced = AppMotion.reduce(context);
-    _motion.duration = reduced
-        ? Duration.zero
-        : AppMotion.scaled(context, AppMotion.sheetEnter);
-    _motion.reverseDuration = reduced
-        ? Duration.zero
-        : AppMotion.scaled(context, AppMotion.sheetExit);
-  }
-
-  void _syncOpen(bool open) {
-    if (AppMotion.reduce(context)) {
-      _motion.value = open ? 1 : 0;
-      return;
-    }
-    if (open) {
-      _motion.forward();
-    } else {
-      _motion.reverse();
-    }
-  }
-
-  void _handleMotionStatus(AnimationStatus status) {
-    if (status == AnimationStatus.dismissed && !widget.open) {
-      _notifyExitSettled();
-    }
-  }
-
   void _notifyExitSettled() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && !widget.open) widget.onExitSettled?.call();
-    });
+    if (mounted && !widget.open) widget.onExitSettled?.call();
   }
 
   /// Keeps the draft in step with edits made elsewhere (full settings,
@@ -214,7 +179,7 @@ class _FloatingVideoSettingsState extends State<FloatingVideoSettings>
                       bottom: 16,
                     ),
                     child: AnimatedBuilder(
-                      animation: _motionCurve,
+                      animation: _motion.progress,
                       child: RepaintBoundary(
                         child: ClipRRect(
                           borderRadius: BorderRadius.circular(16),
@@ -232,13 +197,17 @@ class _FloatingVideoSettingsState extends State<FloatingVideoSettings>
                                     : Colors.black.withValues(alpha: 0.1),
                                 width: 1,
                               ),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.42),
-                                  blurRadius: 28,
-                                  offset: const Offset(0, 10),
-                                ),
-                              ],
+                              boxShadow: AppMotion.lowPower(context)
+                                  ? null
+                                  : [
+                                      BoxShadow(
+                                        color: Colors.black.withValues(
+                                          alpha: 0.42,
+                                        ),
+                                        blurRadius: 28,
+                                        offset: const Offset(0, 10),
+                                      ),
+                                    ],
                             ),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -261,18 +230,19 @@ class _FloatingVideoSettingsState extends State<FloatingVideoSettings>
                       ),
                       builder: (context, child) {
                         // Slide the already-painted panel as one surface.
-                        // Opacity over the video texture tiles and leaves a
-                        // seam, so this motion never fades.
+                        // Keep Transform.translate mounted when settled so
+                        // child scroll/focus state never remounts at t == 1.0.
                         final reduce = AppMotion.reduce(context);
-                        final t = reduce ? 1.0 : _motionCurve.value;
+                        final t = reduce ? 1.0 : _motion.value.clamp(0.0, 1.0);
                         final panel = IgnorePointer(
                           ignoring: !widget.open && t < 0.99,
                           child: child,
                         );
-                        if (t >= 0.999) return panel;
                         return Transform.translate(
                           key: const ValueKey('floating-settings-slide'),
-                          offset: Offset((1.0 - t) * (panelWidth + 20.0), 0),
+                          offset: t >= 0.999
+                              ? Offset.zero
+                              : Offset((1.0 - t) * (panelWidth + 20.0), 0),
                           child: panel,
                         );
                       },
@@ -374,32 +344,35 @@ class _FloatingVideoSettingsState extends State<FloatingVideoSettings>
   }
 
   Widget _buildTabContent(ThemeData theme, Color accent) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      child: switch (_currentTab) {
-        VideoSettingsTab.audioSubs => FloatingAudioSubsTab(
-          controller: widget.controller,
-          draft: _draft,
-          pickSubtitle: widget.pickSubtitle,
-          onChangeDraft: _changeDraft,
-          onCommit: _commit,
-        ),
-        VideoSettingsTab.picture => FloatingPictureTab(
-          draft: _draft,
-          onChangeDraft: _changeDraft,
-          onCommit: _commit,
-        ),
-        VideoSettingsTab.playback => FloatingPlaybackTab(
-          controller: widget.controller,
-          draft: _draft,
-          accent: accent,
-          onCommit: _commit,
-        ),
-        VideoSettingsTab.display => FloatingDisplayTab(
-          controller: widget.controller,
-          appPreferences: widget.appPreferences,
-        ),
-      },
+    return AppSectionReveal(
+      key: ValueKey<VideoSettingsTab>(_currentTab),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: switch (_currentTab) {
+          VideoSettingsTab.audioSubs => FloatingAudioSubsTab(
+            controller: widget.controller,
+            draft: _draft,
+            pickSubtitle: widget.pickSubtitle,
+            onChangeDraft: _changeDraft,
+            onCommit: _commit,
+          ),
+          VideoSettingsTab.picture => FloatingPictureTab(
+            draft: _draft,
+            onChangeDraft: _changeDraft,
+            onCommit: _commit,
+          ),
+          VideoSettingsTab.playback => FloatingPlaybackTab(
+            controller: widget.controller,
+            draft: _draft,
+            accent: accent,
+            onCommit: _commit,
+          ),
+          VideoSettingsTab.display => FloatingDisplayTab(
+            controller: widget.controller,
+            appPreferences: widget.appPreferences,
+          ),
+        },
+      ),
     );
   }
 
@@ -471,15 +444,18 @@ class _TabPill extends StatelessWidget {
       button: true,
       selected: selected,
       child: Material(
-        color: bg,
+        color: Colors.transparent,
         borderRadius: BorderRadius.circular(AppRadii.control),
         child: InkWell(
           onTap: onTap,
           borderRadius: BorderRadius.circular(AppRadii.control),
-          child: Container(
+          child: AnimatedContainer(
+            duration: AppMotion.duration(context, AppMotion.quick),
+            curve: AppMotion.standardCurve,
             padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 2),
             alignment: Alignment.center,
             decoration: BoxDecoration(
+              color: bg,
               borderRadius: BorderRadius.circular(AppRadii.control),
               border: Border.all(
                 color: selected
