@@ -22,6 +22,7 @@ class _TrackingPreviewBackend implements SeekPreviewBackend {
   @override
   Future<void> open(
     String source, {
+    Map<String, String>? httpHeaders,
     Duration start = Duration.zero,
     Duration timeout = const Duration(seconds: 5),
   }) async {}

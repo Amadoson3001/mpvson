@@ -593,6 +593,18 @@ extension PlayerControllerEngine on PlayerController {
 
     final pending = _pendingOpen;
     if (pending != null) {
+      if (pending.boundary == 0) {
+        final playback = _playback;
+        if (playback is MediaKitPlaybackService) {
+          _capturePendingBoundary(
+            pending,
+            candidate: playback.requestedBoundary,
+          );
+        } else if (snapshot.sourceStart > _displacedSourceStart &&
+            snapshot.sourceStart > _activeSourceStart) {
+          _capturePendingBoundary(pending, candidate: snapshot.sourceStart);
+        }
+      }
       switch (_classifyPendingSnapshot(pending, snapshot)) {
         case _PendingLoadOutcome.confirmed:
           snapshot = snapshot.copyWith(isBuffering: false);
@@ -755,6 +767,14 @@ extension PlayerControllerEngine on PlayerController {
     }
     if (oldKind != _mediaKind) {
       _seekPreview.setAudio(isAudio);
+    }
+    if (_engineHasMedia &&
+        current != null &&
+        MediaEntry.isNetworkUrl(current!.path) &&
+        snapshot.streamPlaybackState.streamUrl.isNotEmpty &&
+        oldStreamPlaybackState.streamUrl !=
+            snapshot.streamPlaybackState.streamUrl) {
+      _syncSeekPreviewSource(current!);
     }
 
     if (changed) {

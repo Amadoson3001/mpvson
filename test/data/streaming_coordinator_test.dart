@@ -394,6 +394,178 @@ void main() {
       },
     );
 
+    test('a thrown reconnect advances to the next attempt', () async {
+      await coordinator.prepareStream('https://example.com/stream.mp4');
+      final attemptId = coordinator.currentAttemptId;
+      var calls = 0;
+      coordinator.onReconnectRequired = (_, _) async {
+        calls++;
+        throw StateError('open failed');
+      };
+
+      coordinator.handleNativeLifecycleEvent(
+        const NativeMediaEvent.ended(
+          endReason: NativeEndReason.error,
+          errorCode: -8,
+        ),
+        attemptId: attemptId,
+      );
+      expect(coordinator.state.stage, StreamStage.reconnecting);
+      expect(coordinator.state.reconnectAttempts, 1);
+
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      expect(calls, 1);
+      expect(coordinator.state.stage, StreamStage.reconnecting);
+      expect(coordinator.state.reconnectAttempts, 2);
+
+      await Future<void>.delayed(const Duration(milliseconds: 700));
+      expect(calls, 2);
+      expect(coordinator.state.stage, StreamStage.failed);
+      expect(coordinator.state.error, contains('Tap Retry'));
+    });
+
+    test(
+      'a thrown reconnect after stop does not fail the idle player',
+      () async {
+        await coordinator.prepareStream('https://example.com/stream.mp4');
+        coordinator.onReconnectRequired = (_, _) async {
+          coordinator.stop();
+          throw StateError('open failed');
+        };
+        coordinator.handleNativeLifecycleEvent(
+          const NativeMediaEvent.ended(
+            endReason: NativeEndReason.error,
+            errorCode: -8,
+          ),
+          attemptId: coordinator.currentAttemptId,
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+        expect(coordinator.state.stage, StreamStage.idle);
+      },
+    );
+
+    test('refresh replaces expired quality urls', () async {
+      const page = 'https://example.com/watch';
+      const oldLow = 'https://cdn.example/low?expire=1';
+      const oldHigh = 'https://cdn.example/high?expire=1';
+      const newLow = 'https://cdn.example/low?expire=2';
+      const newHigh = 'https://cdn.example/high?expire=2';
+      final subject = StreamingCoordinator(
+        ytDlpResolver: _SequenceResolver(
+          initial: const ResolvedStream(
+            originalUrl: page,
+            streamUrl: oldLow,
+            isExpiring: true,
+            renditions: [
+              StreamRendition(
+                id: '360',
+                label: '360p',
+                height: 360,
+                url: oldLow,
+              ),
+              StreamRendition(
+                id: '720',
+                label: '720p',
+                height: 720,
+                url: oldHigh,
+              ),
+            ],
+          ),
+          refreshed: const ResolvedStream(
+            originalUrl: page,
+            streamUrl: newLow,
+            isExpiring: true,
+            renditions: [
+              StreamRendition(
+                id: '360',
+                label: '360p',
+                height: 360,
+                url: newLow,
+              ),
+              StreamRendition(
+                id: '720',
+                label: '720p',
+                height: 720,
+                url: newHigh,
+              ),
+            ],
+          ),
+        ),
+      );
+      addTearDown(subject.dispose);
+
+      await subject.prepareStream(page);
+      expect(
+        subject.state.availableRenditions.map((rendition) => rendition.url),
+        containsAll(<String?>[oldLow, oldHigh]),
+      );
+
+      final refreshed = await subject.refreshExpiringStream();
+      expect(refreshed, isNotNull);
+      final urls = subject.state.availableRenditions
+          .map((rendition) => rendition.url)
+          .toList();
+      expect(urls, containsAll(<String?>[newLow, newHigh]));
+      expect(urls, isNot(contains(oldLow)));
+      expect(urls, isNot(contains(oldHigh)));
+      expect(
+        subject.state.availableRenditions.any((rendition) => rendition.isAuto),
+        isTrue,
+      );
+    });
+
+    test(
+      'failed quality switch reopens the previous stream before reporting ready',
+      () async {
+        await coordinator.prepareStream('https://example.com/video.mp4');
+        coordinator.handleNativeLifecycleEvent(
+          const NativeMediaEvent.loaded(),
+          attemptId: coordinator.currentAttemptId,
+        );
+        coordinator.updatePosition(const Duration(seconds: 12));
+        StreamInputSnapshot? restored;
+        coordinator.onRestorePreviousStream = (snapshot) async {
+          restored = snapshot;
+        };
+        const high = StreamRendition(
+          id: '720',
+          label: '720p',
+          height: 720,
+          url: 'https://cdn.example/720.mp4',
+        );
+        coordinator.selectRendition(high);
+        coordinator.failQualitySwitch(high);
+        expect(coordinator.state.stage, StreamStage.switchingQuality);
+        expect(coordinator.state.stageMessage, contains('Restoring'));
+
+        await Future<void>.delayed(Duration.zero);
+        expect(restored?.streamUrl, 'https://example.com/video.mp4');
+        expect(restored?.position, const Duration(seconds: 12));
+        expect(coordinator.state.stage, StreamStage.ready);
+        expect(coordinator.state.isAutoQuality, isTrue);
+        expect(coordinator.state.selectedRendition?.isAuto, isTrue);
+      },
+    );
+
+    test('failed stream restore does not report playback as ready', () async {
+      await coordinator.prepareStream('https://example.com/video.mp4');
+      coordinator.onRestorePreviousStream = (_) async {
+        throw StateError('reopen failed');
+      };
+      const high = StreamRendition(
+        id: '720',
+        label: '720p',
+        height: 720,
+        url: 'https://cdn.example/720.mp4',
+      );
+      coordinator.selectRendition(high);
+      coordinator.failQualitySwitch(high);
+      await Future<void>.delayed(Duration.zero);
+      expect(coordinator.state.stage, StreamStage.failed);
+      expect(coordinator.state.error, contains('previous stream'));
+      expect(coordinator.state.isAutoQuality, isTrue);
+    });
+
     test('transient error invokes onReconnectRequired callback', () async {
       await coordinator.prepareStream('https://example.com/stream.mp4');
       final attemptId = coordinator.currentAttemptId;
@@ -618,7 +790,195 @@ void main() {
         expect(ytCoordinator.state.error, contains('yt-dlp'));
       },
     );
+
+    test(
+      'auto quality applies conservative initial rendition for yt-dlp streams',
+      () async {
+        const muxed360 = StreamRendition(
+          id: '18',
+          label: '360p',
+          width: 640,
+          height: 360,
+          bitrate: 500000,
+          url: 'https://cdn.example.com/360.mp4',
+          isMuxed: true,
+        );
+        const split720 = StreamRendition(
+          id: '136',
+          label: '720p',
+          width: 1280,
+          height: 720,
+          bitrate: 1800000,
+          url: 'https://cdn.example.com/720.mp4',
+          audioUrl: 'https://cdn.example.com/audio.m4a',
+          httpHeaders: {'Referer': 'https://example.com/'},
+          isMuxed: false,
+        );
+        const split1080 = StreamRendition(
+          id: '137',
+          label: '1080p',
+          width: 1920,
+          height: 1080,
+          bitrate: 4000000,
+          url: 'https://cdn.example.com/1080.mp4',
+          audioUrl: 'https://cdn.example.com/audio.m4a',
+          isMuxed: false,
+        );
+        final subject = StreamingCoordinator(
+          ytDlpResolver: _StaticResolvedStreamResolver(
+            const ResolvedStream(
+              originalUrl: 'https://example.com/watch',
+              streamUrl: 'https://cdn.example.com/360.mp4',
+              renditions: [split1080, split720, muxed360],
+            ),
+          ),
+        );
+        addTearDown(subject.dispose);
+
+        final prepared = await subject.prepareStream(
+          'https://example.com/watch',
+        );
+        expect(prepared, isNotNull);
+        expect(prepared!.isAutoQuality, isTrue);
+        expect(prepared.playableUrl, 'https://cdn.example.com/720.mp4');
+        expect(prepared.audioUrl, 'https://cdn.example.com/audio.m4a');
+        expect(subject.activeHttpHeaders, {'Referer': 'https://example.com/'});
+      },
+    );
+
+    test(
+      'multi-codec yt-dlp streams disambiguate active rendition and confirm switches',
+      () async {
+        const low = StreamRendition(
+          id: '18',
+          label: '360p',
+          width: 640,
+          height: 360,
+          bitrate: 500000,
+          url: 'https://cdn.example.com/360.mp4',
+          isMuxed: true,
+        );
+        const vp9_720 = StreamRendition(
+          id: '247',
+          label: '720p',
+          width: 1280,
+          height: 720,
+          bitrate: 1500000,
+          url: 'https://cdn.example.com/720-vp9.webm',
+          audioUrl: 'https://cdn.example.com/audio.webm',
+          isMuxed: false,
+        );
+        const avc_720 = StreamRendition(
+          id: '136',
+          label: '720p',
+          width: 1280,
+          height: 720,
+          bitrate: 1900000,
+          url: 'https://cdn.example.com/720-avc.mp4',
+          audioUrl: 'https://cdn.example.com/audio.m4a',
+          isMuxed: false,
+        );
+        final subject = StreamingCoordinator(
+          ytDlpResolver: _StaticResolvedStreamResolver(
+            const ResolvedStream(
+              originalUrl: 'https://example.com/watch',
+              streamUrl: 'https://cdn.example.com/360.mp4',
+              renditions: [avc_720, vp9_720, low],
+            ),
+          ),
+        );
+        addTearDown(subject.dispose);
+
+        await subject.prepareStream('https://example.com/watch');
+        subject.handleNativeLifecycleEvent(
+          const NativeMediaEvent.loaded(),
+          attemptId: subject.currentAttemptId,
+        );
+        // Active rendition resolves immediately to avc_720 (exact URL match).
+        expect(subject.state.activeRendition, avc_720);
+
+        // Switching to another codec at the same 720p resolution confirms cleanly.
+        subject.selectRendition(vp9_720);
+        expect(subject.state.stage, StreamStage.switchingQuality);
+        subject.recordStreamInput(vp9_720.url!, vp9_720.audioUrl);
+        subject.handleNativeLifecycleEvent(
+          const NativeMediaEvent.loaded(),
+          attemptId: subject.currentAttemptId,
+        );
+        expect(subject.state.stage, StreamStage.ready);
+        expect(subject.state.activeRendition, vp9_720);
+
+        // Re-enable Auto and verify downshift steps down to 360p (not 720p).
+        subject.selectRendition(StreamRendition.auto);
+        StreamRendition? downshiftTarget;
+        subject.onAutoQualitySwitch = (target) async {
+          downshiftTarget = target;
+        };
+        subject.updateDemuxerStats(
+          bufferedDuration: const Duration(milliseconds: 400),
+          pausedForCache: true,
+        );
+        subject.updateDemuxerStats(
+          bufferedDuration: const Duration(milliseconds: 200),
+          pausedForCache: true,
+        );
+        expect(downshiftTarget, low);
+      },
+    );
+
+    test('DASH manifest with DRM fails immediately with DRM error', () async {
+      final subject = StreamingCoordinator(
+        manifestService: _FakeStreamManifestService(
+          const StreamManifestInfo(
+            masterUrl: 'https://example.com/drm.mpd',
+            format: StreamFormat.dash,
+            hasUnsupportedDrm: true,
+          ),
+        ),
+      );
+      addTearDown(subject.dispose);
+
+      final prepared = await subject.prepareStream(
+        'https://example.com/drm.mpd',
+      );
+      expect(prepared, isNull);
+      expect(subject.state.stage, StreamStage.failed);
+      expect(subject.state.error, contains('DRM'));
+    });
+
+    test(
+      'direct fallback does not advertise bogus quality renditions',
+      () async {
+        final subject = StreamingCoordinator(
+          manifestService: _FakeStreamManifestService(
+            StreamManifestInfo.directFallback('https://example.com/media'),
+          ),
+        );
+        addTearDown(subject.dispose);
+
+        final prepared = await subject.prepareStream(
+          'https://example.com/media',
+        );
+        expect(prepared, isNotNull);
+        expect(subject.state.availableRenditions, isEmpty);
+      },
+    );
   });
+}
+
+class _StaticResolvedStreamResolver extends YtDlpResolver {
+  _StaticResolvedStreamResolver(this.stream);
+  final ResolvedStream stream;
+
+  @override
+  bool canResolve(String url) => url == stream.originalUrl;
+
+  @override
+  Future<ResolvedStream> resolve(
+    String url, {
+    Duration timeout = const Duration(seconds: 35),
+    CancellationToken? cancelToken,
+  }) async => stream;
 }
 
 class _MissingYtDlpRunner extends ProcessRunner {
@@ -661,6 +1021,30 @@ class _FakeStreamManifestService extends StreamManifestService {
     dynamic client,
     Duration? timeout,
   }) async => info;
+}
+
+class _SequenceResolver extends YtDlpResolver {
+  _SequenceResolver({required this.initial, required this.refreshed});
+
+  final ResolvedStream initial;
+  final ResolvedStream refreshed;
+
+  @override
+  bool canResolve(String url) => url == initial.originalUrl;
+
+  @override
+  Future<ResolvedStream> resolve(
+    String url, {
+    Duration timeout = const Duration(seconds: 35),
+    CancellationToken? cancelToken,
+  }) async => initial;
+
+  @override
+  Future<ResolvedStream> refresh(
+    ResolvedStream stream, {
+    Duration timeout = const Duration(seconds: 35),
+    CancellationToken? cancelToken,
+  }) async => refreshed;
 }
 
 class _RefreshResolver extends YtDlpResolver {

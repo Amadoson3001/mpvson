@@ -52,12 +52,35 @@ class _DesktopLifecycle extends WindowListener {
           return;
       }
     }
+    if (updates.restartRequested) {
+      final launched = await _launchPreparedUpdate();
+      if (!launched) {
+        // The installer or helper did not start. Leave the window open so the
+        // verified package can be retried without relaunching Mpvson.
+        updates.cancelRestart();
+        _closing = false;
+        return;
+      }
+    }
     await _releaseServices(discard: true, applyUpdate: true);
     await _finishWindowClose();
   }
 
+  /// Launches the prepared installer or helper. A throw is a failed launch.
+  Future<bool> _launchPreparedUpdate() async {
+    try {
+      return await updates.launchPreparedInstall();
+    } on Object {
+      return false;
+    }
+  }
+
   /// Runs one shutdown attempt, reporting a save failure instead of throwing.
+  ///
+  /// A pending update saves the session but leaves playback running. The
+  /// engine is released only after the installer or helper actually starts.
   Future<SessionSaveException?> _attemptClose() async {
+    final releaseEngine = !updates.restartRequested;
     try {
       try {
         await appPreferences?.flush();
@@ -67,9 +90,9 @@ class _DesktopLifecycle extends WindowListener {
       if (controller.closingState == ControllerClosingState.awaitingDecision) {
         // A previous attempt parked the controller in its decision phase; only
         // an explicit retry starts a new save.
-        await controller.retryClose();
+        await controller.retryClose(release: releaseEngine);
       } else {
-        await controller.close();
+        await controller.close(release: releaseEngine);
       }
       return null;
     } on SessionSaveException catch (error) {

@@ -198,6 +198,9 @@ class PlayerController extends ChangeNotifier {
 
   bool _discardOnClose = false;
 
+  /// When set, a close persists the session and returns without releasing libmpv.
+  bool _deferEngineRelease = false;
+
   bool _initializing = false;
 
   bool _initialized = false;

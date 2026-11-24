@@ -371,11 +371,23 @@ extension PlayerControllerSession on PlayerController {
   /// Repeated calls share one shutdown. While a failed save awaits a decision
   /// the callers join that decision instead of opening a second prompt;
   /// `discard: true`/`force: true` always completes the shutdown.
-  Future<void> close({bool discard = false, bool force = false}) {
+  ///
+  /// [release] false persists the session and leaves playback running so a
+  /// caller can abort the shutdown, for example when an update fails to launch.
+  Future<void> close({
+    bool discard = false,
+    bool force = false,
+    bool release = true,
+  }) {
     if (_closingState == ControllerClosingState.closed) {
       return Future<void>.value();
     }
-    if (discard || force) _discardOnClose = true;
+    if (discard || force) {
+      _discardOnClose = true;
+      _deferEngineRelease = false;
+    } else if (!release) {
+      _deferEngineRelease = true;
+    }
 
     if (_closingState == ControllerClosingState.awaitingDecision) {
       if (_discardOnClose) return _discardPendingClose();
@@ -392,7 +404,7 @@ extension PlayerControllerSession on PlayerController {
   }
 
   /// Retries a failed shutdown save, used by the "Retry" prompt action.
-  Future<void> retryClose() async {
+  Future<void> retryClose({bool release = true}) async {
     final decision = _pendingDecision;
     _pendingDecision = null;
     if (_closingState == ControllerClosingState.awaitingDecision) {
@@ -401,7 +413,7 @@ extension PlayerControllerSession on PlayerController {
     _closeFuture = null;
     _discardOnClose = false;
     try {
-      await close();
+      await close(release: release);
     } finally {
       if (decision != null && !decision.isCompleted) decision.complete();
     }
@@ -413,6 +425,7 @@ extension PlayerControllerSession on PlayerController {
     _pendingDecision = null;
     _closeFuture = null;
     _discardOnClose = false;
+    _deferEngineRelease = false;
     _closingState = ControllerClosingState.running;
     _error = null;
     _scheduleSave();
@@ -449,8 +462,17 @@ extension PlayerControllerSession on PlayerController {
         await saveSession();
         await _sessions.flush();
       }
+      if (_deferEngineRelease) {
+        _deferEngineRelease = false;
+        _closeFuture = null;
+        _closingState = ControllerClosingState.running;
+        _updateProgressTimer();
+        _notifyIfOpen();
+        return;
+      }
       await _releaseAndFinish();
     } on Object catch (exception) {
+      _deferEngineRelease = false;
       if (_isClosed || _notifierDisposed) rethrow;
       if (_discardOnClose) {
         // Discarding promises a shutdown even when persistence failed. The

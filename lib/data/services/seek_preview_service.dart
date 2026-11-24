@@ -218,6 +218,7 @@ abstract interface class SeekPreviewBackend {
   /// Opens [source] starting at [start] position with a bounded [timeout].
   Future<void> open(
     String source, {
+    Map<String, String>? httpHeaders,
     Duration start = Duration.zero,
     Duration timeout = const Duration(seconds: 5),
   });
@@ -470,6 +471,7 @@ class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
   @override
   Future<void> open(
     String source, {
+    Map<String, String>? httpHeaders,
     Duration start = Duration.zero,
     Duration timeout = const Duration(seconds: 5),
   }) async {
@@ -493,6 +495,7 @@ class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
             .resolve(
               source,
               timeout: remaining.isNegative ? Duration.zero : remaining,
+              httpHeaders: httpHeaders,
             );
         if (selected != null) {
           playbackSource = selected.toString();
@@ -543,7 +546,11 @@ class MediaKitSeekPreviewBackend implements SeekPreviewBackend {
     final trackListEvent = _trackListEvent;
     final durationEvent = _durationEvent;
     await player.open(
-      Media(playbackSource, start: start > Duration.zero ? start : null),
+      Media(
+        playbackSource,
+        httpHeaders: httpHeaders,
+        start: start > Duration.zero ? start : null,
+      ),
       play: false,
     );
     if (native is NativePlayer) {
@@ -1225,6 +1232,7 @@ class SeekPreviewService {
   int _interactionGeneration = 0;
 
   String? _currentSource;
+  Map<String, String>? _currentHttpHeaders;
   bool _isAudio = false;
   bool _isSeekable = true;
   bool _isSuspended = false;
@@ -1266,6 +1274,7 @@ class SeekPreviewService {
 
   SeekPreviewBackend? _backend;
   String? _backendSource;
+  Map<String, String>? _backendHttpHeaders;
   Future<void>? _backendQueue;
   Future<void>? _disposeFuture;
   bool _disposed = false;
@@ -1404,6 +1413,7 @@ class SeekPreviewService {
   /// gently pre-warmed so the first hover renders immediately without loading.
   Future<void> setSource(
     String? source, {
+    Map<String, String>? httpHeaders,
     bool isAudio = false,
     bool isSeekable = true,
   }) async {
@@ -1411,6 +1421,9 @@ class SeekPreviewService {
     _sourceGeneration++;
     final sourceGen = _sourceGeneration;
     _currentSource = source;
+    _currentHttpHeaders = httpHeaders == null || httpHeaders.isEmpty
+        ? null
+        : Map<String, String>.unmodifiable(httpHeaders);
     _isAudio = isAudio;
     _isSeekable = isSeekable;
     _cancelActiveRequest();
@@ -1445,6 +1458,7 @@ class SeekPreviewService {
           final old = _backend;
           _backend = null;
           _backendSource = null;
+          _backendHttpHeaders = null;
           if (old != null) {
             try {
               await old.dispose();
@@ -1471,6 +1485,7 @@ class SeekPreviewService {
           final existing = _backend;
           if (existing == null) return;
           _backendSource = null;
+          _backendHttpHeaders = null;
           try {
             await existing.stop();
           } on Object catch (error) {
@@ -1930,10 +1945,12 @@ class SeekPreviewService {
         return null;
       }
       var backend = _backend;
-      if (backend != null &&
-          _backendSource != null &&
-          _backendSource != _currentSource) {
+      final sourceMatchesBackend =
+          _backendSource == _currentSource &&
+          mapEquals(_backendHttpHeaders, _currentHttpHeaders);
+      if (backend != null && _backendSource != null && !sourceMatchesBackend) {
         _backendSource = null;
+        _backendHttpHeaders = null;
         try {
           await backend.stop();
         } on Object catch (error) {
@@ -1954,19 +1971,24 @@ class SeekPreviewService {
         _backend = backend;
       }
       var openedAtTarget = false;
-      if (_backendSource != _currentSource) {
+      if (_backendSource != _currentSource ||
+          !mapEquals(_backendHttpHeaders, _currentHttpHeaders)) {
         stage = 'open';
         final openingSource = _currentSource!;
+        final openingHeaders = _currentHttpHeaders;
         final openStart = _latestTarget ?? target;
         await backend.open(
           openingSource,
+          httpHeaders: openingHeaders,
           start: openStart,
           timeout: _remaining(started, deadline),
         );
         if (!_disposed &&
             _sourceGeneration == sourceGen &&
-            _currentSource == openingSource) {
+            _currentSource == openingSource &&
+            mapEquals(_currentHttpHeaders, openingHeaders)) {
           _backendSource = openingSource;
+          _backendHttpHeaders = openingHeaders;
           openedAtTarget = true;
         }
         if (!canRun()) {
@@ -2312,6 +2334,7 @@ class SeekPreviewService {
           if (stopRemote) {
             await backend.stop();
             _backendSource = null;
+            _backendHttpHeaders = null;
           } else {
             await backend.pause();
           }
@@ -2359,6 +2382,7 @@ class SeekPreviewService {
       if (force) _interactionActive = false;
       _backend = null;
       _backendSource = null;
+      _backendHttpHeaders = null;
       _lastLiveSeekTarget = null;
       _lastLiveSeekExact = false;
       if (!_disposed && _stateNotifier.value.liveTextureId != null) {

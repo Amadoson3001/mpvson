@@ -83,8 +83,11 @@ extension PlayerControllerPlayback on PlayerController {
     if (!_acceptsCommands || operation != _operation) return;
 
     try {
-      await _playback.open(entry.path, play: play);
+      final openFuture = _playback.open(entry.path, play: play);
+      _capturePendingBoundary(pending);
+      await openFuture;
       if (!_isCurrentOpen(pending)) return;
+      _capturePendingBoundary(pending);
       // The load may already be confirmed by the service's latest state, since
       // native events can arrive while open() is still awaiting.
       if (identical(_pendingOpen, pending)) {
@@ -215,10 +218,25 @@ extension PlayerControllerPlayback on PlayerController {
     return _PendingLoadOutcome.stillLoading;
   }
 
+  /// Captures the engine's load-attempt boundary for [pending] once known.
+  void _capturePendingBoundary(_PendingOpen pending, {int? candidate}) {
+    if (pending.boundary > 0) return;
+    final playback = _playback;
+    final resolved =
+        candidate ??
+        (playback is MediaKitPlaybackService
+            ? playback.requestedBoundary
+            : playback.state.sourceStart);
+    if (resolved > _displacedSourceStart) {
+      pending.boundary = resolved;
+    }
+  }
+
   /// Marks the attached source as displaced so its late events are dropped.
   void _markSourceDisplaced() {
-    if (_activeSourceStart > _displacedSourceStart) {
-      _displacedSourceStart = _activeSourceStart;
+    final highest = max(_activeSourceStart, _pendingOpen?.boundary ?? 0);
+    if (highest > _displacedSourceStart) {
+      _displacedSourceStart = highest;
     }
     _seekPreview.setSource(null);
   }
@@ -259,6 +277,39 @@ extension PlayerControllerPlayback on PlayerController {
       entryId: pending.entryId,
       boundary: pending.boundary,
       duration: snapshot.duration,
+    );
+  }
+
+  ({String source, Map<String, String>? httpHeaders}) _resolvePreviewInput(
+    MediaEntry entry,
+  ) {
+    if (MediaEntry.isNetworkUrl(entry.path)) {
+      final streamState = _playbackState.streamPlaybackState;
+      final resolvedUrl = streamState.streamUrl.trim();
+      if (resolvedUrl.isNotEmpty) {
+        return (
+          source: resolvedUrl,
+          httpHeaders: _playback.streamingCoordinator.activeHttpHeaders,
+        );
+      }
+      final fallbackUrl = _playback.streamingCoordinator.state.streamUrl.trim();
+      if (fallbackUrl.isNotEmpty) {
+        return (
+          source: fallbackUrl,
+          httpHeaders: _playback.streamingCoordinator.activeHttpHeaders,
+        );
+      }
+    }
+    return (source: entry.path, httpHeaders: null);
+  }
+
+  void _syncSeekPreviewSource(MediaEntry entry) {
+    final preview = _resolvePreviewInput(entry);
+    _seekPreview.setSource(
+      preview.source,
+      httpHeaders: preview.httpHeaders,
+      isAudio: isAudio,
+      isSeekable: isSeekable,
     );
   }
 
@@ -332,11 +383,7 @@ extension PlayerControllerPlayback on PlayerController {
     _notifyIfOpen();
     _consumePendingResume();
     _syncCurrentProgress();
-    _seekPreview.setSource(
-      entry.path,
-      isAudio: isAudio,
-      isSeekable: isSeekable,
-    );
+    _syncSeekPreviewSource(entry);
     _scheduleSave();
     _updateProgressTimer();
   }
@@ -347,7 +394,9 @@ extension PlayerControllerPlayback on PlayerController {
     _clearPendingNavigation(pending.entryId);
     _engineHasMedia = false;
     _engineEntryId = null;
-    _activeSourceStart = pending.boundary;
+    if (pending.boundary > _activeSourceStart) {
+      _activeSourceStart = pending.boundary;
+    }
     final entry = _entryById(pending.entryId);
     _playbackState = _playbackState.copyWith(
       isPlaying: false,

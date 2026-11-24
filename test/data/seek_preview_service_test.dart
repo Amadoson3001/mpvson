@@ -11,6 +11,7 @@ class _FakeSeekPreviewBackend implements SeekPreviewBackend {
   final int? textureId;
 
   final List<String> openedSources = <String>[];
+  final List<Map<String, String>?> openedHeaders = <Map<String, String>?>[];
   final List<({Duration target, bool exact})> liveSeeks =
       <({Duration target, bool exact})>[];
   final List<({Duration target, bool exact})> extractedFrames =
@@ -31,10 +32,12 @@ class _FakeSeekPreviewBackend implements SeekPreviewBackend {
   @override
   Future<void> open(
     String source, {
+    Map<String, String>? httpHeaders,
     Duration start = Duration.zero,
     Duration timeout = const Duration(seconds: 5),
   }) async {
     openedSources.add(source);
+    openedHeaders.add(httpHeaders);
   }
 
   @override
@@ -92,6 +95,7 @@ class _DelayedOpenBackend implements SeekPreviewBackend {
   @override
   Future<void> open(
     String source, {
+    Map<String, String>? httpHeaders,
     Duration start = Duration.zero,
     Duration timeout = const Duration(seconds: 5),
   }) {

@@ -342,7 +342,9 @@ class MediaKitPlaybackService
           );
           if (matching.isNotEmpty && matching.first.url != null) {
             targetUrl = matching.first.url!;
-            audioUrl = matching.first.audioUrl ?? audioUrl;
+            audioUrl = matching.first.isMuxed
+                ? null
+                : (matching.first.audioUrl ?? audioUrl);
             headers = matching.first.httpHeaders ?? headers;
           }
         }
@@ -351,22 +353,36 @@ class MediaKitPlaybackService
 
       final platform = _player.platform;
       if (platform is NativePlayer) {
-        await _setExternalAudioFile(platform, audioUrl);
-        if (_disposed || !_streamingCoordinator.ownsAttempt(attemptId)) return;
-        await _streamingCoordinator.applyStreamingSettings(
-          platform,
-          isNetwork: true,
-          isLive: _streamingCoordinator.state.isLive,
-          isLowSpec: _appliedPlaybackSettings.isLowSpecOrRamPreserved,
-          limitDemuxerCache: _limitDemuxerCache,
-          shouldContinue: () =>
-              !_disposed && _streamingCoordinator.ownsAttempt(attemptId),
-        );
-        if (_disposed || !_streamingCoordinator.ownsAttempt(attemptId)) return;
         final boundary = _identity.attached.boundary > 0
             ? _identity.attached.boundary
             : _identity.boundaryCounter;
+        await _setExternalAudioFile(platform, audioUrl);
+        if (_disposed ||
+            !_streamingCoordinator.ownsAttempt(attemptId) ||
+            _identity.boundaryCounter != boundary) {
+          return;
+        }
+        await _applyBufferingPolicy(
+          isNetwork: true,
+          isLive: _streamingCoordinator.state.isLive,
+          force: true,
+          shouldContinue: () =>
+              !_disposed &&
+              _streamingCoordinator.ownsAttempt(attemptId) &&
+              _identity.boundaryCounter == boundary,
+        );
+        if (_disposed ||
+            !_streamingCoordinator.ownsAttempt(attemptId) ||
+            _identity.boundaryCounter != boundary) {
+          return;
+        }
+        _lastHttpErrorStatus = null;
         _identity.registerResolvedSource(boundary, targetUrl);
+        _streamingCoordinator.recordStreamInput(
+          targetUrl,
+          audioUrl,
+          httpHeaders: headers,
+        );
         await _player.open(
           Media(
             targetUrl,
@@ -375,14 +391,12 @@ class MediaKitPlaybackService
           ),
           play: _desiredPlaying,
         );
-        if (!_disposed && _streamingCoordinator.ownsAttempt(attemptId)) {
-          _streamingCoordinator.recordStreamInput(targetUrl, audioUrl);
-        }
       }
     };
     _streamingCoordinator.onAutoQualitySwitch = (StreamRendition target) async {
       await _applyRenditionSwitch(target);
     };
+    _streamingCoordinator.onRestorePreviousStream = _restorePreviousStream;
     _subscriptions.add(
       _streamingCoordinator.streamState.listen((streamState) {
         if (streamState.stage == StreamStage.failed &&
@@ -506,7 +520,7 @@ class MediaKitPlaybackService
   final Map<int, int> _playlistEntryToBoundary = <int, int>{};
   final Map<int, int> _playlistEntryToAttemptId = <int, int>{};
   int? _lastHttpErrorStatus;
-  String? _selectedDashVideoTrackId;
+  String? _selectedVideoTrackId;
   bool _hasExternalAudioFile = false;
 
   Future<void> _setExternalAudioFile(
@@ -531,6 +545,60 @@ class MediaKitPlaybackService
 
   @override
   StreamingCoordinator get streamingCoordinator => _streamingCoordinator;
+
+  /// Reopens the input captured before a failed quality switch.
+  Future<void> _restorePreviousStream(StreamInputSnapshot snapshot) async {
+    final platform = _player.platform;
+    if (platform is! NativePlayer || _disposed) return;
+
+    final attemptId = _streamingCoordinator.currentAttemptId;
+    final request = ++_qualityRequest;
+    bool isCurrent() =>
+        !_disposed &&
+        request == _qualityRequest &&
+        _streamingCoordinator.ownsAttempt(attemptId);
+    if (!isCurrent()) return;
+
+    final current = _streamingCoordinator.state;
+    final urlChanged =
+        snapshot.streamUrl.isNotEmpty &&
+        (current.streamUrl != snapshot.streamUrl ||
+            current.audioUrl != snapshot.audioUrl);
+    if (urlChanged) {
+      await _setExternalAudioFile(platform, snapshot.audioUrl);
+      if (!isCurrent()) return;
+      final boundary = _identity.attached.boundary > 0
+          ? _identity.attached.boundary
+          : _identity.boundaryCounter;
+      _lastHttpErrorStatus = null;
+      _identity.registerResolvedSource(boundary, snapshot.streamUrl);
+      _activeStreamHeaders = snapshot.httpHeaders;
+      _streamingCoordinator.recordStreamInput(
+        snapshot.streamUrl,
+        snapshot.audioUrl,
+        httpHeaders: snapshot.httpHeaders,
+      );
+      final resume = _streamingCoordinator.state.isLive
+          ? null
+          : (snapshot.position > Duration.zero ? snapshot.position : null);
+      await _player.open(
+        Media(
+          snapshot.streamUrl,
+          httpHeaders: snapshot.httpHeaders,
+          start: resume,
+        ),
+        play: _desiredPlaying,
+      );
+      if (!isCurrent()) return;
+    }
+
+    final format = _streamingCoordinator.activeFormat;
+    if (format != StreamFormat.hls && format != StreamFormat.dash) return;
+    final rendition = snapshot.isAutoQuality
+        ? StreamRendition.auto
+        : (snapshot.selectedRendition ?? StreamRendition.auto);
+    await _applyRenditionSwitch(rendition);
+  }
 
   @override
   Future<void> selectQuality(StreamRendition rendition) async {
@@ -557,9 +625,12 @@ class MediaKitPlaybackService
     final format = _streamingCoordinator.activeFormat;
     if (format == StreamFormat.hls) {
       if (rendition.isAuto) {
+        _selectedVideoTrackId = null;
         await platform.setProperty('hls-bitrate', 'max');
         if (!isCurrent()) return;
         await platform.setProperty('edition', 'auto');
+        if (!isCurrent()) return;
+        await platform.setProperty('vid', 'auto');
         return;
       }
       if (rendition.bitrate != null && rendition.bitrate! > 0) {
@@ -576,19 +647,46 @@ class MediaKitPlaybackService
             .timeout(const Duration(seconds: 1));
         if (isCurrent() && actual.trim() == '$editionIdx') {
           _streamingCoordinator.confirmQualitySwitch(rendition);
+          return;
         }
-        return;
       }
-      if (rendition.isMuxed && rendition.url != null) {
+      final trackId = await _resolveVideoTrackId(platform, rendition);
+      if (!isCurrent()) return;
+      if (trackId != null) {
+        _selectedVideoTrackId = trackId;
+        await platform.setProperty('vid', trackId);
+        if (!isCurrent()) return;
+        final actual = await platform
+            .getProperty('vid')
+            .timeout(const Duration(seconds: 1));
+        if (isCurrent() && actual.trim() == trackId) {
+          _streamingCoordinator.confirmQualitySwitch(rendition);
+          return;
+        }
+      }
+      if (rendition.url != null &&
+          (rendition.isMuxed || rendition.audioUrl != null)) {
         final pos = _state.position;
         final play = _state.isPlaying;
+        await _setExternalAudioFile(
+          platform,
+          rendition.isMuxed ? null : rendition.audioUrl,
+        );
+        if (!isCurrent()) return;
         final boundary = _identity.attached.boundary > 0
             ? _identity.attached.boundary
             : _identity.boundaryCounter;
+        _lastHttpErrorStatus = null;
         _identity.registerResolvedSource(boundary, rendition.url!);
         final headers =
             rendition.httpHeaders ??
             _streamingCoordinator.activeResolvedPage?.httpHeaders;
+        _activeStreamHeaders = headers;
+        _streamingCoordinator.recordStreamInput(
+          rendition.url!,
+          rendition.isMuxed ? null : rendition.audioUrl,
+          httpHeaders: headers,
+        );
         await _player.open(
           Media(
             rendition.url!,
@@ -597,20 +695,20 @@ class MediaKitPlaybackService
           ),
           play: play,
         );
-        if (isCurrent()) {
-          _activeStreamHeaders = headers;
-          _streamingCoordinator.recordStreamInput(rendition.url!, null);
-        }
+        return;
+      }
+      if (isCurrent()) {
+        _streamingCoordinator.failQualitySwitch(rendition);
       }
     } else if (format == StreamFormat.dash) {
       if (rendition.isAuto) {
-        _selectedDashVideoTrackId = null;
+        _selectedVideoTrackId = null;
         await platform.setProperty('vid', 'auto');
       } else {
-        final trackId = await _resolveDashVideoTrackId(platform, rendition);
+        final trackId = await _resolveVideoTrackId(platform, rendition);
         if (!isCurrent()) return;
         if (trackId != null) {
-          _selectedDashVideoTrackId = trackId;
+          _selectedVideoTrackId = trackId;
           await platform.setProperty('vid', trackId);
           if (!isCurrent()) return;
           final actual = await platform
@@ -618,23 +716,36 @@ class MediaKitPlaybackService
               .timeout(const Duration(seconds: 1));
           if (isCurrent() && actual.trim() == trackId) {
             _streamingCoordinator.confirmQualitySwitch(rendition);
+            return;
           }
+        }
+        if (isCurrent()) {
+          _streamingCoordinator.failQualitySwitch(rendition);
         }
       }
     } else {
+      if (rendition.isAuto) return;
       // Direct progressive or yt-dlp formats: switch engine input while keeping logical queue source.
       if (rendition.url != null) {
         final pos = _state.position;
         final play = _state.isPlaying;
-        await _setExternalAudioFile(platform, rendition.audioUrl);
+        final audioUrl = rendition.isMuxed ? null : rendition.audioUrl;
+        await _setExternalAudioFile(platform, audioUrl);
         if (!isCurrent()) return;
         final boundary = _identity.attached.boundary > 0
             ? _identity.attached.boundary
             : _identity.boundaryCounter;
+        _lastHttpErrorStatus = null;
         _identity.registerResolvedSource(boundary, rendition.url!);
         final headers =
             rendition.httpHeaders ??
             _streamingCoordinator.activeResolvedPage?.httpHeaders;
+        _activeStreamHeaders = headers;
+        _streamingCoordinator.recordStreamInput(
+          rendition.url!,
+          audioUrl,
+          httpHeaders: headers,
+        );
         await _player.open(
           Media(
             rendition.url!,
@@ -643,13 +754,8 @@ class MediaKitPlaybackService
           ),
           play: play,
         );
-        if (isCurrent()) {
-          _activeStreamHeaders = headers;
-          _streamingCoordinator.recordStreamInput(
-            rendition.url!,
-            rendition.audioUrl,
-          );
-        }
+      } else if (isCurrent()) {
+        _streamingCoordinator.failQualitySwitch(rendition);
       }
     }
   }
@@ -717,7 +823,7 @@ class MediaKitPlaybackService
     return int.tryParse(rendition.id);
   }
 
-  Future<String?> _resolveDashVideoTrackId(
+  Future<String?> _resolveVideoTrackId(
     NativePlayer platform,
     StreamRendition rendition,
   ) async {
@@ -806,6 +912,7 @@ class MediaKitPlaybackService
   final Map<String, String> _confirmedPlaybackProperties = <String, String>{};
   PlaybackSettings _appliedPlaybackSettings = PlaybackSettings.defaults;
   bool? _appliedBufferingPolicyNetwork;
+  bool? _appliedBufferingPolicyLive;
   bool? _appliedBufferingPolicyLowSpec;
   bool? _appliedBufferingPolicyLimitCache;
   final PlaybackSourceIdentity _identity = PlaybackSourceIdentity();
@@ -869,7 +976,13 @@ class MediaKitPlaybackService
     }
     final isNetwork = _appliedBufferingPolicyNetwork;
     if (limitChanged && isNetwork != null) {
-      unawaited(_applyBufferingPolicy(isNetwork: isNetwork, force: true));
+      unawaited(
+        _applyBufferingPolicy(
+          isNetwork: isNetwork,
+          isLive: _appliedBufferingPolicyLive ?? false,
+          force: true,
+        ),
+      );
     }
   }
 
@@ -1078,7 +1191,7 @@ class MediaKitPlaybackService
     try {
       await _propertyWriter(
         'vid',
-        enabled ? (_selectedDashVideoTrackId ?? 'auto') : 'no',
+        enabled ? (_selectedVideoTrackId ?? 'auto') : 'no',
       );
     } on Object catch (error) {
       _diagnostics?.record('playback.video_track', error: error);
@@ -1172,7 +1285,7 @@ class MediaKitPlaybackService
     _desiredPlaying = play;
     _activeStreamHeaders = null;
     _lastHttpErrorStatus = null;
-    _selectedDashVideoTrackId = null;
+    _selectedVideoTrackId = null;
     _streamingCoordinator.cancelActiveAttempt(
       reason: 'superseded by open boundary $boundary',
     );
@@ -1297,19 +1410,14 @@ class MediaKitPlaybackService
       }
 
       if (_disposed || _identity.boundaryCounter != boundary) return;
-      if (_player.platform is NativePlayer) {
-        await _streamingCoordinator.applyStreamingSettings(
-          _player.platform as NativePlayer,
-          isNetwork:
-              MediaSource.isNetworkUrl(path) ||
-              MediaEntry.isBufferedNetworkSource(path),
-          isLive: isLive,
-          isLowSpec: _appliedPlaybackSettings.isLowSpecOrRamPreserved,
-          limitDemuxerCache: _limitDemuxerCache,
-          shouldContinue: () =>
-              !_disposed && _identity.boundaryCounter == boundary,
-        );
-      }
+      await _applyBufferingPolicy(
+        isNetwork:
+            MediaSource.isNetworkUrl(path) ||
+            MediaEntry.isBufferedNetworkSource(path),
+        isLive: isLive,
+        shouldContinue: () =>
+            !_disposed && _identity.boundaryCounter == boundary,
+      );
       if (done.isCompleted ||
           _disposed ||
           _identity.boundaryCounter != boundary) {
@@ -1323,6 +1431,7 @@ class MediaKitPlaybackService
         Media(targetUrl, httpHeaders: headers),
         play: play || _traceAutoplay,
       );
+      if (_disposed || _identity.boundaryCounter != boundary) return;
       _reconcileVideoSuspensionAfterLoad();
       _ensureTraceTimer();
       if (!_identity.observationActive && !_disposed) {
@@ -1417,13 +1526,16 @@ class MediaKitPlaybackService
 
   Future<void> _applyBufferingPolicy({
     required bool isNetwork,
+    bool isLive = false,
     bool force = false,
+    bool Function()? shouldContinue,
   }) async {
     // The engine keeps these options across sources, so repeating the same
     // native writes before every local-file open only delays playback.
     final lowSpec = _appliedPlaybackSettings.isLowSpecOrRamPreserved;
     if (!force &&
         _appliedBufferingPolicyNetwork == isNetwork &&
+        _appliedBufferingPolicyLive == isLive &&
         _appliedBufferingPolicyLowSpec == lowSpec &&
         _appliedBufferingPolicyLimitCache == _limitDemuxerCache) {
       return;
@@ -1431,63 +1543,17 @@ class MediaKitPlaybackService
     final nativePlayer = _player.platform;
     if (nativePlayer is! NativePlayer) return;
     try {
-      if (!isNetwork) {
-        // Ordinary local files: disable network-style caching. Byte caps
-        // come from the graphics settings; readahead is long enough for
-        // high-bitrate files without turning into a network cache.
-        await nativePlayer
-            .setProperty('cache', 'no', waitForInitialization: false)
-            .timeout(const Duration(seconds: 1));
-        await nativePlayer
-            .setProperty('cache-on-disk', 'no', waitForInitialization: false)
-            .timeout(const Duration(seconds: 1));
-        await nativePlayer
-            .setProperty(
-              'demuxer-readahead-secs',
-              lowSpec ? '2' : '8',
-              waitForInitialization: false,
-            )
-            .timeout(const Duration(seconds: 1));
-      } else {
-        // HTTP(S) and network paths: retain disk-backed caching.
-        await nativePlayer
-            .setProperty('cache', 'yes', waitForInitialization: false)
-            .timeout(const Duration(seconds: 1));
-        await nativePlayer
-            .setProperty('cache-on-disk', 'yes', waitForInitialization: false)
-            .timeout(const Duration(seconds: 1));
-        await nativePlayer
-            .setProperty('cache-secs', '20', waitForInitialization: false)
-            .timeout(const Duration(seconds: 1));
-        await nativePlayer
-            .setProperty(
-              'demuxer-readahead-secs',
-              '20',
-              waitForInitialization: false,
-            )
-            .timeout(const Duration(seconds: 1));
-      }
-
-      final limits = demuxerCacheLimits(
-        limit: _limitDemuxerCache,
-        lowSpec: lowSpec,
+      await _streamingCoordinator.applyStreamingSettings(
+        nativePlayer,
+        isNetwork: isNetwork,
+        isLive: isLive,
+        isLowSpec: lowSpec,
+        limitDemuxerCache: _limitDemuxerCache,
+        shouldContinue: shouldContinue ?? () => !_disposed,
       );
-      await nativePlayer
-          .setProperty(
-            'demuxer-max-bytes',
-            limits.forwardBytes.toString(),
-            waitForInitialization: false,
-          )
-          .timeout(const Duration(seconds: 1));
-      await nativePlayer
-          .setProperty(
-            'demuxer-max-back-bytes',
-            limits.backBytes.toString(),
-            waitForInitialization: false,
-          )
-          .timeout(const Duration(seconds: 1));
-
+      if (shouldContinue?.call() == false || _disposed) return;
       _appliedBufferingPolicyNetwork = isNetwork;
+      _appliedBufferingPolicyLive = isLive;
       _appliedBufferingPolicyLowSpec = lowSpec;
       _appliedBufferingPolicyLimitCache = _limitDemuxerCache;
     } on Object catch (error) {
@@ -1503,13 +1569,13 @@ class MediaKitPlaybackService
     _diagnostics?.record('playback.stop', message: 'boundary $boundary');
     _streamingCoordinator.stop();
     _activeEngineAttemptId = 0;
+    _activeEngineBoundary = 0;
     _lastHttpErrorStatus = null;
-    _selectedDashVideoTrackId = null;
+    _selectedVideoTrackId = null;
     _desiredPlaying = false;
     _activeStreamHeaders = null;
-    if (_player.platform is NativePlayer) {
-      await _setExternalAudioFile(_player.platform as NativePlayer, null);
-    }
+    final hasActiveVideo =
+        _videoController != null && _state.videoTracks.isNotEmpty;
     _emit(
       _state.copyWith(
         sourceStart: boundary,
@@ -1525,15 +1591,50 @@ class MediaKitPlaybackService
         streamPlaybackState: const StreamPlaybackState(),
       ),
     );
-    final hasActiveVideo =
-        _videoController != null && _state.videoTracks.isNotEmpty;
-    if (hasActiveVideo) {
+    final previous = _openTail;
+    final done = Completer<void>();
+    _openTail = done.future;
+    unawaited(_runQueuedStop(boundary, hasActiveVideo, previous, done));
+    return done.future;
+  }
+
+  Future<void> _runQueuedStop(
+    int boundary,
+    bool hasActiveVideo,
+    Future<void>? previous,
+    Completer<void> done,
+  ) async {
+    try {
       try {
-        // pause() waits for video-controller initialization/frame rendering; keep it best-effort.
-        await _player.pause().timeout(const Duration(milliseconds: 200));
-      } catch (_) {}
+        await previous;
+      } on Object {
+        // A failed earlier open must not prevent stopping the engine.
+      }
+      if (done.isCompleted || _disposed) return;
+      if (_identity.boundaryCounter != boundary) {
+        // A newer open or stop superseded this request.
+        return;
+      }
+      if (_player.platform is NativePlayer) {
+        await _setExternalAudioFile(_player.platform as NativePlayer, null);
+      }
+      if (_disposed || _identity.boundaryCounter != boundary) return;
+      if (hasActiveVideo) {
+        try {
+          // pause() waits for video-controller initialization/frame rendering; keep it best-effort.
+          await _player.pause().timeout(const Duration(milliseconds: 200));
+        } catch (_) {}
+      }
+      if (_disposed || _identity.boundaryCounter != boundary) return;
+      await _player.stop();
+    } on Object catch (error, stackTrace) {
+      if (!done.isCompleted) {
+        done.completeError(error, stackTrace);
+      }
+      return;
+    } finally {
+      if (!done.isCompleted) done.complete();
     }
-    await _player.stop();
   }
 
   @override
@@ -1686,7 +1787,13 @@ class MediaKitPlaybackService
     final appliedNetwork = _appliedBufferingPolicyNetwork;
     if (appliedNetwork != null &&
         previousLowSpec != settings.isLowSpecOrRamPreserved) {
-      unawaited(_applyBufferingPolicy(isNetwork: appliedNetwork, force: true));
+      unawaited(
+        _applyBufferingPolicy(
+          isNetwork: appliedNetwork,
+          isLive: _appliedBufferingPolicyLive ?? false,
+          force: true,
+        ),
+      );
     }
     final controller = _videoController;
     if (controller != null) {
@@ -1959,19 +2066,54 @@ class MediaKitPlaybackService
     await _player.dispose();
   }
 
+  void _rememberPlaylistEntry(int entryId, int boundary, int attemptId) {
+    _playlistEntryToBoundary.remove(entryId);
+    _playlistEntryToBoundary[entryId] = boundary;
+    _playlistEntryToAttemptId.remove(entryId);
+    _playlistEntryToAttemptId[entryId] = attemptId;
+    while (_playlistEntryToBoundary.length > 64) {
+      final oldest = _playlistEntryToBoundary.keys.first;
+      _playlistEntryToBoundary.remove(oldest);
+      _playlistEntryToAttemptId.remove(oldest);
+    }
+  }
+
   /// Attributes one engine event to the source the engine reported.
   void _handleNativeEvent(NativeMediaEvent event) {
     if (_disposed) return;
     if (event.kind == NativeMediaEventKind.started) {
-      if (event.source.trim().isEmpty) return;
+      if (event.source.trim().isEmpty) {
+        // MPV_EVENT_START_FILE arrives with a playlistEntryId and no source
+        // string (the `path` property follows separately). Map the entry ID
+        // now so the matching MPV_EVENT_END_FILE can be attributed reliably.
+        final entryId = event.playlistEntryId;
+        if (entryId != null &&
+            _activeEngineBoundary > 0 &&
+            _activeEngineBoundary == _identity.boundaryCounter) {
+          _rememberPlaylistEntry(
+            entryId,
+            _activeEngineBoundary,
+            _activeEngineAttemptId,
+          );
+          if (_streamingCoordinator.ownsAttempt(_activeEngineAttemptId)) {
+            _streamingCoordinator.handleNativeLifecycleEvent(
+              event,
+              attemptId: _activeEngineAttemptId,
+            );
+          }
+        }
+        return;
+      }
       final attachment = _identity.attachStarted(event.source);
       if (!attachment.hasSource) return;
       if (event.playlistEntryId != null) {
-        _playlistEntryToBoundary[event.playlistEntryId!] = attachment.boundary;
-        _playlistEntryToAttemptId[event.playlistEntryId!] =
-            attachment.boundary == _activeEngineBoundary
-            ? _activeEngineAttemptId
-            : 0;
+        _rememberPlaylistEntry(
+          event.playlistEntryId!,
+          attachment.boundary,
+          attachment.boundary == _activeEngineBoundary
+              ? _activeEngineAttemptId
+              : 0,
+        );
       }
       if (attachment.boundary != _identity.boundaryCounter) return;
     }

@@ -22,7 +22,11 @@ class HlsPreviewSourceResolver {
 
   /// Returns a selected video variant URL, or null when [source] is not a
   /// supported master manifest. Network failures are reported to the caller.
-  Future<Uri?> resolve(String source, {required Duration timeout}) async {
+  Future<Uri?> resolve(
+    String source, {
+    required Duration timeout,
+    Map<String, String>? httpHeaders,
+  }) async {
     final master = Uri.tryParse(source);
     if (master == null || !_isSupportedMasterUrl(master)) return null;
     if (timeout <= Duration.zero) {
@@ -31,7 +35,11 @@ class HlsPreviewSourceResolver {
 
     final client = _clientFactory();
     try {
-      return await _resolveWithClient(client, master).timeout(
+      return await _resolveWithClient(
+        client,
+        master,
+        httpHeaders: httpHeaders,
+      ).timeout(
         timeout,
         onTimeout: () {
           client.close(force: true);
@@ -43,12 +51,21 @@ class HlsPreviewSourceResolver {
     }
   }
 
-  Future<Uri?> _resolveWithClient(HttpClient client, Uri master) async {
+  Future<Uri?> _resolveWithClient(
+    HttpClient client,
+    Uri master, {
+    Map<String, String>? httpHeaders,
+  }) async {
     var currentUri = master;
     late HttpClientResponse response;
     for (var redirectCount = 0; ; redirectCount++) {
       final request = await client.getUrl(currentUri);
       request.followRedirects = false;
+      if (httpHeaders != null && _sameOrigin(master, currentUri)) {
+        httpHeaders.forEach((key, value) {
+          request.headers.set(key, value);
+        });
+      }
       response = await request.close();
       if (_hasCookies(response)) return null;
       final location = response.headers.value(HttpHeaders.locationHeader);
@@ -95,6 +112,11 @@ class HlsPreviewSourceResolver {
   bool _hasCookies(HttpClientResponse response) =>
       response.cookies.isNotEmpty ||
       response.headers[HttpHeaders.setCookieHeader]?.isNotEmpty == true;
+
+  bool _sameOrigin(Uri a, Uri b) =>
+      a.scheme.toLowerCase() == b.scheme.toLowerCase() &&
+      a.host.toLowerCase() == b.host.toLowerCase() &&
+      a.port == b.port;
 
   bool _isHttpUrl(Uri uri) =>
       (uri.scheme == 'http' || uri.scheme == 'https') &&
