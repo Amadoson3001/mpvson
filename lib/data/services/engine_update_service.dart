@@ -214,8 +214,6 @@ class EngineUpdateService extends ChangeNotifier {
             ? MpvGithubRelease.stableSourceLabel
             : MpvGithubRelease.sourceLabel
       : 'Custom signed feed';
-  bool get supportedPlatform =>
-      _platformProvider() != EngineUpdatePlatform.unsupported;
   bool get selfManaged => _isSelfManagedPlatform;
   String get status => _status;
   double get progress => _progress;
@@ -274,11 +272,6 @@ class EngineUpdateService extends ChangeNotifier {
     }
     return _bundledVersion;
   }
-
-  bool get rollbackTargetIsBundled =>
-      canRollback &&
-      (_selectionState!.previous == null ||
-          !_isCompatibleInstall(_selectionState!.previous!));
 
   bool get _isSelfManagedPlatform =>
       _platformProvider() == EngineUpdatePlatform.windows;

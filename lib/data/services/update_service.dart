@@ -130,7 +130,6 @@ class UpdateService extends ChangeNotifier {
 
   bool get configured => _configured;
   bool get busy => _busy;
-  bool get usesOfficialGitHubSource => _usesOfficialGitHubSource;
   String get sourceLabel => _usesOfficialGitHubSource
       ? GitHubAppRelease.sourceLabel
       : 'Custom update feed';
@@ -164,10 +163,6 @@ class UpdateService extends ChangeNotifier {
     AppUpdateArtifact.linuxBundle => installMode == AppInstallMode.linuxBundle,
     _ => false,
   };
-
-  bool get canLaunchInstaller =>
-      _release?.artifact == AppUpdateArtifact.windowsInstaller &&
-      canInstallDownloaded;
 
   bool get canInstallDownloaded {
     if (_downloadPath == null || !supportsAutoInstall) return false;
@@ -661,21 +656,6 @@ class UpdateService extends ChangeNotifier {
     }
   }
 
-  /// Re-verifies the downloaded Windows installer's SHA-256 digest and launches
-  /// it detached so the app can close and complete the upgrade.
-  Future<bool> launchInstaller() async {
-    if (!canLaunchInstaller) {
-      if (!_disposed && !_busy) {
-        _failurePhase = 'apply';
-        _fail(
-          const _UpdateException('There is no verified installer to launch.'),
-        );
-      }
-      return false;
-    }
-    return installUpdate();
-  }
-
   /// Records the user's intent to apply this verified update when Mpvson
   /// closes.
   ///
@@ -863,18 +843,6 @@ class UpdateService extends ChangeNotifier {
     }
   }
 
-  /// Re-verifies and stages the package, then launches the helper.
-  ///
-  /// Kept for callers that intentionally bypass the UI close flow (tests and
-  /// manual tooling); the application UI uses [prepareInstall] followed by a
-  /// lifecycle-owned [launchPreparedInstall].
-  Future<bool> installUpdate() async {
-    if (_disposed || _busy) return false;
-    if (!_installPrepared && !await prepareInstall()) return false;
-    if (!requestRestart()) return false;
-    return launchPreparedInstall();
-  }
-
   Future<File> _verifiedPackage(String path, ReleaseInfo release) async {
     final file = File(path);
     if (!await file.exists()) {
@@ -954,19 +922,6 @@ class UpdateService extends ChangeNotifier {
     } on Object {
       // The current service already reports the error.
     }
-  }
-
-  /// Downloads (or reuses cached) update package and installs it in one step.
-  Future<bool> downloadAndInstall() async {
-    if (_disposed || _busy) return false;
-    if (_status == 'available' ||
-        (_status == 'error' && failedDuringDownload)) {
-      await download();
-    }
-    if (!_disposed && _status == 'ready' && canInstallDownloaded) {
-      return installUpdate();
-    }
-    return false;
   }
 
   String _resolvedExecutablePath() {

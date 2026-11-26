@@ -16,12 +16,10 @@ abstract final class AppColors {
   static const ink = Color(0xFFF9FAFB);
   static const inkMuted = Color(0xFFC5C9D8);
   static const inkDim = Color(0xFFAEB4CC);
-  static const inkFaint = Color(0xFF7D859E);
 
   // Accent and support
   static const lamp = Color(0xFFF1A64C);
   static const lampLight = Color(0xFFB45309);
-  static const defaultAccent = lampLight;
   static const jade = Color(0xFF7FC3A3);
   static const sky = Color(0xFF82B4D4);
   static const gold = Color(0xFFDDB264);
@@ -49,9 +47,7 @@ abstract final class AppColors {
   // Media overlays and scrollbar / shadows
   static const onStage = Color(0xFFF7F4EC);
   static const scrim = Color(0xCC000000);
-  static const lightScrollbarThumb = Color(0xFF8C93A0);
   static const lightScrim = Color(0x66000000);
-  static const shadow14 = Color(0x14000000);
 }
 
 /// The current media's accent; defaults to the projector-lamp color.

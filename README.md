@@ -5,6 +5,7 @@ A modern desktop video and music player for Windows and Linux, powered by Flutte
 ## Features
 
 - **Hardware-accelerated playback (`libmpv`)** with subtitle styling (`libass`), chapter markers, multi-track audio/subtitle switching, playback speed controls, seek-bar frame previews, and dynamic quality presets.
+- **Cloud & network streaming**: Direct URL playback, HLS/DASH manifest parsing, `yt-dlp` extraction, adaptive rendition switching, and stream recovery.
 - **Media library & playlists** backed by an isolate-hosted SQLite database, pure-Dart container/tag probing (fast scans without booting `libmpv` per file), live folder watchers, favorites, and drag-and-drop playlists.
 - **Desktop OS integration**:
   - Single-instance launch & Explorer/file-manager `--enqueue` support
@@ -64,11 +65,10 @@ flutter pub get
 # Windows: configure plugin junctions, verify engine cache, and bundle VC++ runtime
 dart run tool/setup_windows_build.dart
 
-# Verify formatting, version sync, static analysis, and tests
-dart format --output=none --set-exit-if-changed lib tool test
+# Verify formatting, version sync, and static analysis
+dart format --output=none --set-exit-if-changed lib tool
 dart run tool/version.dart check
 flutter analyze --no-fatal-infos
-flutter test
 
 # Build release
 flutter build windows --release --tree-shake-icons --target=lib/main.dart

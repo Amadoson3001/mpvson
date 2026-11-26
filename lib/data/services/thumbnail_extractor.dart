@@ -40,8 +40,6 @@ class MediaKitThumbnailExtractor implements ThumbnailExtractor {
   int _activeOperations = 0;
   bool _disposed = false;
 
-  Player? get currentDecoder => _decoder;
-
   static Player _defaultPlayerFactory() => Player(
     configuration: const PlayerConfiguration(
       title: 'Mpvson thumbnail decoder',

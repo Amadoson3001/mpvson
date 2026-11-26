@@ -98,8 +98,6 @@ extension PlayerControllerEngine on PlayerController {
 
   QueueSnapshot get queueSnapshot => _queueSnapshot;
 
-  int get queueRevision => _queueSnapshot.revision;
-
   int get currentIndex => _currentIndex;
 
   MediaEntry? get current {
@@ -115,9 +113,6 @@ extension PlayerControllerEngine on PlayerController {
     }
     return entry;
   }
-
-  /// Looks up a queue entry by its unique [id] in O(1) time.
-  MediaEntry? entryById(String id) => _entryById(id);
 
   /// Whether the native engine currently has a source loaded.
   ///
@@ -152,8 +147,6 @@ extension PlayerControllerEngine on PlayerController {
   List<VideoTrack> get videoTracks => _playbackState.videoTracks;
 
   List<PlaybackChapter> get chapters => chaptersListenable.value;
-
-  MediaKind get mediaKind => _mediaKind;
 
   bool get isAudio => _mediaKind == MediaKind.audio;
 
@@ -232,9 +225,6 @@ extension PlayerControllerEngine on PlayerController {
       return null;
     }
   }
-
-  /// Closes without saving, used by the "Close without saving" prompt action.
-  Future<void> discardClose() => close(discard: true, force: true);
 
   Future<void> openPaths(
     List<String> paths, {

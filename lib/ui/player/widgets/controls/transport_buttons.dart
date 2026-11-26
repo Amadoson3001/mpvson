@@ -35,33 +35,6 @@ class TransportButtons extends StatelessWidget {
     return count * extent + (count - 1) * gap;
   }
 
-  /// Shift that puts the play/pause button on the row's center line.
-  ///
-  /// Three secondary buttons flank the play button, so the row's midpoint
-  /// falls between the play and next buttons. Nudging the row by half that
-  /// difference centers the play button — the anchor of the control band —
-  /// instead of the gap between two buttons.
-  static double playButtonCenterOffset({
-    required bool compact,
-    bool showStop = true,
-    bool showShuffleRepeat = false,
-  }) {
-    if ((showShuffleRepeat && !showStop) || (!showStop && !showShuffleRepeat)) {
-      return 0.0;
-    }
-    final extent = compact
-        ? PlayerControlStyle.compactControlExtent
-        : PlayerControlStyle.controlExtent;
-    final gap = _gapBetween(compact: compact);
-    return preferredWidth(
-              compact: compact,
-              showStop: showStop,
-              showShuffleRepeat: showShuffleRepeat,
-            ) /
-            2 -
-        (extent + gap + extent / 2);
-  }
-
   /// Gap between transport buttons: the same token sizes the [SizedBox]es in
   /// [build], so the math and the rendered row cannot drift apart.
   static double _gapBetween({required bool compact}) =>

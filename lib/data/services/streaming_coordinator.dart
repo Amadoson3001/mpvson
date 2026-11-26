@@ -132,7 +132,6 @@ class StreamingCoordinator {
   Map<String, String>? _activeHttpHeaders;
 
   ResolvedStream? get activeResolvedPage => _activeResolvedPage;
-  StreamManifestInfo? get activeManifest => _activeManifest;
   Map<String, String>? get activeHttpHeaders => _activeHttpHeaders;
 
   /// Returns the current stream format (HLS, DASH, direct, or progressive).

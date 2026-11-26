@@ -99,12 +99,6 @@ class MediaCatalog {
     return supportedExtensions.contains(ext);
   }
 
-  /// Returns whether a given file path has a supported image extension.
-  static bool isSupportedImage(String filePath) {
-    final ext = p.extension(filePath).toLowerCase().replaceFirst('.', '');
-    return imageExtensions.contains(ext);
-  }
-
   /// Returns whether a given file path has a supported subtitle extension.
   static bool isSubtitleFile(String filePath) {
     final ext = p.extension(filePath).toLowerCase().replaceFirst('.', '');

@@ -71,7 +71,6 @@ class LibraryShell extends StatefulWidget {
     this.showSettings = false,
     this.onSettings,
     this.onCloseSettings,
-    this.homeNavigationRequest = 0,
     this.queueOpen,
     this.onQueueOpenChanged,
   });
@@ -92,7 +91,6 @@ class LibraryShell extends StatefulWidget {
   final bool showSettings;
   final VoidCallback? onSettings;
   final VoidCallback? onCloseSettings;
-  final int homeNavigationRequest;
   final bool? queueOpen;
   final ValueChanged<bool>? onQueueOpenChanged;
 
@@ -233,19 +231,6 @@ class _LibraryShellState extends State<LibraryShell>
       } else if (_currentSection == LibrarySection.settings) {
         _sectionGeneration++;
         _currentSection = _previousSection;
-      }
-    }
-    if (widget.homeNavigationRequest != oldWidget.homeNavigationRequest) {
-      _sectionGeneration++;
-      _searchController.removeListener(_onSearchChanged);
-      _searchController.clear();
-      _searchController.addListener(_onSearchChanged);
-      _searchQuery = '';
-      _currentSection = LibrarySection.home;
-      _previousSection = LibrarySection.home;
-      _isOnDemandQueueOpen = false;
-      if (_nowPlayingMorph.value > 0) {
-        _nowPlayingMorph.snap(false);
       }
     }
   }

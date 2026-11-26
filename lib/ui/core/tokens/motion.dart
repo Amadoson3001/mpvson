@@ -36,10 +36,6 @@ abstract final class AppMotion {
   /// Default spatial move: a surface settling into a new seat.
   static const Duration spatialDefault = Duration(milliseconds: 240);
 
-  /// Long spatial move: a panel pushing the video aside, where the neighbor
-  /// has to make room at the same pace.
-  static const Duration spatialSlow = Duration(milliseconds: 300);
-
   /// Micro feedback: a press, a toggle.
   static const Duration effectsFast = Duration(milliseconds: 90);
 
@@ -62,19 +58,6 @@ abstract final class AppMotion {
   static const Duration press = Duration(milliseconds: 80);
   static const Duration hover = Duration(milliseconds: 120);
   static const Duration stage = Duration(milliseconds: 140);
-
-  /// Sheet expansion and collapse timings for Now Playing morph transition.
-  static const Duration sheetEnter = spatialDefault;
-  static const Duration sheetExit = spatialFast;
-
-  /// Side-panel push-aside timings: the queue slides in beside the video while
-  /// the picture makes room at the same pace.
-  static const Duration panelEnter = spatialSlow;
-  static const Duration panelExit = spatialFast;
-
-  /// The docked video's expand (reverse) timing. Same role as the panel
-  /// retract: the stage is only taking back a seat it gave up.
-  static const Duration dockExpand = spatialFast;
 
   /// Start scale for the dialog morph. The surface grows from the trigger
   /// point with a leading opacity ramp.
@@ -198,9 +181,6 @@ abstract final class AppMotion {
     return initial;
   }
 
-  /// Latest host hardware capability profile (CPU, GPU, and system RAM).
-  static HardwareProfile get hardwareProfile => _hardwareProfile;
-
   /// Updates motion & effect heuristics once asynchronous GPU/RAM probes
   /// finish on startup (no-op in tests unless explicitly invoked).
   static void updateHardwareProfile(HardwareProfile profile) {
@@ -233,19 +213,6 @@ abstract final class AppMotion {
 
   static Duration duration(BuildContext context, Duration preferred) =>
       scaled(context, preferred);
-
-  /// Surface transition for stage/view swaps: the outgoing surface fades out
-  /// while the incoming one fades in.
-  static Widget stageTransition(
-    BuildContext context,
-    Widget child,
-    Animation<double> animation, {
-    bool forward = true,
-    bool isCurrent = true,
-  }) {
-    if (lowPower(context)) return child;
-    return FadeTransition(opacity: animation, child: child);
-  }
 }
 
 /// A single, restrained aperture reveal for a newly presented screen surface.

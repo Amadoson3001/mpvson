@@ -10,7 +10,6 @@ class HlsPreviewSourceResolver {
     this.maxManifestBytes = 64 * 1024,
   }) : _clientFactory = clientFactory ?? HttpClient.new;
 
-  static const int defaultMaxManifestBytes = 64 * 1024;
   static const int _maxRedirects = 5;
   static final RegExp _videoCodec = RegExp(
     r'^(?:avc[13]|hev1|hvc1|dvh1|dvhe|dvav|av01|vp0?8|vp09|theora|theo|mp4v\.)',

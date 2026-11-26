@@ -53,7 +53,7 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
   final Future<void> Function()? onQuitApplication;
 
   PlayerController? _controller;
-  OpenRequestCoordinator? _openRequestCoordinator;
+  final OpenRequestCoordinator? _openRequestCoordinator;
   AppPreferencesRepository? _preferences;
   final MediaProbeService? _mediaProbeService;
   MediaLibraryRepository? _libraryRepository;
@@ -91,43 +91,6 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
   OpenRequestCoordinator? get openRequestCoordinator => _openRequestCoordinator;
   AppPreferencesRepository? get preferences => _preferences;
   MediaProbeService? get mediaProbeService => _mediaProbeService;
-
-  void attachController(PlayerController controller) {
-    if (_controller == controller) return;
-    detachController();
-    _controller = controller;
-    if (_initialized && !_disposed) {
-      _controller!.addListener(_onControllerChanged);
-      _syncAll();
-    }
-  }
-
-  void detachController() {
-    if (_controller != null) {
-      _controller!.removeListener(_onControllerChanged);
-      _controller = null;
-      if (_initialized && !_disposed) {
-        _syncPlaybackState();
-        _syncPowerLock();
-      }
-    }
-  }
-
-  void attachCoordinator(OpenRequestCoordinator coordinator) {
-    _openRequestCoordinator = coordinator;
-  }
-
-  void attachPreferences(AppPreferencesRepository preferences) {
-    if (_preferences == preferences) return;
-    if (_preferences != null) {
-      _preferences!.removeListener(_onPreferencesChanged);
-    }
-    _preferences = preferences;
-    if (_initialized && !_disposed) {
-      _preferences!.addListener(_onPreferencesChanged);
-      _syncPowerLock();
-    }
-  }
 
   @override
   Future<void> initialize() async {
@@ -662,7 +625,7 @@ class DesktopIntegrationServiceImpl extends DesktopIntegrationService {
           origin: OpenOrigin.osActivation,
           timestamp: DateTime.now(),
         );
-        return (await _openRequestCoordinator!.handleOpenRequest(
+        return (await _openRequestCoordinator.handleOpenRequest(
               request,
             )).status ==
             OpenStatus.accepted;

@@ -170,12 +170,6 @@ class MediaScannerService {
   /// Stream of scan status updates.
   Stream<LibraryScanStatus> get scanStatusStream => _statusController.stream;
 
-  /// Unmodifiable view of registered folders.
-  List<String> get registeredFolders => List.unmodifiable(_explicitFolders);
-
-  /// Unmodifiable view of currently watched folder paths.
-  List<String> get watchedFolders => List.unmodifiable(_watchers.keys);
-
   static DirectoryWatcher _defaultWatcherFactory(String path) =>
       DirectoryWatcher(path);
 
@@ -286,15 +280,6 @@ class MediaScannerService {
     await _runScanRoots(
       deduplicateFolderRoots(_explicitFolders, pathContext: _pathContext),
     );
-  }
-
-  /// Reconciles changes across all registered folders.
-  ///
-  /// Can be called on application startup or resume.
-  Future<void> reconcile() async {
-    if (_isDisposed) return;
-    _updateStatus(_status.copyWith(phase: ScanPhase.reconciling));
-    await scanAll();
   }
 
   /// Cancels any in-progress scan and enrichment.

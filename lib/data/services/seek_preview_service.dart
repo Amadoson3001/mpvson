@@ -1209,12 +1209,6 @@ class SeekPreviewService {
   final Duration _localIdleWorkerTimeout;
   final Duration _localPrewarmDelay;
 
-  /// Whether a preview backend player is currently allocated in memory.
-  bool get hasActiveWorker => _backend != null;
-
-  /// Whether the active source is a remote HTTP/HTTPS stream.
-  bool get isCurrentSourceRemote => _isCurrentSourceRemote;
-
   final SeekPreviewBackendFactory _backendFactory;
   final void Function(bool extracting)? onExtractionStateChange;
   final SeekPreviewLRUCache _cache;

@@ -64,28 +64,6 @@ class AppChrome {
     );
   }
 
-  /// Re-derives the chrome from an existing scheme with a different accent.
-  /// Used by the artwork accent scope so it retints every component theme
-  /// instead of patching a handful of them.
-  factory AppChrome.fromScheme(ColorScheme scheme, Color accent) {
-    final dark = scheme.brightness == Brightness.dark;
-    return AppChrome._resolved(
-      brightness: scheme.brightness,
-      background: scheme.surfaceContainerLowest,
-      surface: scheme.surface,
-      card: scheme.surfaceContainer,
-      hover: scheme.surfaceContainerHighest,
-      border: scheme.outlineVariant,
-      borderStrong: scheme.outline,
-      text: scheme.onSurface,
-      secondaryText: scheme.onSurfaceVariant,
-      muted: dark ? AppColors.inkDim : AppColors.lightInkDim,
-      danger: scheme.error,
-      scrim: scheme.scrim,
-      accent: accent,
-    );
-  }
-
   factory AppChrome._resolved({
     required Brightness brightness,
     required Color background,

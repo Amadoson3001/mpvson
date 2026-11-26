@@ -98,14 +98,6 @@ class PlaybackPulse extends InheritedNotifier<Animation<double>> {
     required Animation<double> animation,
     required super.child,
   }) : super(notifier: animation);
-
-  static double valueOf(BuildContext context, {int phaseIndex = 0}) {
-    if (AppMotion.reduce(context)) return 0.0;
-    final pulse = context.dependOnInheritedWidgetOfExactType<PlaybackPulse>();
-    final raw = pulse?.notifier?.value ?? 0.0;
-    if (phaseIndex == 0) return raw;
-    return (raw + (phaseIndex * 0.28)) % 1.0;
-  }
 }
 
 /// Micro 3-bar animated equalizer glyph that paints directly to a Canvas.

@@ -230,9 +230,6 @@ class MediaEntry {
     }
   }
 
-  /// Alias for [formatDisplayPath] retrieving the filesystem's canonical case.
-  static String canonicalCase(String source) => formatDisplayPath(source);
-
   static String titleFromPath(String source) {
     if (isNetworkUrl(source)) {
       final uri = Uri.tryParse(source);

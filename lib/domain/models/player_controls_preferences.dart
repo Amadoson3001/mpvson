@@ -58,12 +58,6 @@ enum SeekBarThickness {
     SeekBarThickness.bold => 8.0,
   };
 
-  double get restingThumbRadius => switch (this) {
-    SeekBarThickness.slim => 4.0,
-    SeekBarThickness.standard => 5.5,
-    SeekBarThickness.bold => 6.5,
-  };
-
   double get hoverThumbRadius => switch (this) {
     SeekBarThickness.slim => 6.5,
     SeekBarThickness.standard => 8.0,

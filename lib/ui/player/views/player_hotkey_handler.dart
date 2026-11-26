@@ -96,8 +96,6 @@ class PlayerHotkeyHandler {
   double _rateBeforeHold = 1;
   bool _isDisposed = false;
 
-  bool get isSpaceHeld => _spaceHeld;
-
   void cancelHeldSpeed() {
     _spaceTimer?.cancel();
     _spaceHeld = false;

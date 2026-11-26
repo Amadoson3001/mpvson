@@ -29,7 +29,6 @@ class PlayerEmbeddedLibrary extends StatelessWidget {
     required this.appPreferences,
     required this.libraryRepository,
     required this.desktopIntegration,
-    required this.homeNavigationRequest,
     required this.draggingFiles,
     required this.settingsOpen,
     required this.onSettingsOpened,
@@ -46,7 +45,6 @@ class PlayerEmbeddedLibrary extends StatelessWidget {
   final AppPreferencesRepository? appPreferences;
   final MediaLibraryRepository? libraryRepository;
   final DesktopIntegrationService? desktopIntegration;
-  final int homeNavigationRequest;
   final bool draggingFiles;
   final bool settingsOpen;
   final VoidCallback onSettingsOpened;
@@ -60,7 +58,6 @@ class PlayerEmbeddedLibrary extends StatelessWidget {
       repository: repository,
       controller: controller,
       initialSection: LibrarySection.home,
-      homeNavigationRequest: homeNavigationRequest,
       queueOpen: chrome.queueOpen,
       onQueueOpenChanged: chrome.setQueueOpen,
       home: HomeView(

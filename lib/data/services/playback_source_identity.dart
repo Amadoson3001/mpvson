@@ -95,10 +95,6 @@ class PlaybackSourceIdentity {
     return _request.copyWith(loaded: _request.hasSource);
   }
 
-  /// The load attempt of the most recent request that the engine has not
-  /// resolved yet, when there is one.
-  int? get pendingBoundary => _pendingBoundary;
-
   /// The unresolved request's attachment.
   ///
   /// libmpv reports a failed load without ever notifying `path`, so this is the

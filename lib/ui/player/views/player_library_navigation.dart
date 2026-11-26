@@ -24,11 +24,9 @@ class PlayerLibraryNavigation extends ChangeNotifier {
   bool _showLibrary = false;
   bool _showPlayerView = false;
   String? _playerViewEntryId;
-  int _homeNavigationRequest = 0;
   bool _settingsOpen = false;
 
   bool get settingsOpen => _settingsOpen;
-  int get homeNavigationRequest => _homeNavigationRequest;
 
   bool get isShowingLibrary {
     final current = controller.current;
@@ -55,15 +53,6 @@ class PlayerLibraryNavigation extends ChangeNotifier {
     _showLibrary = false;
     _showPlayerView = true;
     _playerViewEntryId = entryId;
-    notifyListeners();
-    onVisibilityChanged();
-  }
-
-  void backToHome() {
-    _showLibrary = true;
-    _showPlayerView = false;
-    _settingsOpen = false;
-    _homeNavigationRequest++;
     notifyListeners();
     onVisibilityChanged();
   }

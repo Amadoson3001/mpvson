@@ -12,7 +12,6 @@ export 'player_top_bar.dart';
 
 typedef FullscreenSetter = Future<void> Function(bool fullscreen);
 
-const double wideQueuePanelWidth = AppLayout.queuePanelWidth;
 const Size miniPlayerSize = Size(
   AppLayout.miniPlayerWidth,
   AppLayout.miniPlayerHeight,
@@ -71,7 +70,6 @@ class PlayerLayoutManager with WindowListener, ChangeNotifier {
 
   bool get isFullscreen => _isFullscreen;
   bool get isMiniPlayer => _miniPlayer;
-  bool get isMinimized => _minimized;
   bool get animationsSuspended => _animationsSuspended;
   bool get isNativeWindow => desktopWindow && fullscreenSetter == null;
 

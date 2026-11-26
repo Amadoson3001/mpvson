@@ -100,44 +100,6 @@ class GpuInfoService {
     return profile;
   }
 
-  /// Writes the full diagnostic snapshot beside `diagnostics.log`.
-  Future<File?> writeSnapshot({Directory? directory}) async {
-    final gpuSnapshot = await snapshot();
-    final defaultAdapter = await resolveDefault();
-    final preference = await readPreference();
-    final payload = <String, Object?>{
-      'capturedAt': DateTime.now().toUtc().toIso8601String(),
-      'defaultAdapter': defaultAdapter?.toJson(),
-      'preference': preference,
-      'snapshot': gpuSnapshot?.toJson(),
-    };
-
-    try {
-      final target = directory ?? await _defaultDirectory();
-      await target.create(recursive: true);
-      final file = File(p.join(target.path, 'gpu_snapshot.json'));
-      await file.writeAsString(
-        const JsonEncoder.withIndent('  ').convert(payload),
-        flush: true,
-      );
-      return file;
-    } on Object {
-      return null;
-    }
-  }
-
-  Future<void> recordSnapshot(
-    DiagnosticSink sink, {
-    Directory? directory,
-  }) async {
-    final file = await writeSnapshot(directory: directory);
-    if (file == null) {
-      sink.record('gpu.snapshot', message: 'GPU diagnostics were unavailable.');
-      return;
-    }
-    sink.record('gpu.snapshot', message: 'Wrote ${file.path}');
-  }
-
   Future<Directory> _defaultDirectory() async {
     final base = await getApplicationSupportDirectory();
     return Directory(p.join(base.path, 'mpvson'));

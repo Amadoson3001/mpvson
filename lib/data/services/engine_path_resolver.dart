@@ -26,12 +26,6 @@ class EnginePathResolver {
     return File(path).exists();
   }
 
-  /// Synchronously checks whether an engine library binary exists at [path].
-  static bool engineExistsSync(String? path) {
-    if (path == null || path.isEmpty) return false;
-    return File(path).existsSync();
-  }
-
   /// Parses and cleans a raw engine version string reported by libmpv (e.g. from `mpv-version`).
   /// Strips leading `mpv` or `libmpv` prefixes and excess whitespace.
   static String cleanVersion(String raw) {

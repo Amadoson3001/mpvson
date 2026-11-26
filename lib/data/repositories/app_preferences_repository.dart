@@ -257,18 +257,15 @@ class AppPreferencesRepository extends ChangeNotifier {
 
   final File? _customFile;
   DesktopPreferences _preferences = const DesktopPreferences();
-  bool _loaded = false;
   bool _primaryInvalid = false;
   int _revision = 0;
   int _savedRevision = 0;
   Future<void>? _writeInFlight;
   Object? _saveError;
   Object? get saveError => _saveError;
-  bool get isSaving => _writeInFlight != null;
 
   DesktopPreferences get preferences => _preferences;
   GraphicsSettings get graphicsSettings => _preferences.graphics;
-  bool get isLoaded => _loaded;
 
   Future<File> _resolveFile() async {
     if (_customFile != null) return _customFile;
@@ -314,7 +311,6 @@ class AppPreferencesRepository extends ChangeNotifier {
       // Keep defaults if neither copy can be read. Do not overwrite the backup.
       _primaryInvalid = true;
     } finally {
-      _loaded = true;
       notifyListeners();
     }
   }

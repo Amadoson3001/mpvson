@@ -15,9 +15,6 @@ extension PlayerControllerTransport on PlayerController {
   /// Current repeat mode as a string ('off', 'all', 'one') for backwards compatibility.
   String get repeatMode => _repeatMode.value;
 
-  /// Strongly typed current repeat mode.
-  PlayerRepeatMode get playerRepeatMode => _repeatMode;
-
   ControlDensity get controlDensity => _controlDensity;
 
   bool get autoPlayNextVideo => _autoPlayNextVideo;

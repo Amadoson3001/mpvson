@@ -124,13 +124,6 @@ class HardwareProfile {
     HardwareTier.high => 350,
   };
 
-  /// Bounded probe worker count scaled to physical CPU concurrency.
-  int get recommendedMaxConcurrentProbes => switch (tier) {
-    HardwareTier.low => math.min(2, cpuCount),
-    HardwareTier.balanced => math.min(4, cpuCount),
-    HardwareTier.high => cpuCount >= 8 ? 6 : 4,
-  };
-
   static GpuAdapter? _pickBestDiscrete(List<GpuAdapter> adapters) {
     GpuAdapter? best;
     for (final adapter in adapters) {

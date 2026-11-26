@@ -74,7 +74,6 @@ class PlayerContent extends StatefulWidget {
     required this.enableNativeDrop,
     required this.isShowingLibrary,
     required this.settingsOpen,
-    required this.homeNavigationRequest,
     required this.draggingFiles,
     required this.onVideoTap,
     required this.onVideoDoubleTap,
@@ -105,7 +104,6 @@ class PlayerContent extends StatefulWidget {
   final bool enableNativeDrop;
   final bool isShowingLibrary;
   final bool settingsOpen;
-  final int homeNavigationRequest;
   final bool draggingFiles;
 
   final VoidCallback onVideoTap;
@@ -338,7 +336,6 @@ class _PlayerContentState extends State<PlayerContent>
       appPreferences: widget.appPreferences,
       libraryRepository: widget.libraryRepository,
       desktopIntegration: widget.desktopIntegration,
-      homeNavigationRequest: widget.homeNavigationRequest,
       draggingFiles: widget.draggingFiles,
       settingsOpen: widget.settingsOpen,
       onSettingsOpened: widget.onSettingsOpened,

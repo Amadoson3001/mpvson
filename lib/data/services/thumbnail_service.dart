@@ -118,10 +118,6 @@ class MediaKitThumbnailService implements ThumbnailService {
   int _requestSequenceCounter = 0;
   bool _disposed = false;
 
-  /// Recent local diagnostics for monitoring and test verification.
-  List<ThumbnailDiagnosticRecord> get recentDiagnostics =>
-      List<ThumbnailDiagnosticRecord>.unmodifiable(_recentDiagnostics);
-
   void _recordDiagnostic(
     String stage, {
     String? source,

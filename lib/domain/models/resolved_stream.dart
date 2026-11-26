@@ -57,21 +57,6 @@ class ResolvedStream {
   /// Whether this stream requires a separate audio input.
   bool get hasSeparateAudio => audioUrl != null && audioUrl != streamUrl;
 
-  /// Whether the resolved URL is already expired.
-  bool isExpired({DateTime? now}) {
-    if (expiresAt == null) return false;
-    return (now ?? DateTime.now()).isAfter(expiresAt!);
-  }
-
-  /// Whether the resolved URL is near expiry within the specified [threshold].
-  bool isNearExpiry({
-    DateTime? now,
-    Duration threshold = const Duration(minutes: 5),
-  }) {
-    if (expiresAt == null) return false;
-    return (now ?? DateTime.now()).add(threshold).isAfter(expiresAt!);
-  }
-
   /// The rendition matching [formatId], if available.
   StreamRendition? get selectedRendition {
     if (formatId == null) return null;

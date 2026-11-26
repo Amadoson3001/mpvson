@@ -352,7 +352,6 @@ class TransportState {
   final StreamPlaybackState streamPlaybackState;
 
   bool get isStreaming => streamPlaybackState.isStreaming;
-  String? get streamStageMessage => streamPlaybackState.stageMessage;
   StreamStage get streamStage => streamPlaybackState.stage;
   List<StreamRendition> get availableRenditions =>
       streamPlaybackState.availableRenditions;

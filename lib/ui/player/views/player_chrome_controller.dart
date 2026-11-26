@@ -27,7 +27,6 @@ class PlayerChromeController extends ChangeNotifier {
     this.queueFocusScope.addListener(_handleQueueFocusChange);
   }
 
-  static const controlHideDelay = Duration(milliseconds: 2800);
   static const fullscreenHideDelay = Duration(seconds: 2);
 
   final MenuController contextMenu;

@@ -342,26 +342,6 @@ extension PlayerControllerQueue on PlayerController {
     return (index, removed);
   }
 
-  /// Removes an entry from recent history by its [id] or canonical path.
-  (int, MediaEntry)? removeRecentById(String id) {
-    if (!_acceptsCommands) return null;
-    final canonical = MediaEntry.canonicalSource(id);
-    final index = _recent.indexWhere(
-      (item) =>
-          item.id == id ||
-          item.path == id ||
-          item.id == canonical ||
-          MediaEntry.canonicalSource(item.path) == canonical,
-    );
-    if (index < 0) return null;
-    final removed = _recent.removeAt(index);
-    _unmodifiableRecent = List<MediaEntry>.unmodifiable(_recent);
-    _rebuildRecentEntryIndices();
-    _scheduleSave();
-    _notifyIfOpen();
-    return (index, removed);
-  }
-
   /// Restores a previously removed recent entry at [index].
   void restoreRecent(int index, MediaEntry entry) {
     if (!_acceptsCommands) return;

@@ -547,7 +547,6 @@ class _PlayerScreenState extends State<PlayerScreen>
                       enableNativeDrop: widget.enableNativeDrop,
                       isShowingLibrary: _navigation.isShowingLibrary,
                       settingsOpen: _navigation.settingsOpen,
-                      homeNavigationRequest: _navigation.homeNavigationRequest,
                       draggingFiles: _draggingFiles,
                       onVideoTap: _toggleVideoPlayback,
                       onVideoDoubleTap: () {
